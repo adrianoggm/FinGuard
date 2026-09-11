@@ -39,7 +39,9 @@ _VISUAL_STYLE = re.compile(
     r"\b(?:barra|barras|linea|area|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
     r"circular|donut|anillo|horizontal|vertical|tumba\w*|de\s+pie)\b"
 )
-_TARGET = re.compile(
+# Exported (Wave 4.5, Task 4): `visual_explanation.asks_why` reads this same ordinal vocabulary
+# off its own «¿por qué el primer gráfico?» match rather than a second copy of it.
+TARGET = re.compile(
     r"\b(?:(?:el\s+)?(?:ultimo|last)|(?:el\s+)?primer(?:o|a)?|"
     r"(?:el\s+)?segund(?:o|a)?)\s+grafic(?:o|a)\b"
 )
@@ -56,6 +58,27 @@ def fold(sentence: str) -> str:
         for character in unicodedata.normalize("NFKD", sentence.casefold())
         if not unicodedata.combining(character)
     )
+
+
+def resolve_target(word: str | None, contexts: tuple[VisualContext, ...]) -> str | None:
+    """`word` (a folded `TARGET` match, or `None` for "the last chart") resolved against
+    `contexts` into a real `chart_id`.
+
+    The one resolution rule, shared rather than duplicated: no contexts at all resolves to
+    nothing; naming a second chart that does not exist resolves to nothing too (the caller
+    decides what that means -- `interpret_visual` refuses with its own sentence before ever
+    reaching here for that case, `asks_why`'s caller answers `VISUAL_NEEDS_TARGET`); anything else
+    is the last chart unless the word says "primer" or "segund".
+    """
+    if not contexts:
+        return None
+    if word is None:
+        return contexts[-1].chart_id
+    if "primer" in word:
+        return contexts[0].chart_id
+    if "segund" in word:
+        return contexts[1].chart_id if len(contexts) >= 2 else None
+    return contexts[-1].chart_id
 
 
 def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> VisualIntent | None:
@@ -80,16 +103,11 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
         return None
     if not contexts:
         return VisualIntent(None, None, "No hay ningún gráfico anterior que pueda cambiar.")
-    target_match = _TARGET.search(folded)
-    target = contexts[-1].chart_id
-    if target_match:
-        word = target_match.group(0).casefold()
-        if "primer" in word:
-            target = contexts[0].chart_id
-        elif "segund" in word:
-            if len(contexts) < 2:
-                return VisualIntent(None, None, "No existe un segundo gráfico anterior.")
-            target = contexts[1].chart_id
+    target_match = TARGET.search(folded)
+    word = target_match.group(0).casefold() if target_match else None
+    if word is not None and "segund" in word and len(contexts) < 2:
+        return VisualIntent(None, None, "No existe un segundo gráfico anterior.")
+    target = resolve_target(word, contexts)
     if show_every_row:
         # The one patch that clears rather than sets. `EncodingPatch.clear` exists for exactly this
         # and nothing produced it until now, so the limit the chart applies by default was one the

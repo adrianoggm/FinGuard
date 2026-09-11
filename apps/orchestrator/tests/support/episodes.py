@@ -234,6 +234,11 @@ _VISUAL_OUTCOMES = {
     "VISUAL_INCOMPATIBLE",
     "VISUAL_NEEDS_TARGET",
     "VISUAL_AMBIGUOUS",
+    # Task 4: the turn asked about the chart and got an answer about the chart -- the same reason
+    # every sibling above belongs in this set. Without it a `VISUAL_EXPLAINED` answer falls through
+    # unrecognised and is silently counted as a query, exactly the blindness a «¿por qué este
+    # gráfico?» turn should be caught answering and could not.
+    "VISUAL_EXPLAINED",
 }
 # R9: a drill-down that fit several bars asks which one rather than guessing -- a question about
 # the figures already on screen (which bar?), not a request to change the chart, so it does not
