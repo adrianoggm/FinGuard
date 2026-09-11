@@ -296,6 +296,17 @@ class AskFinancialQuestionResult:
     visual_follow_up: VisualFollowUp | None = None
     # Internal, typed source for a save candidate. Never serialized as financial data.
     metric_definition: FinancialPlan | ComparisonPlan | RatioPlan | None = None
+    # I-1 (fix wave, D-4.5-6/M-2): a fingerprint of `metric_definition` (back-fill included),
+    # taken in `stream()` and fixed for this turn -- the value `_remember_visual_context` seals
+    # onto a chart drawn THIS turn. It exists as its own field, rather than the seal reading
+    # `metric_definition` directly, so that a LATER turn's own fresh `metric_definition` (its own
+    # back-fill, from ITS OWN `last_plan`) has something independent to be compared against: the
+    # R7 guard in `llm_mapper.question_to_dto` reads `newest.plan_digest` (sealed HERE, at the
+    # turn that drew the chart) against a digest of ITS OWN, current-turn `metric_definition` --
+    # two turns' worth of state, not the same field read twice in one call, which is what made
+    # the guard tautological before this field existed. `None` when `metric_definition` is not a
+    # `FinancialPlan` at all (a comparison, a ratio, or no plan ran this turn).
+    visual_plan_digest: str | None = None
 
 
 @dataclass(frozen=True)

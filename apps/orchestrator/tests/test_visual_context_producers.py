@@ -74,6 +74,10 @@ async def _charted_result() -> AskFinancialQuestionResult:
             rows=(VisualRow("Comida", 100), VisualRow("Casa", 50)), metric="SUM"
         ),
         metric_definition=plan,
+        # `stream()`'s own I-1 line, done by hand here since this fixture builds the Result
+        # directly rather than through `stream()`: the digest of the plan that drew THIS chart,
+        # captured once, before anything a test does afterward could change `metric_definition`.
+        visual_plan_digest=plan_digest(plan),
     )
     return await _decided_visual(result, default_policy(), DEFAULT_PRESENTATION, "")
 
@@ -104,6 +108,7 @@ async def _charted_result_grouped_by_category() -> AskFinancialQuestionResult:
             rows=(VisualRow("Comida", 100), VisualRow("Casa", 50)), metric="SUM"
         ),
         metric_definition=plan,
+        visual_plan_digest=plan_digest(plan),
     )
     return await _decided_visual(result, default_policy(), DEFAULT_PRESENTATION, "")
 
@@ -193,9 +198,15 @@ def test_a_fresh_chart_carries_the_labels_its_dataset_draws(charted_result, char
 
 async def test_a_fresh_chart_carries_the_window_and_plan_digest() -> None:
     """The fix wave's own two provenance facts: the window this turn's dataset actually covers
-    (carried up from `VisualDataset.window`) and a fingerprint of the plan that produced it
-    (`metric_definition`, when it is a `FinancialPlan`), both set before the seal, the same as
-    `test_a_fresh_chart_carries_the_labels_its_dataset_draws` proves for labels above."""
+    (carried up from `VisualDataset.window`) and a fingerprint of the plan that produced it, both
+    set before the seal, the same as `test_a_fresh_chart_carries_the_labels_its_dataset_draws`
+    proves for labels above.
+
+    I-1 (fix wave, D-4.5-6/M-2): the digest sealed onto the context now comes from `result.
+    visual_plan_digest` -- `stream()`'s own line, computed from the plan that produced the
+    dataset BEFORE any back-fill -- not from `result.metric_definition` recomputed here. This
+    fixture builds the Result directly (bypassing `stream()`), so it sets `visual_plan_digest`
+    by hand the same way `stream()` would have."""
     plan = FinancialPlan(
         Direction.EXPENSE,
         period=RelativePeriod(Period.LAST_MONTH),
@@ -211,6 +222,7 @@ async def test_a_fresh_chart_carries_the_window_and_plan_digest() -> None:
             rows=(VisualRow("Comida", 100), VisualRow("Casa", 50)), metric="SUM", window=window
         ),
         metric_definition=plan,
+        visual_plan_digest=plan_digest(plan),
     )
     charted = await ask_financial_question._decided_visual(
         result, default_policy(), DEFAULT_PRESENTATION, ""
@@ -225,10 +237,12 @@ async def test_a_fresh_chart_carries_the_window_and_plan_digest() -> None:
 def test_a_fresh_chart_with_no_financial_plan_carries_no_digest(
     charted_result, chart_response
 ) -> None:
-    """`plan_digest` is `None` whenever `metric_definition` is not a `FinancialPlan` at all --
-    `charted_result`'s own fixture sets one, so this drives the guard with `None` directly rather
-    than asserting only the positive case above."""
-    no_plan = replace(charted_result, metric_definition=None)
+    """`plan_digest` is `None` whenever the turn produced no `visual_plan_digest` at all --
+    `charted_result`'s own fixture sets one for its own `metric_definition`, so this drives the
+    guard with `None` directly (as `stream()` would leave it when `metric_definition` is not a
+    `FinancialPlan` at the point the digest is taken) rather than asserting only the positive
+    case above."""
+    no_plan = replace(charted_result, metric_definition=None, visual_plan_digest=None)
     remembered = llm_mapper._remember_visual_context(no_plan, chart_response)
     (context,) = remembered.conversation.visual_contexts[-1:]
     assert context.plan_digest is None
@@ -517,32 +531,24 @@ def test_a_visual_unchanged_answer_carries_no_explanation() -> None:
 
 
 async def test_r7_a_stale_backfilled_plan_never_names_its_noun_in_the_spoken_line(
-    charted_result, monkeypatch
+    charted_result,
 ) -> None:
-    """R7 (4.4 review M-2): `result.metric_definition` can be back-filled from
-    `conversation.last_plan` (`ask_financial_question.py:~629-632`) with a plan from ANOTHER turn
-    -- one that never drew this chart. Within one `question_to_dto` call, `_remember_visual_context`
-    seals the FRESH context's own `plan_digest` from that very same `result.metric_definition`
-    (`llm_mapper.py`'s `VisualContext(..., plan_digest=plan_digest(result.metric_definition) ...)`),
-    so a same-call comparison can never disagree by construction -- the mismatch this guards
-    against is a value seen at a different `plan_digest(...)` call than the one that sealed the
-    chart. `llm_mapper.plan_digest` is monkeypatched to answer its two call sites in this function
-    differently (the seal, then the guard) to exercise the branch directly, the way a chart drawn
-    from one plan and a `last_plan` backfilled from an unrelated one would disagree in practice.
-    The presenter must fall back to the generic noun («desglose») rather than speak the stale
-    plan's own noun («categorías»)."""
-    real_digest = llm_mapper.plan_digest
-    calls = {"n": 0}
-
-    def fake_digest(plan: object) -> str:
-        calls["n"] += 1
-        return real_digest(plan)[:16] if calls["n"] == 1 else "differentdigest1"
-
-    monkeypatch.setattr(llm_mapper, "plan_digest", fake_digest)
+    """I-1 (fix wave, D-4.5-6/M-2), natural rather than monkeypatched. `charted_result.
+    visual_plan_digest` is the digest of the plan that actually drew the chart -- `stream()`'s own
+    line, done by hand in the fixture -- and `_remember_visual_context` now seals `newest.
+    plan_digest` from THAT, not from `result.metric_definition`. This test then does exactly what
+    `ask_financial_question.stream()`'s own back-fill does in practice: replaces
+    `metric_definition` with a DIFFERENT plan (a later, unrelated question's `last_plan`, here
+    distinguished by `group_by='CATEGORY'`) without touching `visual_plan_digest`, which stream()
+    would not have touched either -- it was computed once, before the back-fill, from the plan
+    that drew this chart. `plan_digest(result.metric_definition)` (the back-filled plan) and
+    `newest.plan_digest` (sealed from the ORIGINAL plan) now genuinely disagree, no monkeypatch
+    needed, and the presenter must fall back to the generic noun («desglose») rather than speak
+    the stale plan's own noun («categorías»)."""
     plan_with_grouping = replace(charted_result.metric_definition, group_by="CATEGORY")
+    assert plan_digest(plan_with_grouping) != charted_result.visual_plan_digest
     voice_result = replace(charted_result, metric_definition=plan_with_grouping)
     response = llm_mapper.question_to_dto(voice_result, spoken_for_voice=True)
-    assert calls["n"] == 2
     assert response.spoken is not None
     assert "categoría" not in response.spoken.lower()
     assert response.spoken == "En pantalla tienes el desglose."
