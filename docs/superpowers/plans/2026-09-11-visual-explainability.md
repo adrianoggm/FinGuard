@@ -49,9 +49,10 @@ second memory; no rationale).
   conversation → the recogniser abstains (the turn goes where it went before) — no new refusal text.
 - **R6 — no new endpoint, no new memory, no automatic action.** The `<details>` is inert; no chip is added (a chip
   would be the first non-restyle chip and bypass `_chip_verifies`).
-- **R7 — M-2 (4.4 branch review) is closed here:** `question_to_dto` hands the presenter (and now the explainer's
-  noun) the plan only when `sha256(plan)[:16] == newest.plan_digest`; otherwise `None` → the generic noun. One test
-  pairs a charted follow-up's noun with the chart's own grouping under a stale `last_plan`.
+- **R7 — M-2 (4.4 branch review) is closed here (re-ruled — see Landed, D-4.5-6):** `question_to_dto` hands the
+  presenter (and now the explainer's noun) the plan only when `sha256(plan)[:16] == newest.plan_digest`; otherwise
+  `None` → the generic noun. One test pairs a charted follow-up's noun with the chart's own grouping under a stale
+  `last_plan`.
 - **R8 — `turn_id` bound to a recoverable turn is REFUSED for this wave**, with the reason written down: it needs a
   store (§13's second memory) or a replayable record the orchestrator does not keep; the explanation does not need
   it (R1). `docs/next.md`'s sentence is updated to say so.
