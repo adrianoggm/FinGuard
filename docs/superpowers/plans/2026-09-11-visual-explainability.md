@@ -112,6 +112,77 @@ Design §10 row 4.5 (done when: §11 runs on camera — the code side is ready; 
 
 Then: whole-branch review (opus, base = 4.4's closing head), one fix wave, scoped re-review, CLOSED line. Not pushed; not fast-forwarded by default (the user decides).
 
+## Landed
+
+- **Task 1** — §7 rewritten per R1-R3; `VisualContext.source`/`.fallback_reason` sealed through the
+  three boundaries. `57063d6` (docs), `dc9c436` (code).
+- **Task 2** — `explain_chart` derives `chart_reason`/`ordering_reason`/`scope_summary`/`provenance`
+  from the sealed context alone, over every family. `47a0597`.
+- **Task 2b** — nouns read from the drawn labels, not the field name; measure word from
+  `measure_metric()`; `_spec_dimension` fixes the recurrence dimension pick (Task 2 review I-1); §7's
+  `provenance` typed `str | None`. `4a12083`.
+- **Task 3** — `QuestionResponse.explanation` on every charted answer, both channels, the restyle
+  path included; R7's plan-digest guard; the web's inert `<details>` «¿Por qué este gráfico?».
+  `6aab2cb` (orchestrator), `5edccb1` (web).
+- **Task 4** — `asks_why` recogniser and the controller short-circuit on both routes →
+  `VISUAL_EXPLAINED`, zero ledger, zero model, conversation unchanged. `6283309`.
+- **Task 5** — episode 32 gains the why-turn after turn 1; episode 33 turn 1 asserts
+  `explanation: true`; `Turn.explanation` in the harness. `7f673e8`, `92b00e3`.
+- **Task 6** — this record: design §7/§10/§11, `docs/next.md`, `docs/conversational-capabilities.md`,
+  this Landed section. Docs only.
+
+Suite at HEAD (`92b00e3`): orchestrator 4227 passed / 3 skipped / 209 deselected (three globs) +
+corpus 207 (176 · 1194) at 0.0 %; web 117; gateway 122 / 1 (untouched across the whole wave);
+ratchets 22/43/0 (`UNMEASURED`/`MUTE`/`CONTESTED`), unmoved.
+
+**Rulings, as applied:**
+- **R1** — §7 rewritten to derive from the sealed context, not `decision`/`source_plan`. Applied,
+  Task 1.
+- **R2** — provenance wording follows the real `VisualSource`/`FallbackReason` sets, not the design's
+  first-draft vocabulary. Applied, Task 2.
+- **R3** — scope states dates and a group count, never an amount; the evidence count is not stated.
+  Applied, Task 2/2b; no `€`/decimal/thousands pattern asserted over every family.
+- **R4** — one derivation (`explain_chart`), two surfaces (`QuestionResponse.explanation`,
+  `VISUAL_EXPLAINED`). Applied, Task 3/4.
+- **R5** — `asks_why` claims the question deterministically in the controller's visual short-circuit,
+  before `interpret_visual`, only when a trusted chart exists; CONTESTED probed at 0 for every
+  phrasing. Applied, Task 4.
+- **R6** — no new endpoint, no new memory, no chip; the `<details>` is inert. Applied, Task 3.
+- **R7** — the digest guard was written exactly as ruled, but Task 3's review found it tautological
+  within today's `AskFinancialQuestionResult` assembly (the seal and the guard read the same value
+  off the same object in one call) — **re-ruled by the review as D-4.5-6, IMPORTANT, fix wave**: M-2
+  is not actually closed; the fix belongs at the chart's own producer.
+- **R8** — the `turn_id` → recoverable-turn binding is refused, reason written down in `docs/next.md`.
+  Applied, Task 6.
+- **R9** — the video's polish is the user's; the plan states what the code offers the on-camera run
+  (episode 32's order, the explanation visible after turn 1, spoken after the why-question). Applied,
+  Task 6.
+- **R10** — ratchets only moved by a claimed phrasing; none of `UNMEASURED`/`MUTE`/`CONTESTED` moved
+  this wave (the new corpus turn's phrasing was already claimed by `asks_why`, not a fresh recogniser
+  win) — `Ceiling` literals untouched by any implementer. Applied, Task 5.
+- **R11** (ledger, Task 2 concern) — the dimension noun is derived from the sealed `LABELS`, not the
+  field name (every producer names the field literally `"dimension"`). Applied, Task 2b.
+
+**Deferred — open** (the fix wave has not run):
+- **D-4.5-1** — an inline example string in design §7's old code block does not match the four R2
+  provenance strings verbatim. Minor.
+- **D-4.5-4** — `category_words` has no public keys accessor; the noun rule reads the private
+  `_NAMES` across a module boundary.
+- **D-4.5-5** — the `_MARK_REASONS` callables carry unused parameters (optional).
+- **D-4.5-6** — the R7/M-2 digest guard is tautological today (compares a value to itself within one
+  call); the real fix digests the plan at the chart's own producer, before the `metric_definition`
+  back-fill. IMPORTANT.
+- **D-4.5-7** — no web test drives the explanation disclosure through a materialised restyle
+  end-to-end.
+- **D-4.5-8** — a later-turn explanation's `scope_summary` reads a count of zero because
+  `profile.row_count` never crosses the wire; the proposed fix (`len(context.labels)`, worded "al
+  menos N" or omitted at the label cap) has not landed. IMPORTANT.
+
+`D-4.5-2` (design §7's `provenance` type) was fixed in Task 2b. `D-4.5-3` (a week-grouped chart's
+labels read as days) was RE-RULED, not a fix-wave item: the 7-day-spacing heuristic that would have
+told weeks from days was rejected as a guess the module's own "never guesses" principle forbids —
+the limit is stated in §7 instead.
+
 ## Self-review
 - Every §7 input in R1 survives the wire and is sealed — checked against `chart.py:352-410` and `llm_dto.py:326-356`.
 - Nothing reads `source`/`fallback_reason` to decide anything (grep at review).

@@ -392,6 +392,21 @@ it, because it is a function of the chart, not of the turn that asked about it. 
 free-text `rationale` is refused too, as it always was: the explanation is derived from the
 accepted decision's closed vocabulary, never from what the model said about itself.
 
+**Landed, 4.5.** Both surfaces run as specified above: `QuestionResponse.explanation` on every
+charted answer (TEXT and VOICE, restyle included), and «¿Por qué este gráfico?» (and its close
+variants) answered outcome `VISUAL_EXPLAINED` with `as_text()` in `text`, zero ledger calls, zero
+model calls, the conversation unchanged. Probed strings, `bar`/`NONE` grouping: `chart_reason`
+"Barras: comparas grupos entre sí.", `ordering_reason` "Orden: de mayor a menor importe.",
+`scope_summary` "Datos: 0 grupos.", `provenance` "Elegido por las reglas de FinGuard." — the four
+sentences joined by `as_text()`. What it refuses, exactly as ruled: the `turn_id` → recoverable-turn
+binding (needs a store this design does not keep); no amount, total or percentage, ever; no rule
+name, provider error or discarded proposal. Two known limits, not fixed by this wave: a later-turn
+`scope_summary` reads a count of zero, because `profile.row_count` does not survive the wire and
+the sealed `labels`-based substitute has not landed (D-4.5-8); the R7 digest guard in `llm_mapper.py`
+compares the sealed plan's digest against a value computed from the same object in the same call, so
+it cannot yet disagree on any input reachable today — the fix belongs at the chart's own producer,
+not the mapper (D-4.5-6).
+
 ## 8. Performance
 
 Once banking has answered, the answer writer and the visual planner are independent; they run
@@ -454,7 +469,7 @@ evidence · every rejected proposal ends in a valid answer.
 | **4.2 Continuous visual conversation — done (3b, 4.2b)** | presentation patches through the verifier with `source="patch"`, on a context the server has sealed (3b); reshape linkage `derived_from`; the corpus's episode reshaped, regrouped and restyled in §9's own words (4.2b) | done — `evaluation/conversations/32-visual-continuation.yaml` runs every turn end to end with the banking-call assertion: turn 2, «Separa transporte público y gasolina.», re-queries the plan in view (one call, `derived_from: true`) instead of a planning-dataset stand-in; turn 3, «Ahora compáralo por meses.», regroups it into a month-by-month series instead of the comparison reader's refusal; turns 4-5 restyle a bar by number (turn 3's own chart is a line, which refuses an orientation change) and by «el gráfico anterior», each an effective, verified change. Turn 1 stays the planning-dataset anchor sentence — `window_words.py` excludes «este verano» by design, so nothing here could give it a window without guessing. Turns 4-5 of §9's own sketch — a drill-down into a split category — are 4.3's. **Fix wave, I-4:** in §9's own order the restyle bullet (§11) is refused right after turn 3's month line, with no chart between them for a bar to be turned — episode 32 reaches it only because turn 4 names a bar by number first; the scenario in §9's own sequence closes once 4.3 leaves a chart behind for «el gráfico anterior» to resolve to |
 | **4.3 Financial drill-down — done** | reference resolution over result labels; bounded drill-down plan; movements linked to evidence; "back" | done — turns 4-5 pass verbatim in episode 32; an ambiguous reference asks (`DRILL_AMBIGUOUS`, harness route `CLARIFY`); the drill's chart is a merchant bar deriving from the chart it drilled |
 | **4.4 Multimodal continuity — done** | `chart_id`/`visualTurnId` on voice events; the chart-derived spoken summary; the multimodal cases | done — four of the five multimodal cases run in episode 33 (a, b, d, e); the fifth (c, the interruption) is the gateway's own protocol cancellation test; full-turn latency measured with fake providers, the real-provider row pending the operator's run |
-| **4.5 Explainability and product** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | `docs/superpowers/plans/2026-09-11-visual-explainability.md` — the acceptance scenario in §11 runs on camera |
+| **4.5 Explainability and product — done on the code side** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | done on the code side — the §11 scenario's code path is proved by episodes 32/33 (`docs/superpowers/plans/2026-09-11-visual-explainability.md`); the on-camera run is the operator's |
 
 Sub-waves 4.1-4.2 are worth landing on their own: they make the corpus see charts and make every
 visual follow-up verified, without a single new product surface.
@@ -464,10 +479,11 @@ visual follow-up verified, without a single new product surface.
 Complete when this runs end to end, on camera:
 
 - By voice: «¿En qué he gastado más este verano?» — FinGuard answers by voice, shows the ranking, and
-  discreetly explains why bars. **Not this wave** — voice and explainability are §4.5's; episode 32's
-  turn 1 anchors on «¿Cuánto gasté el mes pasado?» instead, because `window_words.py` excludes a
-  season on purpose. **The voice answer and its chart are landed, 4.4** (episode 33 turn 1: VOICE,
-  charted, `spoken: true`) — the discreet explanation stays 4.5's.
+  discreetly explains why bars. Episode 32's turn 1 anchors on «¿Cuánto gasté el mes pasado?» instead,
+  because `window_words.py` excludes a season on purpose. **The voice answer and its chart are
+  landed, 4.4** (episode 33 turn 1: VOICE, charted, `spoken: true`); **the discreet explanation is
+  landed, 4.5** — episode 33 turn 1 also asserts `explanation: true`, and episode 32's why-turn right
+  after turn 1 answers it in text, both from `explain_chart` alone.
 - By text: «Separa transporte público y gasolina.» — the summer and the account are kept, the data is
   re-queried, the chart updates, `derived_from` points at the first chart. **Landed, 4.2b** —
   episode 32 turn 2, verbatim; the window kept is turn 1's own (last month, not a summer — the same
@@ -480,7 +496,9 @@ Complete when this runs end to end, on camera:
   «agosto» resolves against the month line's own label rather than reaching the planner, the plan
   turn 3 left in view narrows to that bar and regroups by merchant, clamped to the days the harness's
   fixed today had actually seen (2026-08-01..2026-08-05, never the whole calendar month); one banking
-  call, `derived_from: true`, its chart a merchant bar.
+  call, `derived_from: true`, its chart a merchant bar. **Unchanged by 4.5** — this turn's own
+  drill answer carries an `explanation` field like any other charted answer, but nothing about the
+  drill itself changed.
 - «Pon el gráfico anterior en horizontal.» — the previous visual context is recovered and only its
   presentation changes, with zero banking calls. **Landed, 4.2b** — episode 32 turn 5 at the time
   (now turn 7, since 4.3's own Task 5 inserted the drill's two turns ahead of it), verbatim:
@@ -496,7 +514,9 @@ Complete when this runs end to end, on camera:
   the y axis) — so this exact wording is a no-op there, `VISUAL_UNCHANGED`; «en vertical» is the
   effective change instead, which is why episode 32 turns the first chart by number rather than
   reusing §9's own wording for that turn, and only reaches §9's own «en horizontal» wording one turn
-  later, verbatim, against the bar that turn just made vertical.
+  later, verbatim, against the bar that turn just made vertical. **Unchanged by 4.5** — probably
+  nothing beyond the explanation itself: every restyle in this sequence now also carries an
+  `explanation` field, but no restyle mechanics moved.
 
 ## 12. Out of scope, to protect the calendar
 
