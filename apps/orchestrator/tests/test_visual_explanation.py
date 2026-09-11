@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from finguard_orchestrator.domain.enums import GroupBy
+from finguard_orchestrator.domain.enums import GroupBy, Metric
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ChartEncoding,
@@ -126,7 +126,9 @@ _EXPECTED: dict[str, str] = {
         "Elegido por las reglas de FinGuard."
     ),
     "recurrence": (
-        "Puntos: cada uno es un grupo y su número de movimientos. Orden: cronológico. "
+        # U-2 (Wave 3 hardening): RECURRENCE's points plot `value_minor`, an amount -- "número de
+        # movimientos" was always the wrong word for this family, pinned wrong until now.
+        "Puntos: cada uno es un grupo y su importe. Orden: cronológico. "
         "Datos: 2 grupos entre el 1 de junio y el 31 de agosto de 2026. "
         "Elegido por las reglas de FinGuard."
     ),
@@ -328,11 +330,75 @@ def test_measure_metric_values_found_map_to_a_word() -> None:
         assert profile.measure_metric() in _MEASURE_WORDS
 
 
+# A-7/C-2/U-3 (Wave 3 hardening): the seven `FAMILY_DATASETS` fixtures above never set
+# `plan_metric` (`scripts/export_chart_fixtures.py`'s own construction), so
+# `test_measure_metric_values_found_map_to_a_word` could pass at 207/207 while every live producer
+# that DOES set it (`_decided_visual`, `ask_financial_question.py:~5362`, `plan_metric=context.
+# metric`) explained a count chart as money -- the exact defect this walks every `VisualDataset(`
+# call site in `ask_financial_question.py` to catch. Each entry is `(dataset_metric, plan_metric,
+# expected_word)`: `dataset_metric` is the literal string/`Metric` the producer's own
+# `VisualDataset(...)` names; `plan_metric` is what `_decided_visual` actually passes for that
+# result (`None` when the producer never sets `plan_context`, `Metric` when it does).
+_PRODUCER_METRIC_PAIRS: tuple[tuple[str, str | None, str], ...] = (
+    # `_how_many_payees` (~3153): a merchant count, `plan_context=_spoken(scoped)` (~3130) -- the
+    # payee-count plan's own metric is COUNT, same as the dataset's shape.
+    ("COUNT", "COUNT", "número de movimientos"),
+    # `_compare_periods` (~3464): dataset shape is the marker `COMPARISON`; `plan_context=_spoken
+    # (latest)` (~3395) carries whichever metric the two operands actually compared -- SUM (the
+    # ordinary case) and COUNT (U-4/A-7's own named hazard: "a comparison of COUNTs explains as
+    # importe") are both real, live shapes.
+    ("COMPARISON", "SUM", "importe"),
+    ("COMPARISON", "COUNT", "número de movimientos"),
+    # A comparison whose plan did not survive the wire (an echoed context predating Task 2, or one
+    # with no `plan_context` at all) falls back to the dataset's own shape marker.
+    ("COMPARISON", None, "importe"),
+    # The ratio share/net-cash-flow/percent-change producers (~3560-3602): `plan_context=_spoken
+    # (scoped_whole)`, and `RatioPlan.__post_init__`/`RatioDraft.__post_init__` both enforce
+    # "ratio operands must be ungrouped sums" -- `plan_metric` is always SUM here, never absent, so
+    # the dataset's own `RATIO_SHARE` marker never actually wins on the live path.
+    ("RATIO_SHARE", "SUM", "importe"),
+    # `RATIO_SHARE`'s own word is reachable only when no plan survives -- an older echoed context,
+    # or `FAMILY_DATASETS`'s own `ratio_share` fixture (`test_measure_metric_values_found_map_to_
+    # a_word` above), which is exactly why that test alone could not have caught A-7/C-2.
+    ("RATIO_SHARE", None, "peso"),
+    # The generic grouped-result producer (the mainline "cuánto/cuántos/de media por categoría"
+    # answer, `metric=plan.metric.value` beside `plan_context=_spoken(plan)`) realises every
+    # `Metric` member as both the dataset's own shape AND the plan's metric at once -- the shape
+    # C-2's fix (COUNT/AVERAGE/PERIOD_AVERAGE joining the dict) exists for.
+    ("SUM", "SUM", "importe"),
+    ("COUNT", "COUNT", "número de movimientos"),
+    ("AVERAGE", "AVERAGE", "importe medio"),
+    ("PERIOD_AVERAGE", "PERIOD_AVERAGE", "importe medio"),
+    ("CUMULATIVE", "CUMULATIVE", "importe"),
+    ("FREQUENCY", "FREQUENCY", "número de movimientos"),
+    ("RECURRENCE", "RECURRENCE", "importe"),
+    # `_frequency_or_recurrence`-style helpers (~5738, ~5775/5787) build the `VisualDataset`
+    # directly and are not shown setting `plan_context` in the same call -- the shape-marker-only
+    # case, `plan_metric=None`, is the one `FAMILY_DATASETS`'s own `frequency`/`recurrence`
+    # fixtures already exercise (asserted again here for the same reason as `RATIO_SHARE` above).
+    ("FREQUENCY", None, "número de movimientos"),
+    ("RECURRENCE", None, "importe"),
+)
+
+
+def test_every_producers_metric_and_plan_metric_pair_maps_to_the_right_word() -> None:
+    for dataset_metric, plan_metric, expected in _PRODUCER_METRIC_PAIRS:
+        dataset = VisualDataset(
+            rows=(VisualRow("A", 100), VisualRow("B", 200)), metric=dataset_metric
+        )
+        profile = visual_profile_of(
+            dataset, total_minor=None, group_by="NONE", plan_metric=plan_metric
+        )
+        word = _MEASURE_WORDS.get(profile.measure_metric(), "importe")
+        assert word == expected, (dataset_metric, plan_metric, word)
+
+
 _DATE_PATTERN = re.compile(r"\b\d{1,2} de [a-zé]+( de \d{4})?\b")
 _COUNT_PATTERN = re.compile(
     r"\b\d+ (grupos?|categorías?|meses?|comercios?|días?|semanas?|cuentas?|contrapartes?)\b"
 )
-# "número de movimientos" (the FREQUENCY/RECURRENCE measure word, R11) carries no digit of its own
+# "número de movimientos" (the COUNT/FREQUENCY measure word, R11; U-2 moved RECURRENCE off it, its
+# points plot an amount) carries no digit of its own
 # -- unlike the old "movimiento" word it replaces, it does not need a place in `_COUNT_PATTERN`.
 
 
@@ -412,8 +478,12 @@ def test_a_week_chart_says_semanas_after_a_round_trip() -> None:
         ("SUM", "importe"),
         ("COMPARISON", "importe"),
         ("CUMULATIVE", "importe"),
+        ("COUNT", "número de movimientos"),
         ("FREQUENCY", "número de movimientos"),
-        ("RECURRENCE", "número de movimientos"),
+        ("AVERAGE", "importe medio"),
+        ("PERIOD_AVERAGE", "importe medio"),
+        # U-2: RECURRENCE's points plot `value_minor`, an amount -- not a count.
+        ("RECURRENCE", "importe"),
         ("RATIO_SHARE", "peso"),
     ],
 )
@@ -422,11 +492,9 @@ def test_measure_word_per_metric(metric: str, word: str) -> None:
 
 
 def test_the_measure_word_vocabulary_is_closed() -> None:
-    assert set(_MEASURE_WORDS) == {
-        "SUM",
-        "CUMULATIVE",
-        "FREQUENCY",
-        "RECURRENCE",
+    # A-7/C-2: closed over the real `Metric` enum (every member `measure_metric()` can return
+    # verbatim as a plan's own metric) plus the two shape markers no `Metric` member names.
+    assert set(_MEASURE_WORDS) == {member.value for member in Metric} | {
         "RATIO_SHARE",
         "COMPARISON",
     }
