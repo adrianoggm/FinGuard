@@ -279,6 +279,68 @@ def test_chart_identity_ignores_a_chart_id_on_an_unknown_visualization_kind() ->
     assert chart_identity(kpi_answer, None) == {}
 
 
+def test_chart_identity_picks_the_newest_of_three_contexts() -> None:
+    """G-9: `app.py:131-143`'s own assumption -- `conversation["visual_contexts"][-1]` is this
+    turn's chart -- was never exercised against a list longer than one before this test, because
+    the fake always *replaced* the list with a single element where the real `Conversation.
+    with_visual_context` removes-and-appends up to `MAX_VISUAL_CONTEXTS`. Three contexts here,
+    not two: two would still pass a bug that just returns "the last of exactly two"."""
+    three_contexts = {
+        "visual_contexts": [
+            {"chart_id": "chart-1", "turn_id": "turn-1"},
+            {"chart_id": "chart-2", "turn_id": "turn-2"},
+            {"chart_id": "chart-3", "turn_id": "turn-3"},
+        ]
+    }
+    newest_answer = {"visualization": {"kind": "chart", "chart_id": "chart-3"}}
+    assert chart_identity(newest_answer, three_contexts) == {
+        "chartId": "chart-3",
+        "visualTurnId": "turn-3",
+    }
+    # An older context among the three is not mistaken for the newest: naming it still stamps a
+    # `chartId` (the answer really did draw it), but no `visualTurnId` -- it does not match
+    # `visual_contexts[-1]`.
+    oldest_answer = {"visualization": {"kind": "chart", "chart_id": "chart-1"}}
+    assert chart_identity(oldest_answer, three_contexts) == {"chartId": "chart-1"}
+
+
+def test_a_third_charted_turn_keeps_all_three_contexts_newest_last() -> None:
+    """G-9: end to end, through the fake's own `_with_visual_context` (mirroring `Conversation.
+    with_visual_context`) -- three different charted turns on one session leave the conversation
+    carrying all three contexts, newest last, and each turn's own events are identified by its
+    own chart, never the session's first or its accumulated middle one."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            first, first_indices = _run_one_turn(
+                socket, session_id, 1, "turn-1", "quiero ver el gráfico".encode()
+            )
+            for event_type in IDENTITY_EVENT_TYPES:
+                assert first[first_indices[event_type]]["chartId"] == "chart-fake-1"
+            second, second_indices = _run_one_turn(socket, session_id, 3, "turn-2", b"guardalo")
+            for event_type in IDENTITY_EVENT_TYPES:
+                assert second[second_indices[event_type]]["chartId"] == "chart-fake-4"
+            third, third_indices = _run_one_turn(socket, session_id, 5, "turn-3", b"reestilo")
+            for event_type in IDENTITY_EVENT_TYPES:
+                assert third[third_indices[event_type]]["chartId"] == "chart-fake-2"
+            final_conversation = third[third_indices["turn.completed"]]["conversation"]
+            assert isinstance(final_conversation, dict)
+            visual_contexts = final_conversation["visual_contexts"]
+            assert visual_contexts == [
+                {"chart_id": "chart-fake-1", "turn_id": "11111111-1111-1111-1111-111111111111"},
+                {"chart_id": "chart-fake-4", "turn_id": "44444444-4444-4444-4444-444444444444"},
+                {"chart_id": "chart-fake-2", "turn_id": "22222222-2222-2222-2222-222222222222"},
+            ]
+    sessions.clear()
+
+
 def test_restyle_turn_carries_chart_identity_from_the_derivation() -> None:
     """I-1: a restyle answers through `_visual_only_response`, whose `QuestionResponse` carries
     the new chart only in `visualization_derivation.chart_id` (`visualization` stays `None`).

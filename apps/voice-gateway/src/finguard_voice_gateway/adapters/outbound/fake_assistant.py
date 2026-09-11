@@ -42,6 +42,27 @@ def _fold(text: str) -> str:
     return "".join(character for character in decomposed if not unicodedata.combining(character))
 
 
+# G-9: the real cap (`domain/constants.py`'s `MAX_VISUAL_CONTEXTS`), mirrored here so the fake's
+# own append-and-trim behaves like `Conversation.with_visual_context` at the boundary too.
+_MAX_VISUAL_CONTEXTS = 5
+
+
+def _with_visual_context(existing: object, chart_id: str, turn_id: str) -> list[dict[str, str]]:
+    """Mirrors `Conversation.with_visual_context` (G-9): append the new context and keep at most
+    `_MAX_VISUAL_CONTEXTS`, removing any earlier entry for the same chart id first so the newest
+    occurrence of a chart is always last. Before this, every charted/restyled branch below
+    *replaced* the whole list with a single element, so a conversation carrying more than one
+    context -- the ordinary case after a second or third chart -- was never exercised by any
+    gateway test; `chart_identity`'s "newest last" reading of `visual_contexts[-1]` was only ever
+    proven true for lists of length one."""
+    contexts = (
+        [item for item in existing if isinstance(item, dict)] if isinstance(existing, list) else []
+    )
+    contexts = [item for item in contexts if item.get("chart_id") != chart_id]
+    contexts.append({"chart_id": chart_id, "turn_id": turn_id})
+    return contexts[-_MAX_VISUAL_CONTEXTS:]
+
+
 def _chart_visualization(chart_id: str, *, unit: str = "money") -> dict[str, object]:
     """A `ChartVisualizationResponse`-shaped dict, `unit`/`limit` included (G-3): the real DTO
     always emits both (`unit` defaults to `"money"`, never absent), and `apps/web/src/api.ts`
@@ -124,9 +145,9 @@ class FakeAssistantClient:
                 "spec": _LINE_SPEC,
                 "limit": None,
             }
-            reply_conversation["visual_contexts"] = [
-                {"chart_id": _RESTYLE_CHART_ID, "turn_id": _RESTYLE_TURN_ID}
-            ]
+            reply_conversation["visual_contexts"] = _with_visual_context(
+                incoming_contexts, _RESTYLE_CHART_ID, _RESTYLE_TURN_ID
+            )
         elif "kpi" in folded:
             # G-8: a `KpiVisualizationResponse` -- no `chart_id` at all, so `chart_identity`
             # must stamp neither `chartId` nor `visualTurnId` for this case; that is its own
@@ -226,9 +247,9 @@ class FakeAssistantClient:
                     "parts": [],
                 },
             ]
-            reply_conversation["visual_contexts"] = [
-                {"chart_id": _COMPOUND_CHART_ID, "turn_id": _COMPOUND_TURN_ID}
-            ]
+            reply_conversation["visual_contexts"] = _with_visual_context(
+                incoming_contexts, _COMPOUND_CHART_ID, _COMPOUND_TURN_ID
+            )
         elif "guardalo" in folded:
             # G-8: an answer with `save_candidate` -- `SaveCandidate.chart_id` names the same
             # chart this answer just drew, matching the real controller's own invariant.
@@ -237,14 +258,14 @@ class FakeAssistantClient:
                 "definition_token": "fake-definition-token",
                 "chart_id": _SAVE_CHART_ID,
             }
-            reply_conversation["visual_contexts"] = [
-                {"chart_id": _SAVE_CHART_ID, "turn_id": _SAVE_TURN_ID}
-            ]
+            reply_conversation["visual_contexts"] = _with_visual_context(
+                incoming_contexts, _SAVE_CHART_ID, _SAVE_TURN_ID
+            )
         elif "grafico" in folded:
             answer["visualization"] = _chart_visualization(_CHART_ID)
-            reply_conversation["visual_contexts"] = [
-                {"chart_id": _CHART_ID, "turn_id": _CHART_TURN_ID}
-            ]
+            reply_conversation["visual_contexts"] = _with_visual_context(
+                incoming_contexts, _CHART_ID, _CHART_TURN_ID
+            )
             spoken = (
                 "Restaurantes fue la categoría con mayor gasto. En pantalla tienes el "
                 "desglose, y puedes preguntarme por cualquiera de las categorías."
