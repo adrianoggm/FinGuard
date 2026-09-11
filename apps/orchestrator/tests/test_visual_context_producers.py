@@ -601,20 +601,57 @@ class _Cards:
         return ()
 
 
+async def test_an_ordinary_voice_query_keeps_its_own_specific_noun() -> None:
+    """R15 (round 3): the main query producer (`_answered`/`_visual_dataset`,
+    `ask_financial_question.py:~5873`) HAS the `FinancialPlan` that drew the chart in its own local
+    scope and now stamps it onto `metric_definition` directly -- `stream()`'s back-fill
+    (`~:630-641`) finds the field already set and never runs, so `metric_definition_borrowed` stays
+    False and `question_to_dto` may name this plan's own noun. This is the 4.4 behaviour
+    (`«Restaurantes fue la categoría con mayor gasto…»`, `«…por categorías»`) that round 3 exists
+    to keep: R14's flag must not silence an ordinary, single-turn chart that plainly ran its own
+    plan this turn."""
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.CATEGORY,
+    )
+    handler = ask_financial_question.AskFinancialQuestionHandler(
+        _PlansTheBreakdown(plan),
+        _TwoTurnLedger(),
+        accounts=_Accounts(),
+        contacts=_Contacts(),
+        cards=_Cards(),
+    )
+    turn = await handler.handle(
+        ask_financial_question.AskFinancialQuestionQuery(
+            sentence="¿en qué categorías gasté el mes pasado?",
+            account_id=uuid4(),
+            today=date(2026, 8, 5),
+        )
+    )
+    assert turn.metric_definition_borrowed is False, "the main producer stamps its own plan"
+    assert isinstance(turn.metric_definition, FinancialPlan)
+    assert turn.metric_definition.group_by is GroupBy.CATEGORY
+
+    response = llm_mapper.question_to_dto(turn, spoken_for_voice=True)
+    assert response.spoken == (
+        "Restaurantes fue la categoría con mayor gasto. "
+        "En pantalla tienes el desglose, y puedes preguntarme por cualquiera de las categorías."
+    )
+
+
 async def test_a_charted_step_with_no_plan_of_its_own_speaks_the_generic_noun() -> None:
     """The re-review's `probe_m2` scenario (`branch-re-review.md`, item 2), reproduced through
     `stream()`'s own lines rather than by hand -- N-2's own complaint about the deleted R7 tests.
 
-    Turn 1 answers an ordinary CATEGORY breakdown; its own `_visual_dataset` producer sets no
-    `metric_definition`, so `stream()`'s back-fill supplies `conversation.last_plan` and flags it
-    `metric_definition_borrowed=True` -- true of turn 1 itself, not only of what follows (the probe
-    table in the task report says so for all five producers: none stamps its own plan). Turn 2
+    Turn 1 answers an ordinary CATEGORY breakdown through `_answered`/`_visual_dataset`, which
+    (round 3, R15) stamps its own plan -- `metric_definition_borrowed` is False for turn 1 itself
+    (`test_an_ordinary_voice_query_keeps_its_own_specific_noun`, above). Turn 2
     ("¿cuántas suscripciones tengo?") is a real, deterministic payee count -- `_how_many_payees`
-    sets no `metric_definition` either. Its own `conversation.last_plan` ends up its OWN plan
-    (`answered_with_result` updates it), not turn 1's -- but since `metric_definition` is still
-    back-filled rather than stamped by the producer, `metric_definition_borrowed` is True here too,
-    and the presenter cannot tell "this chart's own plan" from "whatever was in view" either way.
-    The generic noun is the only one it is ever entitled to say."""
+    is one of the four producers that genuinely runs no single `FinancialPlan` of the main path's
+    shape, so it sets no `metric_definition` and `stream()`'s back-fill supplies
+    `conversation.last_plan` instead, flagging it `metric_definition_borrowed=True`. The generic
+    noun is the only one this turn is entitled to say."""
     breakdown_plan = FinancialPlan(
         direction=Direction.EXPENSE,
         period=RelativePeriod(Period.LAST_MONTH),
@@ -634,7 +671,7 @@ async def test_a_charted_step_with_no_plan_of_its_own_speaks_the_generic_noun() 
             today=date(2026, 8, 5),
         )
     )
-    assert turn1.metric_definition_borrowed is True, "no producer here stamps its own plan"
+    assert turn1.metric_definition_borrowed is False, "the main producer stamps its own plan"
 
     turn2 = await handler.handle(
         ask_financial_question.AskFinancialQuestionQuery(
@@ -654,11 +691,12 @@ async def test_a_charted_step_with_no_plan_of_its_own_speaks_the_generic_noun() 
 
 async def test_metric_definition_borrowed_is_false_until_the_backfill_sets_it() -> None:
     """The flag's own default (`AskFinancialQuestionResult.metric_definition_borrowed = False`)
-    is what a producer that stamped its own plan would leave untouched -- exactly the shape
-    `_charted_result_grouped_by_category` builds, which is why `question_to_dto` still speaks the
-    specific noun for it (`test_a_voice_charted_answer_carries_a_spoken_summary`, above). Pinned
-    here directly, on the field, so the two ends of R14's contract -- False on a stamped plan, True
-    once `stream()`'s back-fill runs -- are each asserted once, in one place."""
+    is what a producer that stamped its own plan leaves untouched -- exactly the shape
+    `_charted_result_grouped_by_category` builds (and, since round 3, exactly what `_answered`
+    itself now does for real), which is why `question_to_dto` still speaks the specific noun for it
+    (`test_a_voice_charted_answer_carries_a_spoken_summary`, above). Pinned here directly, on the
+    field, so the two ends of R14/R15's contract -- False on a stamped plan, True once `stream()`'s
+    back-fill runs for a producer that has none -- are each asserted once, in one place."""
     voice_result = await _charted_result_grouped_by_category()
     assert voice_result.metric_definition_borrowed is False
 

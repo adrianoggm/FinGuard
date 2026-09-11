@@ -435,12 +435,15 @@ same field within the same call. Only `ask_financial_question.stream()`'s own ba
 turn's own producer, so it says so directly: `AskFinancialQuestionResult.metric_definition_borrowed`,
 set True in the same `replace` that back-fills the plan. `question_to_dto` hands the presenter's
 `spoken_summary` a plan only when the flag is False; `visual_plan_digest` stays sealed as data for
-4.3's drill, unread by the presenter now. Known limit: none of the five `VisualDataset` producers
-(`_visual_dataset` and the inline builds in `_how_many_payees`, `_compare_periods`, the ratio
-branches, `_compare_salary_history`) stamps its own plan onto `metric_definition` today, so the flag
-is True on every chart this handler draws — ordinary single-turn ones included — and the presenter's
-specific noun is unreachable in production until a later wave threads plan ownership into those
-producers. Also still open, by design rather than by omission: a week-grouped chart's explanation says
+4.3's drill, unread by the presenter now. Round 3 (R15): the main query producer
+(`_answered`/`_visual_dataset`, `~:5873`) HAS the `FinancialPlan` that drew the chart in its own
+local scope and now stamps `metric_definition` there directly, so `stream()`'s back-fill never
+runs for it and an ordinary, single-turn VOICE query keeps its 4.4 noun («Restaurantes fue la
+categoría con mayor gasto…», «…por categorías»). The other four producers (`_how_many_payees`,
+`_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely run no single
+`FinancialPlan` of that shape, stamp nothing, and stay on the back-fill — a chart that follows one
+of those, over whatever plan was previously in view, speaks only the generic desglose line, by
+design, not as an unclosed limit. Also still open, by design rather than by omission: a week-grouped chart's explanation says
 «días» (D-4.5-3, above).
 
 ## 8. Performance

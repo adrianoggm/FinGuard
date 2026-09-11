@@ -137,11 +137,18 @@ Then: whole-branch review (opus, base = 4.4's closing head), one fix wave, scope
   from `conversation.last_plan` (`ask_financial_question.stream()`, `~:630-633`) — the one place
   that ever assigns it. `question_to_dto` hands the presenter a plan only when the flag is False;
   `visual_plan_digest` stays sealed as data for 4.3's drill, unread by the presenter now. The R7
-  guard and its two stale-plan tests are removed. Known limit: none of the five `VisualDataset`
-  producers stamps its own plan onto `metric_definition`, so the flag is True on every chart
-  `stream()` draws today, ordinary single-turn ones included — the specific noun is unreachable in
-  production until a later wave threads plan ownership into those producers (see the task's own
-  report for the five-producer probe table).
+  guard and its two stale-plan tests are removed.
+- **Task 7, round 3 (R15)** — round 1 shipped the flag True on every chart, including an ordinary
+  single-turn one, since no producer stamped its own plan — a regression against 4.4's VOICE noun,
+  caught before merge. Fix: the main query producer (`_answered`/`_visual_dataset`, `~:5873`) HAS
+  the `FinancialPlan` that drew the chart in its own local scope, so it now stamps
+  `metric_definition=plan` there directly, alongside `visual_dataset=`; `stream()`'s back-fill then
+  finds the field already set and never runs. An ordinary VOICE query keeps its 4.4 noun
+  («Restaurantes fue la categoría con mayor gasto…», «…por categorías»); the other four producers
+  (`_how_many_payees`, `_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely
+  run no single `FinancialPlan` of that shape, stamp nothing, and correctly stay on the back-fill —
+  a chart that follows one of those, over whatever plan was previously in view, speaks the generic
+  desglose line, by design.
 
 Suite at HEAD (`92b00e3`): orchestrator 4227 passed / 3 skipped / 209 deselected (three globs) +
 corpus 207 (176 · 1194) at 0.0 %; web 117; gateway 122 / 1 (untouched across the whole wave);
@@ -181,6 +188,12 @@ above (D-4.5-6) stays on this plan's open list, not its closed one.
   tautological too (same object, one field of indirection later) — **re-ruled again as R14**: a
   digest can never make this distinction, because no producer stamps its own plan; the presenter
   needs the handler to say so directly. Closed, Task 7, with `metric_definition_borrowed`.
+- **R15** — round 1's flag was True on every chart, silencing the specific noun even on an
+  ordinary, single-turn query — a regression against 4.4's VOICE summary, not an acceptable
+  consequence of R14. Fix: the main query producer (`_answered`/`_visual_dataset`) stamps
+  `metric_definition` with the `FinancialPlan` it actually ran, since it is the one producer that
+  has one in local scope; the other four stay on the back-fill because they genuinely have none.
+  Closed, Task 7 round 3.
 - **R8** — the `turn_id` → recoverable-turn binding is refused, reason written down in `docs/next.md`.
   Applied, Task 6.
 - **R9** — the video's polish is the user's; the plan states what the code offers the on-camera run
@@ -205,11 +218,15 @@ only place that ever assigns `metric_definition`, so it is the only place that c
 value came from `conversation.last_plan` rather than this turn's own producer — it says so with
 `AskFinancialQuestionResult.metric_definition_borrowed`, and `question_to_dto` hands the presenter
 a plan only when that flag is False. `visual_plan_digest` stays sealed as data (4.3's drill still
-binds to it); the presenter no longer reads it. Known limit, not a defect: none of the five
-`VisualDataset` producers stamps its own plan onto `metric_definition` (the probe table in the
-task's report), so the flag is True on every chart drawn today and the specific noun is
-unreachable in production until a later wave threads plan ownership into those producers — that
-follow-up still touches `ask_financial_question.py`'s producer contract and needs the user's word.
+binds to it); the presenter no longer reads it. Round 3 (R15) corrected round 1's over-reach: the
+main query producer (`_answered`/`_visual_dataset`, `~:5873`) HAS the `FinancialPlan` that drew the
+chart in its own local scope, so it now stamps `metric_definition` there directly — the back-fill
+never runs for it, and an ordinary, single-turn VOICE query keeps its 4.4 noun («Restaurantes fue
+la categoría con mayor gasto…», «…por categorías»). The other four producers (`_how_many_payees`,
+`_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely run no single
+`FinancialPlan` of that shape, stamp nothing, and correctly stay on the back-fill — a chart that
+follows one of those, over whatever plan was previously in view, speaks the generic desglose line,
+by design, not as an open limit.
 
 `D-4.5-2` (design §7's `provenance` type) was fixed in Task 2b. `D-4.5-3` (a week-grouped chart's
 labels read as days) was RE-RULED, not a fix-wave item: the 7-day-spacing heuristic that would have

@@ -5875,6 +5875,15 @@ def _answered(
         movements=[_spoken_movement(movement) for movement in visible_movements],
         suggestions=query_recovery.empty_suggestions(plan) if answer.is_empty else [],
         explicit_visualization=_asks_for_visualization(sentence),
+        # R15 (Wave 4.5, round 3 of D-4.5-6/M-2): this is the one producer that actually HAS the
+        # `FinancialPlan` that drew `visual_dataset` -- it is the same `plan` two lines below, in
+        # its own local scope, never inherited from `conversation.last_plan`. Stamping it here
+        # means `stream()`'s back-fill (`~:630-641`) finds `metric_definition` already set and
+        # never runs, so `metric_definition_borrowed` stays False and the presenter may name this
+        # plan's own noun. The other four producers in this handler (`_how_many_payees`,
+        # `_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely run no
+        # single `FinancialPlan` of this shape and are correctly left to the back-fill.
+        metric_definition=plan,
         visual_dataset=_visual_dataset(
             plan,
             answer,

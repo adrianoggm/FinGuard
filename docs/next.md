@@ -894,14 +894,16 @@ fact is provenance, and only `stream()`'s own back-fill (`ask_financial_question
 it, so it says so directly: `AskFinancialQuestionResult.metric_definition_borrowed` is set True in
 the same `replace` that back-fills `metric_definition` from `conversation.last_plan`, and
 `question_to_dto` hands the presenter the plan only when it is False. `visual_plan_digest` stays —
-4.3's drill still binds to it — but the presenter no longer reads it. What this does not reach:
-none of the five `VisualDataset` producers (`_visual_dataset`, `_how_many_payees`,
-`_compare_periods`, the ratio branches, `_compare_salary_history`) ever stamps `metric_definition`
-with its own plan — every one of them leaves it `None` and lets the back-fill supply
-`conversation.last_plan` instead — so `metric_definition_borrowed` is True on every chart `stream()`
-draws today, ordinary single-turn ones included, and the presenter's specific noun is unreachable in
-production until a later wave threads plan ownership into those five producers; the flag is
-correct, not merely inert, the day the first one does. The video's
+4.3's drill still binds to it — but the presenter no longer reads it. Round 3 (R15) found the first
+cut too conservative: the main query producer (`_answered`/`_visual_dataset`, `~:5873`) HAS the
+`FinancialPlan` that drew the chart in its own local scope, so it now stamps `metric_definition`
+there directly, alongside `visual_dataset=`. `stream()`'s back-fill then finds the field already
+set and never runs, so an ordinary, single-turn VOICE query keeps the 4.4 behaviour
+(«Restaurantes fue la categoría con mayor gasto…», «…por categorías»). The other four producers
+(`_how_many_payees`, `_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely
+run no single `FinancialPlan` of that shape, stamp nothing, and are correctly left to the
+back-fill — a chart that follows one of them, over whatever plan was previously in view, speaks
+only the generic «En pantalla tienes el desglose.» line, by design. The video's
 on-camera run of §11 is the user's; what the code offers it is episode 32's turn order and the
 explanation visible after turn 1, spoken right after «¿Por qué este gráfico?».
 
