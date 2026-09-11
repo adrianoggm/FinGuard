@@ -4,6 +4,16 @@ export const VOICE_OUTPUT_RATE = 24_000;
 // How far ahead of the clock the first frame of a turn is scheduled. Enough to absorb the
 // jitter of frames arriving over a socket, small enough that nobody waits for it.
 const PLAYBACK_LEAD_SECONDS = 0.06;
+// W-5: how long a turn may wait, after the holder stops talking, for its own audio.started
+// before the client gives up. Without this a turn whose answer never produced any audio (a
+// refusal that forgot to synthesise, a dead TTS provider) left `maybeFinish` waiting forever on
+// `audioCompleted`/`playerIdle`, which only an actual `audio.started`/`audio.completed` pair can
+// ever set -- the status stuck on "processing", the button stuck on "Interrumpir y hablar", and
+// the mic never released. Chosen generously against the pipeline this app fronts (ASR, planning,
+// generation, TTS -- seconds, not milliseconds), not measured against a production P95.
+export const SILENT_TURN_TIMEOUT_MS = 15_000;
+export const SILENT_TURN_MESSAGE =
+  "El asistente no ha respondido con voz a tiempo. Inténtalo de nuevo.";
 
 export type VoiceStatus =
   | "idle"
@@ -339,6 +349,18 @@ export class VoiceClient {
   private textFinalSeen = false;
   private pendingAudioStarted: VoiceEvent | null = null;
   private pendingAudioFrames: ArrayBuffer[] = [];
+  // W-3: the turn a barge-in just cancelled, until the gateway confirms it drained
+  // (`response.cancelled` for that turn id -- sent synchronously on the server's own receipt of
+  // this turn's `input.start`, well before its TTS pipeline could produce a straggler). A
+  // straggler PCM frame carries no turn identity of its own, so the fence cannot filter it by
+  // inspecting the frame; instead it holds the *new* turn's own audio.started buffered until the
+  // old one is confirmed gone, closing the window a stray frame from the old turn's task could
+  // otherwise land in.
+  private drainPending: string | null = null;
+  // W-5: armed once the holder stops talking, cleared the moment this turn's own audio actually
+  // starts or the turn otherwise finishes. If neither happens in time, the turn is failed with a
+  // visible message instead of leaving the session stuck on "processing" forever.
+  private silentTurnTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly player: PcmPlayer;
 
   constructor(private readonly options: VoiceClientOptions) {
@@ -420,10 +442,12 @@ export class VoiceClient {
     this.send("input.commit", this.turnId);
     this.turnState = "processing";
     this.options.onStatus("processing");
+    this.armSilentTurnTimeout();
   }
 
   cancel(): void {
     if (this.closed) return;
+    this.clearSilentTurnTimeout();
     this.send("response.cancel", this.turnId);
     this.player.clear();
     this.discardFencedAudio = true;
@@ -448,6 +472,8 @@ export class VoiceClient {
     this.textFinalSeen = false;
     this.pendingAudioStarted = null;
     this.pendingAudioFrames = [];
+    this.drainPending = null;
+    this.clearSilentTurnTimeout();
     this.audioCompleted = false;
     this.turnCompleted = false;
     this.playerIdle = false;
@@ -472,6 +498,11 @@ export class VoiceClient {
     this.textFinalSeen = false;
     this.pendingAudioStarted = null;
     this.pendingAudioFrames = [];
+    // The gateway confirms this turn drained with its own `response.cancelled` (sent the moment
+    // it sees this barge-in's `input.start`, long before the old turn's TTS loop could still be
+    // producing a straggler) -- audio.started for the *new* turn waits for that confirmation.
+    this.drainPending = previousTurn;
+    this.clearSilentTurnTimeout();
     this.audioCompleted = false;
     this.turnCompleted = false;
     this.playerIdle = false;
@@ -614,6 +645,18 @@ export class VoiceClient {
     }
     if (!this.ready) throw new Error("El gateway no está listo.");
 
+    if (event.type === "response.cancelled" && event.turnId === this.drainPending) {
+      // W-3: the gateway's own confirmation that the turn a barge-in just cancelled has fully
+      // drained -- sent synchronously on the server's receipt of the new turn's `input.start`,
+      // long before that old turn's TTS loop could still be producing a straggler frame. Held
+      // back from the generic turnId filter below (which would otherwise discard it as late work
+      // from a turn that is no longer current) because this is exactly the signal the new turn's
+      // own audio.started is waiting on.
+      this.drainPending = null;
+      this.tryReleasePendingAudioStarted();
+      return;
+    }
+
     if (
       TURN_EVENTS.has(event.type) &&
       (typeof event.turnId !== "string" || event.turnId !== this.turnId)
@@ -631,29 +674,16 @@ export class VoiceClient {
       // would play over a bubble that never got one. Treated exactly like an uncharted answer.
       this.announcedChartId = outcome === false ? null : VoiceClient.chartIdOf(event.answer);
       this.textFinalSeen = true;
-      if (this.pendingAudioStarted) {
-        const buffered = this.pendingAudioStarted;
-        this.pendingAudioStarted = null;
-        this.applyAudioStarted(buffered);
-        const frames = this.pendingAudioFrames;
-        this.pendingAudioFrames = [];
-        for (const frame of frames) {
-          if (this.audioCompleted || !this.player.enqueue(frame)) {
-            throw new Error("Audio binario fuera de audio.started/audio.completed.");
-          }
-          this.playerIdle = false;
-        }
-      }
+      this.tryReleasePendingAudioStarted();
     } else if (event.type === "audio.started") {
-      if (this.textFinalSeen) {
+      if (this.textFinalSeen && this.drainPending === null) {
         this.applyAudioStarted(event);
       } else {
-        // W-4: audio.started arrived before the assistant.text.final that says which chart (if
-        // any) this turn drew. The ordering is not itself a violation -- only fencing it against
-        // a chart identity that has not arrived yet would be, one way by accident (an uncharted
-        // turn's null happens to match) and the other by a wrong-sounding error (a charted turn's
-        // real id looks like "another chart" when none has been announced yet). Buffered instead,
-        // deterministically: applied the moment the text that resolves it arrives.
+        // W-4/W-3: buffered, deterministically, until whichever this turn is still waiting on
+        // resolves -- the text that says which chart (if any) it drew (W-4), and/or the previous
+        // turn's own drain confirmation, which closes the window a straggler PCM frame from that
+        // cancelled turn could otherwise land in as if it were this one's (W-3). Applied the
+        // instant both are true.
         this.pendingAudioStarted = event;
       }
     } else if (event.type === "audio.completed") {
@@ -683,6 +713,9 @@ export class VoiceClient {
   /** The audio.started fence and its side effects, applied once the chart it names (if any) is
    * actually known -- either immediately, or once a buffered event's text arrives (W-4). */
   private applyAudioStarted(event: VoiceEvent): void {
+    // This turn has audio, so the W-5 guard no longer applies -- audio.completed/turn.completed
+    // take over from here.
+    this.clearSilentTurnTimeout();
     // The gateway stamps the chart the turn drew on audio.started; audio for a chart this
     // client did not just render is a protocol error, never played.
     const chartId = typeof event.chartId === "string" ? event.chartId : null;
@@ -702,6 +735,23 @@ export class VoiceClient {
     this.options.onStatus("speaking");
   }
 
+  /** Applies a buffered audio.started (and any binary already queued behind it) the moment
+   * everything it was waiting on resolves -- W-4's text, W-3's drain confirmation, or both. */
+  private tryReleasePendingAudioStarted(): void {
+    if (!this.pendingAudioStarted || !this.textFinalSeen || this.drainPending !== null) return;
+    const buffered = this.pendingAudioStarted;
+    this.pendingAudioStarted = null;
+    this.applyAudioStarted(buffered);
+    const frames = this.pendingAudioFrames;
+    this.pendingAudioFrames = [];
+    for (const frame of frames) {
+      if (this.audioCompleted || !this.player.enqueue(frame)) {
+        throw new Error("Audio binario fuera de audio.started/audio.completed.");
+      }
+      this.playerIdle = false;
+    }
+  }
+
   private maybeFinish(): void {
     if (this.turnCompleted && this.audioCompleted && this.playerIdle) {
       void this.finishTurn();
@@ -716,6 +766,7 @@ export class VoiceClient {
   private async finishTurn(): Promise<void> {
     if (this.closed || this.finishCalled) return;
     this.finishCalled = true;
+    this.clearSilentTurnTimeout();
     this.turnState = "idle";
     await this.cleanup(false);
     this.options.onStatus("idle");
@@ -725,8 +776,26 @@ export class VoiceClient {
   private async fail(message: string): Promise<void> {
     if (this.failed) return;
     this.failed = true;
+    this.clearSilentTurnTimeout();
     await this.cleanup(true);
     this.options.onStatus("error", message);
+  }
+
+  /** W-5: fails the turn, visibly, if it produces no audio at all within
+   * `SILENT_TURN_TIMEOUT_MS` of the holder falling silent -- see the constant's own comment. */
+  private armSilentTurnTimeout(): void {
+    this.clearSilentTurnTimeout();
+    this.silentTurnTimer = setTimeout(() => {
+      this.silentTurnTimer = null;
+      void this.fail(SILENT_TURN_MESSAGE);
+    }, SILENT_TURN_TIMEOUT_MS);
+  }
+
+  private clearSilentTurnTimeout(): void {
+    if (this.silentTurnTimer !== null) {
+      clearTimeout(this.silentTurnTimer);
+      this.silentTurnTimer = null;
+    }
   }
 
   private send(type: string, turnId?: string): void {
@@ -822,6 +891,7 @@ export class VoiceClient {
   }
 
   private async cleanup(sendClose: boolean): Promise<void> {
+    this.clearSilentTurnTimeout();
     if (this.closed && !this.socket && !this.context && !this.stream) return;
 
     const socket = this.socket;

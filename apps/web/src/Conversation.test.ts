@@ -33,6 +33,7 @@ import {
   settled,
   voiceButtonAction,
   voiceEventIdentity,
+  VoiceError,
   withChoice,
   type Thread,
   type Turn,
@@ -229,6 +230,21 @@ describe("voice button controls", () => {
     await voiceButtonAction("listening", client);
 
     expect(calls).toEqual(["stopCapture"]);
+  });
+});
+
+describe("voice error announcement (W-8)", () => {
+  it("gets role=\"alert\" so a screen reader announces it without being focused on it", () => {
+    const markup = renderToStaticMarkup(
+      createElement(VoiceError, { message: "Permiso de micrófono denegado. Actívalo para usar la voz." }),
+    );
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("Permiso de micrófono denegado.");
+  });
+
+  it("renders nothing when there is no error, same as before", () => {
+    const markup = renderToStaticMarkup(createElement(VoiceError, { message: null }));
+    expect(markup).toBe("");
   });
 });
 
@@ -597,6 +613,63 @@ describe("¿Por qué este gráfico?", () => {
     );
     expect(markup).toContain("¿Por qué este gráfico?");
     expect(markup).toContain(explanation.chart_reason);
+  });
+
+  it("keeps «Ver la consulta» and «Ver los movimientos» on a restyled chart (W-7)", () => {
+    // `VISUAL_UPDATED` sends plan: null, groups: [], movements: [] -- a presentation-only change
+    // has no new query to run -- so without inheriting the source turn's evidence, the restyled
+    // bubble drew a chart with rows and offered only "¿Por qué este gráfico?".
+    const source = answer({
+      currency: "EUR",
+      plan: "Gastos de agosto por categoría",
+      visualization: chart,
+      groups: [{ key: "Comida", total_minor: 4500, movement_count: 3 }],
+      movement_count: 3,
+      movements: [
+        { occurred_at: "2026-08-03", description: "Mercadona", amount_minor: 4500, merchant_name: "Mercadona", category: "GROCERIES" },
+      ],
+    });
+    const turns: Turn[] = [{ who: "assistant", answer: source }];
+    const restyled = materializeVisualizationDerivation(
+      turns,
+      answer({
+        visualization: null,
+        visualization_derivation: { source_chart_id: chart.chart_id, chart_id: "chart-2", spec: chart.spec },
+      }),
+    );
+    // The evidence is inherited, not stale: it is the source turn's own, not whatever the parent
+    // answer happened to carry -- there is nothing on the restyle answer itself to leak.
+    expect(restyled.plan).toBe("Gastos de agosto por categoría");
+    expect(restyled.groups).toEqual(source.groups);
+    expect(restyled.movement_count).toBe(3);
+    expect(restyled.movements).toEqual(source.movements);
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: thread({ turns: [...turns, { who: "assistant", answer: restyled }] }),
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+    expect(markup).toContain("Ver la consulta");
+    expect(markup).toContain("Gastos de agosto por categoría");
+    expect(markup).toContain("Ver los movimientos");
+    expect(markup).toContain("Mercadona");
+  });
+
+  it("never overwrites a restyle answer's own evidence, should it ever carry one", () => {
+    const source = answer({ currency: "EUR", plan: "consulta original", visualization: chart });
+    const turns: Turn[] = [{ who: "assistant", answer: source }];
+    const restyled = materializeVisualizationDerivation(
+      turns,
+      answer({
+        plan: "consulta propia",
+        visualization: null,
+        visualization_derivation: { source_chart_id: chart.chart_id, chart_id: "chart-2", spec: chart.spec },
+      }),
+    );
+    expect(restyled.plan).toBe("consulta propia");
   });
 });
 
