@@ -178,6 +178,24 @@ def drawn_labels(dataset: VisualDataset) -> DrawnLabels:
     this sorted" -- whether the *top* and the *bottom* are each unique, so «la barra más alta» and
     «la más baja» each have one answer. It is `False` whenever the dimension list had to be cut at
     the cap (the true bottom is off the list) or the dataset carried no rows at all.
+
+    A-11 (Wave 3 hardening): when the dataset has MORE THAN ONE distinct `series` value (a
+    comparison, or any grouped bar with a colour split), the *chart* draws one bar per (dimension,
+    series) pair -- `len(dimensions) * len(series)` bars -- never one bar per dimension. A single
+    repeated series value (RECURRENCE's cadence, e.g. every row tagged `"MONTHLY"`) draws no extra
+    bar and is not this case -- summing across it is summing across nothing, the same total the
+    no-series branch below would compute. `deterministic_visual_planner.py`'s own dimension-axis
+    sort (`_sort_for`) asks Vega-Lite to order the axis by `{"field": measure, "order":
+    "descending"}` with no `"op"` of its own, and Vega-Lite's documented default for a sort field
+    that repeats per axis position is `"mean"`, not `"sum"` -- so summing `value_minor` across two
+    or more series, the way the single-series/no-series branch below does, is not even guaranteed
+    to be the *axis's own* order once series sizes differ, let alone a claim about any single bar.
+    Ranking here would be inventing a number nobody's screen shows for a value nobody asked for
+    (the total across periods), which is exactly the "guess with a confident shape fact attached"
+    the finding names. So a multi-series dataset never ranks: the dimension order is
+    first-appearance (the one order this module can state as fact, needing no aggregate at all) and
+    `ranked` is always `False`, refusing every superlative rather than answering one about a bar
+    nobody drew.
     """
     totals: dict[str, int] = {}
     series_seen: set[str] = set()
@@ -191,10 +209,19 @@ def drawn_labels(dataset: VisualDataset) -> DrawnLabels:
     if not totals:
         return DrawnLabels()
 
+    series_labels = tuple(series_order[:MAX_DRAWN_LABELS])
+
+    if len(series_seen) > 1:
+        # First-appearance order, the one fact this module can state -- `ranked` is always `False`
+        # regardless of the cap below, so there is no "true bottom off the list" case to track here
+        # the way the no-series branch's `cut` tracks it.
+        dimensions = tuple(totals)
+        labels = dimensions[:MAX_DRAWN_LABELS]
+        return DrawnLabels(labels=labels, series_labels=series_labels, ranked=False)
+
     ranked_dimensions = sorted(totals, key=lambda label: totals[label], reverse=True)
     cut = len(ranked_dimensions) > MAX_DRAWN_LABELS
     labels = tuple(ranked_dimensions[:MAX_DRAWN_LABELS])
-    series_labels = tuple(series_order[:MAX_DRAWN_LABELS])
 
     if cut:
         ranked = False

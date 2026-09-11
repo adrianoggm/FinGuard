@@ -272,9 +272,12 @@ _EXPECTED_DRAWN_LABELS: dict[str, DrawnLabels] = {
         labels=("Netflix", "Spotify"), series_labels=("MONTHLY",), ranked=True
     ),
     "ratio_share": DrawnLabels(labels=("Parte", "Resto"), ranked=True),
-    # GROCERIES sums 100+90=190 over both windows, RESTAURANTS sums 50+70=120.
+    # A-11 (Wave 3 hardening): two distinct series values (2026-07, 2026-06) means the chart draws
+    # four bars, not two -- GROCERIES' and RESTAURANTS' combined totals across both windows are not
+    # a number either bar on screen shows, so the dimension order is first-appearance and `ranked`
+    # is `False`, never a claim about "the tallest bar" over a sum nobody drew.
     "categorical_comparison": DrawnLabels(
-        labels=("GROCERIES", "RESTAURANTS"), series_labels=("2026-07", "2026-06"), ranked=True
+        labels=("GROCERIES", "RESTAURANTS"), series_labels=("2026-07", "2026-06"), ranked=False
     ),
 }
 
@@ -285,8 +288,8 @@ def test_every_family_dataset_knows_the_labels_it_draws(family_name: str) -> Non
     the property this function exists for ("the labels match the bars the chart actually draws")
     is exactly the one a single hand-picked fixture cannot prove for every shape a real dataset
     takes: a plain sum, a temporal series, a cumulative one, an INPUT-ordered weekday list, a
-    dimension summed across repeated rows (recurrence), a two-row share, and a grouped comparison
-    whose ranking is by the total across both windows."""
+    dimension summed across repeated rows sharing one series value (recurrence), a two-row share,
+    and a grouped comparison whose two distinct series values mean it is never ranked (A-11)."""
     dataset, _ = FAMILY_DATASETS[family_name]
     assert drawn_labels(dataset) == _EXPECTED_DRAWN_LABELS[family_name]
 
@@ -342,6 +345,44 @@ def test_one_row_is_ranked() -> None:
 def test_an_empty_dataset_draws_no_labels() -> None:
     dataset = VisualDataset(metric="SUM", rows=())
     assert drawn_labels(dataset) == DrawnLabels()
+
+
+# --- Task 2 (Wave 3 hardening, A-11): a series-bearing dataset never ranks a sum nobody drew -----
+
+
+def test_a_grouped_comparison_never_ranks_the_sum_across_series() -> None:
+    """A sums to 105 across both series, B to 120 -- the old code ranked B first by that sum, a
+    number no single bar on screen shows (the chart draws four bars: A-X, A-Y, B-X, B-Y). The fix
+    keeps first-appearance order (A before B, as the rows arrived) and never claims a ranking."""
+    dataset = VisualDataset(
+        metric="COMPARISON",
+        rows=(
+            VisualRow(dimension="A", value_minor=100, series="X"),
+            VisualRow(dimension="B", value_minor=60, series="X"),
+            VisualRow(dimension="A", value_minor=5, series="Y"),
+            VisualRow(dimension="B", value_minor=60, series="Y"),
+        ),
+    )
+    result = drawn_labels(dataset)
+    assert result.labels == ("A", "B")
+    assert result.series_labels == ("X", "Y")
+    assert result.ranked is False
+
+
+def test_a_single_repeated_series_value_still_ranks_like_recurrence() -> None:
+    """Only one distinct series value ever appears (a cadence marker, not a comparison) -- summing
+    across it draws no extra bar, so the existing sum-and-rank behaviour must be unaffected."""
+    dataset = VisualDataset(
+        metric="RECURRENCE",
+        rows=(
+            VisualRow(dimension="Netflix", value_minor=1_299, series="MONTHLY"),
+            VisualRow(dimension="Netflix", value_minor=1_299, series="MONTHLY"),
+            VisualRow(dimension="Spotify", value_minor=999, series="MONTHLY"),
+        ),
+    )
+    result = drawn_labels(dataset)
+    assert result.labels == ("Netflix", "Spotify")
+    assert result.ranked is True
 
 
 def test_101_distinct_dimensions_are_capped_at_100_and_left_unranked() -> None:
