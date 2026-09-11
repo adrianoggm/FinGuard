@@ -12,12 +12,14 @@ proposal the verifier discarded. §9's invariant -- "zero explanations of a disc
 holds here too: this describes the chart finally accepted, never the one a model wanted. The
 evidence (movement) count does not survive the wire either, so it is never claimed.
 
-**Why the noun is keyed by the dimension field, not by a plan's `GroupBy`.** `spoken_presenter`'s
-`_NOUNS` (the precedent for tone and rule order) is keyed by a `FinancialPlan.group_by`, because
-`spoken_summary` runs inside the same turn that built the plan. This module has no plan to read at
-all -- R1's whole premise is that `decision`/`source_plan` are gone by the time an explanation is
-asked for -- so the only thing left to name the dimension is the `VisualField` itself,
-`profile.role("dimension")[0]`, keyed by its *name*.
+**Why the noun comes from the drawn labels, not the dimension field's name (R11).** Every
+`FAMILY_DATASETS` producer names its dimension field literally `"dimension"` (Task 2's report), so
+a name-keyed noun was always the generic «grupo/grupos» -- it explained nothing. The producers name
+a field by its *role* (`"dimension"`, `"measure"`, `"series"`), never by what it holds; the only
+thing that says what a group actually is is the values the chart drew, i.e. `context.labels`. A
+merchant, counterparty or account chart is «grupos» on purpose here too: the wire carries no
+grouping marker for those fields, and the labels themselves (free strings such as "Netflix" or a
+counterparty name) do not say what kind of thing they are either -- this module never guesses.
 """
 
 from __future__ import annotations
@@ -35,59 +37,91 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     VisualSource,
 )
+from finguard_orchestrator.domain.services import category_words, visual_reference
 from finguard_orchestrator.domain.services.answer_writer import _MONTHS
 
-# The generic fallback, used whenever the dimension's own name (or its absence) names nothing more
-# specific -- a comparison or ratio profile with no dimension field at all, or (see the report:
-# every producer today names the dimension field literally "dimension", never "category"/"month"/
-# "merchant") the ordinary case too.
+# The generic fallback -- an empty label tuple, a mix of shapes, or labels that match none of the
+# closed shapes below (merchant names, counterparty names, account names, weekday abbreviations,
+# "Parte"/"Resto", ...).
 _GENERIC_NOUN: Final[tuple[str, str, str]] = ("grupo", "grupos", "un grupo")
 
-# Closed over the dimension field NAMES the seven families' *producers* could set (read from
-# `FAMILY_DATASETS`/the visual-field literature: category, month, merchant, weekday, day, week,
-# account, counterparty) plus the literal name `visual_profile_of` actually assigns today
-# ("dimension") -- so the TEST that walks every family's real dimension name finds it here rather
-# than falling through to the generic noun by accident. Unknown name -> `_GENERIC_NOUN`.
-_NOUNS: Final[dict[str, tuple[str, str, str]]] = {
-    "dimension": _GENERIC_NOUN,
-    "category": ("categoría", "categorías", "una categoría"),
-    "month": ("mes", "meses", "un mes"),
-    "merchant": ("comercio", "comercios", "un comercio"),
-    "weekday": ("día", "días", "un día"),
-    "day": ("día", "días", "un día"),
-    "week": ("semana", "semanas", "una semana"),
-    "account": ("cuenta", "cuentas", "una cuenta"),
-    "counterparty": ("contraparte", "contrapartes", "una contraparte"),
-}
+# `category_words.names()` is the Spanish word a *person* reads ("supermercado", "restaurantes",
+# ...) -- what `answer_writer._group_name` substitutes into spoken text. A chart's `labels` are
+# never that: `visual_profile.drawn_labels` carries `row.dimension` straight through with no
+# translation, so a CATEGORY-grouped chart's labels are the ledger's own keys ("GROCERIES",
+# "RESTAURANTS", ...), exactly the set `category_words._NAMES` closes over. The public `names()`
+# would never match a real label -- stated here rather than silently swapped, and repeated in the
+# Task 2b report as a brief/code mismatch worth a second look.
+_CATEGORY_KEYS: Final[frozenset[str]] = frozenset(category_words._NAMES)
 
 
-def _nouns(dimension: VisualField | None) -> tuple[str, str, str]:
-    if dimension is None:
+def _is_iso_date(label: str) -> bool:
+    try:
+        date.fromisoformat(label)
+    except ValueError:
+        return False
+    return True
+
+
+def _nouns_of(labels: tuple[str, ...]) -> tuple[str, str, str]:
+    """The noun triple the drawn labels earn: singular, plural, indefinite.
+
+    All-or-nothing: every label in the tuple must agree on the same shape, or the tuple reads as a
+    mix and gets the generic noun -- one merchant name next to two month labels is not "two months
+    and a merchant", it is a chart this module cannot name precisely. Checked in this order --
+    month, then ISO date, then category key -- because the three never collide:
+    `visual_reference.parsed_month` demands a `YYYY-MM` shape with `01`-`12`, `date.fromisoformat`
+    rejects that same string only when the day component is missing (it is), and a category key
+    such as `RESTAURANTS` fails both.
+
+    NEEDS_CONTEXT (also in the Task 2b report): the brief asks for a fourth, WEEK-shaped branch
+    ahead of the day check. `cumulative_calculator`/`test_cumulative_and_group_rankings.py` show a
+    WEEK group's key is its bucket's Monday written as a plain ISO date -- the identical shape a
+    DAY group's key already has. There is no format left in a WEEK label that a DAY label does not
+    also have, so a week-grouped chart's labels take the day branch below; a separate WEEK branch
+    would either never fire or fire on DAY labels too, and this module does not invent a pattern
+    that was not found.
+    """
+    if not labels:
         return _GENERIC_NOUN
-    return _NOUNS.get(dimension.name, _GENERIC_NOUN)
+    if all(visual_reference.parsed_month(label) is not None for label in labels):
+        return ("mes", "meses", "un mes")
+    if all(_is_iso_date(label) for label in labels):
+        return ("día", "días", "un día")
+    if all(label in _CATEGORY_KEYS for label in labels):
+        return ("categoría", "categorías", "una categoría")
+    return _GENERIC_NOUN
 
 
 # What `profile.measure_metric()` actually returns across the seven `FAMILY_DATASETS` families
-# (verified on the tree at dc9c436, no `plan_metric` set by any of them): `SUM`, `CUMULATIVE`,
+# (verified on the tree at 47a0597, no `plan_metric` set by any of them): `SUM`, `CUMULATIVE`,
 # `FREQUENCY`, `RECURRENCE`, `RATIO_SHARE`, `COMPARISON` -- shape/measure markers, never
-# `EXPENSE`/`INCOME` (those live only on a `FinancialPlan.direction`, which this module never
-# sees -- R1's whole point). So the "EXPENSE-like -> gasto, INCOME-like -> ingreso" branches the
-# brief describes are unreachable with today's producers; every value found maps to the "else"
-# word, "movimiento", except `RATIO_SHARE`, which the brief calls out by name for "peso". Closed
-# over exactly the values found, so a metric this module has never seen falls back to "movimiento"
-# through `.get` rather than raising.
-_MEDIDA_WORDS: Final[dict[str, str]] = {
-    "SUM": "movimiento",
-    "CUMULATIVE": "movimiento",
-    "FREQUENCY": "movimiento",
-    "RECURRENCE": "movimiento",
+# `EXPENSE`/`INCOME` (those live only on a `FinancialPlan.direction`, which this module never sees
+# -- R1's whole point, restated by R11). Closed over exactly the values found: an unknown metric
+# marker is a producer change the tests below will catch at import time (the assertion), not
+# something this dict should silently grow to cover.
+_MEASURE_WORDS: Final[dict[str, str]] = {
+    "SUM": "importe",
+    "COMPARISON": "importe",
+    "CUMULATIVE": "importe",
+    "FREQUENCY": "número de movimientos",
+    "RECURRENCE": "número de movimientos",
     "RATIO_SHARE": "peso",
-    "COMPARISON": "movimiento",
+}
+assert set(_MEASURE_WORDS) == {
+    "SUM",
+    "CUMULATIVE",
+    "FREQUENCY",
+    "RECURRENCE",
+    "RATIO_SHARE",
+    "COMPARISON",
 }
 
 
-def _medida(profile: VisualProfile) -> str:
-    return _MEDIDA_WORDS.get(profile.measure_metric(), "movimiento")
+def _measure_word(profile: VisualProfile) -> str:
+    # A metric this module has never seen falls back to "importe" at runtime rather than raising --
+    # the import-time assertion above is where a new metric marker gets caught.
+    return _MEASURE_WORDS.get(profile.measure_metric(), "importe")
 
 
 def _bar_reason(temporal: bool, medida: str, singular: str, plural: str, indef: str) -> str:
@@ -154,6 +188,32 @@ def _date_words(moment: date, *, with_year: bool) -> str:
     """
     base = f"{moment.day} de {_MONTHS[moment.month - 1]}"
     return f"{base} de {moment.year}" if with_year else base
+
+
+def _spec_dimension(spec: ChartSpec, profile: VisualProfile) -> VisualField | None:
+    """The dimension-role field the spec actually draws, not merely the first one in the profile.
+
+    `visual_profile_of` emits two dimension-role fields for RECURRENCE: the nominal `"dimension"`
+    placeholder and the temporal `"occurred_at"`, which is the chart's real x-axis (Task 2 review
+    I-1). Picking `next(iter(profile.role("dimension")), None)` always found the placeholder first
+    and the temporal branch of `_ordering_reason` never fired for a recurring-charge chart. This
+    instead walks the spec's own encodings -- in the order the spec lists them -- and returns the
+    first one naming a dimension-role field, so whichever field the chart puts a channel on (x, y
+    or color; RECURRENCE lists its temporal `x=occurred_at` before its nominal `y=dimension`) wins.
+    A spec with no such encoding (there is none among today's families) falls back to a temporal
+    dimension field, then to the first one, matching the old behaviour when there is only one.
+    """
+    dimension_fields = profile.role("dimension")
+    if not dimension_fields:
+        return None
+    by_name = {field.name: field for field in dimension_fields}
+    for encoding in spec.encodings:
+        if encoding.field in by_name:
+            return by_name[encoding.field]
+    for field in dimension_fields:
+        if field.type == "temporal":
+            return field
+    return dimension_fields[0]
 
 
 def _encoding_sort(spec: ChartSpec, field_name: str | None) -> tuple[str | None, str | None]:
@@ -232,9 +292,9 @@ def explain_chart(context: VisualContext) -> VisualExplanation:
     """A pure function of `context` -- no plan, no decision, no wire, no controller."""
     profile = context.profile
     spec = context.spec
-    dimension = next(iter(profile.role("dimension")), None)
-    singular, plural, indef = _nouns(dimension)
-    medida = _medida(profile)
+    dimension = _spec_dimension(spec, profile)
+    singular, plural, indef = _nouns_of(context.labels)
+    medida = _measure_word(profile)
 
     if profile.comparison:
         chart_reason = f"Dos periodos lado a lado, para que compares el mismo {medida} en cada uno."

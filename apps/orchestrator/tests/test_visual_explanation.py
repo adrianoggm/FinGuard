@@ -29,8 +29,8 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.services.visual_explanation import (
-    _MEDIDA_WORDS,
-    _NOUNS,
+    _MEASURE_WORDS,
+    _nouns_of,
     explain_chart,
 )
 from finguard_orchestrator.domain.services.visual_profile import drawn_labels, visual_profile_of
@@ -87,20 +87,28 @@ def _context(
 
 
 # family -> expected as_text(), verified once the module exists and pinned in the report table.
+# The nouns now come from the labels each family actually draws (`FAMILY_DATASETS` in
+# `scripts/export_chart_fixtures.py`): "breakdown" mixes a category key (GROCERIES) with two plain
+# Spanish words (ALQUILER, ZAPATOS) so it stays generic; "temporal"/"cumulative" draw `YYYY-MM`
+# month labels; "frequency" draws weekday abbreviations (generic); "recurrence" draws merchant
+# names (generic) but its dimension is now `occurred_at` (temporal) so it gains an ordering
+# sentence (Task 2 review I-1); "ratio_share" draws "Parte"/"Resto" (generic); and
+# "categorical_comparison" draws two real category keys (GROCERIES, RESTAURANTS), both in
+# `category_words._NAMES`, so it is the one family that reads "categorías".
 _EXPECTED: dict[str, str] = {
     "breakdown": (
-        "Barras: comparas grupos entre sí. Orden: de mayor a menor movimiento. "
+        "Barras: comparas grupos entre sí. Orden: de mayor a menor importe. "
         "Datos: 3 grupos entre el 1 de junio y el 31 de agosto de 2026. "
         "Elegido por las reglas de FinGuard."
     ),
     "temporal": (
-        "Líneas: ves cómo cambia el movimiento a lo largo de los grupos. Orden: cronológico. "
-        "Datos: 3 grupos entre el 1 de junio y el 31 de agosto de 2026. "
+        "Líneas: ves cómo cambia el importe a lo largo de los meses. Orden: cronológico. "
+        "Datos: 3 meses entre el 1 de junio y el 31 de agosto de 2026. "
         "Elegido por las reglas de FinGuard."
     ),
     "cumulative": (
-        "Área: ves cómo se acumula el movimiento a lo largo de los grupos. Orden: cronológico. "
-        "Datos: 3 grupos entre el 1 de junio y el 31 de agosto de 2026. "
+        "Área: ves cómo se acumula el importe a lo largo de los meses. Orden: cronológico. "
+        "Datos: 3 meses entre el 1 de junio y el 31 de agosto de 2026. "
         "Elegido por las reglas de FinGuard."
     ),
     "frequency": (
@@ -109,7 +117,7 @@ _EXPECTED: dict[str, str] = {
         "Elegido por las reglas de FinGuard."
     ),
     "recurrence": (
-        "Puntos: cada uno es un grupo y su movimiento. "
+        "Puntos: cada uno es un grupo y su número de movimientos. Orden: cronológico. "
         "Datos: 3 grupos entre el 1 de junio y el 31 de agosto de 2026. "
         "Elegido por las reglas de FinGuard."
     ),
@@ -119,9 +127,9 @@ _EXPECTED: dict[str, str] = {
         "Elegido por las reglas de FinGuard."
     ),
     "categorical_comparison": (
-        "Dos periodos lado a lado, para que compares el mismo movimiento en cada uno. "
-        "Orden: de mayor a menor movimiento. "
-        "Datos: 4 grupos entre el 1 de junio y el 31 de agosto de 2026. "
+        "Dos periodos lado a lado, para que compares el mismo importe en cada uno. "
+        "Orden: de mayor a menor importe. "
+        "Datos: 4 categorías entre el 1 de junio y el 31 de agosto de 2026. "
         "Elegido por las reglas de FinGuard."
     ),
 }
@@ -244,24 +252,68 @@ def test_the_source_vocabulary_is_closed() -> None:
     assert set(_PROVENANCE_LINES) == set(get_args(VisualSource))
 
 
-def test_every_familys_dimension_name_is_in_the_noun_mapping() -> None:
-    for family_name in FAMILY_DATASETS:
-        _, profile = _spec_and_profile(family_name)
-        dimension = next(iter(profile.role("dimension")), None)
-        assert dimension is not None
-        assert dimension.name in _NOUNS
-
-
 def test_measure_metric_values_found_map_to_a_word() -> None:
     for family_name in FAMILY_DATASETS:
         _, profile = _spec_and_profile(family_name)
-        assert profile.measure_metric() in _MEDIDA_WORDS
+        assert profile.measure_metric() in _MEASURE_WORDS
 
 
 _DATE_PATTERN = re.compile(r"\b\d{1,2} de [a-zé]+( de \d{4})?\b")
 _COUNT_PATTERN = re.compile(
     r"\b\d+ (grupos?|categorías?|meses?|comercios?|días?|semanas?|cuentas?|contrapartes?)\b"
 )
+# "número de movimientos" (the FREQUENCY/RECURRENCE measure word, R11) carries no digit of its own
+# -- unlike the old "movimiento" word it replaces, it does not need a place in `_COUNT_PATTERN`.
+
+
+def test_nouns_of_a_month_label_tuple() -> None:
+    assert _nouns_of(("2026-01", "2026-02")) == ("mes", "meses", "un mes")
+
+
+def test_nouns_of_an_iso_date_label_tuple() -> None:
+    assert _nouns_of(("2026-01-05", "2026-01-12")) == ("día", "días", "un día")
+
+
+def test_nouns_of_a_category_key_label_tuple() -> None:
+    assert _nouns_of(("GROCERIES", "RESTAURANTS")) == ("categoría", "categorías", "una categoría")
+
+
+def test_nouns_of_free_strings_is_generic() -> None:
+    assert _nouns_of(("Netflix", "Spotify")) == ("grupo", "grupos", "un grupo")
+
+
+def test_nouns_of_a_mixed_label_tuple_is_generic() -> None:
+    assert _nouns_of(("2026-01", "GROCERIES")) == ("grupo", "grupos", "un grupo")
+
+
+def test_nouns_of_an_empty_tuple_is_generic() -> None:
+    assert _nouns_of(()) == ("grupo", "grupos", "un grupo")
+
+
+@pytest.mark.parametrize(
+    ("metric", "word"),
+    [
+        ("SUM", "importe"),
+        ("COMPARISON", "importe"),
+        ("CUMULATIVE", "importe"),
+        ("FREQUENCY", "número de movimientos"),
+        ("RECURRENCE", "número de movimientos"),
+        ("RATIO_SHARE", "peso"),
+    ],
+)
+def test_measure_word_per_metric(metric: str, word: str) -> None:
+    assert _MEASURE_WORDS[metric] == word
+
+
+def test_the_measure_word_vocabulary_is_closed() -> None:
+    assert set(_MEASURE_WORDS) == {
+        "SUM",
+        "CUMULATIVE",
+        "FREQUENCY",
+        "RECURRENCE",
+        "RATIO_SHARE",
+        "COMPARISON",
+    }
 
 
 @pytest.mark.parametrize("family_name", sorted(_EXPECTED))
