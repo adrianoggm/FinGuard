@@ -49,7 +49,18 @@ episodes:
       replan anything, or mint a new chart — it only reads what turn 1's visual context already
       carries and reports back on it. Its `says:` is the exact `chart_reason` the probe shows,
       verbatim, and the conversation the turn leaves behind is byte-identical to the one turn 1
-      left, because nothing about the thread moved. The sentence is claimed the same deterministic
+      left, because nothing about the thread moved.
+
+      **I-3 (fix wave).** Turn 1's own `groups:` used to name a bare `TRANSPORT` key — no ledger
+      category is spelled that way (the real keys are `TRANSPORT_PUBLIC`/`TRANSPORT_FUEL`), so
+      turn 2's `chart_reason` fell to the generic noun, «Barras: comparas grupos entre sí.», and a
+      genuine category chart read as unspecified. The fixture now names `TRANSPORT_PUBLIC` — one
+      of the same two keys turn 3 already splits into — so all three of turn 1's groups
+      (`RESTAURANTS`, `TRANSPORT_PUBLIC`, `GROCERIES`) are real category keys and `chart_reason`
+      says «Barras: comparas categorías entre sí.», probed. Turn 3's split reads the sentence
+      «transporte público y gasolina», not turn 1's `groups:` key, so renaming turn 1's key changes
+      nothing about what turn 3 queries or the plan it leaves in view — probed: `derived_from:
+      true`, `groups:`, and `ran:` below hold unchanged. The sentence is claimed the same deterministic
       way the drill's own «¿Por qué agosto es tan alto?» is: `tests/test_what_we_hand_to_the_
       planner.py`'s ratchets sit unmoved at `UNMEASURED` 22 / `MUTE` 43, and `tests/test_which_
       recogniser_claims_a_turn.py`'s CONTESTED stays 0 — measured, not assumed. Turn 3, «Separa
@@ -114,7 +125,7 @@ episodes:
     turns:
       - say: ¿Cuánto gasté el último trimestre?
         route: QUERY
-        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT, 21000, 2], [GROCERIES, 18000, 5]]
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         # The breakdown floor's canonical form, probed against the real harness: chart-wide sort
         # is None, the ranking is the y axis's own sort.
         chart:
@@ -136,7 +147,7 @@ episodes:
         # against turn 1's own chart deterministically (`no_model: true`, probed); reads no
         # ledger and mints no chart. `chart_reason` is the probe's own line for a `bar` over
         # turn 1's grouping, verbatim -- see `why`.
-        says: "Barras: comparas grupos entre sí."
+        says: "Barras: comparas categorías entre sí."
       - say: Separa transporte público y gasolina.
         route: QUERY
         groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]

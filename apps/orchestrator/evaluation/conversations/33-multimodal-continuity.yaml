@@ -93,7 +93,7 @@ episodes:
       - say: ¿Cuánto gasté el último trimestre?
         channel: VOICE
         route: QUERY
-        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT, 21000, 2], [GROCERIES, 18000, 5]]
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         chart:
           mark: bar
           channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
