@@ -105,6 +105,15 @@ def names() -> tuple[str, ...]:
     return tuple(_NAMES.values())
 
 
+def keys() -> tuple[str, ...]:
+    """The ledger's own category identifiers ("GROCERIES", "RESTAURANTS", ...) -- never the
+    Spanish words `names()` returns. D-4.5-4 (fix wave): `visual_explanation.py` needs the set of
+    real category keys to tell a category-grouped chart's labels from a merchant's or an
+    account's, and reading `_NAMES` directly reached across a module boundary into a private
+    name. This is that public door."""
+    return tuple(_NAMES)
+
+
 # The words that mean exactly one category, for the gate that refuses a misread one.
 #
 # A deliberate subset of the glossary above, and the exclusions are the design. "La compra" and "la

@@ -350,9 +350,13 @@ def _explanation_response(why: WhyAsked, conversation: Conversation) -> Question
     target = resolve_target(why.target, conversation.visual_contexts)
     context = conversation.visual_context(target) if target is not None else None
     if context is None:
+        # M-8 (fix wave): this is the *explanation* path -- a holder asking why a chart looks the
+        # way it does, never asking to change one. The restyle path below reuses this same
+        # outcome for a different question and keeps its own "quieres cambiar" wording; this text
+        # serves both without claiming a change was ever asked for.
         return QuestionResponse(
             outcome="VISUAL_NEEDS_TARGET",
-            text="Indica qué gráfico quieres cambiar.",
+            text="Indica de qué gráfico hablas.",
             conversation=conversation_mapper.to_payload(conversation),
         )
     if not context.trusted:
@@ -364,7 +368,7 @@ def _explanation_response(why: WhyAsked, conversation: Conversation) -> Question
     return QuestionResponse(
         outcome="VISUAL_EXPLAINED",
         text=explain_chart(context).as_text(),
-        explanation=llm_mapper._explanation_of(context),
+        explanation=llm_mapper.explanation_of(context),
         conversation=conversation_mapper.to_payload(conversation),
     )
 
@@ -497,7 +501,7 @@ def _visual_only_response(
             limit=updated.spec.limit,
         ),
         save_candidate=candidate,
-        explanation=llm_mapper._explanation_of(next_conversation.visual_contexts[-1]),
+        explanation=llm_mapper.explanation_of(next_conversation.visual_contexts[-1]),
     )
 
 

@@ -338,8 +338,8 @@ explanation is not a policy, and neither field ever feeds a verifier, a merge, o
 @dataclass(frozen=True)
 class VisualExplanation:
     chart_reason: str            # "Barras: comparas categorías entre sí."
-    ordering_reason: str | None  # "Orden: de mayor a menor gasto."
-    scope_summary: str           # "Entre el 1 de junio y el 31 de agosto de 2026, en 4 categorías."
+    ordering_reason: str | None  # "Orden: de mayor a menor importe."
+    scope_summary: str           # "Datos: 4 categorías entre el 1 de junio y el 31 de agosto de 2026."
     provenance: str | None       # "Elegido por las reglas de FinGuard."; None for an echoed chart
 
     def as_text(self) -> str: ...
@@ -349,10 +349,14 @@ class VisualExplanation:
 behind it — omits the line entirely rather than guessing at one (see "Provenance wording" below).
 
 `explain_chart(context: VisualContext) -> VisualExplanation` is a pure function of `context.spec`,
-`context.profile`, `context.labels`, `context.ranked`, `context.window`, `context.derived_from`,
-`context.source` and `context.fallback_reason` — nothing else, and nothing turn-local: mark →
-`chart_reason`; the dimension's `EncodingSort` and `ranked` → `ordering_reason`; `window` and
-`profile.row_count` → `scope_summary`; `source`/`fallback_reason` → `provenance`. The noun inside
+`context.profile`, `context.labels`, `context.window`, `context.source` and
+`context.fallback_reason` — nothing else, and nothing turn-local (M-2, fix wave: `context.
+derived_from` and `context.ranked` are on the wire, but `explain_chart` reads neither — `ranked` is
+deliberately not read for `ordering_reason`, which states what the spec's own sort says it draws,
+not whether the data happens to make every band distinct). mark → `chart_reason`; the dimension's
+own `EncodingSort` → `ordering_reason`; `window` and `len(context.labels)` → `scope_summary`
+(I-2, fix wave: not `profile.row_count`, which does not survive the wire — see "Scope" below);
+`source`/`fallback_reason` → `provenance`. The noun inside
 `chart_reason`/`ordering_reason`/`scope_summary` (mes/día/categoría/grupo) comes from the drawn
 `labels` themselves, never from a plan's `GroupBy` or a field's name — the plan is not on the wire
 (§4) and every producer names its dimension field by role, never by what it holds — while the
@@ -374,9 +378,23 @@ discarded — the §9 invariant «zero explanations of a discarded spec» restat
 describes the chart finally accepted, never the one the model wanted.
 
 **Scope.** `scope_summary` states dates, read from the sealed `window` («entre el 1 de junio y el
-31 de agosto de 2026»), and a count of groups, read from `profile.row_count` («4 categorías», «12
-meses»…). It never states an amount, a total or a percentage — the evidence (movement) count does
-not survive the wire (§4) and so is never claimed, honestly rather than by omission alone.
+31 de agosto de 2026»), and a count of groups. I-2 (fix wave): the count is `len(context.labels)`,
+not `profile.row_count` — the labels are sealed and do travel the wire, while the row count does
+not, so a later-turn explanation of an echoed chart (every `VISUAL_EXPLAINED` answer, by
+definition) would otherwise state a false «0» on its own headline question. The count is omitted
+— «Datos: las categorías entre …», «Datos: los meses …» (the article agrees in gender with the
+noun) — whenever `labels` is empty or its length hits the wire cap (`MAX_DRAWN_LABELS`,
+`visual_profile.py`): a full label list means "at least this many, we stopped counting", and
+stating that as a bare number would read as a total rather than a floor. It never
+states an amount, a total or a percentage — the evidence (movement) count does not survive the
+wire (§4) and so is never claimed, honestly rather than by omission alone.
+
+D-4.5-3 (re-ruled, no fix-wave item): a WEEK group's key is its bucket's Monday written as a plain
+ISO date — the identical shape a DAY group's key already has, and there is no format left in a WEEK
+label that a DAY label does not also have. `_nouns_of` cannot tell the two apart from the label
+alone, so a week-grouped chart's explanation says «días» — a stated limit, not a bug, and not a
+heuristic this module invents (spacing labels seven days apart was considered and rejected: a
+sparse day chart can space that way by coincidence).
 
 **Two surfaces, one derivation.** `explain_chart` runs once per charted answer and feeds both:
 `QuestionResponse.explanation` on every answer that carries a chart — a discreet «¿Por qué este
@@ -390,22 +408,31 @@ for a chart — is refused for this wave: it needs a store this design does not 
 memory) or a replayable record the orchestrator has nowhere to put; the explanation does not need
 it, because it is a function of the chart, not of the turn that asked about it. The model's
 free-text `rationale` is refused too, as it always was: the explanation is derived from the
-accepted decision's closed vocabulary, never from what the model said about itself.
+accepted decision's closed vocabulary, never from what the model said about itself. M-11 (fix
+wave): «¿Por qué barras de gasolina?» is not a why-question — `asks_why`'s grammar is anchored
+(a sentence naming a period, a month or a category, like «gasolina», is a drill or a financial
+question, never a why-ask) and abstains, so `interpret_visual` claims it instead and reads it as a
+restyle to bars. Pre-existing behaviour, not something this wave changed, and the safe ordering
+(`asks_why` runs before any restyle is applied on a sentence it DOES claim) is in place; a wider
+`_WHY` vocabulary that could tell the two apart is left for later.
 
 **Landed, 4.5.** Both surfaces run as specified above: `QuestionResponse.explanation` on every
 charted answer (TEXT and VOICE, restyle included), and «¿Por qué este gráfico?» (and its close
 variants) answered outcome `VISUAL_EXPLAINED` with `as_text()` in `text`, zero ledger calls, zero
-model calls, the conversation unchanged. Probed strings, `bar`/`NONE` grouping: `chart_reason`
-"Barras: comparas grupos entre sí.", `ordering_reason` "Orden: de mayor a menor importe.",
-`scope_summary` "Datos: 0 grupos.", `provenance` "Elegido por las reglas de FinGuard." — the four
-sentences joined by `as_text()`. What it refuses, exactly as ruled: the `turn_id` → recoverable-turn
-binding (needs a store this design does not keep); no amount, total or percentage, ever; no rule
-name, provider error or discarded proposal. Two known limits, not fixed by this wave: a later-turn
-`scope_summary` reads a count of zero, because `profile.row_count` does not survive the wire and
-the sealed `labels`-based substitute has not landed (D-4.5-8); the R7 digest guard in `llm_mapper.py`
-compares the sealed plan's digest against a value computed from the same object in the same call, so
-it cannot yet disagree on any input reachable today — the fix belongs at the chart's own producer,
-not the mapper (D-4.5-6).
+model calls, the conversation unchanged. Probed strings, a `CATEGORY`-grouped bar over four
+categories: `chart_reason` "Barras: comparas categorías entre sí.", `ordering_reason` "Orden: de
+mayor a menor importe.", `scope_summary` "Datos: 4 categorías entre el 1 de junio y el 31 de
+agosto de 2026.", `provenance` "Elegido por las reglas de FinGuard." — the four sentences joined by
+`as_text()`. What it refuses, exactly as ruled: the `turn_id` → recoverable-turn binding (needs a
+store this design does not keep); no amount, total or percentage, ever; no rule name, provider
+error or discarded proposal. The fix wave closed both limits this section used to name here as
+open: a later-turn `scope_summary` now counts `len(context.labels)` rather than the wire-zeroed
+`profile.row_count` (I-2/D-4.5-8, see "Scope" above); the R7 digest guard in `llm_mapper.py` now
+compares the digest sealed at the turn that drew the chart (`AskFinancialQuestionResult.
+visual_plan_digest`, fixed once that turn, before `metric_definition`'s own back-fill) against a
+LATER turn's freshly back-filled `metric_definition`, rather than a value computed from the same
+object in the same call (I-1/D-4.5-6). The one limit still open, by design rather than by
+omission: a week-grouped chart's explanation says «días» (D-4.5-3, above).
 
 ## 8. Performance
 

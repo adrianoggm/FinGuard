@@ -1302,6 +1302,10 @@ async def test_a_target_that_resolves_to_nothing_answers_needs_target() -> None:
 
     assert response.outcome == "VISUAL_NEEDS_TARGET"
     assert fake_queries.ran == []
+    # M-8 (fix wave): the explanation path's own wording -- the holder asked why a chart looks
+    # the way it does, never asked to change one, so the text must not claim otherwise (the
+    # restyle path below keeps "quieres cambiar", which IS a change request).
+    assert response.text == "Indica de qué gráfico hablas."
 
 
 def test_no_chart_at_all_falls_through_unchanged() -> None:

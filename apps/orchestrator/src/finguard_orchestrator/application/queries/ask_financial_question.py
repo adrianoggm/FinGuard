@@ -170,6 +170,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     VisualDecision,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
@@ -630,6 +631,27 @@ class AskFinancialQuestionHandler:
                         step.conversation.last_plan, FinancialPlan
                     ):
                         step = replace(step, metric_definition=step.conversation.last_plan)
+                    # I-1 (fix wave, D-4.5-6/M-2): a fingerprint of `metric_definition` -- the
+                    # plan that ran this turn, back-fill included -- taken HERE and sealed onto
+                    # the chart `_remember_visual_context` is about to build below (via
+                    # `_decided_visual` -> `llm_mapper`). The seal reads THIS field, a value fixed
+                    # for this turn, never `result.metric_definition` recomputed a second time --
+                    # that was the tautology I-1 named: a LATER turn that only echoes this chart
+                    # (no new `visual_dataset`, so this line never re-runs) still gets a FRESH
+                    # `metric_definition` of its own, backfilled from ITS OWN, possibly different
+                    # `last_plan`, and the R7 guard in `llm_mapper.question_to_dto` compares that
+                    # fresh value against the digest sealed HERE, at the turn that actually drew
+                    # the chart -- a comparison across two turns' worth of state, not the same
+                    # field read twice within one call. `None` when `metric_definition` is not a
+                    # `FinancialPlan` at all (a comparison, a ratio, or no plan ran).
+                    step = replace(
+                        step,
+                        visual_plan_digest=(
+                            plan_digest(step.metric_definition)
+                            if isinstance(step.metric_definition, FinancialPlan)
+                            else None
+                        ),
+                    )
                     # The chart is decided once for the turn using the presentation circumstances
                     # supplied at the edge. The deterministic floor may currently ignore some of
                     # them, but the application seam is complete for planners that do not.

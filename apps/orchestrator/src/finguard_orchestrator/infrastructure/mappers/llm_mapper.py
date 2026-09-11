@@ -409,11 +409,13 @@ def _remember_visual_context(
         # is nothing to fingerprint (a comparison, a ratio, a metric_definition that is not a
         # `FinancialPlan` at all).
         window=result.visual_dataset.window,
-        plan_digest=(
-            plan_digest(result.metric_definition)
-            if isinstance(result.metric_definition, FinancialPlan)
-            else None
-        ),
+        # I-1 (fix wave, D-4.5-6/M-2): sealed from `result.visual_plan_digest`, computed in
+        # `ask_financial_question.stream()` from the plan that actually produced `visual_dataset`
+        # -- BEFORE `metric_definition` could be back-filled from a different turn's `last_plan`.
+        # Recomputing it here from `result.metric_definition` (the old shape) sealed whatever plan
+        # `metric_definition` happened to hold by this point, which is sometimes the back-filled
+        # one -- the guard below then compared that value against itself and could never disagree.
+        plan_digest=result.visual_plan_digest,
         # Task 1 (Wave 4.5): descriptive provenance, from the same decision the profile above
         # already came from -- never re-derived, never guessed.
         source=decision.source,
@@ -514,9 +516,14 @@ def _chip_verifies(chip: str, context: VisualContext) -> bool:
     return isinstance(verify(draft_of(merged.spec), context.profile), ChartSpec)
 
 
-def _explanation_of(context: VisualContext) -> VisualExplanationResponse:
+def explanation_of(context: VisualContext) -> VisualExplanationResponse:
     """`explain_chart(context)`, put on the wire -- `text` is `as_text()` so a client that wants
-    one line has it without recomputing the join itself."""
+    one line has it without recomputing the join itself.
+
+    M-7 (fix wave): public, not `_explanation_of` -- `llm_controller.py` calls it from outside
+    this module (the charted-answer field and `VISUAL_EXPLAINED` both go through this one
+    derivation), and the one-derivation property is worth stating in the name rather than reusing
+    a name that reads as private to two of its own callers."""
     explanation = explain_chart(context)
     return VisualExplanationResponse(
         chart_reason=explanation.chart_reason,
@@ -573,15 +580,19 @@ def question_to_dto(
         if isinstance(visualization, ChartVisualizationResponse)
         else None
     )
-    explanation = _explanation_of(newest) if newest is not None else None
+    explanation = explanation_of(newest) if newest is not None else None
     spoken = None
     if spoken_for_voice and newest is not None:
-        # R7 (4.4 review M-2): `result.metric_definition` is back-filled from
-        # `conversation.last_plan` (`ask_financial_question.py:~629-632`) whenever the turn's own
-        # step named none, so by the time it reaches here it can be a DIFFERENT plan than the one
-        # that drew this chart -- a later, unrelated question's plan riding along on a turn that
-        # only echoed a chart. The sealed `plan_digest` on `newest` is what the chart itself was
-        # drawn from, so it -- not "is this a `FinancialPlan`" -- is the check: a mismatch falls
+        # R7 (4.4 review M-2, closed for real by I-1 in the fix wave): `result.metric_definition`
+        # is back-filled from `conversation.last_plan` (`ask_financial_question.py:~629-632`)
+        # whenever the turn's own step named none, so by the time it reaches here it can be a
+        # DIFFERENT plan than the one that drew this chart -- a later, unrelated question's plan
+        # riding along on a turn that only echoed a chart. `newest.plan_digest` is sealed from
+        # `result.visual_plan_digest` -- taken in `stream()` from the plan that actually produced
+        # `visual_dataset`, BEFORE that back-fill runs -- so this comparison can genuinely
+        # disagree: a back-filled `metric_definition` from a different `group_by` digests
+        # differently than the plan that drew the chart, and the guard below actually fires
+        # rather than matching itself by construction (the tautology I-1 named). A mismatch falls
         # back to `None`, and `spoken_summary` speaks the generic noun instead of another turn's.
         plan_for_spoken = (
             result.metric_definition
