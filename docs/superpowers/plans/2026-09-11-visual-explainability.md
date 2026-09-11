@@ -132,6 +132,16 @@ Then: whole-branch review (opus, base = 4.4's closing head), one fix wave, scope
   `explanation: true`; `Turn.explanation` in the harness. `7f673e8`, `92b00e3`.
 - **Task 6** — this record: design §7/§10/§11, `docs/next.md`, `docs/conversational-capabilities.md`,
   this Landed section. Docs only.
+- **Task 7 (R14)** — D-4.5-6/M-2 closed, not with the digest: `AskFinancialQuestionResult.
+  metric_definition_borrowed`, set True in the same `replace` that back-fills `metric_definition`
+  from `conversation.last_plan` (`ask_financial_question.stream()`, `~:630-633`) — the one place
+  that ever assigns it. `question_to_dto` hands the presenter a plan only when the flag is False;
+  `visual_plan_digest` stays sealed as data for 4.3's drill, unread by the presenter now. The R7
+  guard and its two stale-plan tests are removed. Known limit: none of the five `VisualDataset`
+  producers stamps its own plan onto `metric_definition`, so the flag is True on every chart
+  `stream()` draws today, ordinary single-turn ones included — the specific noun is unreachable in
+  production until a later wave threads plan ownership into those producers (see the task's own
+  report for the five-producer probe table).
 
 Suite at HEAD (`92b00e3`): orchestrator 4227 passed / 3 skipped / 209 deselected (three globs) +
 corpus 207 (176 · 1194) at 0.0 %; web 117; gateway 122 / 1 (untouched across the whole wave);
@@ -167,7 +177,10 @@ above (D-4.5-6) stays on this plan's open list, not its closed one.
 - **R7** — the digest guard was written exactly as ruled, but Task 3's review found it tautological
   within today's `AskFinancialQuestionResult` assembly (the seal and the guard read the same value
   off the same object in one call) — **re-ruled by the review as D-4.5-6, IMPORTANT, fix wave**: M-2
-  is not actually closed; the fix belongs at the chart's own producer.
+  is not actually closed; the fix belongs at the chart's own producer. The fix wave's attempt stayed
+  tautological too (same object, one field of indirection later) — **re-ruled again as R14**: a
+  digest can never make this distinction, because no producer stamps its own plan; the presenter
+  needs the handler to say so directly. Closed, Task 7, with `metric_definition_borrowed`.
 - **R8** — the `turn_id` → recoverable-turn binding is refused, reason written down in `docs/next.md`.
   Applied, Task 6.
 - **R9** — the video's polish is the user's; the plan states what the code offers the on-camera run
@@ -185,13 +198,18 @@ above (D-4.5-6) stays on this plan's open list, not its closed one.
 
 **Parked:** D-4.5-5 — the `_MARK_REASONS` callables carry unused parameters (optional); untouched.
 
-**Still OPEN** — D-4.5-6, the R7/M-2 digest guard is tautological today: `visual_plan_digest` is
-computed from `metric_definition` one line after that field's own back-fill, off the same object
-the guard later compares it against, so the comparison cannot disagree in production. The fix
-wave's attempt captured the digest at that same back-filled point rather than at the chart's own
-producer, and did not close it. The real fix: stamp the digest of the plan that produced the
-DATASET, at the dataset's own producer, and seal that. IMPORTANT — needs the user's word, since it
-touches `ask_financial_question.py`'s producer contract.
+**CLOSED, Task 7 (R14)** — D-4.5-6, the R7/M-2 digest guard, is gone: no digest of
+`metric_definition` can tell a borrowed plan from an owned one, since both would read it off the
+same field in the same call. `ask_financial_question.stream()`'s own back-fill (`~:630-633`) is the
+only place that ever assigns `metric_definition`, so it is the only place that can know whether the
+value came from `conversation.last_plan` rather than this turn's own producer — it says so with
+`AskFinancialQuestionResult.metric_definition_borrowed`, and `question_to_dto` hands the presenter
+a plan only when that flag is False. `visual_plan_digest` stays sealed as data (4.3's drill still
+binds to it); the presenter no longer reads it. Known limit, not a defect: none of the five
+`VisualDataset` producers stamps its own plan onto `metric_definition` (the probe table in the
+task's report), so the flag is True on every chart drawn today and the specific noun is
+unreachable in production until a later wave threads plan ownership into those producers — that
+follow-up still touches `ask_financial_question.py`'s producer contract and needs the user's word.
 
 `D-4.5-2` (design §7's `provenance` type) was fixed in Task 2b. `D-4.5-3` (a week-grouped chart's
 labels read as days) was RE-RULED, not a fix-wave item: the 7-day-spacing heuristic that would have

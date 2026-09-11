@@ -428,12 +428,19 @@ store this design does not keep); no amount, total or percentage, ever; no rule 
 error or discarded proposal. The fix wave closed one limit this section used to name here as open:
 a later-turn `scope_summary` now counts `len(context.labels)` rather than the wire-zeroed
 `profile.row_count` (I-2/D-4.5-8, see "Scope" above). D-4.5-6/M-2 (the R7 digest guard in
-`llm_mapper.py`) is **still open**: `AskFinancialQuestionResult.visual_plan_digest` is computed in
-`stream()` from `metric_definition` one line AFTER that field's own back-fill, off the same
-object the guard later compares it against, so the two sides of the comparison are always digests
-of the same value and the guard cannot fire in production. Closing it needs the DATASET to carry
-the digest of the plan that produced it, stamped by its own producer, not by this back-filled
-field. Also still open, by design rather than by omission: a week-grouped chart's explanation says
+`llm_mapper.py`) is **closed by Task 7 (R14)**, not by that digest: a digest of `metric_definition`
+cannot tell a borrowed plan from an owned one, since the seal and any guard both read it off the
+same field within the same call. Only `ask_financial_question.stream()`'s own back-fill
+(`~:630-633`) knows whether `metric_definition` came from `conversation.last_plan` rather than this
+turn's own producer, so it says so directly: `AskFinancialQuestionResult.metric_definition_borrowed`,
+set True in the same `replace` that back-fills the plan. `question_to_dto` hands the presenter's
+`spoken_summary` a plan only when the flag is False; `visual_plan_digest` stays sealed as data for
+4.3's drill, unread by the presenter now. Known limit: none of the five `VisualDataset` producers
+(`_visual_dataset` and the inline builds in `_how_many_payees`, `_compare_periods`, the ratio
+branches, `_compare_salary_history`) stamps its own plan onto `metric_definition` today, so the flag
+is True on every chart this handler draws — ordinary single-turn ones included — and the presenter's
+specific noun is unreachable in production until a later wave threads plan ownership into those
+producers. Also still open, by design rather than by omission: a week-grouped chart's explanation says
 «días» (D-4.5-3, above).
 
 ## 8. Performance
