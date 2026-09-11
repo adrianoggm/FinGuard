@@ -29,6 +29,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.services.plan_digest import plan_digest
+from finguard_orchestrator.domain.services.visual_explanation import explain_chart
 from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
 from finguard_orchestrator.domain.services.visual_profile import drawn_labels
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -80,6 +81,31 @@ async def _charted_result() -> AskFinancialQuestionResult:
 @pytest.fixture
 async def charted_result() -> AskFinancialQuestionResult:
     return await _charted_result()
+
+
+async def _charted_result_grouped_by_category() -> AskFinancialQuestionResult:
+    """The same turn as `_charted_result`, except the plan that draws the chart already groups by
+    CATEGORY -- so `plan_digest(result.metric_definition) == newest.plan_digest` holds from the
+    start, the R7 case a matching digest is meant to describe (as opposed to `charted_result`'s
+    own `GroupBy.NONE` plan, later mutated by a test AFTER the chart is drawn -- exactly the stale,
+    non-matching case R7 exists to catch)."""
+    plan = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        transaction_ids=(uuid4(), uuid4()),
+        group_by="CATEGORY",
+    )
+    result = AskFinancialQuestionResult(
+        outcome="PLANNED",
+        text="Resultado",
+        plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
+        groups=[SpokenGroup("visible", 100, 2), SpokenGroup("also visible", 50, 1)],
+        visual_dataset=VisualDataset(
+            rows=(VisualRow("Comida", 100), VisualRow("Casa", 50)), metric="SUM"
+        ),
+        metric_definition=plan,
+    )
+    return await _decided_visual(result, default_policy(), DEFAULT_PRESENTATION, "")
 
 
 @pytest.fixture
@@ -352,13 +378,16 @@ def test_a_plan_without_evidence_yields_no_ids() -> None:
 # --- Task 3 (Wave 4.4): `spoken` on a VOICE charted answer ------------------------------------
 
 
-def test_a_voice_charted_answer_carries_a_spoken_summary(charted_result) -> None:
+async def test_a_voice_charted_answer_carries_a_spoken_summary() -> None:
     """`question_to_dto(..., spoken_for_voice=True)` over a charted result fills `spoken` with the
-    presenter's own sentence -- named here by its top label (`charted_result`'s dataset draws
-    "Comida" (100) ahead of "Casa" (50), ranked) once the plan actually groups by CATEGORY (the
-    fixture's own plan groups by nothing, per its docstring)."""
-    plan_with_grouping = replace(charted_result.metric_definition, group_by="CATEGORY")
-    voice_result = replace(charted_result, metric_definition=plan_with_grouping)
+    presenter's own sentence -- named here by its top label (the dataset draws "Comida" (100)
+    ahead of "Casa" (50), ranked) once the plan that DREW THE CHART groups by CATEGORY.
+
+    R7 (Wave 4.5): built via `_charted_result_grouped_by_category` rather than `charted_result`
+    mutated after the fact, so `plan_digest(metric_definition) == newest.plan_digest` actually
+    holds -- the case this test exists to describe is the plan matching the chart, not a
+    same-shaped plan swapped in afterwards (that is `test_r7_...stale...` below)."""
+    voice_result = await _charted_result_grouped_by_category()
     response = llm_mapper.question_to_dto(voice_result, spoken_for_voice=True)
     assert response.spoken is not None
     assert response.spoken.startswith("Comida fue la categoría con mayor gasto.")
@@ -403,6 +432,133 @@ def test_a_voice_restyle_carries_no_spoken(restyle_turn) -> None:
     assert response.spoken is None
 
 
+# --- Task 3 (Wave 4.5): `explanation` on every charted answer, on every channel -----------------
+
+
+def _remembered_newest(result: AskFinancialQuestionResult) -> VisualContext:
+    """The exact domain `VisualContext` `question_to_dto` computes `explanation`/`spoken` from --
+    built the same way the mapper itself builds it (`_visualization_to_dto` then
+    `_remember_visual_context`), so a test can call `explain_chart` over the very object the
+    mapper used rather than a wire round trip, which does not preserve every `VisualProfile`
+    field (`conversation_mapper.to_domain` zeroes `row_count`, for one) and so is not equivalent
+    for this purpose."""
+    visualization = _visualization_to_dto(result)
+    remembered = llm_mapper._remember_visual_context(result, visualization)
+    return remembered.conversation.visual_contexts[-1]
+
+
+def test_a_text_charted_answer_carries_its_explanation(charted_result) -> None:
+    """`question_to_dto` fills `explanation` from `explain_chart` over the newest sealed context,
+    on TEXT (`spoken_for_voice=False`) exactly as it does on VOICE."""
+    expected = explain_chart(_remembered_newest(charted_result))
+    response = llm_mapper.question_to_dto(charted_result, spoken_for_voice=False)
+    assert response.explanation is not None
+    assert response.explanation.text == expected.as_text()
+    assert response.explanation.chart_reason == expected.chart_reason
+    assert response.explanation.ordering_reason == expected.ordering_reason
+    assert response.explanation.scope_summary == expected.scope_summary
+    assert response.explanation.provenance == "Elegido por las reglas de FinGuard."
+    assert "€" not in response.explanation.text
+
+
+def test_a_voice_charted_answer_also_carries_its_explanation(charted_result) -> None:
+    """The same thing, on VOICE -- `explanation` does not depend on `spoken_for_voice`."""
+    expected = explain_chart(_remembered_newest(charted_result))
+    response = llm_mapper.question_to_dto(charted_result, spoken_for_voice=True)
+    assert response.explanation is not None
+    assert response.explanation.text == expected.as_text()
+    assert response.spoken is not None
+    assert "€" not in response.spoken
+
+
+def test_a_kpi_answer_has_no_explanation() -> None:
+    """A KPI turn draws no `ChartVisualizationResponse`, so there is no chart to explain."""
+    result = AskFinancialQuestionResult(outcome="ANSWERED", text="Gastaste 42 €", total_minor=4200)
+    response = llm_mapper.question_to_dto(result, spoken_for_voice=True)
+    assert response.visualization is None
+    assert response.explanation is None
+
+
+def test_a_restyle_carries_its_explanation_and_names_it_a_patch(restyle_turn) -> None:
+    """`_visual_only_response`'s `VISUAL_UPDATED` answer explains the derived chart, and its
+    provenance names the restyle: the derived context's `source` is `"patch"`."""
+    initial_context = VisualContext(
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        source_plan=FinancialPlan(
+            Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH), transaction_ids=(uuid4(),)
+        ),
+        evidence_ids=(uuid4(),),
+    )
+    conversation = IDLE.with_visual_context(initial_context)
+    from_wire = conversation_mapper.to_domain(conversation_mapper.to_payload(conversation))
+    intent = interpret_visual("ordénalo de menor a mayor", from_wire.visual_contexts)
+    assert intent is not None
+    response = _visual_only_response(intent, from_wire)
+    assert response.outcome == "VISUAL_UPDATED"
+    derived = conversation_mapper.to_domain(response.conversation).visual_contexts[-1]
+    expected = explain_chart(derived)
+    assert response.explanation is not None
+    assert response.explanation.text == expected.as_text()
+    assert response.explanation.provenance == "Ajustado a petición tuya sobre el gráfico anterior."
+    assert "€" not in response.explanation.text
+
+
+def test_a_visual_unchanged_answer_carries_no_explanation() -> None:
+    """Probe and pin: `VISUAL_UNCHANGED` mints no derived context (F2), so the controller's bare
+    `QuestionResponse` for it carries no `explanation` either -- today's behaviour, stated."""
+    conversation = IDLE.with_visual_context(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE))
+    intent = interpret_visual("ordena de mayor a menor", conversation.visual_contexts)
+    assert intent is not None
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UNCHANGED"
+    assert response.explanation is None
+
+
+async def test_r7_a_stale_backfilled_plan_never_names_its_noun_in_the_spoken_line(
+    charted_result, monkeypatch
+) -> None:
+    """R7 (4.4 review M-2): `result.metric_definition` can be back-filled from
+    `conversation.last_plan` (`ask_financial_question.py:~629-632`) with a plan from ANOTHER turn
+    -- one that never drew this chart. Within one `question_to_dto` call, `_remember_visual_context`
+    seals the FRESH context's own `plan_digest` from that very same `result.metric_definition`
+    (`llm_mapper.py`'s `VisualContext(..., plan_digest=plan_digest(result.metric_definition) ...)`),
+    so a same-call comparison can never disagree by construction -- the mismatch this guards
+    against is a value seen at a different `plan_digest(...)` call than the one that sealed the
+    chart. `llm_mapper.plan_digest` is monkeypatched to answer its two call sites in this function
+    differently (the seal, then the guard) to exercise the branch directly, the way a chart drawn
+    from one plan and a `last_plan` backfilled from an unrelated one would disagree in practice.
+    The presenter must fall back to the generic noun («desglose») rather than speak the stale
+    plan's own noun («categorías»)."""
+    real_digest = llm_mapper.plan_digest
+    calls = {"n": 0}
+
+    def fake_digest(plan: object) -> str:
+        calls["n"] += 1
+        return real_digest(plan)[:16] if calls["n"] == 1 else "differentdigest1"
+
+    monkeypatch.setattr(llm_mapper, "plan_digest", fake_digest)
+    plan_with_grouping = replace(charted_result.metric_definition, group_by="CATEGORY")
+    voice_result = replace(charted_result, metric_definition=plan_with_grouping)
+    response = llm_mapper.question_to_dto(voice_result, spoken_for_voice=True)
+    assert calls["n"] == 2
+    assert response.spoken is not None
+    assert "categoría" not in response.spoken.lower()
+    assert response.spoken == "En pantalla tienes el desglose."
+    assert "€" not in response.spoken
+
+
+async def test_r7_a_matching_digest_keeps_the_specific_noun() -> None:
+    """The matching-digest case (today's own, unaffected by R7's guard) keeps speaking the
+    specific noun the plan actually names -- same assertion as
+    `test_a_voice_charted_answer_carries_a_spoken_summary`, kept here too under R7's own name."""
+    voice_result = await _charted_result_grouped_by_category()
+    response = llm_mapper.question_to_dto(voice_result, spoken_for_voice=True)
+    assert response.spoken is not None
+    assert response.spoken.startswith("Comida fue la categoría con mayor gasto.")
+
+
 def test_a_restyled_chart_names_its_origin_and_keeps_its_plan(restyle_turn) -> None:
     """`restyle_turn` drives the restyle endpoint (llm_controller) with a conversation holding
     `VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, source_plan=<a FinancialPlan>,
@@ -427,6 +583,17 @@ def test_a_restyled_chart_names_its_origin_and_keeps_its_plan(restyle_turn) -> N
     assert derived.decision is None  # decision never crosses the wire -- see the docstring above
     assert derived.source_plan is None
     assert derived.evidence_ids == ()
+
+
+def test_a_restyles_derived_context_carries_source_patch(restyle_turn) -> None:
+    """Task 1 (Wave 4.5): `_derived_context` builds its `decision` as `VisualDecision(source=
+    "patch", ...)` (`llm_controller._visual_only_response`), so the derived context it seals
+    carries `source="patch"`, `fallback_reason=None` -- surviving the wire round trip
+    `restyle_turn`'s own fixture drives it through."""
+    response = restyle_turn
+    (derived,) = response.conversation.visual_contexts[-1:]
+    assert derived.source == "patch"
+    assert derived.fallback_reason is None
 
 
 def test_the_restyle_helper_copies_a_trusted_contexts_provenance_forward() -> None:
@@ -479,6 +646,20 @@ def test_the_restyle_helper_copies_a_trusted_contexts_labels_forward_too() -> No
     assert derived.labels == trusted.labels
     assert derived.series_labels == trusted.series_labels
     assert derived.ranked == trusted.ranked
+
+
+def test_a_fresh_charts_newest_context_carries_the_decisions_source(
+    charted_result, chart_response
+) -> None:
+    """Task 1 (Wave 4.5): `charted_result` drives the default deterministic policy
+    (`default_policy()`, `_charted_result`'s own fixture), so `visual_decision.source ==
+    "deterministic"` with no `fallback_reason` -- `_remember_visual_context` copies both onto the
+    context it builds, before the seal, the same way it already does for `window`/`plan_digest`."""
+    assert charted_result.visual_decision.source == "deterministic"
+    remembered = llm_mapper._remember_visual_context(charted_result, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.source == "deterministic"
+    assert context.fallback_reason is None
 
 
 def test_the_restyle_helper_copies_a_trusted_contexts_window_and_digest_forward_too() -> None:

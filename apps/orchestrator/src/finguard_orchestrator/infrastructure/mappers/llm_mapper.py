@@ -37,6 +37,7 @@ from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUpK
 from finguard_orchestrator.domain.models.visual_plan import canonical, draft_of
 from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.spoken_presenter import spoken_summary
+from finguard_orchestrator.domain.services.visual_explanation import explain_chart
 from finguard_orchestrator.domain.services.visual_interpreter import (
     apply_visual_intent,
     interpret_visual,
@@ -75,6 +76,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     SpokenGroupResponse,
     SpokenMovementResponse,
     SummaryMovementResponse,
+    VisualExplanationResponse,
     VisualizationResponse,
     WalletResponse,
 )
@@ -412,6 +414,10 @@ def _remember_visual_context(
             if isinstance(result.metric_definition, FinancialPlan)
             else None
         ),
+        # Task 1 (Wave 4.5): descriptive provenance, from the same decision the profile above
+        # already came from -- never re-derived, never guessed.
+        source=decision.source,
+        fallback_reason=decision.fallback_reason,
     )
     # Task 3: sealed here, where the context is born -- before it ever reaches `to_payload` --
     # rather than by a second pass over the wire once the response is built. `seal` is `None` for
@@ -508,6 +514,19 @@ def _chip_verifies(chip: str, context: VisualContext) -> bool:
     return isinstance(verify(draft_of(merged.spec), context.profile), ChartSpec)
 
 
+def _explanation_of(context: VisualContext) -> VisualExplanationResponse:
+    """`explain_chart(context)`, put on the wire -- `text` is `as_text()` so a client that wants
+    one line has it without recomputing the join itself."""
+    explanation = explain_chart(context)
+    return VisualExplanationResponse(
+        chart_reason=explanation.chart_reason,
+        ordering_reason=explanation.ordering_reason,
+        scope_summary=explanation.scope_summary,
+        provenance=explanation.provenance,
+        text=explanation.as_text(),
+    )
+
+
 def question_to_dto(
     result: AskFinancialQuestionResult,
     *,
@@ -549,11 +568,29 @@ def question_to_dto(
         else None
     )
     result = _remember_visual_context(result, visualization, seal=seal)
+    newest = (
+        result.conversation.visual_contexts[-1]
+        if isinstance(visualization, ChartVisualizationResponse)
+        else None
+    )
+    explanation = _explanation_of(newest) if newest is not None else None
     spoken = None
-    if spoken_for_voice and isinstance(visualization, ChartVisualizationResponse):
-        newest = result.conversation.visual_contexts[-1]
+    if spoken_for_voice and newest is not None:
+        # R7 (4.4 review M-2): `result.metric_definition` is back-filled from
+        # `conversation.last_plan` (`ask_financial_question.py:~629-632`) whenever the turn's own
+        # step named none, so by the time it reaches here it can be a DIFFERENT plan than the one
+        # that drew this chart -- a later, unrelated question's plan riding along on a turn that
+        # only echoed a chart. The sealed `plan_digest` on `newest` is what the chart itself was
+        # drawn from, so it -- not "is this a `FinancialPlan`" -- is the check: a mismatch falls
+        # back to `None`, and `spoken_summary` speaks the generic noun instead of another turn's.
+        plan_for_spoken = (
+            result.metric_definition
+            if isinstance(result.metric_definition, FinancialPlan)
+            and plan_digest(result.metric_definition) == newest.plan_digest
+            else None
+        )
         spoken = spoken_summary(
-            newest.spec, newest.profile, newest.labels, newest.ranked, result.metric_definition
+            newest.spec, newest.profile, newest.labels, newest.ranked, plan_for_spoken
         )
     chart_id = (
         visualization.chart_id if isinstance(visualization, ChartVisualizationResponse) else None
@@ -642,6 +679,7 @@ def question_to_dto(
         suggestions=result.suggestions or (_chart_suggestions(context) if context else []),
         save_candidate=candidate,
         spoken=spoken,
+        explanation=explanation,
     )
 
 

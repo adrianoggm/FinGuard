@@ -340,16 +340,23 @@ class VisualExplanation:
     chart_reason: str            # "Barras: comparas categorías entre sí."
     ordering_reason: str | None  # "Orden: de mayor a menor gasto."
     scope_summary: str           # "Entre el 1 de junio y el 31 de agosto de 2026, en 4 categorías."
-    provenance: str              # "Elegido por las reglas de FinGuard."
+    provenance: str | None       # "Elegido por las reglas de FinGuard."; None for an echoed chart
 
     def as_text(self) -> str: ...
 ```
+
+`provenance` is `str | None`, not `str`: `source is None` — a chart echoed back with no decision
+behind it — omits the line entirely rather than guessing at one (see "Provenance wording" below).
 
 `explain_chart(context: VisualContext) -> VisualExplanation` is a pure function of `context.spec`,
 `context.profile`, `context.labels`, `context.ranked`, `context.window`, `context.derived_from`,
 `context.source` and `context.fallback_reason` — nothing else, and nothing turn-local: mark →
 `chart_reason`; the dimension's `EncodingSort` and `ranked` → `ordering_reason`; `window` and
-`profile.row_count` → `scope_summary`; `source`/`fallback_reason` → `provenance`.
+`profile.row_count` → `scope_summary`; `source`/`fallback_reason` → `provenance`. The noun inside
+`chart_reason`/`ordering_reason`/`scope_summary` (mes/día/categoría/grupo) comes from the drawn
+`labels` themselves, never from a plan's `GroupBy` or a field's name — the plan is not on the wire
+(§4) and every producer names its dimension field by role, never by what it holds — while the
+measure word (importe/número de movimientos/peso) comes from `profile.measure_metric()` (R11).
 
 **Provenance wording** (the closed sets `VisualSource`/`FallbackReason` actually carry, never the
 invented `AI_VERIFIED`/`DETERMINISTIC_FALLBACK`/`USER_PATCH` of the first draft):

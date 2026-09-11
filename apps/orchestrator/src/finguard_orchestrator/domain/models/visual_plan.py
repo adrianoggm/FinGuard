@@ -10,18 +10,20 @@ from dataclasses import dataclass
 from typing import Literal, get_args
 
 from finguard_orchestrator.domain.models.chart import ChartSpec
+from finguard_orchestrator.domain.models.chart import FallbackReason as FallbackReason
+from finguard_orchestrator.domain.models.chart import VisualSource as VisualSource
 
 # The policy's closed sets. Defined here, not in `visual_planning_policy.py`, so
 # `VisualDecision.fallback_reason` (`deterministic_visual_planner.py`) can be typed by the same
 # name the policy constructs it from -- the policy already imports this module, so typing the
 # field the other way round would be the cycle, not this one.
 VisualMode = Literal["deterministic", "shadow", "hybrid", "promoted"]
-FallbackReason = Literal["abstention", "timeout", "provider_error", "invalid_proposal"]
 
-# `VisualDecision.source` (`deterministic_visual_planner.py`) is typed by this name for the same
-# reason `FallbackReason` is: the policy and the seam both construct decisions, and a set defined
-# next to the constructions instead of here would be one more place the three could drift.
-VisualSource = Literal["llm", "deterministic", "patch"]
+# `FallbackReason` and `VisualSource` re-exported from `chart.py` (Task 1, Wave 4.5): they now type
+# `VisualContext.fallback_reason`/`.source` there too, and `chart.py` cannot import this module
+# back (this module already imports `ChartSpec` from it) -- so `chart.py` is the one definition,
+# and this import keeps every existing `from .visual_plan import VisualSource, FallbackReason`
+# in this codebase working unchanged.
 
 # `Rejection.rule`'s closed set. The first nine are `visual_plan_verifier.py`'s own names, one per
 # rule function in the order `verify` runs them; a name that module does not construct never
