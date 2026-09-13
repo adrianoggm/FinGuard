@@ -445,7 +445,17 @@ def _remember_visual_context(
             # previous chart naming itself as the origin would let a legitimate, freshly sealed
             # chart point its provenance at one nobody signed for.
             and previous.trusted
-            # The fact, not the verb -- see `_same_lineage`'s own comment.
+            # F-H3 (Wave 3 hardening, fix round): the causal fact first -- the reader that
+            # answered this turn actually patched, regrouped or split whatever the conversation
+            # already carried (`plan_continues_conversation`, stamped in
+            # `AskFinancialQuestionHandler._answering`), rather than reading a fresh plan off the
+            # sentence alone. Two turns that structurally happen to name the same bare window are
+            # not lineage without this: `_same_lineage` cannot tell "the model read this window
+            # again, coincidentally" from "this chart reshapes that one", because both produce the
+            # identical `FinancialPlan` shape. The structural check stays below it as a sanity
+            # check, not the test -- a reader bug that continues the wrong thing must not still
+            # claim lineage just because the shapes happen to line up.
+            and result.plan_continues_conversation
             and _same_lineage(ancestor_plan, result.metric_definition)
         )
         else None

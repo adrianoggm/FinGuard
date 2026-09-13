@@ -76,6 +76,83 @@ _NOT_A_NAME: Final = frozenset(
 )
 
 
+# B-2(a) (Wave 3 hardening, R-H1): words a bare-word turn says that are never a shop's name — a
+# discard, a correction, a control word, a pleasantry, a bare intensifier. `nada` is the audit's own
+# example: "¿cuánto gasté el mes pasado?" answered `merchants: ['nada']`, three ledger calls, a real
+# total for a word that named nothing. The 10 pinned corpus turns Task 3 found (six episode files —
+# `13-messy.yaml`'s "quería"/"es que"/"pues eso"/"nada"; `02-corrections.yaml`'s "ahora sí";
+# `05-typos.yaml`'s "gracais"; `06-colloquial.yaml`'s "ah vale"; `07-cancellations.yaml`'s "cancelar
+# consulta" ×2/"cambiar consulta"/"déjalo"; `08-confirmations.yaml`'s "confirmo") decompose into
+# these tokens once folded — no phrase beyond the four idioms below needs its own entry.
+#
+# A closed list on purpose, not a heuristic: Task 3's general rule (require a capitalised,
+# merchant-shaped token) fixed the same bug but reopened all ten pinned turns as an open-ended
+# judgement call. This list only ever grows by a name proven, the same way this file's own merchant
+# vocabulary does — never by a pattern that could also match a shop nobody has named yet.
+_NEVER_A_MERCHANT_PHRASES: Final = frozenset(
+    {
+        "otra vez",
+        "en euros",
+        "es que",
+        "pues eso",
+    }
+)
+
+_NEVER_A_MERCHANT_WORDS: Final = frozenset(
+    {
+        "deshaz",
+        "vuelve",
+        "nada",
+        "vale",
+        "ok",
+        "si",
+        "no",
+        "gracias",
+        "gracais",  # the typo the corpus itself types (05-typos.yaml)
+        "mas",
+        "menos",
+        "atras",
+        "cancela",
+        "cancelar",
+        "consulta",
+        "cambiar",
+        "repite",
+        "eso",
+        "esto",
+        "ahi",
+        "ya",
+        "ah",
+        "ahora",
+        "bien",
+        "hecho",
+        "listo",
+        "queria",
+        "dejalo",
+        "confirmo",
+    }
+)
+
+
+def never_a_merchant(sentence: str) -> bool:
+    """Whether `sentence` is nothing but words this service already knows are not a shop's name.
+
+    Folded and stripped first, then matched whole against the four multi-word idioms
+    (`_NEVER_A_MERCHANT_PHRASES`) before falling back to a per-word check against
+    `_NEVER_A_MERCHANT_WORDS` — so "ahora sí" reads as "ahora" + "sí" (both single words) while
+    "es que" and "pues eso" stay the two-word units they are, neither half meaning anything alone.
+
+    A sentence with even one word this does not recognise is not this — the caller falls through to
+    the ordinary bare-name guess, exactly as before this rule existed.
+    """
+    folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
+    if not folded:
+        return False
+    if folded in _NEVER_A_MERCHANT_PHRASES:
+        return True
+    words = folded.split()
+    return bool(words) and all(word in _NEVER_A_MERCHANT_WORDS for word in words)
+
+
 def close_to(searched: str, merchants: tuple[str, ...], limit: int = 3) -> tuple[str, ...]:
     """The shops that look like what was asked for, best first.
 

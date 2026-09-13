@@ -611,14 +611,18 @@ def test_this_summer_asks_for_the_current_year_by_name() -> None:
     )
 
     assert question == "¿Te refieres a junio, julio y agosto de 2026?"
-    assert chips == ("Junio, julio y agosto de 2026",)
+    # F-H2 (Wave 3 hardening, fix round): the chip is a range phrase the month reader can parse
+    # back ("de junio a agosto de 2026"), not the comma list the question reads aloud -- `_A_MONTH`
+    # only ever reads the *last* named month of a comma list, so a holder answering with the chip
+    # exactly as offered used to get back a single, silently wrong month.
+    assert chips == ("De junio a agosto de 2026",)
 
 
 def test_last_summer_asks_for_the_previous_year_by_name() -> None:
     question, chips = window_words.season_ask("¿Y en el verano pasado?", today=REFERENCE)
 
     assert question == "¿Te refieres a junio, julio y agosto de 2025?"
-    assert chips == ("Junio, julio y agosto de 2025",)
+    assert chips == ("De junio a agosto de 2025",)
 
 
 def test_a_bare_season_with_no_qualifier_offers_both_years() -> None:
@@ -627,7 +631,7 @@ def test_a_bare_season_with_no_qualifier_offers_both_years() -> None:
     assert question == (
         "¿Te refieres a marzo, abril y mayo de 2026 o a marzo, abril y mayo de 2025?"
     )
-    assert chips == ("Marzo, abril y mayo de 2026", "Marzo, abril y mayo de 2025")
+    assert chips == ("De marzo a mayo de 2026", "De marzo a mayo de 2025")
 
 
 @pytest.mark.parametrize("sentence", ["en verano", "otoño"])
@@ -641,3 +645,30 @@ def test_a_bare_season_word_alone_is_still_a_season_ask(sentence: str) -> None:
 )
 def test_a_sentence_with_no_season_is_not_a_season_ask(sentence: str) -> None:
     assert window_words.season_ask(sentence, today=REFERENCE) is None
+
+
+# --- F-H2 (Wave 3 hardening, fix round): the season's own chip is a window `window_in` reads -----
+#
+# `season_ask` offers a chip a holder can answer with verbatim -- and until now nothing in this
+# file could read it back: `_A_MONTH` matches only the last named month of a comma list, so
+# "junio, julio y agosto de 2026" resolved to a single, silently wrong August. The chip is a range
+# phrase instead ("de junio a agosto de 2026"), and this is the reader for exactly that shape.
+
+
+def test_the_seasons_own_chip_is_a_window_it_can_read_back() -> None:
+    window = window_words.window_in("De junio a agosto de 2026", today=REFERENCE)
+    assert window == AbsoluteRange(start=date(2026, 6, 1), end=date(2026, 8, 31))
+
+
+def test_the_range_reader_keeps_every_named_month_not_just_the_last() -> None:
+    """The exact failure B-4 left open: a comma list drops every month but the last one, and a
+    range phrase must not repeat that."""
+    window = window_words.window_in("de marzo a mayo de 2025", today=REFERENCE)
+    assert window == AbsoluteRange(start=date(2025, 3, 1), end=date(2025, 5, 31))
+
+
+def test_a_winter_range_crosses_the_year_boundary() -> None:
+    """ "de diciembre a febrero de 2026" names December 2026 through February *2027* -- the same
+    anchor `_season_months` already uses for winter (the printed year is the first month's)."""
+    window = window_words.window_in("de diciembre a febrero de 2026", today=date(2027, 3, 1))
+    assert window == AbsoluteRange(start=date(2026, 12, 1), end=date(2027, 2, 28))

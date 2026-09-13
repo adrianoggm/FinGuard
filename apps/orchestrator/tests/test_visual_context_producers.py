@@ -271,7 +271,14 @@ def test_a_reshape_names_the_chart_it_came_from(charted_result, chart_response) 
     its origin. `visual_follow_up` still carries `ANALYTICAL_RESHAPE` here (a real reshape reads
     this way too), but it is `previous.source_plan` matching `charted_result.metric_definition`
     that decides it now, not the kind -- `test_derived_from_is_decided_by_the_plan_not_the_verb`
-    below is the pinned proof that the kind alone no longer does."""
+    below is the pinned proof that the kind alone no longer does.
+
+    F-H3 (Wave 3 hardening, fix round): `plan_continues_conversation=True` stands in for the real
+    continuation reader (`AskFinancialQuestionHandler._answering` stamps it when a reader from
+    `_ON_A_COMPARISON`/`_ON_THE_QUERY_IN_VIEW` claims the turn) -- the causal fact `derived_from`
+    now requires alongside the structural match, so this fixture, which builds its result by
+    hand rather than through the handler, states it explicitly.
+    """
     previous = VisualContext(
         "chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=charted_result.metric_definition
     )
@@ -279,6 +286,7 @@ def test_a_reshape_names_the_chart_it_came_from(charted_result, chart_response) 
         charted_result,
         conversation=charted_result.conversation.with_visual_context(previous),
         visual_follow_up=VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan"),
+        plan_continues_conversation=True,
     )
     remembered = llm_mapper._remember_visual_context(reshaped, chart_response)
     (context,) = remembered.conversation.visual_contexts[-1:]
@@ -321,6 +329,7 @@ def test_a_drill_down_names_the_chart_it_drilled(charted_result, chart_response)
         charted_result,
         conversation=charted_result.conversation.with_visual_context(previous),
         visual_follow_up=VisualFollowUp("DRILL_DOWN", "drill_down_reader"),
+        plan_continues_conversation=True,
     )
     remembered = llm_mapper._remember_visual_context(drilled, chart_response)
     (context,) = remembered.conversation.visual_contexts[-1:]
@@ -371,12 +380,46 @@ def test_an_unrelated_new_chart_names_no_origin(charted_result, chart_response) 
     assert context.derived_from is None
 
 
+def test_two_unrelated_turns_sharing_a_shape_do_not_claim_each_other(
+    charted_result, chart_response
+) -> None:
+    """F-H3 (Wave 3 hardening, fix round): the review's own named risk. `chart-0` and
+    `charted_result` share window and direction and neither names a category -- exactly the
+    common bare-window shape `_same_scope` alone would call compatible -- but nothing continued
+    this turn from that chart: `plan_continues_conversation` is `False` (this turn's plan was
+    read fresh, not patched from the conversation), the honest state of a second, independently
+    asked "¿cuánto gasté?" several turns after an unrelated one. `derived_from` must stay `None`
+    even though the structural check alone (`_same_lineage`) would pass -- the causal flag is the
+    gate now, not a second vote alongside the shape.
+    """
+    previous = VisualContext(
+        "chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=charted_result.metric_definition
+    )
+    coincidental = replace(
+        charted_result,
+        conversation=charted_result.conversation.with_visual_context(previous),
+        visual_follow_up=VisualFollowUp("UNRELATED", "none"),
+        plan_continues_conversation=False,
+    )
+    remembered = llm_mapper._remember_visual_context(coincidental, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.derived_from is None
+
+
 def test_derived_from_is_decided_by_the_plan_not_the_verb(charted_result, chart_response) -> None:
     """B-3's own pin: a chart whose `visual_follow_up.kind` is `UNRELATED` -- the classification a
     turn like "enséñamelo por meses" gets, because `turn_analyzer` does not read that verb as a
     follow-up -- still derives from the trusted chart in view when its plan is a refinement of the
     same window and categories. The kind used to be the only thing `_remember_visual_context`
     read; this is the case where it disagreed with the fact and the fact must win.
+
+    F-H3 (Wave 3 hardening, fix round): the fact itself moved on from B-3's own version of it.
+    B-3 read the *plan's shape* as the fact; the review named the gap that leaves (two unrelated
+    turns can share a shape by coincidence) and this reads the *reader's own causal claim*
+    (`plan_continues_conversation`) instead, with the shape kept only as the sanity check below
+    it. "enséñamelo por meses" is real `contextual_follow_up_plan` output in production
+    (`test_the_handler_and_the_mapper_together_prove_derived_from` drives it end to end); this
+    unit fixture states that fact by hand, same as the kind it already stated by hand.
     """
     previous = VisualContext(
         "chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=charted_result.metric_definition
@@ -385,6 +428,7 @@ def test_derived_from_is_decided_by_the_plan_not_the_verb(charted_result, chart_
         charted_result,
         conversation=charted_result.conversation.with_visual_context(previous),
         visual_follow_up=VisualFollowUp("UNRELATED", "none"),
+        plan_continues_conversation=True,
     )
     remembered = llm_mapper._remember_visual_context(unrelated_but_same_plan, chart_response)
     (context,) = remembered.conversation.visual_contexts[-1:]

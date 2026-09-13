@@ -482,6 +482,11 @@ RUNS: Final = (
     _ON_THE_QUERY_IN_VIEW,
     _ON_THE_SENTENCE_ITSELF,
 )
+# F-H3 (Wave 3 hardening, fix round): the two runs whose readers resolve their plan from
+# `focus_of(conversation)` -- a patch, a regroup or a split of whatever the conversation already
+# carried, never a fresh read of the sentence alone. `_answering` stamps
+# `plan_continues_conversation` from membership in this set.
+_CONTINUATION_READERS: Final = _ON_A_COMPARISON + _ON_THE_QUERY_IN_VIEW
 
 
 class AskFinancialQuestionHandler:
@@ -808,11 +813,30 @@ class AskFinancialQuestionHandler:
             # vocabulary here is more certain about what the sentence is missing, and answering
             # with the wrong months is worse than asking which ones were meant.
             question, chips = season
+            # F-H2 (Wave 3 hardening, fix round): the ask used to leave `conversation=was`
+            # unchanged -- an honest question with no state behind it, so the next turn (a bare
+            # "sí", "esos tres", or the chip itself) was read exactly like any fresh sentence, and
+            # the wrong-but-confident failure this whole finding exists to close just moved one
+            # turn later. Reusing the same clarification workflow the planner's own window
+            # question opens (`FinancialClarification`, `awaiting=Slot.WINDOW`) closes it: the
+            # direction is the one fact this sentence states or inherits, nothing else is settled,
+            # and `_finish_pending`'s ordinary reply-to-a-clarification path resolves the window on
+            # the next turn exactly like any other answer to "¿de qué periodo?" would -- the chip
+            # itself now being a range phrase `window_words.window_in` can read back (see its own
+            # module docstring).
+            facts = explicit_facts.read(query.sentence, today=query.today)
+            direction = facts.direction or (
+                previous.direction if isinstance(previous, FinancialPlan) else Direction.EXPENSE
+            )
             yield AskFinancialQuestionResult(
                 outcome=Spoken.GUIDANCE.value,
                 text=question,
                 question=question,
-                conversation=was,
+                conversation=was.with_active(
+                    FinancialClarification(
+                        draft=FinancialPlanDraft(direction=direction), awaiting=Slot.WINDOW
+                    )
+                ),
                 suggestions=list(chips),
             )
             return
@@ -1141,6 +1165,27 @@ class AskFinancialQuestionHandler:
             return
 
         narrowing = _a_bare_shop_name(query, was) if intent is Intent.FINANCIAL_QUERY else None
+        if isinstance(narrowing, _NeverAMerchant):
+            # B-2(a): a word the closed stop-list already knows is never a shop's name. The honest
+            # ask, never a merchant filter -- zero ledger calls, the conversation unchanged.
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=(
+                    f"No sé a qué te refieres con «{narrowing.said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                question=(
+                    f"No sé a qué te refieres con «{narrowing.said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                plan=(
+                    answer_writer.describe(was.last_plan)
+                    if isinstance(was.last_plan, FinancialPlan)
+                    else None
+                ),
+                conversation=was,
+            )
+            return
         if narrowing is not None:
             shop, previous = narrowing
             # A whole turn that is one name, with a question behind it. "Spotify", typed after
@@ -1291,7 +1336,15 @@ class AskFinancialQuestionHandler:
             if isinstance(drill, DrillDown):
                 yield Stage("planned", answer_writer.describe(drill.plan))
                 yield Stage("querying")
-                yield await self._answer(query, drill.plan, movements=MAX_SELECTED_TRANSACTIONS)
+                answered = await self._answer(
+                    query, drill.plan, movements=MAX_SELECTED_TRANSACTIONS
+                )
+                # F-H3 (Wave 3 hardening, fix round): `read_drill_down` clamps the previous plan's
+                # own window to the bar the sentence named -- a continuation exactly like a
+                # reshape or a regroup, and outside `_answering`'s reader-registry dispatch (this
+                # branch answers directly, before `contextual_follow_up_plan` is ever asked), so
+                # the causal flag `derived_from` reads is stamped here rather than there.
+                yield replace(answered, plan_continues_conversation=True)
                 return
 
         referenced_result = await self._referenced_result_plan(query)
@@ -1631,8 +1684,20 @@ class AskFinancialQuestionHandler:
         `query = replace(query, conversation=was)`. Passing it is how that stays true by
         construction instead of by inspection: this method uses exactly the variable the inline
         block it replaced used.
+
+        F-H3 (Wave 3 hardening, fix round): every reader this method ever dispatches to is one of
+        the five runs `_steps` asks in order, and `claimed.reader` names exactly which one claimed
+        the turn. `_CONTINUATION_READERS` is `_ON_A_COMPARISON` and `_ON_THE_QUERY_IN_VIEW` --
+        the two runs that resolve their own plan from `focus_of(conversation)`, i.e. patch,
+        regroup or split whatever the conversation already carried, as opposed to
+        `_ON_THE_SENTENCE_ITSELF` (a fresh plan the sentence alone produced) or
+        `_ON_A_NAMED_SUBJECT`. Stamped onto the result here, once, rather than in each of the
+        eleven producer methods those two runs dispatch to.
         """
+        continuation = claimed.reader in _CONTINUATION_READERS
         async for step in _ANSWERING[claimed.reader](self, query, was, claimed.plan):
+            if continuation and isinstance(step, AskFinancialQuestionResult):
+                step = replace(step, plan_continues_conversation=True)
             yield step
 
     async def _a_ratio(
@@ -5001,9 +5066,17 @@ _THE_WHOLE_LOT: Final = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class _NeverAMerchant:
+    """The bare word this turn typed, when B-2(a)'s closed stop-list already knows it is not a
+    shop's name -- `_a_bare_shop_name`'s own sentinel for "ask, do not guess"."""
+
+    said: str
+
+
 def _a_bare_shop_name(
     query: AskFinancialQuestionQuery, was: Conversation
-) -> tuple[str, FinancialPlan] | None:
+) -> tuple[str, FinancialPlan] | _NeverAMerchant | None:
     """A turn that is nothing but a name, answered by narrowing the last question to it.
 
     Only reached once the router *and* the balance ellipsis have had their say, which is the guard
@@ -5044,7 +5117,13 @@ def _a_bare_shop_name(
         # A word another vocabulary already owns. "Gasolina" is a category, "la hucha" an account
         # and "enero" a window, and each of them has a path that answers it properly.
         return None
-    return query.sentence.strip(" ¿?¡!.,;:"), plan
+    stripped = query.sentence.strip(" ¿?¡!.,;:")
+    if merchant_words.never_a_merchant(query.sentence):
+        # B-2(a) (Wave 3 hardening, R-H1): the closed stop-list -- words this service already
+        # knows are a discard, a correction or a pleasantry, never a shop. "Nada" stops being a
+        # merchant filter here rather than one query later, at zero cost instead of three.
+        return _NeverAMerchant(stripped)
+    return stripped, plan
 
 
 def _narrows_the_balance(
