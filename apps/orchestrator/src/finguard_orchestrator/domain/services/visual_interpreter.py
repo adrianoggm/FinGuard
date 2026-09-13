@@ -196,6 +196,14 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
     if not visual_signal:
         return None
     if not contexts:
+        # F-3 (fix wave, Important 6): `show_every_row` ("todos"/"todas"/"sin límite") abstains
+        # here rather than claims -- with no chart in context it may be answering a pending
+        # clarification (C-3), which lives in the handler, not this interpreter, and the handler
+        # never sees a sentence this claims. Every other no-context visual signal (a mark, an
+        # orientation, a sort, a size or limit word) is a genuine restyle instruction with nothing
+        # to restyle, and the caller now answers that honestly instead of falling to the planner.
+        if show_every_row:
+            return None
         return VisualIntent(None, None, "No hay ningún gráfico anterior que pueda cambiar.")
     target_match = TARGET.search(folded)
     word = target_match.group(0).casefold() if target_match else None
