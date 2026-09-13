@@ -16,7 +16,7 @@ from support import episodes
 from support.visual_planners import BREAKDOWN_PROFILE
 from test_decisions_call_sites import ACCOUNT as CS_ACCOUNT
 from test_decisions_call_sites import TODAY as CS_TODAY
-from test_decisions_call_sites import FakeLedger, handler_for, turn_for
+from test_decisions_call_sites import FakeLedger, FixedInterpreter, handler_for, turn_for
 
 from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.application.queries import ask_financial_question
@@ -519,6 +519,38 @@ async def test_the_streaming_routes_short_circuit_records_it_too() -> None:
     assert (decision.now, decision.detail) == ("PRESENTATION_ONLY", "interpret_visual")
 
 
+async def test_a_financial_ask_beside_a_sort_word_reaches_the_planner_not_a_restyle() -> None:
+    """F-H1 (Wave 3 hardening, fix round): «Ordena mis gastos por categoría y dime el total»
+    carries a financial word ("gastos") and a style word ("ordena") together with a real
+    data-asking clause ("dime el total") that neither `_FINANCIAL_QUERY_SIGNAL` (no window, no
+    comparison verb) nor `category_words.named_in` (no named category, only the generic axis
+    noun "categoría") catches. A-10's own fix left no `else` for this residue in
+    `interpret_visual`, so the turn fell all the way through to the ordinary restyle path and the
+    controller answered a sort patch (`VISUAL_UPDATED`) with zero ledger calls, discarding the
+    actual question. It must fall through to the planner instead, exactly like any other real
+    financial question would -- driven through the controller's route function directly (the
+    same seam `test_the_controllers_visual_short_circuit_records_the_kind_and_claimant` uses)
+    since the bug is in the controller's own short-circuit gate, not in the handler.
+    """
+    draws = _DrawsOneChart()
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, draws)
+    response = await ask_question(
+        _charted_request("Ordena mis gastos por categoría y dime el total"),
+        _WHO,
+        queries=bus,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        attempt="x",
+        reads=FixedInterpreter(Intent.FINANCIAL_QUERY),
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+    assert len(draws.calls) == 1
+    assert response.outcome not in ("VISUAL_UPDATED", "VISUAL_AMBIGUOUS")
+
+
 async def test_the_controllers_visual_response_is_unchanged_by_recording(monkeypatch) -> None:
     """No visible change, on the controller's own short-circuit: the caller gets exactly the same
     response whether or not a recording turn happens to be open around it."""
@@ -800,6 +832,11 @@ async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(
     else:
         assert response.conversation.visual_contexts[0].token is None
     assert fake_queries.ran == []
+    # D-H-1: the drill lexicon resolves a target the way a restyle would; the interpreter's own
+    # mixed-turn refusal (`presentation+reshape`) never does -- `VisualIntent(None, None, ...,
+    # mixed=True)` carries no target at all, so there is nothing to name here either.
+    expected_chart_id = None if claimant == "presentation+reshape" else "chart-1"
+    assert response.about_chart_id == expected_chart_id
     (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
     assert (decision.now, decision.detail) == ("AMBIGUOUS", claimant)
 
@@ -834,6 +871,7 @@ async def test_the_streaming_routes_ambiguous_short_circuit_asks_too() -> None:
     assert payload["outcome"] == "VISUAL_AMBIGUOUS"
     assert payload["text"] == llm_controller._ASK["presentation+drill"]
     assert fake_queries.ran == []
+    assert payload["about_chart_id"] == "chart-1"  # D-H-1
     (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
     assert (decision.now, decision.detail) == ("AMBIGUOUS", "presentation+drill")
 
@@ -1500,6 +1538,7 @@ async def test_the_question_route_explains_the_newest_chart(
     assert response.spoken is None
     assert response.visualization is None
     assert response.visualization_derivation is None
+    assert response.about_chart_id == newest.chart_id  # D-H-1
 
 
 @pytest.mark.parametrize("channel", ["TEXT", "VOICE"])
@@ -1541,6 +1580,7 @@ async def test_the_streaming_route_explains_the_newest_chart_in_one_frame(
     assert frames[0]["text"] == explain_chart(newest).as_text()
     assert fake_queries.ran == []
     assert calls == []
+    assert frames[0]["about_chart_id"] == newest.chart_id  # D-H-1
 
 
 async def test_por_que_el_primer_grafico_explains_the_first_of_two() -> None:
@@ -1565,6 +1605,7 @@ async def test_por_que_el_primer_grafico_explains_the_first_of_two() -> None:
     assert response.text == explain_chart(first_sealed).as_text()
     assert "enero" in response.text
     assert fake_queries.ran == []
+    assert response.about_chart_id == first_sealed.chart_id  # D-H-1: the first, not the newest
 
 
 async def test_a_forged_newest_context_answers_untrusted_not_explained() -> None:
@@ -1590,6 +1631,7 @@ async def test_a_forged_newest_context_answers_untrusted_not_explained() -> None
 
     assert response.outcome == "VISUAL_UNTRUSTED"
     assert fake_queries.ran == []
+    assert response.about_chart_id == context.chart_id  # D-H-1: named even though untrusted
 
 
 async def test_a_target_that_resolves_to_nothing_answers_needs_target() -> None:
@@ -1615,6 +1657,7 @@ async def test_a_target_that_resolves_to_nothing_answers_needs_target() -> None:
     # the way it does, never asked to change one, so the text must not claim otherwise (the
     # restyle path below keeps "quieres cambiar", which IS a change request).
     assert response.text == "Indica de qué gráfico hablas."
+    assert response.about_chart_id is None  # D-H-1: no chart resolved -- that is the question
 
 
 def test_no_chart_at_all_falls_through_unchanged() -> None:

@@ -611,6 +611,7 @@ def test_a_patch_that_the_verifier_refuses_keeps_the_previous_chart_and_names_th
     assert "verified whole" not in response.text
     assert response.conversation is not None
     assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
+    assert response.about_chart_id == "chart-1"  # D-H-1: the refusal is about this chart
     (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
     assert decision.verdict is Verdict.DECLINED
     assert decision.detail == "invalid_proposal:donut_claims"
@@ -639,6 +640,7 @@ def test_a_merge_level_refusal_is_recorded_too() -> None:
     assert "positive, exclusive parts" not in response.text
     assert response.conversation is not None
     assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
+    assert response.about_chart_id == "chart-1"  # D-H-1: the refusal is about this chart
     (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
     assert decision.verdict is Verdict.DECLINED
     assert decision.detail == "invalid_proposal:merge"
@@ -695,6 +697,7 @@ def test_turning_a_bar_already_that_way_answers_visual_unchanged() -> None:
     response = _visual_only_response(intent, conversation)
     assert response.outcome == "VISUAL_UNCHANGED"
     assert response.visualization_derivation is None
+    assert response.about_chart_id == "chart-1"  # D-H-1: the chart this answer is about
 
 
 def test_a_grouped_comparison_bar_turns_and_its_offset_swaps_too() -> None:
@@ -1000,6 +1003,7 @@ def test_an_untrusted_context_is_refused_before_any_merge_or_ledger_call() -> No
     assert response.outcome == "VISUAL_UNTRUSTED"
     assert response.text == "No reconozco ese gráfico; pide uno nuevo y podré cambiarlo."
     assert response.conversation == to_payload(conversation)
+    assert response.about_chart_id == "chart-1"  # D-H-1: the untrusted target, named anyway
     assert turn.sealed().decisions == ()
 
 

@@ -1002,6 +1002,13 @@ class QuestionResponse(_Payload):
     # screen. Derived from the sealed context alone (`explain_chart`), never from a model, and
     # absent exactly when this turn's answer draws no chart.
     explanation: VisualExplanationResponse | None = None
+    # D-H-1 (from T5, gateway G-6): the chart an answer speaks about without drawing one -- read,
+    # never authoritative. `VISUAL_EXPLAINED` and the refusal outcomes (`VISUAL_UNTRUSTED`/
+    # `VISUAL_INCOMPATIBLE`/`VISUAL_NEEDS_TARGET`/`VISUAL_AMBIGUOUS`/`VISUAL_UNCHANGED`) carry no
+    # field naming the chart they are about, so the gateway's `chart_identity` has nothing to stamp
+    # those turns with. `None` when no chart was resolved (`VISUAL_NEEDS_TARGET`'s own "which
+    # chart?" case) or the outcome is not one of these.
+    about_chart_id: str | None = None
     # Replies the service can actually understand on the next turn. They are data rather than
     # prose so a client can render buttons without scraping the answer text.
     suggestions: list[str] = []

@@ -336,7 +336,9 @@ _REFUSAL_TEXT: dict[RejectionRule, str] = {
 }
 
 
-def _refusal_response(rejection: Rejection, conversation: Conversation) -> QuestionResponse:
+def _refusal_response(
+    rejection: Rejection, conversation: Conversation, *, chart_id: str | None = None
+) -> QuestionResponse:
     """The one refusal sentence, in the holder's language, whichever path named the rule.
 
     A-3 (Wave 3 hardening): `rule == "limit"` covers two different claims -- "this chart cannot
@@ -344,6 +346,10 @@ def _refusal_response(rejection: Rejection, conversation: Conversation) -> Quest
     only speaks the first. `_COMPARISON_LIMIT_REASON` is the verifier's own name for the second;
     matched against `rejection.reason` (never re-derived from the spec here) so this dict stays
     the single source for every other rule's clause.
+
+    D-H-1 (from T5, gateway G-6): `chart_id` is the target this refusal is about -- always
+    resolved by the time either caller reaches this function -- so the gateway can stamp identity
+    onto a turn that drew no chart of its own.
     """
     clause = (
         "una comparación necesita sus dos periodos"
@@ -354,6 +360,7 @@ def _refusal_response(rejection: Rejection, conversation: Conversation) -> Quest
         outcome="VISUAL_INCOMPATIBLE",
         text=f"No puedo aplicar ese cambio a este gráfico: {clause}; el anterior se mantiene.",
         conversation=conversation_mapper.to_payload(conversation),
+        about_chart_id=chart_id,
     )
 
 
@@ -404,18 +411,21 @@ def _explanation_response(why: WhyAsked, conversation: Conversation) -> Question
             outcome="VISUAL_NEEDS_TARGET",
             text="Indica de qué gráfico hablas.",
             conversation=conversation_mapper.to_payload(conversation),
+            about_chart_id=target,  # `target` is None here -- the one shape that misses
         )
     if not context.trusted:
         return QuestionResponse(
             outcome="VISUAL_UNTRUSTED",
             text=_untrusted_text(context),
             conversation=conversation_mapper.to_payload(conversation),
+            about_chart_id=target,
         )
     return QuestionResponse(
         outcome="VISUAL_EXPLAINED",
         text=explain_chart(context).as_text(),
         explanation=llm_mapper.explanation_of(context),
         conversation=conversation_mapper.to_payload(conversation),
+        about_chart_id=target,
     )
 
 
@@ -433,6 +443,7 @@ def _visual_only_response(
             outcome="VISUAL_INCOMPATIBLE",
             text=intent.explanation,
             conversation=conversation_mapper.to_payload(conversation),
+            about_chart_id=intent.target,
         )
     context = conversation.visual_context(intent.target)
     if context is None or intent.patch is None:
@@ -440,6 +451,7 @@ def _visual_only_response(
             outcome="VISUAL_NEEDS_TARGET",
             text="Indica qué gráfico quieres cambiar.",
             conversation=conversation_mapper.to_payload(conversation),
+            about_chart_id=None,  # D-H-1: no chart was resolved -- that is the question itself
         )
     # Task 3: refuse, never repair. An echoed context whose seal did not check out
     # (`conversation_mapper.to_domain`'s own `verify`) is drawn and can still be navigated, but it
@@ -450,6 +462,7 @@ def _visual_only_response(
             outcome="VISUAL_UNTRUSTED",
             text=_untrusted_text(context),
             conversation=conversation_mapper.to_payload(conversation),
+            about_chart_id=context.chart_id,
         )
     # `_saved_visual_source` only ever offers a definition that has a chart; this states it rather
     # than assuming it, so a chart-less metric falls back to the conversation's own context. A
@@ -472,7 +485,7 @@ def _visual_only_response(
         # never into the text the holder reads.
         merge_rejection = Rejection("merge", str(exc))
         record_visual_decision_refused(trusted_context, merge_rejection)
-        return _refusal_response(merge_rejection, conversation)
+        return _refusal_response(merge_rejection, conversation, chart_id=context.chart_id)
     # The domain verifies the merged chart exactly as it would a model's proposal (`draft_of`
     # names what the merged spec names). It refuses, it never repairs: a refusal here leaves the
     # previous chart untouched and names which rule it broke, and nothing below repairs it either.
@@ -485,7 +498,7 @@ def _visual_only_response(
     refusal = verify(draft_of(updated.spec), trusted_context.profile)
     if isinstance(refusal, Rejection):
         record_visual_decision_refused(trusted_context, refusal)
-        return _refusal_response(refusal, conversation)
+        return _refusal_response(refusal, conversation, chart_id=context.chart_id)
     # F2 (fix wave 2): a verified patch is not automatically a *different* chart. `canonical()`
     # is the same equality `changed_from_baseline` already trusts, so a restyle whose merged spec
     # draws identically to what is already on screen answers here, before anything is minted --
@@ -504,6 +517,7 @@ def _visual_only_response(
             outcome="VISUAL_UNCHANGED",
             text="El gráfico ya está así; lo dejo como está.",
             conversation=conversation_mapper.to_payload(conversation),
+            about_chart_id=context.chart_id,
         )
     rendered_spec = present_spec(updated.spec)
     decision = VisualDecision(
@@ -1789,6 +1803,7 @@ async def ask(
                 outcome="VISUAL_AMBIGUOUS",
                 text=_ASK[follow_up.claimant],
                 conversation=conversation_mapper.to_payload(was),
+                about_chart_id=visual.target,
             )
         source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
         # D-3b-6 (fix wave): unconditional -- `_visual_only_response`'s own save-candidate branch
@@ -1974,6 +1989,7 @@ async def ask_streaming(
                 outcome="VISUAL_AMBIGUOUS",
                 text=_ASK[follow_up.claimant],
                 conversation=conversation_mapper.to_payload(was),
+                about_chart_id=visual.target,
             )
         else:
             source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
