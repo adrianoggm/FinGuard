@@ -29,7 +29,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import (
-    _COMPARISON_LIMIT_REASON,
+    COMPARISON_LIMIT_REASON,
     verify,
 )
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
@@ -546,7 +546,7 @@ def test_limit_refuses_an_ungrouped_comparison_even_though_it_reads_as_ranked_ba
     result = verify(ranked_bar(limit=1), profile)
     assert rule_of(result) == "limit"
     assert isinstance(result, Rejection)
-    assert result.reason == _COMPARISON_LIMIT_REASON
+    assert result.reason == COMPARISON_LIMIT_REASON
 
 
 def test_a_grouped_comparison_needs_offset_and_disabled_stack() -> None:

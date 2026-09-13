@@ -148,7 +148,16 @@ class VisualPlanningPolicy:
             floor = self._fallback.plan(profile, presentation)
             if floor is None:
                 return None
-        if floor is None and proposed_spec is not None:
+        if floor is None and proposed_spec is not None and self._mode == "promoted":
+            # D-H-4 (fix wave, minor): `self._mode == "promoted"` made explicit rather than left
+            # to be true by construction -- `floor` reaches this line still `None` only when the
+            # early guard above (`if self._mode != "promoted":`) did not run, and that guard is
+            # the only place `floor` is ever left unset, so this condition used to be correct by
+            # control-flow tracing rather than by anything this branch itself said. Stated here,
+            # it also stops meaning something different the day a fifth mode is added: a future
+            # mode that also leaves `floor` unset for a different reason would silently recompute
+            # it here otherwise, rather than leaving `changed_from_baseline` honestly `None`.
+            #
             # A-5 (Wave 3 hardening): `promoted`'s own accepted-proposal branch used to skip the
             # floor entirely (R2), which is exactly why `changed_from_baseline` could never be
             # measured in the one mode it exists to justify. Computed here too now, but only for
