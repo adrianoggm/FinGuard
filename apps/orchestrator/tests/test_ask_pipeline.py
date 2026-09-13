@@ -702,6 +702,11 @@ async def test_a_bare_word_that_is_no_shop_leaves_the_question_alone() -> None:
     asserted: "gracais", "déjalo", "nada" and twelve more became shop filters, and two outlived
     their turn, so "¿cuánto gasté el mes pasado?" ran a turn later filtered by "nada".
 
+    "Menos mal" rather than the corpus's own "ah vale" or "nada": B-2(a)'s closed stop-list (below)
+    now catches those before the guess, so this test needs a bare word neither half of which is on
+    that list — "menos" is, "mal" is not — to still exercise the guess-then-retract mechanism this
+    test is actually about.
+
     Nothing here reads the word. The ledger says whether it is a shop, on a query the empty answer
     was already spending."""
     ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
@@ -709,7 +714,7 @@ async def test_a_bare_word_that_is_no_shop_leaves_the_question_alone() -> None:
 
     result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
         AskFinancialQuestionQuery(
-            sentence="ah vale",
+            sentence="menos mal",
             account_id=ACCOUNT,
             today=TODAY,
             conversation=Conversation(last_plan=previous),
@@ -717,9 +722,33 @@ async def test_a_bare_word_that_is_no_shop_leaves_the_question_alone() -> None:
     )
 
     assert result.outcome == PlanningOutcome.PLANNED.value
-    assert ledger.plans[0].merchants == ("ah vale",), "it still guesses first"
+    assert ledger.plans[0].merchants == ("menos mal",), "it still guesses first"
     assert ledger.plans[-1].merchants == (), "and retracts to the question the user was asking"
     assert ledger.plans[-1].categories == ("GROCERIES",), "which keeps everything else it had"
+
+
+async def test_a_closed_stop_list_word_is_asked_about_never_guessed_as_a_merchant() -> None:
+    """B-2(a) (Wave 3 hardening, R-H1): a bare word this service already knows is a discard, a
+    correction or a pleasantry never becomes a merchant filter — it is the honest ask, and it costs
+    no ledger call at all, unlike the guess-then-retract above.
+
+    The audit's own named example: "¿cuánto gasté el mes pasado?" used to run a second time with
+    `merchants: ['nada']`. It must not run at all."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
+    previous = plan(categories=("GROCERIES",))
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="nada",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "nada" in (result.text or "")
+    assert ledger.plans == []
 
 
 async def test_a_financial_aside_suspends_a_half_built_payment_instead_of_erasing_it() -> None:

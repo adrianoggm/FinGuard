@@ -1165,6 +1165,27 @@ class AskFinancialQuestionHandler:
             return
 
         narrowing = _a_bare_shop_name(query, was) if intent is Intent.FINANCIAL_QUERY else None
+        if isinstance(narrowing, _NeverAMerchant):
+            # B-2(a): a word the closed stop-list already knows is never a shop's name. The honest
+            # ask, never a merchant filter -- zero ledger calls, the conversation unchanged.
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=(
+                    f"No sé a qué te refieres con «{narrowing.said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                question=(
+                    f"No sé a qué te refieres con «{narrowing.said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                plan=(
+                    answer_writer.describe(was.last_plan)
+                    if isinstance(was.last_plan, FinancialPlan)
+                    else None
+                ),
+                conversation=was,
+            )
+            return
         if narrowing is not None:
             shop, previous = narrowing
             # A whole turn that is one name, with a question behind it. "Spotify", typed after
@@ -5045,9 +5066,17 @@ _THE_WHOLE_LOT: Final = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class _NeverAMerchant:
+    """The bare word this turn typed, when B-2(a)'s closed stop-list already knows it is not a
+    shop's name -- `_a_bare_shop_name`'s own sentinel for "ask, do not guess"."""
+
+    said: str
+
+
 def _a_bare_shop_name(
     query: AskFinancialQuestionQuery, was: Conversation
-) -> tuple[str, FinancialPlan] | None:
+) -> tuple[str, FinancialPlan] | _NeverAMerchant | None:
     """A turn that is nothing but a name, answered by narrowing the last question to it.
 
     Only reached once the router *and* the balance ellipsis have had their say, which is the guard
@@ -5088,7 +5117,13 @@ def _a_bare_shop_name(
         # A word another vocabulary already owns. "Gasolina" is a category, "la hucha" an account
         # and "enero" a window, and each of them has a path that answers it properly.
         return None
-    return query.sentence.strip(" ¿?¡!.,;:"), plan
+    stripped = query.sentence.strip(" ¿?¡!.,;:")
+    if merchant_words.never_a_merchant(query.sentence):
+        # B-2(a) (Wave 3 hardening, R-H1): the closed stop-list -- words this service already
+        # knows are a discard, a correction or a pleasantry, never a shop. "Nada" stops being a
+        # merchant filter here rather than one query later, at zero cost instead of three.
+        return _NeverAMerchant(stripped)
+    return stripped, plan
 
 
 def _narrows_the_balance(
