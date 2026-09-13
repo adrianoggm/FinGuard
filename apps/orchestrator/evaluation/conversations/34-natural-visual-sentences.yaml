@@ -10,10 +10,14 @@
 # the audit's own table measured, kept inside one conversation rather than thirty-four.
 #
 # Every expectation here is honest: a right answer, an ask, or a refusal — never the wrong
-# confident total the audit found pinned nowhere before this file. Two sentences (rows 1 and 2 of
-# the table, B-9) are still answered with an unrelated total after items 1-4 of this task and all
-# of Task 4 — probed, not guessed — and are left OPEN below rather than pinned as passing; see the
-# report.
+# confident total the audit found pinned nowhere before this file.
+#
+# Task 8b (the ratchet-claiming round) closed five of the rows this file used to leave OPEN: rows
+# 1-2 (B-9, size/shape words and "tarta"), row 7 ("vuelve al anterior", now an honest ask over two
+# charts), row 19 ("¿por qué tanto?", now the drill's own honest ask over a NONE-grouped chart) and
+# row 32 ("guarda este gráfico", answered from the chart). Row 28 ("ponme solo restaurantes") moves
+# from a model-answered right guess to a deterministically claimed one. See task-8b-report.md for
+# the before/after table.
 
 episodes:
   - name: the_thirty_four_sentences_the_service_used_to_hand_over
@@ -22,17 +26,27 @@ episodes:
       closed-stop-list words now the honest ask at zero calls) and B-7 gave every restyle its chips
       back (rows 3-5, 8, 11, 30 all now carry `suggestions`, where the audit found none). The rest
       were already right by Task 3's own fixes (B-1 exclusions, B-3 lineage, B-4 seasons, B-6
-      why/drill, B-8 limits) or were already right in the audit itself. Two rows (1, 2 — «hazlo más
-      grande», «ponlo en tarta») are unrelated presentation words B-9 named and this task's scope
-      never touched: probed again here, they still answer a total for a sentence that named no
-      figure. «Vuelve al anterior» (row 7) is three words, one past `_a_bare_shop_name`'s own
-      two-word ceiling, so B-2(a)'s stop-list never reaches it — still a confident, unrelated total.
-      «Guarda este gráfico» (row 32, B-7's own save request) is still answered with a total too;
-      chips were this task's B-7, not a save handler. «¿Por qué tanto?» (row 19) still reaches the
-      model with the same total: probed and confirmed a harness artefact, not a live defect —
-      turn 1's own plan is `group_by: NONE` even though its injected rows draw three categories, so
-      the drill's own grouping gate never sees a groupable plan to widen. All four are marked OPEN
-      below, never pinned as right.
+      why/drill, B-8 limits) or were already right in the audit itself.
+
+      Task 8b (the ratchet-claiming round) closed five more. Rows 1-2 («hazlo más grande», «ponlo
+      en tarta», B-9): the visual interpreter now reads a bare size/shape word — «más grande»,
+      «más pequeño», «agrándalo», «amplía», «zoom» refuse honestly (`VISUAL_INCOMPATIBLE`, "el
+      tamaño lo decide la pantalla…"), and «tarta»/«pastel»/«quesito» join «circular»/«donut»/
+      «anillo» as a real donut restyle. Row 7 («vuelve al anterior»): three words past
+      `_a_bare_shop_name`'s own two-word ceiling, so B-2(a)'s stop-list never reached it — the
+      interpreter itself now asks (`VISUAL_AMBIGUOUS`, two chips) when the phrase names no style
+      word of its own, over two or more charts; with only one chart in view (as at the audit's own
+      row) there is nothing to go back to, so the probe here first draws a second chart to test the
+      real ambiguity. Row 19 («¿por qué tanto?»): the harness artefact stands (turn 1's own plan is
+      `group_by: NONE`), and it is exactly what the fix targets — a NONE-grouped chart has no bar
+      to drill, so the drill reader now asks which breakdown is meant («¿Tanto en qué? Puedo
+      desglosarlo por categoría o por mes.») instead of falling through to the model. Row 32
+      («guarda este gráfico», B-7's own save request): answered from the chart already on screen,
+      zero ledger calls, `VISUAL_UNCHANGED` with the save affordance in its text (or an honest
+      refusal when metrics are off). Row 28 («ponme solo restaurantes») was already the right
+      category by luck of the stub, but model-answered and so unmeasured in production; the
+      analyser's reshape reader now claims the same imperative phrasing `_CATEGORY_FILTER_FOLLOW_UP`
+      already reads for «solo restaurantes», so it narrows deterministically instead.
     metrics: [wrong_tool]
     turns:
       # Row 31 — «pon el primer grafico en vertical». RIGHT (unchanged): named by number, so it
@@ -67,10 +81,9 @@ episodes:
         derived_from: true
         chips: ["Ordena de menor a mayor", "Ponlo en horizontal"]
 
-      # Row 1 — «hazlo mas grande». OPEN (B-9): not a stop-list word, not a presentation word this
-      # service's vocabulary owns either — it reaches the model and answers 465,56 €, a real total
-      # for a sentence that asked for a bigger chart. `route`/`banking_calls` are the measured
-      # facts, not a claim that this is correct.
+      # Row 1 — «hazlo mas grande». RIGHT, fixed by this task's own item 1 (B-9): a bare size word
+      # is now the honest refusal (`VISUAL_INCOMPATIBLE`, zero calls) rather than an unrelated
+      # total for a sentence that named no figure.
       - say: ¿Cuánto gasté el último trimestre?
         groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         route: QUERY
@@ -79,11 +92,14 @@ episodes:
         ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
         chart: {mark: bar}
       - say: hazlo mas grande
-        route: QUERY
-        banking_calls: 1
-        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        says: "el tamaño lo decide la pantalla"
+        no_chips: true
 
-      # Row 2 — «ponlo en tarta». OPEN (B-9): same defect, a different unsupported word.
+      # Row 2 — «ponlo en tarta». RIGHT, fixed by this task's own item 1 (B-9): «tarta» joins
+      # «circular»/«donut»/«anillo» as a real donut restyle instead of falling through unclaimed.
       - say: ¿Cuánto gasté el último trimestre?
         groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         route: QUERY
@@ -91,9 +107,11 @@ episodes:
         no_model: true
         ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ponlo en tarta
-        route: QUERY
-        banking_calls: 1
-        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        chart: {mark: donut}
 
       # Row 3 — «ordenalo de mayor a menor porfa». RIGHT: the chart is already in this order, and
       # the honest «ya está así» now carries the chart's own chips (B-7) instead of none.
@@ -153,19 +171,29 @@ episodes:
         says: "deshaz"
         no_chips: true
 
-      # Row 7 — «vuelve al anterior». OPEN: three words, past `_a_bare_shop_name`'s own two-word
-      # ceiling, so B-2(a)'s stop-list is never consulted for it — it still reaches the model and
-      # answers an unrelated total. Not B-2(a)'s scope (a closed list of words, not sentences).
+      # Row 7 — «vuelve al anterior». RIGHT, fixed by this task's own item 3: three words past
+      # `_a_bare_shop_name`'s own two-word ceiling (B-2a's stop-list never reaches it), but
+      # genuinely ambiguous on its own — "show the previous chart" or "undo the last change" — so
+      # the interpreter now asks rather than guesses, with two chips it already claims itself.
+      # A second chart is drawn first (a real restyle) so the probe tests the two-or-more-charts
+      # case the audit's own single-chart row could not: with only one chart there is nothing to
+      # go back to, and that case is left exactly as it was (falls through unclaimed).
       - say: ¿Cuánto gasté el último trimestre?
         groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         route: QUERY
         banking_calls: 1
         no_model: true
         ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ponlo en vertical
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
       - say: vuelve al anterior
-        route: QUERY
-        banking_calls: 1
-        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        chips: ["Pon el gráfico anterior en barras", "Deshacer el último cambio"]
 
       # Row 8 — «pon el de antes en vertical». RIGHT, and now with chips (B-7).
       - say: ¿Cuánto gasté el último trimestre?
@@ -303,10 +331,10 @@ episodes:
         says: "en euros"
         no_chips: true
 
-      # Row 18 — «¿cual es el mayor?». UNVERIFIABLE, unchanged: the fixture's stub planner answers
-      # about "gasolina", a category not on this chart at all — the audit's own point (row 18) is
-      # that no instrument here can tell a right ranking from a wrong one on a model-answered turn,
-      # so only the routing is asserted, never the category.
+      # Row 18 — «¿cual es el mayor?». RIGHT, fixed by this task's own item 5: the same NONE-grouped
+      # chart, no bar to resolve against, so the drill lexicon now widens to this bare superlative
+      # too (`\bcual es (?:el|la) mayor\b`) and the answer is the same honest ask row 19 gets,
+      # never a model-answered ranking about a category ("gasolina") that is not even on the chart.
       - say: ¿Cuánto gasté el último trimestre?
         groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         route: QUERY
@@ -314,13 +342,17 @@ episodes:
         no_model: true
         ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿cual es el mayor?
-        route: QUERY
-        ran: {rank: 1, window: 'LAST_N_MONTHS:3', categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+        route: CLARIFY
+        banking_calls: 0
+        no_model: true
+        says: "¿Tanto en qué?"
+        chips: ["Desglósalo por categoría", "Desglósalo por mes"]
 
-      # Row 19 — «¿por que tanto?». OPEN, and a harness artefact rather than a fresh live defect
-      # (documented, not guessed): turn 1's own `FinancialPlan` carries `group_by: NONE` even
-      # though its injected rows draw three real categories, so the drill's own grouping gate never
-      # sees a plan it could widen and this reaches the model instead, answering the same total.
+      # Row 19 — «¿por que tanto?». RIGHT, fixed by this task's own item 5: turn 1's own
+      # `FinancialPlan` carries `group_by: NONE` (a harness artefact — its injected rows draw
+      # three real categories the plan itself never grouped by), so there is no bar for the drill
+      # to resolve. Rather than falling through to the model with the same total, the drill reader
+      # now asks which breakdown is meant, with chips, at zero ledger calls.
       - say: ¿Cuánto gasté el último trimestre?
         groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         route: QUERY
@@ -328,9 +360,11 @@ episodes:
         no_model: true
         ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿por que tanto?
-        route: QUERY
-        banking_calls: 1
-        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        route: CLARIFY
+        banking_calls: 0
+        no_model: true
+        says: "¿Tanto en qué?"
+        chips: ["Desglósalo por categoría", "Desglósalo por mes"]
 
       # Row 20 — «¿por que este grafico?». RIGHT (§11 bullet 1's own case, unchanged): resolved
       # deterministically against the chart in view, no ledger call, the exact `chart_reason`.
@@ -378,8 +412,11 @@ episodes:
         says: "junio, julio y agosto de 2026"
         chips: ["De junio a agosto de 2026"]
 
-      # Row 28 — «ponme solo restaurantes». RIGHT by plan (unchanged): the stub planner reads the
-      # category correctly, though the turn is model-answered and so unmeasured in production.
+      # Row 28 — «ponme solo restaurantes». RIGHT, fixed by this task's own item 4: the analyser's
+      # reshape reader (`_CATEGORY_FILTER_FOLLOW_UP`) now claims the imperative phrasing the same
+      # way it already claimed the bare fragment «solo restaurantes» — a deterministic narrow of
+      # the plan in view, one ledger call, no model (it used to be model-answered, right by luck of
+      # the stub, and so unmeasured in production).
       - say: ¿Cuánto gasté el último trimestre?
         groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         route: QUERY
@@ -389,6 +426,7 @@ episodes:
       - say: ponme solo restaurantes
         route: QUERY
         banking_calls: 1
+        no_model: true
         says: "restaurantes"
         ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [RESTAURANTS], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
 
@@ -420,8 +458,9 @@ episodes:
         no_model: true
         chips: ["Ordena de menor a mayor", "Ponlo en vertical"]
 
-      # Row 32 — «guarda este grafico». OPEN (B-7's own save request, out of this task's scope):
-      # a save request is still answered with an unrelated total, not the save-candidate flow.
+      # Row 32 — «guarda este grafico». RIGHT, fixed by this task's own item 2 (B-7's own save
+      # request): answered from the chart already on screen, zero ledger calls -- `VISUAL_UNCHANGED`
+      # with the save affordance in its text, never an unrelated total.
       - say: ¿Cuánto gasté el último trimestre?
         groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         route: QUERY
@@ -429,14 +468,21 @@ episodes:
         no_model: true
         ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: guarda este grafico
-        route: QUERY
-        banking_calls: 1
-        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        says: "guardar"
 
-      # Row 33 — «sepáralo en transporte público y gasolina». PARTIAL, unchanged since the audit:
-      # the model reads both categories right (`says:` below), but the stub never sets
-      # `group_by: CATEGORY` the way the deterministic reader does, so no chart derives from this
-      # turn — a weaker lineage than row 34's verbatim wording draws, not a wrong answer.
+      # Row 33 — «sepáralo en transporte público y gasolina» ("the eighth handed-over row").
+      # RIGHT, fixed by this task's own item 5: `_SPLIT_BY_NAMES` already claimed the verbatim
+      # "Separa transporte público y gasolina" (row 34, five words); this phrasing's clitic
+      # ("-lo") and preposition ("en") made it six, which the ellipsis-length gate caught first,
+      # before the split-by-names branch ever ran — declining a sentence the vocabulary already
+      # reads precisely. Moved ahead of that gate (the same position the single-category branch
+      # right above it already has), so this is now claimed deterministically too: zero model
+      # calls, the same `group_by: CATEGORY` row 34 draws (no chart derives from a NONE-grouped
+      # single total either way, row 34's own lead-in included -- the same fact row 28's `why`
+      # already names).
       - say: ¿Cuánto gasté el último trimestre?
         groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
         route: QUERY
@@ -446,8 +492,9 @@ episodes:
       - say: sepáralo en transporte público y gasolina
         route: QUERY
         banking_calls: 1
+        no_model: true
         says: "transporte público y gasolina"
-        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
 
       # Row 34 — «Separa transporte público y gasolina.», §9's own split, verbatim. RIGHT
       # (unchanged): deterministic, and the chart it draws derives from the one it split.
