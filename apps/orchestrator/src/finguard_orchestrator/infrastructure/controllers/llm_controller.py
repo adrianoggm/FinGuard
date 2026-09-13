@@ -388,6 +388,40 @@ def _untrusted_text(context: VisualContext) -> str:
     return _UNTRUSTED_TEXT[context.trust_reason]
 
 
+def _no_chart_why_response(conversation: Conversation) -> QuestionResponse:
+    """F-3 (fix wave, Important 6): «¿por qué este gráfico?» with no chart anywhere in the
+    conversation used to fall through to the planner (`asks_why`'s own gate on
+    `conversation.visual_contexts`) and come back a confident total for a question about a chart
+    that was never drawn -- the exact wrong-but-confident shape this whole wave exists to close.
+    Zero ledger calls, zero model calls, an honest answer instead."""
+    return QuestionResponse(
+        outcome="VISUAL_NEEDS_TARGET",
+        text="No hay ningún gráfico en pantalla todavía; pregúntame algo y lo dibujo.",
+        conversation=conversation_mapper.to_payload(conversation),
+        about_chart_id=None,
+    )
+
+
+def _no_chart_restyle_response(
+    visual: VisualIntent, sentence: str, conversation: Conversation
+) -> QuestionResponse:
+    """F-3 (fix wave, Important 6): a bare style/mark/size/limit instruction with nothing on
+    screen at all -- a KPI answer, or nothing yet -- used to fall through to the planner too,
+    inventing a window for a total nobody asked for. `interpret_visual` abstains (returns `None`)
+    for `show_every_row` ("todos"/"sin límite") in this same no-context shape, because that one
+    may be answering a pending clarification the handler owns (C-3) -- so `visual` here is always
+    a genuine restyle instruction, never that word.
+    """
+    follow_up = classify_claimed_visual(visual, sentence)
+    record_visual_follow_up(follow_up)
+    return QuestionResponse(
+        outcome="VISUAL_INCOMPATIBLE",
+        text="Ese dato no tiene gráfico que cambiar.",
+        conversation=conversation_mapper.to_payload(conversation),
+        about_chart_id=None,
+    )
+
+
 def _explanation_response(why: WhyAsked, conversation: Conversation) -> QuestionResponse:
     """R4/R5/R6: «¿Por qué este gráfico?» answered from the chart itself -- zero ledger calls, zero
     model calls, the conversation unchanged. `context` is resolved exactly as a restyle resolves
@@ -1829,18 +1863,21 @@ async def ask(
     # silently resolving onto whichever context happens to still be trusted.
     # R5: claimed before `interpret_visual` -- «¿por qué este gráfico?» is a question about the
     # chart, not a request to change it, and the two grammars do not overlap (`asks_why` excludes
-    # every `_FINANCIAL`/`_VISUAL` sentence `interpret_visual` would otherwise read). Gated on
-    # there being a chart at all: with nothing charted the recogniser has nothing to explain and
-    # this falls through unchanged, to whatever answered the sentence before this recogniser
-    # existed -- not an oversight, R5's own rule for an empty conversation.
+    # every `_FINANCIAL`/`_VISUAL` sentence `interpret_visual` would otherwise read).
     why = asks_why(request.question)
-    if why is not None and was.visual_contexts:
-        # `classify_claimed_visual`/`record_visual_follow_up`: no `VisualFollowUpKind` fits an
-        # explanation (`PRESENTATION_ONLY`, `ANALYTICAL_RESHAPE`, `DRILL_DOWN`, `UNRELATED`,
-        # `AMBIGUOUS`) -- it neither changes the chart nor asks about one part of it -- and adding
-        # one is a domain vocabulary change Task 5/6 would have to chase through every ratchet.
-        # Nothing is recorded here; the outcome itself (`VISUAL_EXPLAINED`) is the record.
-        return _explanation_response(why, was)
+    if why is not None:
+        if was.visual_contexts:
+            # `classify_claimed_visual`/`record_visual_follow_up`: no `VisualFollowUpKind` fits an
+            # explanation (`PRESENTATION_ONLY`, `ANALYTICAL_RESHAPE`, `DRILL_DOWN`, `UNRELATED`,
+            # `AMBIGUOUS`) -- it neither changes the chart nor asks about one part of it -- and
+            # adding one is a domain vocabulary change Task 5/6 would have to chase through every
+            # ratchet. Nothing is recorded here; the outcome itself (`VISUAL_EXPLAINED`) is it.
+            return _explanation_response(why, was)
+        # F-3 (fix wave, Important 6): nothing charted at all used to fall through unchanged, to
+        # whatever answered the sentence before this recogniser existed -- the planner, which
+        # invented a confident total for a question about a chart nobody drew. Answered honestly
+        # instead, at zero calls.
+        return _no_chart_why_response(was)
 
     # Item 2 (Wave 3 hardening, T8b): "guarda este gráfico" is a question about the chart, exactly
     # like `why` above, not a financial one -- gated the same way, on there being a chart at all.
@@ -1880,14 +1917,20 @@ async def ask(
     # C-1/C-6/C-3 (Wave 3 hardening): moved below the two payment branches above -- a preview or an
     # open payment owns its own reply, whatever words it contains, and a restyle answering it left
     # the preview open with nothing the holder said ever reaching `_as_confirmation`/the paused-
-    # payment readers. Gated on `was.visual_contexts` the same way `asks_why` already is (`if
-    # visual is not None and was.visual_contexts:` -- not just `if visual is not None:`):
-    # `interpret_visual` can return a non-`None` intent with no chart at all (the mixed-turn
-    # refusal fires on financial + style words alone, and `_VISUAL_ALL`/`show_every_row` fires on
-    # a bare "todos"), and both used to be answered `VISUAL_AMBIGUOUS`/`VISUAL_INCOMPATIBLE` -- a
-    # question about, or a refusal of, a chart the holder never mentioned -- instead of falling
-    # through to the planner or the clarification the sentence was actually answering.
+    # payment readers. `interpret_visual` can return a non-`None` intent with no chart at all --
+    # the mixed-turn refusal (a data change and a format change asked together, `visual.mixed`)
+    # fires on financial + style words alone regardless of context, and both it and a genuine
+    # style-only instruction used to be answered `VISUAL_AMBIGUOUS`/`VISUAL_INCOMPATIBLE` for a
+    # chart the holder never mentioned -- instead of falling through to the planner or the
+    # clarification the sentence was actually answering. F-3 (fix wave, Important 6) narrows that
+    # to the mixed case only: `visual.mixed` still falls through (C-1's own "Compara junio y mayo
+    # en barras" carries a real financial question beside the style word), and `show_every_row`
+    # ("todos"/"sin límite") abstains inside `interpret_visual` itself now (C-3, still falls
+    # through) -- so a genuine no-context restyle (`was.visual_contexts` empty, not `mixed`) is
+    # answered honestly rather than reaching the planner and inventing a window.
     visual = interpret_visual(request.question, was.visual_contexts)
+    if visual is not None and not was.visual_contexts and not visual.mixed:
+        return _no_chart_restyle_response(visual, request.question, was)
     if visual is not None and was.visual_contexts:
         follow_up = classify_claimed_visual(visual, request.question)
         record_visual_follow_up(follow_up)
@@ -2043,8 +2086,13 @@ async def ask_streaming(
     # comment there. Streaming yields the identical single `answer` frame the restyle branch below
     # does: the answer text exists all at once, so there is nothing to stage.
     why = asks_why(request.question)
-    if why is not None and was.visual_contexts:
-        answer = _explanation_response(why, was)
+    if why is not None:
+        # F-3 (fix wave, Important 6): see the same block's comment on the question route -- with
+        # nothing charted, this is now the honest no-chart answer rather than a fall-through to
+        # the planner.
+        answer = (
+            _explanation_response(why, was) if was.visual_contexts else _no_chart_why_response(was)
+        )
 
         async def explanation_events() -> AsyncIterator[str]:
             yield _sse({"type": "answer", **answer.model_dump()})
@@ -2087,9 +2135,17 @@ async def ask_streaming(
         if immediate is not None:
             return _open_payment_events(immediate)
 
-    # C-1/C-6/C-3 (Wave 3 hardening): moved below the two payment branches above, and gated on
-    # `was.visual_contexts` -- see the same block's comment on the question route.
+    # C-1/C-6/C-3 (Wave 3 hardening): moved below the two payment branches above -- see the same
+    # block's comment on the question route. F-3 (fix wave, Important 6) narrows the no-context
+    # fall-through to `visual.mixed` only; a genuine no-context restyle is answered honestly.
     visual = interpret_visual(request.question, was.visual_contexts)
+    if visual is not None and not was.visual_contexts and not visual.mixed:
+        answer = _no_chart_restyle_response(visual, request.question, was)
+
+        async def refused_visual_events() -> AsyncIterator[str]:
+            yield _sse({"type": "answer", **answer.model_dump()})
+
+        return StreamingResponse(refused_visual_events(), media_type="text/event-stream")
     if visual is not None and was.visual_contexts:
         follow_up = classify_claimed_visual(visual, request.question)
         record_visual_follow_up(follow_up)

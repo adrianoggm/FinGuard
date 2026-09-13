@@ -623,6 +623,58 @@ def test_a_bare_all_reply_with_no_chart_falls_through_to_the_clarification() -> 
     assert len(draws.calls) == 1
 
 
+def test_f3_an_uncharted_why_is_answered_not_planned() -> None:
+    """F-3 (fix wave, Important 6): «¿por qué este gráfico?» with no chart anywhere in context
+    used to fall through to the planner (`asks_why` gated on `was.visual_contexts`) and come back
+    a confident total for a question about a chart that was never drawn -- the exact
+    wrong-but-confident shape the whole wave exists to close. Zero calls now, an honest answer."""
+    draws = _DrawsOneChart()
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, draws)
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+        response = client.post("/v1/questions", json={"question": "¿por qué este gráfico?"})
+    finally:
+        app.dependency_overrides.clear()
+        app.state.questions_enabled = previously_questions_enabled
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["outcome"] == "VISUAL_NEEDS_TARGET"
+    assert body["text"] == "No hay ningún gráfico en pantalla todavía; pregúntame algo y lo dibujo."
+    assert len(draws.calls) == 0
+
+
+def test_f3_a_bare_restyle_with_no_chart_at_all_is_refused_not_planned() -> None:
+    """F-3 (fix wave, Important 6): a bare style instruction («ponlo en barras») with nothing on
+    screen at all -- a KPI answer, or nothing yet -- used to fall through to the planner and
+    invent a window for a total nobody asked for. `show_every_row` ("todos"/"sin límite") is
+    untouched (C-3, above): only a genuine style/mark instruction is refused here."""
+    draws = _DrawsOneChart()
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, draws)
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+        response = client.post("/v1/questions", json={"question": "ponlo en barras"})
+    finally:
+        app.dependency_overrides.clear()
+        app.state.questions_enabled = previously_questions_enabled
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["outcome"] == "VISUAL_INCOMPATIBLE"
+    assert body["text"] == "Ese dato no tiene gráfico que cambiar."
+    assert len(draws.calls) == 0
+
+
 async def test_a_visual_word_during_an_open_payment_preview_stays_in_the_payment_branch() -> None:
     """C-6: a payment preview is open (`PaymentConfirmation`) and a chart is also on screen. A
     reply carrying only a visual word («ponlo en barras») used to be claimed by `interpret_visual`
@@ -1823,14 +1875,21 @@ async def test_a_target_that_resolves_to_nothing_answers_needs_target() -> None:
     assert response.about_chart_id is None  # D-H-1: no chart resolved -- that is the question
 
 
-def test_no_chart_at_all_falls_through_unchanged() -> None:
-    """Probed first (task-4-report.md): with nothing charted, `asks_why` has nothing to explain
-    and this falls through exactly as it did before the recogniser existed -- an ordinary
-    financial question that, over `episodes.a_stack()`'s three accounts, asks which one first."""
+def test_no_chart_at_all_is_answered_honestly_not_planned() -> None:
+    """F-3 (fix wave, Important 6) supersedes this row's old premise (task-4-report.md): with
+    nothing charted, `asks_why` used to have nothing to explain and fall through to the planner --
+    over `episodes.a_stack()`'s three accounts, an ordinary financial question asking which one
+    first. That is the exact wrong-but-confident shape the wave exists to close for a question
+    about a chart that was never drawn: it is now answered honestly, at zero ledger calls, before
+    the planner ever sees it."""
     stack = episodes.a_stack()
     try:
         response = stack.client.post("/v1/questions", json={"question": "¿Por qué este gráfico?"})
     finally:
         app.dependency_overrides.clear()
     assert response.status_code == 200
-    assert response.json()["outcome"] == "NEEDS_CLARIFICATION"
+    assert response.json()["outcome"] == "VISUAL_NEEDS_TARGET"
+    assert (
+        response.json()["text"]
+        == "No hay ningún gráfico en pantalla todavía; pregúntame algo y lo dibujo."
+    )
