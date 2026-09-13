@@ -466,6 +466,50 @@ def test_no_visual_contexts_is_not_drilled() -> None:
     assert read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST) is None
 
 
+# --- Item 5 (Wave 3 hardening, T8b): a NONE-grouped chart has no bar to resolve, so the drill
+# reader asks which breakdown is meant instead of falling through -----------------------------
+
+
+NONE_GROUPED_PLAN = FinancialPlan(
+    direction=Direction.EXPENSE,
+    period=RelativePeriod(Period.LAST_N_MONTHS, n=3),
+    group_by=GroupBy.NONE,
+    only_account_id=ACCOUNT,
+)
+NONE_GROUPED_CONTEXT = VisualContext(
+    "chart-total",
+    SPEC,
+    BREAKDOWN_PROFILE,
+    plan_digest=plan_digest(NONE_GROUPED_PLAN),
+)
+NONE_GROUPED_CONVERSATION = Conversation(
+    last_plan=NONE_GROUPED_PLAN, visual_contexts=(NONE_GROUPED_CONTEXT,)
+)
+
+
+def test_a_none_grouped_chart_asks_which_breakdown_instead_of_falling_through() -> None:
+    """ "¿Por qué tanto?" over a chart drawn as one undivided total used to fall through to
+    `None` (today's path -- a real model call, answering the same total again) because NONE is
+    not in `_DRILLABLE_GROUPINGS` and there is no bar for `resolve_reference` to resolve. It now
+    asks which breakdown is meant, with the two chips the corpus pins."""
+    ask = read_drill_down("¿por que tanto?", NONE_GROUPED_CONVERSATION, today=AFTER_AUGUST)
+
+    assert isinstance(ask, DrillAsk)
+    assert ask.text == "¿Tanto en qué? Puedo desglosarlo por categoría o por mes."
+    assert ask.suggestions == ("Desglósalo por categoría", "Desglósalo por mes")
+
+
+def test_the_ordinary_several_bars_ask_still_carries_no_chips() -> None:
+    """`DrillAsk.suggestions` is new (item 5); every pre-existing ask must still default to
+    empty so this task adds a case rather than changing one."""
+    unranked = replace(MONTH_CONVERSATION, visual_contexts=(replace(MONTH_CONTEXT, ranked=False),))
+
+    ask = read_drill_down("¿Qué movimientos explican ese pico?", unranked, today=AFTER_AUGUST)
+
+    assert isinstance(ask, DrillAsk)
+    assert ask.suggestions == ()
+
+
 # --- Fix wave: C-1 (never past the chart's own window), I-1 (bound to the chart's own plan), I-4
 # --- (feasibility before ambiguity) --------------------------------------------------------------
 

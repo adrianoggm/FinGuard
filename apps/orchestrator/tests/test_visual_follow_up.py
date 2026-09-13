@@ -753,6 +753,145 @@ async def test_a_voice_restyle_updates_through_the_non_streaming_route_too() -> 
     assert fake_queries.ran == []
 
 
+# --- Task 8b (Wave 3 hardening): B-9 -- a size/shape word is refused honestly, and «tarta» joins
+# «circular»/«donut»/«anillo» as a real restyle --------------------------------------------------
+
+
+async def _streamed_answer(request: QuestionRequest, *, metrics_on: bool = False) -> dict:
+    streamed = await ask_streaming(
+        request,
+        _WHO,
+        asking=None,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        queries=_UnreachableQueries(),
+        attempt="x",
+        reads=None,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=metrics_on,
+    )
+    chunks = [chunk async for chunk in streamed.body_iterator]
+    body = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
+    (line,) = [line for line in body.splitlines() if line.startswith("data: ")]
+    return json.loads(line.removeprefix("data: "))
+
+
+async def test_a_size_word_refuses_honestly_never_reaches_the_ledger() -> None:
+    """B-9, item 1: "hazlo más grande" used to fall through unclaimed (no word in the visual
+    vocabulary recognised it at all) and reach the model for an unrelated total. It now refuses
+    honestly, zero calls, naming what CAN change instead of the chart's own size."""
+    payload = await _streamed_answer(_charted_request("hazlo más grande"))
+
+    assert payload["outcome"] == "VISUAL_INCOMPATIBLE"
+    assert "tamaño lo decide la pantalla" in payload["text"].lower()
+    assert payload["about_chart_id"] == "chart-1"
+
+
+async def test_a_pequeno_size_word_refuses_the_same_way() -> None:
+    payload = await _streamed_answer(_charted_request("hazlo más pequeño"))
+
+    assert payload["outcome"] == "VISUAL_INCOMPATIBLE"
+    assert "tamaño lo decide la pantalla" in payload["text"].lower()
+
+
+@pytest.mark.parametrize("word", ["tarta", "pastel", "quesito"])
+def test_tarta_and_its_synonyms_read_as_a_real_donut_mark(word: str) -> None:
+    """ "Tarta"/"pastel"/"quesito" join "circular"/"donut"/"anillo" as the same mark change -- a
+    real patch (`intent.patch.mark == "donut"`), never the B-9 refusal (`intent.explanation`).
+    Whether a *particular* chart's profile survives the verifier's own donut eligibility rule
+    (`_donut_claims`, `test_visualization_stage2_core.py`) is a separate question this reader
+    does not decide -- it only proposes the mark, exactly like "circular"/"donut" already did."""
+    intent = interpret_visual(f"ponlo en {word}", _SEALED_CHARTED.visual_contexts)
+
+    assert intent is not None
+    assert intent.explanation is None
+    assert intent.patch is not None
+    assert intent.patch.mark == "donut"
+
+
+# --- Task 8b: item 2 -- "guarda este gráfico" is answered from the chart, never the ledger -----
+#
+# `wants_to_save_chart` is asserted through the streaming route (below); `_save_response` itself
+# is exercised directly here, the same pattern `test_visualization_stage2_core.py` uses for
+# `_visual_only_response` -- a chart whose `source_plan` a real turn would have stamped, which
+# `_SEALED_CHARTED`'s bare fixture never claimed to (D-3b-9's own docstring: it is a spec and a
+# profile, not a turn's whole provenance).
+
+
+def test_guarda_este_grafico_is_answered_from_the_chart_metrics_on() -> None:
+    context = replace(CHARTED.visual_contexts[0], source_plan=PREVIOUS)
+    conversation = replace(CHARTED, visual_contexts=(context,))
+
+    response = llm_controller._save_response(
+        conversation,
+        holder_reference=_WHO.holder_reference,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=True,
+    )
+
+    assert response.outcome == "VISUAL_UNCHANGED"
+    assert "guardar" in response.text.lower()
+    assert response.save_candidate is not None
+    assert response.about_chart_id == "chart-1"
+
+
+def test_guarda_este_grafico_refuses_honestly_when_metrics_are_off() -> None:
+    context = replace(CHARTED.visual_contexts[0], source_plan=PREVIOUS)
+    conversation = replace(CHARTED, visual_contexts=(context,))
+
+    response = llm_controller._save_response(
+        conversation,
+        holder_reference=_WHO.holder_reference,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+
+    assert response.outcome == "VISUAL_INCOMPATIBLE"
+    assert "guardar" in response.text.lower()
+    assert response.save_candidate is None
+
+
+async def test_guarda_este_grafico_reaches_the_controllers_short_circuit_over_the_stream() -> None:
+    """The streaming route's own gate (`wants_to_save_chart(...) and was.visual_contexts`):
+    zero ledger calls, and the sentence never reaches `interpret_visual`'s own restyle path."""
+    payload = await _streamed_answer(_charted_request("guarda este grafico"), metrics_on=False)
+
+    assert payload["outcome"] != "VISUAL_UPDATED"
+    assert payload["outcome"] != "VISUAL_NEEDS_TARGET"
+    assert "guardar" in payload["text"].lower()
+
+
+# --- Task 8b: item 3 -- "vuelve al anterior"/"el de antes" over two or more charts asks rather
+# than guessing which one was meant ---------------------------------------------------------------
+
+
+async def test_vuelve_al_anterior_asks_over_two_charts() -> None:
+    """Over `_SEALED_CHARTED` (one chart) alone, "vuelve al anterior" has nothing to go back to
+    and falls through unclaimed -- the ordinary, untouched single-chart case."""
+    payload = await _streamed_answer(_charted_request("vuelve al anterior"))
+
+    assert payload["outcome"] != "VISUAL_AMBIGUOUS"
+    assert payload["outcome"] != "VISUAL_INCOMPATIBLE"
+
+
+async def test_vuelve_al_anterior_asks_with_two_charts_in_view() -> None:
+    second = replace(_SEALED_CHARTED.visual_contexts[0], chart_id="chart-2")
+    two_charts = _SEALED_CHARTED.with_visual_context(second)
+    payload_conversation = conversation_mapper.to_payload(two_charts).model_copy(
+        update={"conversation_id": _CONVERSATION_ID}
+    )
+    request = QuestionRequest(question="vuelve al anterior", conversation=payload_conversation)
+
+    payload = await _streamed_answer(request)
+
+    assert payload["outcome"] == "VISUAL_AMBIGUOUS"
+    assert set(payload["suggestions"]) == {
+        "Pon el gráfico anterior en barras",
+        "Deshacer el último cambio",
+    }
+
+
 # --- Task 6: an AMBIGUOUS short-circuit asks instead of guessing -------------------------------
 #
 # Before this task, a claimed visual turn always went to `_visual_only_response`: the mixed
@@ -1444,6 +1583,30 @@ def test_a_one_name_split_still_declines() -> None:
         read_contextual_follow_up(_query("Separa la gasolina.", conversation=CHARTED_SUMMER))
         is None
     )
+
+
+def test_a_clitic_and_preposition_still_split_by_two_named_categories() -> None:
+    """Item 5 (Wave 3 hardening, T8b, "the eighth handed-over row"): "sepáralo en transporte
+    público y gasolina" is six words where "Separa transporte público y gasolina" (the sibling
+    test above) is five -- the ellipsis-length gate used to return `None` before the
+    split-by-names branch, below it, ever ran. Moved ahead of that gate; the match itself is
+    unchanged."""
+    plan = read_contextual_follow_up(
+        _query("sepáralo en transporte público y gasolina", conversation=CHARTED_SUMMER)
+    )
+    assert plan is not None
+    assert plan.categories == ("TRANSPORT_PUBLIC", "TRANSPORT_FUEL")
+    assert plan.group_by is GroupBy.CATEGORY
+
+
+def test_ponme_solo_names_a_single_category_filter() -> None:
+    """Item 4 (Wave 3 hardening, T8b): "ponme solo restaurantes" is the same category-only
+    filter "solo restaurantes" already reads, said as an imperative to the assistant rather than
+    as a bare fragment."""
+    plan = read_contextual_follow_up(_query("ponme solo restaurantes", conversation=CHARTED_SUMMER))
+    assert plan is not None
+    assert plan.categories == ("RESTAURANTS",)
+    assert plan.merchants == ()
 
 
 # --- Wave 4.5, Task 4: «¿Por qué este gráfico?» is answered from the chart, before
