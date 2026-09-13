@@ -29,18 +29,14 @@ episodes:
       the window the chart's rows cover — is exactly the check that would have caught it, had the
       window been real. It was not: `Ledger.run` answered no window at all before this fix wave,
       so there was nothing for the rule to check turn 3's own three months against.
-      «El último trimestre» is what the controller's own rulings tried first as «los últimos tres
-      meses»/«desde junio hasta agosto» and both moved `handover_cases.py`'s ratchets — neither
-      phrasing is one `_ON_THE_SENTENCE_ITSELF`'s readers recognise (`_natural_period_aggregate_
-      plan` reads only `window_words.natural_period_in`'s narrower vocabulary — quarter, semester,
-      fortnight, weekend — never the counted-window regex `window_in` reads elsewhere), so both
-      reached the planner and, being nowhere in `evaluation/planning/conversations.yaml`, both
-      became a new unmeasured sentence. «El último trimestre» is `_LAST_QUARTER`'s own phrase and
-      resolves to the identical `RelativePeriod(LAST_N_MONTHS, n=3)` the controller's own probes
-      were reaching for, deterministically (`no_model: true`, probed) and with the ratchets
-      unmoved (`UNMEASURED` 22, `MUTE` 43, unchanged) — so the anchor now asks a plain question
-      whose own window genuinely spans three months, and turn 3's three injected rows are an
-      answer that plan can actually produce.
+      «El último trimestre» is `_LAST_QUARTER`'s own phrase and resolves to
+      `RelativePeriod(LAST_N_MONTHS, n=3)` deterministically (`no_model: true`, probed) — so the
+      anchor asks a plain question whose own window genuinely spans three months, and turn 3's
+      three injected rows are an answer that plan can actually produce. The natural variations a
+      holder actually types — «los últimos tres meses», «desde junio hasta agosto» and the rest of
+      the audit's own sentence table — are episode 34's job (`34-natural-visual-sentences.yaml`),
+      not this one's: this episode is a chart's lineage exercised cleanly, turn by turn, and the
+      corpus's honest natural-language coverage lives beside it rather than inside it.
 
       Turn 2, «¿Por qué este gráfico?», sits right here because the ranking is on screen and the
       holder asks why bars — §11 bullet 1's own case, «discreetly explains why bars». It resolves

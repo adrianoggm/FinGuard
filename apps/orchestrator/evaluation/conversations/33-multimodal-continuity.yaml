@@ -89,9 +89,9 @@ episodes:
       shape Task 3's own `test_a_voice_kpi_answer_has_no_spoken` proves in-process.
 
       Every sentence above is one 32 already speaks or a follow-up `contextual_follow_up` already
-      claims (turn 5, probed): `tests/test_what_we_hand_to_the_planner.py` still reads 22 unmeasured
-      sentences and 43 mute ones, unmoved, because nothing here is new vocabulary for a planner to
-      receive.
+      claims (turn 5, probed) — this episode is the channel proof, not the vocabulary one, so it
+      deliberately repeats 32's own anchors rather than reaching for a new phrasing. The natural
+      forms a holder actually types live in `34-natural-visual-sentences.yaml` instead.
     metrics: [context_retention]
     turns:
       - say: ¿Cuánto gasté el último trimestre?
