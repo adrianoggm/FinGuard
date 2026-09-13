@@ -1537,3 +1537,65 @@ async def test_a_season_asks_answer_with_its_own_chip_runs_the_plan_over_the_nam
         start=date(2026, 6, 1), end=date(2026, 8, 31)
     )
     assert second.outcome != Spoken.GUIDANCE.value
+
+
+async def test_f4_a_season_breakdown_question_resolves_to_a_ranked_category_plan() -> None:
+    """F-4 (fix wave, D-H-7/Important 4): §11's own acceptance scenario. «¿En qué he gastado más
+    este verano?» -- «en qué» + a superlative -- asks for a breakdown, not a total; the season
+    clarification draft must carry that shape (`group_by=CATEGORY`) so the resolved plan, once
+    the months are settled by the chip, draws the ranking the question asked for rather than a
+    single number for an invented window."""
+    planner = FakePlanner(PlanningResult.planned(plan(group_by=GroupBy.CATEGORY)))
+    ledger = RecordingLedger(ANSWER)
+    handler = chat(planner, ledger)
+    first = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿En qué he gastado más este verano?",
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=Conversation(),
+        )
+    )
+    (chip,) = first.suggestions
+
+    await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence=chip,
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=first.conversation,
+        )
+    )
+
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].group_by is GroupBy.CATEGORY
+    assert ledger.plans[0].direction is Direction.EXPENSE
+
+
+async def test_f4_a_season_total_question_still_resolves_to_a_total() -> None:
+    """F-4's companion case: «¿cuánto gasté este verano?» names no breakdown shape -- the draft
+    must keep `group_by=NONE` so the resolved plan stays a total, not a ranking nobody asked for."""
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = RecordingLedger(ANSWER)
+    handler = chat(planner, ledger)
+    first = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿Cuánto gasté este verano?",
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=Conversation(),
+        )
+    )
+    (chip,) = first.suggestions
+
+    await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence=chip,
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=first.conversation,
+        )
+    )
+
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].group_by is GroupBy.NONE
