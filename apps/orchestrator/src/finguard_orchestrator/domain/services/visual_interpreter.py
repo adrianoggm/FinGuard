@@ -47,6 +47,21 @@ _FINANCIAL_QUERY_SIGNAL = re.compile(
     r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|"
     r"diciembre|compar(?:a|ar))\b"
 )
+# F-H1 (Wave 3 hardening, fix round): A-10's fix above left no `else` for the sentence that is
+# neither a clean restyle nor caught by `_FINANCIAL_QUERY_SIGNAL`/`category_words.named_in` --
+# "Ordena mis gastos por categoría y dime el total" names only the generic axis noun
+# ("categoría") beside a sort word, so it slipped through both AMBIGUOUS gates and fell all the
+# way to the ordinary restyle logic below, answering a sort patch and silently discarding "dime
+# el total". This is the closed vocabulary of a sentence that is unmistakably asking for data,
+# not naming its axis: an imperative to speak an answer ("dime", "cuéntame"), a quantity word
+# ("cuánto", "cuánta", "cuántos", "cuántas"), "total", the first-person past of "to spend"
+# ("gasté"), any form of "ingres-" (income, distinct from the bare plural axis noun "ingresos"
+# already carved out above), "saldo", a bare digit, or a month name (the last already trips
+# `_FINANCIAL_QUERY_SIGNAL` above and is repeated here only as a second line of defence).
+_DATA_ASKING = re.compile(
+    r"\b(?:dime|cuentame|cuant[oa]s?|total(?:es)?|gaste|ingres\w*|saldo|\d+|"
+    r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b"
+)
 # A-8 (Wave 3 hardening): plurals `_VISUAL` never learned ("líneas", "áreas") and a mark, "puntos",
 # it never had a word for at all -- design §3.1's own "Prefiero líneas" fell through both gates
 # and reached the financial planner as a query no vocabulary here had claimed.
@@ -147,6 +162,14 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
                     "financiero y después el formato del gráfico en otro turno.",
                     mixed=True,
                 )
+            # F-H1: neither AMBIGUOUS gate fired, but the sentence may still be asking a real
+            # financial question the narrow checks above don't catch (no window, no comparison
+            # verb, no named category -- "y dime el total" is exactly this shape). Restore the
+            # missing `else`: only a sentence with no data-asking token left in it is a pure
+            # restyle; anything else falls through to the planner rather than being silently
+            # answered as a chart change.
+            if _DATA_ASKING.search(folded):
+                return None
         else:
             return None
     if not visual_signal:

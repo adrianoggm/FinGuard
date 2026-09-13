@@ -16,7 +16,7 @@ from support import episodes
 from support.visual_planners import BREAKDOWN_PROFILE
 from test_decisions_call_sites import ACCOUNT as CS_ACCOUNT
 from test_decisions_call_sites import TODAY as CS_TODAY
-from test_decisions_call_sites import FakeLedger, handler_for, turn_for
+from test_decisions_call_sites import FakeLedger, FixedInterpreter, handler_for, turn_for
 
 from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.application.queries import ask_financial_question
@@ -517,6 +517,38 @@ async def test_the_streaming_routes_short_circuit_records_it_too() -> None:
         )
     (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
     assert (decision.now, decision.detail) == ("PRESENTATION_ONLY", "interpret_visual")
+
+
+async def test_a_financial_ask_beside_a_sort_word_reaches_the_planner_not_a_restyle() -> None:
+    """F-H1 (Wave 3 hardening, fix round): «Ordena mis gastos por categoría y dime el total»
+    carries a financial word ("gastos") and a style word ("ordena") together with a real
+    data-asking clause ("dime el total") that neither `_FINANCIAL_QUERY_SIGNAL` (no window, no
+    comparison verb) nor `category_words.named_in` (no named category, only the generic axis
+    noun "categoría") catches. A-10's own fix left no `else` for this residue in
+    `interpret_visual`, so the turn fell all the way through to the ordinary restyle path and the
+    controller answered a sort patch (`VISUAL_UPDATED`) with zero ledger calls, discarding the
+    actual question. It must fall through to the planner instead, exactly like any other real
+    financial question would -- driven through the controller's route function directly (the
+    same seam `test_the_controllers_visual_short_circuit_records_the_kind_and_claimant` uses)
+    since the bug is in the controller's own short-circuit gate, not in the handler.
+    """
+    draws = _DrawsOneChart()
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, draws)
+    response = await ask_question(
+        _charted_request("Ordena mis gastos por categoría y dime el total"),
+        _WHO,
+        queries=bus,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        attempt="x",
+        reads=FixedInterpreter(Intent.FINANCIAL_QUERY),
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+    assert len(draws.calls) == 1
+    assert response.outcome not in ("VISUAL_UPDATED", "VISUAL_AMBIGUOUS")
 
 
 async def test_the_controllers_visual_response_is_unchanged_by_recording(monkeypatch) -> None:
