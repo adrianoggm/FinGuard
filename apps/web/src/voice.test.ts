@@ -269,6 +269,50 @@ describe("VoiceClient transport A-J", () => {
     setup.fakeSocket.message(new Uint8Array([2, 0]).buffer);
     expect(setup.playback.sources).toHaveLength(2);
   });
+  // D-H-2 (fix wave): every binary frame is now named by its own `audio.frame` event, so a
+  // straggler is dropped for certain rather than by the ordering heuristics above -- including
+  // the harder case W-3's own mitigation could not cover: a frame arriving *after* the new
+  // turn's own audio is already playing, once `discardFencedAudio` has already cleared.
+  it("drops a frame named for a turn that is no longer current, even after the new turn is already playing", async () => {
+    let next = 0;
+    const setup = await (async () => {
+      const value = makeClient(() => `turn-${++next}`);
+      const promise = value.client.start();
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+      value.fakeSocket.open();
+      value.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 }));
+      await promise;
+      return value;
+    })();
+    setup.client.stopCapture();
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" }));
+    setup.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 }));
+    setup.fakeSocket.message(event("audio.frame", "s-1", 3, { turnId: "turn-1" }));
+    setup.fakeSocket.message(new Uint8Array([0, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(1);
+
+    await setup.client.start(); // barge-in: cancels turn-1, starts turn-2
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 4, { turnId: "turn-2", text: "y" }));
+    setup.fakeSocket.message(event("response.cancelled", "s-1", 5, { turnId: "turn-1" }));
+    setup.fakeSocket.message(event("audio.started", "s-1", 6, { turnId: "turn-2", sampleRate: 24_000 }));
+    expect(setup.statuses.at(-1)).toBe("speaking");
+    setup.fakeSocket.message(event("audio.frame", "s-1", 7, { turnId: "turn-2" }));
+    setup.fakeSocket.message(new Uint8Array([1, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(2); // turn-2's own frame played normally.
+
+    // A late frame from turn-1's own cancelled TTS loop, arriving well after turn-2's audio
+    // started and is already playing -- `discardFencedAudio` is long since clear, so only the
+    // frame's own name protects turn-2's playback from it now.
+    setup.fakeSocket.message(event("audio.frame", "s-1", 8, { turnId: "turn-1" }));
+    setup.fakeSocket.message(new Uint8Array([9, 9]).buffer);
+    expect(setup.playback.sources).toHaveLength(2); // dropped: no third source created.
+
+    // And turn-2's own next frame still plays, proving the drop above named the right frame
+    // rather than jamming the pipe.
+    setup.fakeSocket.message(event("audio.frame", "s-1", 9, { turnId: "turn-2" }));
+    setup.fakeSocket.message(new Uint8Array([2, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(3);
+  });
   // W-5: a turn whose answer produces no audio at all (a refusal that forgot to synthesise, a
   // dead TTS provider) left `maybeFinish` waiting forever on `audioCompleted`/`playerIdle`, which
   // only audio.started/audio.completed can ever set. The client now gives up visibly instead.

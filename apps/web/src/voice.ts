@@ -298,6 +298,8 @@ const EVENT_TYPES = new Set([
   "transcript.final",
   "assistant.text.final",
   "audio.started",
+  // D-H-2 (fix wave): one per binary PCM frame, naming the turn it belongs to.
+  "audio.frame",
   "audio.completed",
   "turn.completed",
   "response.cancelled",
@@ -357,6 +359,17 @@ export class VoiceClient {
   // old one is confirmed gone, closing the window a stray frame from the old turn's task could
   // otherwise land in.
   private drainPending: string | null = null;
+  // D-H-2 (fix wave): every binary PCM frame the gateway sends is now preceded by its own
+  // `audio.frame` event naming the turn it belongs to -- read here and consumed by the very next
+  // `ArrayBuffer` message (WebSocket delivery is ordered, so the pairing is exact). `null` means
+  // no metadata has been seen for the next frame: an older gateway, or a test built before this
+  // fix, that never sends `audio.frame` at all -- treated as unlabelled rather than foreign, so
+  // this stays additive rather than a breaking protocol change for anything that does not opt in.
+  // A frame whose named turn is not the current one is dropped for certain, replacing W-3's
+  // ordering-only mitigation (still left in place below, now redundant but harmless): the old
+  // mechanism could only fence a straggler while `discardFencedAudio` stayed armed; this one
+  // drops it by name even after the new turn's own audio is already playing.
+  private pendingFrameTurnId: string | null = null;
   // W-5: armed once the holder stops talking, cleared the moment this turn's own audio actually
   // starts or the turn otherwise finishes. If neither happens in time, the turn is failed with a
   // visible message instead of leaving the session stuck on "processing" forever.
@@ -472,6 +485,7 @@ export class VoiceClient {
     this.textFinalSeen = false;
     this.pendingAudioStarted = null;
     this.pendingAudioFrames = [];
+    this.pendingFrameTurnId = null;
     this.drainPending = null;
     this.clearSilentTurnTimeout();
     this.audioCompleted = false;
@@ -606,6 +620,15 @@ export class VoiceClient {
 
   private receive(data: unknown, onReady: () => void): void {
     if (data instanceof ArrayBuffer) {
+      // D-H-2 (fix wave): the frame's own name, consumed the instant it is read so the next
+      // frame starts unlabelled again until its own `audio.frame` arrives. `null` (no metadata
+      // seen) is let through unchanged -- see the field's own comment for why. A named frame for
+      // a turn that is not the current one is dropped for certain, before any of the ordering
+      // heuristics below ever run: this is a strictly stronger check, so nothing it lets through
+      // is a frame those heuristics would have refused anyway.
+      const frameTurnId = this.pendingFrameTurnId;
+      this.pendingFrameTurnId = null;
+      if (frameTurnId !== null && frameTurnId !== this.turnId) return;
       if (this.discardFencedAudio && !this.audioStarted) return;
       if (this.pendingAudioStarted) {
         // Its own audio.started is buffered, waiting on the text that will say which chart (if
@@ -644,6 +667,16 @@ export class VoiceClient {
       return;
     }
     if (!this.ready) throw new Error("El gateway no está listo.");
+
+    if (event.type === "audio.frame") {
+      // D-H-2 (fix wave): recorded for the very next `ArrayBuffer` message regardless of whose
+      // turn this is -- a stale turn's own `audio.frame` must still be recorded so the binary
+      // frame right behind it is recognised as foreign and dropped; silently filtering *this*
+      // event by the generic turn check below (as every other turn event is) would leave the
+      // frame that follows unlabelled instead, exactly the gap this fix closes.
+      this.pendingFrameTurnId = typeof event.turnId === "string" ? event.turnId : null;
+      return;
+    }
 
     if (event.type === "response.cancelled" && event.turnId === this.drainPending) {
       // W-3: the gateway's own confirmation that the turn a barge-in just cancelled has fully
@@ -998,6 +1031,9 @@ function validateEvent(
   }
   if (event.type === "error" && typeof event.code !== "string") {
     throw new Error("Evento de error inválido.");
+  }
+  if (event.type === "audio.frame" && typeof event.turnId !== "string") {
+    throw new Error("Evento audio.frame inválido.");
   }
 }
 

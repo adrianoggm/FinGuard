@@ -445,6 +445,43 @@ def _run_one_turn(
     return received, indices
 
 
+def test_every_binary_audio_frame_is_named_by_its_own_turn_id() -> None:
+    """D-H-2 (fix wave): a straggler PCM frame used to carry no turn identity of its own -- the
+    web's W-3 mitigation could only fence it by ordering (a drain-confirmation handshake). Every
+    binary frame is now immediately preceded by its own `audio.frame` event naming the turn, so a
+    stale frame can be dropped for certain rather than by inference."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            socket.send_text(_control("input.start", session_id, 1, "turn-1"))
+            socket.send_bytes(b"quiero ver el grafico")
+            socket.send_text(_control("input.commit", session_id, 2, "turn-1"))
+            pending_frame_turn_id: str | None = None
+            binary_frame_count = 0
+            while True:
+                item = socket.receive()
+                if item.get("bytes") is not None:
+                    binary_frame_count += 1
+                    assert pending_frame_turn_id == "turn-1"
+                    pending_frame_turn_id = None
+                    continue
+                payload = json.loads(item["text"])
+                if payload["type"] == "audio.frame":
+                    assert payload["turnId"] == "turn-1"
+                    pending_frame_turn_id = payload["turnId"]
+                if payload["type"] == "turn.completed":
+                    break
+            assert binary_frame_count > 0
+    sessions.clear()
+
+
 def test_kpi_visualization_carries_no_chart_identity() -> None:
     """G-8: zero coverage before this test for a KPI answer -- `chart_identity`'s own docstring
     already claimed a KPI has no `chart_id` to stamp; nothing exercised that claim."""

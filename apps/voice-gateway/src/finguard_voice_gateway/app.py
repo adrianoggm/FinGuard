@@ -662,6 +662,17 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     ):
         if session.cancelled(generation, turn_id):
             return
+        # D-H-2 (fix wave): a straggler PCM frame from a barge-in-cancelled turn used to carry no
+        # turn identity of its own -- the client could only fence it by ordering (W-3's
+        # drain-confirmation handshake). Every binary frame is now immediately preceded by its
+        # own minimal `audio.frame` event naming the turn it belongs to, so the client can drop a
+        # stale one for certain rather than by inference. No chart identity here: naming a frame's
+        # turn is enough, and `chart_identity` already rides the other four events.
+        await websocket.send_json(
+            event(
+                "audio.frame", session.session_id, turn_id=turn_id, sequence=session.next_sequence()
+            )
+        )
         await websocket.send_bytes(chunk)
         timings.mark("tts_first_byte")
     if session.cancelled(generation, turn_id):

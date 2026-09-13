@@ -105,9 +105,13 @@ show`:
 
 **Deferred D-H-N, open or closed:**
 - **D-H-1** — CLOSED (Task 4): `QuestionResponse.about_chart_id` added, read-never-authoritative.
-- **D-H-1b** (gateway `chart_identity` reading `about_chart_id`) — OPEN, gateway-side, not this wave's.
-- **D-H-2** — OPEN: PCM audio frames carry no turn id on the wire; the web's W-3 fix narrows the
-  barge-in race, the complete fix needs a gateway-side wire tag (ADR-010 now notes it explicitly).
+- **D-H-1b** — CLOSED (fix wave): `chart_identity` reads `about_chart_id` for `VISUAL_EXPLAINED` and
+  the refusal-shaped `VISUAL_*` outcomes, stamping `chartId` (never `visualTurnId`) on the four
+  events; ADR-010 amended.
+- **D-H-2** — CLOSED (fix wave): the gateway now sends an `audio.frame` event naming the turn
+  immediately before every binary PCM frame, and the web drops a frame whose named turn is not
+  current — before W-3's own ordering heuristics run (left in place as a harmless fallback for a
+  frame with no metadata). ADR-010 amended; no protocol version bump.
 - **D-H-3** — CLOSED: the five `Co-Authored-By` trailers stripped by one `git filter-branch` over
   `f43fbab..HEAD` on 2026-09-11, which rewrote every commit after `f43fbab` in the process; the SHA
   map above is the post-strip result (F-6, fix wave, regenerated it after 15 entries went stale).

@@ -1000,10 +1000,12 @@ onward.
   declared scope entirely (B-9's «hazlo más grande»/«ponlo en tarta» were themselves claimed by
   Task 8b — see its own table — so as of `133e973` every row of episode 34 is RIGHT except the ones
   the wave never promised: none remain unaccounted for without a stated reason).
-- **D-H-2** (gateway follow-up, OPEN): PCM audio frames carry no turn id on the wire; the web's W-3
-  fix narrows the barge-in race by holding a new turn's `audio.started` until the gateway confirms
-  the previous turn's cancellation, but a wire-level per-frame tag — the complete fix — needs a
-  gateway-side change, not made in this wave.
+- **D-H-2** (gateway + web, CLOSED by the fix wave): PCM audio frames used to carry no turn id on
+  the wire; the gateway now sends an `audio.frame` event (turn id only) immediately before every
+  binary PCM frame, and the web client drops any frame whose named turn is not the current one —
+  before W-3's own ordering heuristics ever run, which stay in place as a harmless fallback for a
+  frame with no metadata at all. ADR-010 amended; no protocol version bump (additive event type,
+  both sides changed together).
 - **D-H-4** (minor, OPEN): `visual_planning_policy.py`'s promoted-only floor recompute is correct by
   control-flow tracing, not by an explicit `self._mode == "promoted"` guard — a future reader must
   re-derive the trace to confirm it.
