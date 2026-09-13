@@ -800,6 +800,11 @@ async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(
     else:
         assert response.conversation.visual_contexts[0].token is None
     assert fake_queries.ran == []
+    # D-H-1: the drill lexicon resolves a target the way a restyle would; the interpreter's own
+    # mixed-turn refusal (`presentation+reshape`) never does -- `VisualIntent(None, None, ...,
+    # mixed=True)` carries no target at all, so there is nothing to name here either.
+    expected_chart_id = None if claimant == "presentation+reshape" else "chart-1"
+    assert response.about_chart_id == expected_chart_id
     (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
     assert (decision.now, decision.detail) == ("AMBIGUOUS", claimant)
 
@@ -834,6 +839,7 @@ async def test_the_streaming_routes_ambiguous_short_circuit_asks_too() -> None:
     assert payload["outcome"] == "VISUAL_AMBIGUOUS"
     assert payload["text"] == llm_controller._ASK["presentation+drill"]
     assert fake_queries.ran == []
+    assert payload["about_chart_id"] == "chart-1"  # D-H-1
     (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
     assert (decision.now, decision.detail) == ("AMBIGUOUS", "presentation+drill")
 
@@ -1500,6 +1506,7 @@ async def test_the_question_route_explains_the_newest_chart(
     assert response.spoken is None
     assert response.visualization is None
     assert response.visualization_derivation is None
+    assert response.about_chart_id == newest.chart_id  # D-H-1
 
 
 @pytest.mark.parametrize("channel", ["TEXT", "VOICE"])
@@ -1541,6 +1548,7 @@ async def test_the_streaming_route_explains_the_newest_chart_in_one_frame(
     assert frames[0]["text"] == explain_chart(newest).as_text()
     assert fake_queries.ran == []
     assert calls == []
+    assert frames[0]["about_chart_id"] == newest.chart_id  # D-H-1
 
 
 async def test_por_que_el_primer_grafico_explains_the_first_of_two() -> None:
@@ -1565,6 +1573,7 @@ async def test_por_que_el_primer_grafico_explains_the_first_of_two() -> None:
     assert response.text == explain_chart(first_sealed).as_text()
     assert "enero" in response.text
     assert fake_queries.ran == []
+    assert response.about_chart_id == first_sealed.chart_id  # D-H-1: the first, not the newest
 
 
 async def test_a_forged_newest_context_answers_untrusted_not_explained() -> None:
@@ -1590,6 +1599,7 @@ async def test_a_forged_newest_context_answers_untrusted_not_explained() -> None
 
     assert response.outcome == "VISUAL_UNTRUSTED"
     assert fake_queries.ran == []
+    assert response.about_chart_id == context.chart_id  # D-H-1: named even though untrusted
 
 
 async def test_a_target_that_resolves_to_nothing_answers_needs_target() -> None:
@@ -1615,6 +1625,7 @@ async def test_a_target_that_resolves_to_nothing_answers_needs_target() -> None:
     # the way it does, never asked to change one, so the text must not claim otherwise (the
     # restyle path below keeps "quieres cambiar", which IS a change request).
     assert response.text == "Indica de qué gráfico hablas."
+    assert response.about_chart_id is None  # D-H-1: no chart resolved -- that is the question
 
 
 def test_no_chart_at_all_falls_through_unchanged() -> None:
