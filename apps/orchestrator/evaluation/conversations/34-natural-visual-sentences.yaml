@@ -1,0 +1,611 @@
+# The audit's own sentence table (2026-09-11-wave3-audit-behaviour.md), driven for real.
+#
+# Every sentence below is one a holder actually typed at the demo or a natural variation of one
+# already in this corpus — never a sentence invented for the harness. Two contexts, matching the
+# audit's own: **bar**, a three-category breakdown («¿Cuánto gasté el último trimestre?» over
+# restaurants/transporte público/supermercado); **line**, that same breakdown split into two
+# transport categories and regrouped by month. Each probe turn re-establishes its context first
+# (the breakdown question is deterministic and re-asking it costs nothing new to verify), so a
+# turn's own state is never inherited from an unrelated probe before it — the same independence
+# the audit's own table measured, kept inside one conversation rather than thirty-four.
+#
+# Every expectation here is honest: a right answer, an ask, or a refusal — never the wrong
+# confident total the audit found pinned nowhere before this file. Two sentences (rows 1 and 2 of
+# the table, B-9) are still answered with an unrelated total after items 1-4 of this task and all
+# of Task 4 — probed, not guessed — and are left OPEN below rather than pinned as passing; see the
+# report.
+
+episodes:
+  - name: the_thirty_four_sentences_the_service_used_to_hand_over
+    why: >
+      B-2(a) fixed four of the audit's wrong rows outright (6, 17 — «deshaz», «en euros», both
+      closed-stop-list words now the honest ask at zero calls) and B-7 gave every restyle its chips
+      back (rows 3-5, 8, 11, 30 all now carry `suggestions`, where the audit found none). The rest
+      were already right by Task 3's own fixes (B-1 exclusions, B-3 lineage, B-4 seasons, B-6
+      why/drill, B-8 limits) or were already right in the audit itself. Two rows (1, 2 — «hazlo más
+      grande», «ponlo en tarta») are unrelated presentation words B-9 named and this task's scope
+      never touched: probed again here, they still answer a total for a sentence that named no
+      figure. «Vuelve al anterior» (row 7) is three words, one past `_a_bare_shop_name`'s own
+      two-word ceiling, so B-2(a)'s stop-list never reaches it — still a confident, unrelated total.
+      «Guarda este gráfico» (row 32, B-7's own save request) is still answered with a total too;
+      chips were this task's B-7, not a save handler. «¿Por qué tanto?» (row 19) still reaches the
+      model with the same total: probed and confirmed a harness artefact, not a live defect —
+      turn 1's own plan is `group_by: NONE` even though its injected rows draw three categories, so
+      the drill's own grouping gate never sees a groupable plan to widen. All four are marked OPEN
+      below, never pinned as right.
+    metrics: [wrong_tool]
+    turns:
+      # Row 31 — «pon el primer grafico en vertical». RIGHT (unchanged): named by number, so it
+      # reaches back past the line to the very first chart and flips it. Run first, before any
+      # other probe below mints a chart of its own: `MAX_VISUAL_CONTEXTS` is 5, and "the first
+      # chart" means position zero of THIS conversation, which a later probe's own accumulated
+      # contexts would otherwise have evicted by the time this ran.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Separa transporte público y gasolina.
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: Ahora compáralo por meses.
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: pon el primer grafico en vertical
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        chips: ["Ordena de menor a mayor", "Ponlo en horizontal"]
+
+      # Row 1 — «hazlo mas grande». OPEN (B-9): not a stop-list word, not a presentation word this
+      # service's vocabulary owns either — it reaches the model and answers 465,56 €, a real total
+      # for a sentence that asked for a bigger chart. `route`/`banking_calls` are the measured
+      # facts, not a claim that this is correct.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        chart: {mark: bar}
+      - say: hazlo mas grande
+        route: QUERY
+        banking_calls: 1
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 2 — «ponlo en tarta». OPEN (B-9): same defect, a different unsupported word.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ponlo en tarta
+        route: QUERY
+        banking_calls: 1
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 3 — «ordenalo de mayor a menor porfa». RIGHT: the chart is already in this order, and
+      # the honest «ya está así» now carries the chart's own chips (B-7) instead of none.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ordenalo de mayor a menor porfa
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        chips: ["Ordena de menor a mayor", "Ponlo en vertical"]
+
+      # Row 4 — «ordename el grafico de menor a mayor». RIGHT: a real restyle, and its own chips
+      # for the chart it just drew (B-7) rather than an empty list.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ordename el grafico de menor a mayor
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        chips: ["Ordena de mayor a menor", "Ponlo en vertical"]
+
+      # Row 5 — «ordenalo de menor a mayor». RIGHT, same as row 4 in different words.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ordenalo de menor a mayor
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        chips: ["Ordena de mayor a menor", "Ponlo en vertical"]
+
+      # Row 6 — «deshaz». RIGHT, fixed by this task's own item 1 (B-2a): a closed-stop-list word
+      # is the honest ask now, at zero ledger calls — not the three-call merchant guess the audit
+      # found (`merchants: ['deshaz']`).
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: deshaz
+        route: CLARIFY
+        banking_calls: 0
+        says: "deshaz"
+        no_chips: true
+
+      # Row 7 — «vuelve al anterior». OPEN: three words, past `_a_bare_shop_name`'s own two-word
+      # ceiling, so B-2(a)'s stop-list is never consulted for it — it still reaches the model and
+      # answers an unrelated total. Not B-2(a)'s scope (a closed list of words, not sentences).
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: vuelve al anterior
+        route: QUERY
+        banking_calls: 1
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 8 — «pon el de antes en vertical». RIGHT, and now with chips (B-7).
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: pon el de antes en vertical
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        chips: ["Ordena de menor a mayor", "Ponlo en horizontal"]
+
+      # Row 9 — «quita restaurantes». RIGHT (Task 3, B-1): an exclusion, never an inversion.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: quita restaurantes
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        says: "sin restaurantes"
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], excluded_categories: [RESTAURANTS], merchants: [], group_by: NONE, metric: SUM, excluded_merchants: []}
+
+      # Row 10 — «quita los restaurantes del grafico». RIGHT, same fix in a longer sentence.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: quita los restaurantes del grafico
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        says: "sin restaurantes"
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], excluded_categories: [RESTAURANTS], merchants: [], group_by: NONE, metric: SUM, excluded_merchants: []}
+
+      # Row 11 — «solo los tres primeros». RIGHT (Task 3, B-8): a limit patch, not silence — and
+      # now with chips of its own (B-7), «Ver todos» among them.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: solo los tres primeros
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        chips: ["Ver todos"]
+
+      # Row 12 — «por semanas». RIGHT (Task 3, B-3): the grouping is read correctly and the chart
+      # now derives from the one it regrouped, which is also this file's own `chart_text_agrees`
+      # probe: the chart's own sealed `group_by` (WEEK) is compared directly against the plan that
+      # actually drew it, never against a second reading of the prose.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: por semanas
+        groups: [["2026-W23", 15000, 2], ["2026-W24", 17000, 3], ["2026-W25", 14556, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        derived_from: true
+        chart_text_agrees: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: WEEK, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 13 — «enseñamelo por meses». RIGHT, same fix.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: enseñamelo por meses
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 14556, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        derived_from: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 14 — «por meses». RIGHT, same fix, the bare phrase.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: por meses
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 14556, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        derived_from: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 15 — «agrúpalo por meses». RIGHT (unchanged since the audit — the design's own regroup
+      # wording was already correct).
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: agrúpalo por meses
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 14556, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        derived_from: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 17 — «en euros». RIGHT, fixed by this task's own item 1 (B-2a): the closed stop-list's
+      # own two-word phrase, the honest ask at zero calls, not `merchants: ['en euros']`.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: en euros
+        route: CLARIFY
+        banking_calls: 0
+        says: "en euros"
+        no_chips: true
+
+      # Row 18 — «¿cual es el mayor?». UNVERIFIABLE, unchanged: the fixture's stub planner answers
+      # about "gasolina", a category not on this chart at all — the audit's own point (row 18) is
+      # that no instrument here can tell a right ranking from a wrong one on a model-answered turn,
+      # so only the routing is asserted, never the category.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cual es el mayor?
+        route: QUERY
+        ran: {rank: 1, window: 'LAST_N_MONTHS:3', categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+
+      # Row 19 — «¿por que tanto?». OPEN, and a harness artefact rather than a fresh live defect
+      # (documented, not guessed): turn 1's own `FinancialPlan` carries `group_by: NONE` even
+      # though its injected rows draw three real categories, so the drill's own grouping gate never
+      # sees a plan it could widen and this reaches the model instead, answering the same total.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿por que tanto?
+        route: QUERY
+        banking_calls: 1
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 20 — «¿por que este grafico?». RIGHT (§11 bullet 1's own case, unchanged): resolved
+      # deterministically against the chart in view, no ledger call, the exact `chart_reason`.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿por que este grafico?
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        explanation: true
+        explanation_says: "Barras: comparas categorías entre sí."
+
+      # Row 21 — «explicame el grafico». RIGHT, fixed by Task 3 (B-6): the widened explanation
+      # reader claims it now, the same answer as row 20 — no ledger call, no new chart minted.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: explicame el grafico
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        explanation: true
+        explanation_says: "Barras: comparas categorías entre sí."
+
+      # Row 23 — «¿En qué he gastado más este verano?», §11's own opener. RIGHT, fixed by Task 3
+      # (B-4): a season is an honest ask naming its months, not the inherited quarter — probed here
+      # against a fresh bar (the sentence's own single-year reading, since only this quarter is in
+      # view), zero ledger calls.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿En qué he gastado más este verano?
+        route: GUIDANCE
+        banking_calls: 0
+        says: "junio, julio y agosto de 2026"
+        chips: ["De junio a agosto de 2026"]
+
+      # Row 28 — «ponme solo restaurantes». RIGHT by plan (unchanged): the stub planner reads the
+      # category correctly, though the turn is model-answered and so unmeasured in production.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ponme solo restaurantes
+        route: QUERY
+        banking_calls: 1
+        says: "restaurantes"
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [RESTAURANTS], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 29 — «ponlo apilado». RIGHT (unchanged): an honest refusal naming the reason.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ponlo apilado
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        says: "No puedo aplicar ese cambio"
+
+      # Row 30 — «pon el grafico anterior en horizontal». RIGHT, and now with chips too (B-7):
+      # the chart is already horizontal, so this is another honest «ya está así» that used to
+      # carry no chips and now carries the chart's own.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: pon el grafico anterior en horizontal
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        chips: ["Ordena de menor a mayor", "Ponlo en vertical"]
+
+      # Row 32 — «guarda este grafico». OPEN (B-7's own save request, out of this task's scope):
+      # a save request is still answered with an unrelated total, not the save-candidate flow.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: guarda este grafico
+        route: QUERY
+        banking_calls: 1
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 33 — «sepáralo en transporte público y gasolina». PARTIAL, unchanged since the audit:
+      # the model reads both categories right (`says:` below), but the stub never sets
+      # `group_by: CATEGORY` the way the deterministic reader does, so no chart derives from this
+      # turn — a weaker lineage than row 34's verbatim wording draws, not a wrong answer.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: sepáralo en transporte público y gasolina
+        route: QUERY
+        banking_calls: 1
+        says: "transporte público y gasolina"
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+      # Row 34 — «Separa transporte público y gasolina.», §9's own split, verbatim. RIGHT
+      # (unchanged): deterministic, and the chart it draws derives from the one it split.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Separa transporte público y gasolina.
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 14556, 3]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+
+      # --- the line context: the bar above, split into two transport categories and regrouped by
+      # month (episode 32's own turns 1/3/4, verbatim) -- rows 22, 24-27 and 31 of the table.
+
+      # Row 22 — «¿y en verano?». RIGHT, fixed by Task 3 (B-4): the ambiguous case (no year stated
+      # and last summer's already past), naming both candidate years, zero calls.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Separa transporte público y gasolina.
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: Ahora compáralo por meses.
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: ¿y en verano?
+        route: GUIDANCE
+        banking_calls: 0
+        says: "junio, julio y agosto de 2026 o a junio, julio y agosto de 2025"
+        chips: ["De junio a agosto de 2026", "De junio a agosto de 2025"]
+
+      # Row 24 — «¿y en julio?». RIGHT (unchanged): the named month, categories kept.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Separa transporte público y gasolina.
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: Ahora compáralo por meses.
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: ¿y en julio?
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: "2026-07-01..2026-07-31", categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+
+      # Row 25 — «¿por que agosto es tan alto?». RIGHT (unchanged): clamped to the window the
+      # chart's rows actually cover, regrouped by merchant.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Separa transporte público y gasolina.
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: Ahora compáralo por meses.
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: ¿por que agosto es tan alto?
+        groups: [[Repsol, 12000, 2], [Renfe, 6000, 1]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: "2026-08-01..2026-08-05", categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], group_by: MERCHANT, excluded_categories: [], excluded_merchants: []}
+
+      # Row 26 — «¿que comercio es responsable?», design §3.3's own third sentence. RIGHT, fixed
+      # by Task 3 (B-6): the same drill as row 25, driven now rather than falling to the planner.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Separa transporte público y gasolina.
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: Ahora compáralo por meses.
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: ¿que comercio es responsable?
+        groups: [[Repsol, 12000, 2], [Renfe, 6000, 1]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: "2026-08-01..2026-08-05", categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], group_by: MERCHANT, excluded_categories: [], excluded_merchants: []}
+
+      # Row 27 — «comparalo con el mes pasado». RIGHT, fixed by Task 3 (B-3 lineage): both operands
+      # right, and the chart the comparison draws now derives from the one it compared.
+      - say: ¿Cuánto gasté el último trimestre?
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Separa transporte público y gasolina.
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: Ahora compáralo por meses.
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
+        route: QUERY
+        banking_calls: 1
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        derived_from: true
+      - say: comparalo con el mes pasado
+        route: QUERY
+        banking_calls: 2
+        no_model: true
+        derived_from: true
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}, {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
