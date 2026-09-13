@@ -5,15 +5,16 @@ from typing import Any
 
 from finguard_orchestrator.domain.models.chart import Visualization
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.ports.chart_renderer import ChartRenderer
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.services import answer_writer
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
-from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
 def financial_metric_executor(
     banking: FinancialQueryPort,
+    render: ChartRenderer,
 ) -> Callable[[SavedMetricDefinition, Caller], Awaitable[dict[str, Any]]]:
     async def execute(definition: SavedMetricDefinition, caller: Caller) -> dict[str, Any]:
         if not isinstance(definition.plan, FinancialPlan):
@@ -81,7 +82,7 @@ def financial_metric_executor(
                 rows.append(
                     {field: source[field] for field in definition.chart.fields() if field in source}
                 )
-            presented = present(Visualization(definition.chart, tuple(rows)))
+            presented = render(Visualization(definition.chart, tuple(rows)))
             visualization = {
                 "kind": "chart",
                 "chart_id": "saved-metric",

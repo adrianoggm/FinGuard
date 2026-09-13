@@ -100,6 +100,7 @@ from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTo
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
     StaticTokenIdentity,
 )
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 from finguard_orchestrator.observability import configure_logging
 from finguard_orchestrator.observability.otel import configure_tracing, register_turn_recording
 
@@ -413,7 +414,7 @@ def create_app() -> FastAPI:
     app.state.command_bus = command_bus
     # Reached directly by the streaming route: a bus answers once, a stream does not.
     app.state.ask_handler = asking
-    app.state.metrics_executor = financial_metric_executor(banking)
+    app.state.metrics_executor = financial_metric_executor(banking, present)
     # Readiness reports on what /v1/questions needs, not on what /v1/messages needs.
     app.state.questions_enabled = settings.questions_enabled
     app.state.payments_enabled = settings.payments_enabled
