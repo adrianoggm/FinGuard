@@ -32,8 +32,13 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.visual_explanation import (
     _MEASURE_WORDS,
+    _NOUNS_BY_GROUP,
     WhyAsked,
+    _area_reason,
+    _bar_reason,
+    _line_reason,
     _nouns_of,
+    _point_reason,
     asks_why,
     explain_chart,
 )
@@ -442,6 +447,69 @@ def test_nouns_of_a_week_group_says_semanas_even_with_day_shaped_labels() -> Non
         "semanas",
         "una semana",
     )
+
+
+@pytest.mark.parametrize(
+    ("group_by", "expected_article"),
+    [
+        (GroupBy.WEEK, "semanas"),
+        (GroupBy.MONTH, "meses"),
+        (GroupBy.CATEGORY, "categorías"),
+        (GroupBy.ACCOUNT, "cuentas"),
+        (GroupBy.COUNTERPARTY, "contrapartes"),
+    ],
+)
+def test_line_reason_agrees_in_gender_with_every_groupby_noun(
+    group_by: GroupBy, expected_article: str
+) -> None:
+    """F-1 (fix wave): «a lo largo de los semanas» is ungrammatical -- feminine nouns (semana,
+    categoría, cuenta, contraparte) take «las», not the hardcoded «los»."""
+    singular, plural, indef = _NOUNS_BY_GROUP[group_by]
+    assert plural == expected_article
+    article = "las" if indef.startswith("una") else "los"
+    reason = _line_reason(True, "importe", singular, plural, indef)
+    assert reason == f"Líneas: ves cómo cambia el importe a lo largo de {article} {plural}."
+
+
+@pytest.mark.parametrize(
+    ("group_by", "expected_article"),
+    [
+        (GroupBy.WEEK, "semanas"),
+        (GroupBy.CATEGORY, "categorías"),
+    ],
+)
+def test_area_reason_agrees_in_gender_with_a_feminine_noun(
+    group_by: GroupBy, expected_article: str
+) -> None:
+    singular, plural, indef = _NOUNS_BY_GROUP[group_by]
+    assert plural == expected_article
+    article = "las" if indef.startswith("una") else "los"
+    reason = _area_reason(True, "importe", singular, plural, indef)
+    assert reason == f"Área: ves cómo se acumula el importe a lo largo de {article} {plural}."
+
+
+def test_point_reason_uses_the_indefinite_noun_for_a_feminine_group() -> None:
+    singular, plural, indef = _NOUNS_BY_GROUP[GroupBy.CATEGORY]
+    reason = _point_reason(True, "importe", singular, plural, indef)
+    assert reason == f"Puntos: cada una es {indef} y su importe."
+
+
+def test_point_reason_uses_the_indefinite_noun_for_a_masculine_group() -> None:
+    singular, plural, indef = _NOUNS_BY_GROUP[GroupBy.MONTH]
+    reason = _point_reason(True, "importe", singular, plural, indef)
+    assert reason == f"Puntos: cada uno es {indef} y su importe."
+
+
+def test_bar_reason_temporal_branch_agrees_in_gender_with_a_feminine_group() -> None:
+    singular, plural, indef = _NOUNS_BY_GROUP[GroupBy.WEEK]
+    reason = _bar_reason(True, "importe", singular, plural, indef)
+    assert reason == f"Barras por {plural}: ves cuánto suma cada una."
+
+
+def test_bar_reason_temporal_branch_agrees_in_gender_with_a_masculine_group() -> None:
+    singular, plural, indef = _NOUNS_BY_GROUP[GroupBy.MONTH]
+    reason = _bar_reason(True, "importe", singular, plural, indef)
+    assert reason == f"Barras por {plural}: ves cuánto suma cada uno."
 
 
 def test_nouns_of_none_group_by_falls_back_to_labels() -> None:

@@ -155,22 +155,34 @@ def _measure_word(profile: VisualProfile) -> str:
     return _MEASURE_WORDS.get(profile.measure_metric(), "importe")
 
 
+# F-1 (fix wave): the noun triple's own `indef` ("una categoría" vs "un mes") is what already says
+# which gender it is -- `_scope_summary` (:315) reads it this way already. These two helpers are
+# the same agreement, reused rather than a second hardcoded table: `_los_las` for the "los/las
+# {plural}" article, `_cada` for "cada uno/cada una".
+def _los_las(indef: str) -> str:
+    return "las" if indef.startswith("una") else "los"
+
+
+def _cada(indef: str) -> str:
+    return "cada una" if indef.startswith("una") else "cada uno"
+
+
 def _bar_reason(temporal: bool, medida: str, singular: str, plural: str, indef: str) -> str:
     if temporal:
-        return f"Barras por {plural}: ves cuánto suma cada uno."
+        return f"Barras por {plural}: ves cuánto suma {_cada(indef)}."
     return f"Barras: comparas {plural} entre sí."
 
 
 def _line_reason(temporal: bool, medida: str, singular: str, plural: str, indef: str) -> str:
-    return f"Líneas: ves cómo cambia el {medida} a lo largo de los {plural}."
+    return f"Líneas: ves cómo cambia el {medida} a lo largo de {_los_las(indef)} {plural}."
 
 
 def _area_reason(temporal: bool, medida: str, singular: str, plural: str, indef: str) -> str:
-    return f"Área: ves cómo se acumula el {medida} a lo largo de los {plural}."
+    return f"Área: ves cómo se acumula el {medida} a lo largo de {_los_las(indef)} {plural}."
 
 
 def _point_reason(temporal: bool, medida: str, singular: str, plural: str, indef: str) -> str:
-    return f"Puntos: cada uno es un {singular} y su {medida}."
+    return f"Puntos: {_cada(indef)} es {indef} y su {medida}."
 
 
 def _donut_reason(temporal: bool, medida: str, singular: str, plural: str, indef: str) -> str:
