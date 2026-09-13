@@ -27,9 +27,11 @@ _STACKABLE = frozenset({"bar", "area"})  # the two marks Vega-Lite stacks by def
 # this one `_limit` reason and speak its own Spanish clause, instead of the rule's generic
 # sentence -- the only distinction the holder actually needs to hear ("this chart cannot be
 # ranked" versus "a comparison keeps both its periods" are different claims about the data).
-_COMPARISON_LIMIT_REASON = (
-    "a comparison keeps both periods; limiting one is not a ranking transform"
-)
+# D-H-5 (fix wave, minor): public name -- `llm_controller.py` is `infrastructure/`, and importing
+# a name this module never intended to keep private across that boundary was the boundary
+# violation, not the import itself (the whole point of exporting it, stated above, already
+# crosses that seam on purpose).
+COMPARISON_LIMIT_REASON = "a comparison keeps both periods; limiting one is not a ranking transform"
 
 
 def verify(draft: VisualPlanDraft, profile: VisualProfile) -> ChartSpec | Rejection:
@@ -310,7 +312,7 @@ def _limit(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
         # deleting its pair -- a text/chart disagreement on the one gate the whole "the LLM never
         # decides the financial information" argument rests on. `profile.metric`, not `.comparison`:
         # the marker alone is what makes this a comparison at all, grouped or not.
-        return Rejection("limit", _COMPARISON_LIMIT_REASON)
+        return Rejection("limit", COMPARISON_LIMIT_REASON)
     dimension = next((f for f in profile.role("dimension") if f.type == "nominal"), None)
     wrong_family = (
         spec.mark != "bar"

@@ -115,18 +115,25 @@ show`:
 - **D-H-3** — CLOSED: the five `Co-Authored-By` trailers stripped by one `git filter-branch` over
   `f43fbab..HEAD` on 2026-09-11, which rewrote every commit after `f43fbab` in the process; the SHA
   map above is the post-strip result (F-6, fix wave, regenerated it after 15 entries went stale).
-- **D-H-4** — OPEN, minor: the promoted-only floor recompute in `visual_planning_policy.py` is
-  correct by control-flow tracing, not an explicit mode guard.
-- **D-H-5** — OPEN, minor: `llm_controller.py` imports the private `_COMPARISON_LIMIT_REASON`
-  across the domain/infrastructure boundary.
-- **D-H-6** — OPEN: nothing forces a future continuation reader to stamp
-  `plan_continues_conversation` itself; a reader-registry-walking test was proposed, not written.
-- **D-H-7** — OPEN, IMPORTANT: the season clarification's draft carries only `direction`; a
-  breakdown-asking season sentence still resolves to a total, not the ranking it asks for.
-- **D-H-8** — OPEN, docs (this task): `scripts/handover_cases.py`'s "measured" set reads only
-  `planning/conversations.yaml`, never `dev.yaml` — Task 8b's `dev.yaml` addition documents a plan
-  shape but does not itself move the UNMEASURED ratchet; what moved it was the routing fix that
-  stopped the sentence reaching the planner at all.
+- **D-H-4** — CLOSED (fix wave): the promoted-only floor recompute in `visual_planning_policy.py`
+  now guards explicitly on `self._mode == "promoted"` rather than being correct only by
+  control-flow tracing.
+- **D-H-5** — CLOSED (fix wave): `_COMPARISON_LIMIT_REASON` renamed to the public
+  `COMPARISON_LIMIT_REASON`, imported as such by `llm_controller.py`.
+- **D-H-6** — CLOSED (fix wave): `test_plan_continuation_stamps.py` drives every continuation-kind
+  shape (comparison-on-view, reshape/regroup/split over the query in view, and the standalone drill
+  branch) end to end and asserts each stamps `plan_continues_conversation` — the registry walk the
+  centralisation in `_answering` (F-H3) needed to prove it covers the site outside its own table.
+- **D-H-7** — CLOSED (fix wave, F-4): the season clarification's draft now carries
+  `group_by=CATEGORY` when the sentence itself asks "en qué ... más" (a breakdown), `NONE`
+  otherwise; §11's own acceptance scenario resolves to the ranking it asks for.
+- **D-H-8** — CLOSED (fix wave): `scripts/handover_cases.py` now reads `evaluation/planning/
+  dev.yaml` (key `question`) alongside `conversations.yaml` (key `say`) for its "measured" set.
+  Measured: reading `dev.yaml` moves UNMEASURED by **0** (164 handed to the planner, 127 anchor,
+  37 extension, 22 distinct — unchanged) — every one of the 22 remaining sentences is a
+  non-query control word ("sí", "a ver", "1000", …) with no plan expectation in either file, exactly
+  as `test_what_we_hand_to_the_planner.py`'s own comment already argued; the fix closes a real gap
+  in the definition without moving the ceiling today.
 
 **The git-race attribution map** (so the history reads honestly rather than looking tampered — no
 content was lost in any of the three incidents below, each confirmed by direct file inspection at

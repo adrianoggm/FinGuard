@@ -126,7 +126,7 @@ from finguard_orchestrator.domain.services.visual_interpreter import (
     wants_to_save_chart,
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import (
-    _COMPARISON_LIMIT_REASON,
+    COMPARISON_LIMIT_REASON,
     verify,
 )
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -344,7 +344,7 @@ def _refusal_response(
 
     A-3 (Wave 3 hardening): `rule == "limit"` covers two different claims -- "this chart cannot
     be ranked at all" and "a comparison keeps both its periods" -- and `_REFUSAL_TEXT["limit"]`
-    only speaks the first. `_COMPARISON_LIMIT_REASON` is the verifier's own name for the second;
+    only speaks the first. `COMPARISON_LIMIT_REASON` is the verifier's own name for the second;
     matched against `rejection.reason` (never re-derived from the spec here) so this dict stays
     the single source for every other rule's clause.
 
@@ -354,7 +354,7 @@ def _refusal_response(
     """
     clause = (
         "una comparación necesita sus dos periodos"
-        if rejection.reason == _COMPARISON_LIMIT_REASON
+        if rejection.reason == COMPARISON_LIMIT_REASON
         else _REFUSAL_TEXT[rejection.rule]
     )
     return QuestionResponse(
