@@ -1006,13 +1006,22 @@ onward.
   before W-3's own ordering heuristics ever run, which stay in place as a harmless fallback for a
   frame with no metadata at all. ADR-010 amended; no protocol version bump (additive event type,
   both sides changed together).
-- **D-H-4** (minor, OPEN): `visual_planning_policy.py`'s promoted-only floor recompute is correct by
-  control-flow tracing, not by an explicit `self._mode == "promoted"` guard — a future reader must
-  re-derive the trace to confirm it.
-- **D-H-7** (IMPORTANT, OPEN): the season clarification's draft (Task 3's fix round, F-H2) carries
-  only `direction`. §11's own opening sentence, «¿En qué he gastado más este verano?», asks a
-  breakdown («en qué») but resolves — once the window answers — to a **total**, not the ranking the
-  sentence's own wording promises. The round-trip half of B-4 is closed; the shape half is not.
+- **D-H-4** (minor, CLOSED by the fix wave): `visual_planning_policy.py`'s promoted-only floor
+  recompute now guards explicitly on `self._mode == "promoted"` rather than being correct only by
+  control-flow tracing.
+- **D-H-5** (minor, CLOSED by the fix wave): `_COMPARISON_LIMIT_REASON` renamed to the public
+  `COMPARISON_LIMIT_REASON`; `llm_controller.py` imports it as such.
+- **D-H-6** (CLOSED by the fix wave): `test_plan_continuation_stamps.py` walks every
+  continuation-kind shape (comparison-on-view, reshape/regroup/split, the standalone drill branch)
+  end to end and asserts each stamps `plan_continues_conversation`.
+- **D-H-7** (IMPORTANT, CLOSED by the fix wave, F-4): the season clarification's draft now carries
+  `group_by=CATEGORY` when the sentence itself asks "en qué ... más" (a breakdown), `NONE`
+  otherwise — §11's own opening sentence resolves to the ranking it asks for, not a total.
+- **D-H-8** (CLOSED by the fix wave): `scripts/handover_cases.py` now reads `dev.yaml` (key
+  `question`) alongside `conversations.yaml` (key `say`) for its "measured" set. Measured: reading
+  `dev.yaml` moves UNMEASURED by **0** — every one of the 22 remaining sentences is a non-query
+  control word with no expectation in either file, so the ceiling stays exactly where it was
+  (164 handed to the planner, 127 anchor, 37 extension, 22 distinct).
 - **D-4.5-5** (PARKED, unchanged): unused parameters on the `_MARK_REASONS` callables, untouched by
   this wave.
 - **The GPU runs** (Task 9 of the visual-planner plan, OPEN — the user's own action): the runbook is
