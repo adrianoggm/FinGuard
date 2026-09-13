@@ -1319,6 +1319,10 @@ class AskFinancialQuestionHandler:
                     question=drill.text,
                     plan=answer_writer.describe(previous) if previous is not None else None,
                     conversation=was,
+                    # Item 5 (Wave 3 hardening, T8b): empty for the ordinary several-bars ask
+                    # (the question already names its own alternatives); the NONE-grouped ask's
+                    # own two chips, otherwise.
+                    suggestions=list(drill.suggestions),
                 )
                 return
             if isinstance(drill, DrillUnbound):
