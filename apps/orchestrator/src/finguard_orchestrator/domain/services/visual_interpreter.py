@@ -196,21 +196,21 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
     if not visual_signal:
         return None
     if not contexts:
-        # F-3 (fix wave, Important 6): `show_every_row` ("todos"/"todas"/"sin límite") abstains
-        # here rather than claims -- with no chart in context it may be answering a pending
-        # clarification (C-3), which lives in the handler, not this interpreter, and the handler
-        # never sees a sentence this claims. Every other no-context visual signal (a mark, an
-        # orientation, a sort, a size or limit word) is a genuine restyle instruction with nothing
-        # to restyle, and the caller now answers that honestly instead of falling to the planner.
-        #
-        # F-3 regression (fix wave, found measuring D-H-8): `go_back` ("vuelve al anterior"/"el
-        # de antes") abstains for the same reason `show_every_row` does, and for one more of its
-        # own -- "el/lo de antes" is ordinary conversational Spanish for "what we were saying
-        # before", not only "the previous chart" ("Volviendo a lo de antes, ¿cuál fue la nómina
-        # más alta?", episode 14, a real ranking query with no chart in sight). Claiming it here
-        # answered a real question "Ese dato no tiene gráfico que cambiar." instead of letting the
-        # scope-restoration reader that already exists for exactly this sentence run.
-        if show_every_row or go_back:
+        # F-3 (fix wave, Important 6), narrowed by two regressions found measuring D-H-8: a bare
+        # style/mark/orientation word (`_VISUAL` -- "barras", "líneas", "circular", "ordena"...)
+        # is the one no-context signal with no other honest reading, so that alone is claimed and
+        # answered honestly instead of falling to the planner and inventing a window. Every other
+        # route to `visual_signal` here abstains instead of claiming, because each has a real
+        # non-chart reading this interpreter cannot tell apart from the chart one with no chart to
+        # check against: `show_every_row` ("todos"/"sin límite") may be answering a pending
+        # clarification C-3 already owns; `go_back` ("lo de antes") is ordinary Spanish for "what
+        # we were saying before", not only "the previous chart" ("Volviendo a lo de antes, ¿cuál
+        # fue la nómina más alta?", episode 14); `_LIMIT_PHRASE` ("los 2 últimos") reads a window
+        # just as naturally as a row limit ("¿Y de algún otro en los 2 últimos meses?", episode
+        # 13-messy); and a bare size word alone is B-9's own ambiguous case one layer up. Each of
+        # those already falls through to a reader that exists for its non-chart reading -- exactly
+        # as every no-context visual signal did before F-3 introduced this branch at all.
+        if not _VISUAL.search(folded):
             return None
         return VisualIntent(None, None, "No hay ningún gráfico anterior que pueda cambiar.")
     target_match = TARGET.search(folded)

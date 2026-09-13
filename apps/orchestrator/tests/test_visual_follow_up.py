@@ -708,6 +708,35 @@ def test_f3_going_back_to_a_previous_topic_with_no_chart_still_plans() -> None:
     assert len(draws.calls) == 1
 
 
+def test_f3_a_window_phrase_with_no_chart_still_plans() -> None:
+    """Second regression found in the same measurement: "¿Y de algún otro en los 2 últimos
+    meses?" (episode 13-messy, turn 5) reads "los 2 últimos" as `_LIMIT_PHRASE` (a chart row
+    limit, "the last 2 rows") just as naturally as it reads as a window ("the last 2 months") --
+    with no chart to check it against, `interpret_visual` must abstain rather than guess which
+    reading is meant, exactly like `show_every_row` and `go_back` already do."""
+    draws = _DrawsOneChart()
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, draws)
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/questions",
+            json={"question": "¿Y de algún otro en los 2 últimos meses?"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.questions_enabled = previously_questions_enabled
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["outcome"] != "VISUAL_INCOMPATIBLE"
+    assert len(draws.calls) == 1
+
+
 async def test_a_visual_word_during_an_open_payment_preview_stays_in_the_payment_branch() -> None:
     """C-6: a payment preview is open (`PaymentConfirmation`) and a chart is also on screen. A
     reply carrying only a visual word («ponlo en barras») used to be claimed by `interpret_visual`
