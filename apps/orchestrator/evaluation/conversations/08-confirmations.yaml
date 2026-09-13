@@ -157,9 +157,13 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      # B-2(a) (Wave 3 hardening, R-H1): "confirmo" with no preview open reaches this path as a bare
+      # financial-query word, and it is on the closed stop-list -- the honest ask now, not a shop
+      # called "confirmo".
       - say: confirmo
+        route: CLARIFY
         not_says: Hecho
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['confirmo'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        banking_calls: 0
       - say: vale
         route: COURTESY
       - say: gracias
