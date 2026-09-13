@@ -513,11 +513,14 @@ def _visual_only_response(
     # candidate the same request would otherwise have minted. With no saved source,
     # `trusted_context is context` and this is unchanged.
     if canonical(updated.spec) == canonical(context.spec):
+        # B-7 (Wave 3 hardening): the chart did not change, so neither do its chips -- the same
+        # affordance the holder is already looking at, offered again rather than dropped.
         return QuestionResponse(
             outcome="VISUAL_UNCHANGED",
             text="El gráfico ya está así; lo dejo como está.",
             conversation=conversation_mapper.to_payload(conversation),
             about_chart_id=context.chart_id,
+            suggestions=llm_mapper._chart_suggestions(context),
         )
     rendered_spec = present_spec(updated.spec)
     decision = VisualDecision(
@@ -568,6 +571,10 @@ def _visual_only_response(
         ),
         save_candidate=candidate,
         explanation=llm_mapper.explanation_of(next_conversation.visual_contexts[-1]),
+        # B-7 (Wave 3 hardening): the same `_chart_suggestions` -> `_chip_verifies` filter the
+        # first chart's own chips went through (`llm_mapper.question_to_dto`), run over the new
+        # chart -- the restyle just used is an affordance too, not one that disappears once taken.
+        suggestions=llm_mapper._chart_suggestions(derived_context),
     )
 
 

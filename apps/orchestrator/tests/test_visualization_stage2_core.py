@@ -66,6 +66,7 @@ from finguard_orchestrator.infrastructure.mappers.conversation_mapper import (
 )
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     _chart_suggestions,
+    _chip_verifies,
     question_to_dto,
 )
 from finguard_orchestrator.infrastructure.metrics.codec import decode_chart, encode_chart
@@ -1192,6 +1193,38 @@ async def test_a_verified_patch_is_recorded_as_a_patch_decision() -> None:
         ),
     )
     assert ctx.decision is not None and ctx.decision.source == "patch"
+
+
+def test_a_restyle_offers_chips_for_the_chart_it_just_drew() -> None:
+    """B-7 (Wave 3 hardening): a `VISUAL_UPDATED` answer used to carry `suggestions: []` --
+    `final_suggestions` (`llm_controller.py`) is populated only on the rendered query path, so the
+    one affordance a holder just demonstrated (typing a chip) disappeared the moment they used it.
+    The same filter the first chart's chips go through, run over the new one."""
+    spec, profile = _breakdown_bar_ranked()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ordénalo de mayor a menor", conversation.visual_contexts)
+    assert intent is not None
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UPDATED"
+    assert response.suggestions
+    derived = to_domain(response.conversation).visual_contexts[-1]
+    for chip in response.suggestions:
+        assert _chip_verifies(chip, derived)
+
+
+def test_a_restyle_that_changes_nothing_keeps_the_chart_s_own_chips() -> None:
+    """B-7: `VISUAL_UNCHANGED` ("ya está así") is still an answer about the chart on screen, and
+    the chips it offers are that chart's own -- not the empty list a no-op used to leave behind.
+    Same fixture and sentence as `test_turning_a_bar_already_that_way_answers_visual_unchanged`."""
+    spec, profile = _floor_breakdown()
+    context = VisualContext("chart-1", spec, profile)
+    conversation = Conversation(visual_contexts=(context,))
+    intent = interpret_visual("ponlo en horizontal", conversation.visual_contexts)
+    assert intent is not None
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UNCHANGED"
+    assert response.suggestions == _chart_suggestions(context)
+    assert response.suggestions
 
 
 def test_a_round_tripped_ranked_bar_still_verifies_the_descending_sort() -> None:
