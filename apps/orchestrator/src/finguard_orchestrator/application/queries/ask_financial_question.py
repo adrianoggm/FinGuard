@@ -828,13 +828,22 @@ class AskFinancialQuestionHandler:
             direction = facts.direction or (
                 previous.direction if isinstance(previous, FinancialPlan) else Direction.EXPENSE
             )
+            # F-4 (fix wave, D-H-7/Important 4): "en qué he gastado más este verano" asks for a
+            # breakdown by category, not a total -- the shape the round trip must carry too, or
+            # the resolved plan draws a single number for a question that asked which category.
+            group_by = (
+                GroupBy.CATEGORY
+                if window_words.season_asks_a_breakdown(query.sentence)
+                else GroupBy.NONE
+            )
             yield AskFinancialQuestionResult(
                 outcome=Spoken.GUIDANCE.value,
                 text=question,
                 question=question,
                 conversation=was.with_active(
                     FinancialClarification(
-                        draft=FinancialPlanDraft(direction=direction), awaiting=Slot.WINDOW
+                        draft=FinancialPlanDraft(direction=direction, group_by=group_by),
+                        awaiting=Slot.WINDOW,
                     )
                 ),
                 suggestions=list(chips),

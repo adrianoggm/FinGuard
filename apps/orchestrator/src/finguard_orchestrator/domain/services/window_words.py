@@ -1019,6 +1019,22 @@ def season_ask(sentence: str, *, today: date) -> tuple[str, tuple[str, ...]] | N
     return question, chips
 
 
+# F-4 (fix wave, D-H-7/Important 4): §11's own opening sentence, «¿En qué he gastado más este
+# verano?», is a breakdown by category ("en qué" + a superlative), not a total -- the round trip
+# B-4/F-H2 closed only settles the *window*; the draft `season_ask`'s caller opens still defaulted
+# to `GroupBy.NONE`, so the resolved plan drew a single number for a question that asked which
+# category. Scoped to sentences `season_ask` has already matched (a season word is present), so
+# this needs only the one distinction its own docstring already draws: "en qué ... más" is a
+# ranking, "cuánto" is a total.
+_BREAKDOWN_SHAPE: Final = re.compile(r"\ben\s+qu[ée]\b.{0,60}\bm[áa]s\b")
+
+
+def season_asks_a_breakdown(sentence: str) -> bool:
+    """Whether this season question asks "en qué ... más" -- a ranking by category -- rather than
+    a total. Called only on a sentence `season_ask` has already claimed."""
+    return bool(_BREAKDOWN_SHAPE.search(spanish.folded(sentence)))
+
+
 # "de junio a agosto de 2026" -- the season chip's own shape, and read narrowly on purpose: a
 # trailing year is required, which is exactly what keeps this apart from "de junio a septiembre"
 # (no year), the ambiguous range `_a_month_with_no_year` already refuses because it could be either
