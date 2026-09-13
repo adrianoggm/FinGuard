@@ -56,4 +56,76 @@ A new episode 34 with the audit's natural sentences and HONEST expectations (rig
 ### Task 9 — Docs
 Design, `docs/next.md`, `conversational-capabilities.md`, this plan's Landed; the audits' «what is solid» carried as the wave's negative space.
 
+## Landed
+
+One line per task, SHAs post-strip (D-H-3's `git filter-branch` over `f43fbab..HEAD` removed the
+`Co-Authored-By` trailer from five Task 7 commits and remapped every SHA in the batch — the list
+below is the remapped one, not the one any individual task report first announced):
+
+- **Task 1** (A-1/A-13) — `4cb9fc6`, `3ce9cb6`.
+- **Task 2** (A-2/U-4/C-5/A-6/A-11/A-4/A-5/U-5) — `09ddc3f`, `7801a15`, `fd2c9a9`, `77f5f1d`, `a164a90`.
+- **Task 3** (B-1/B-2/B-4/C-1/C-6/C-3/A-8/A-9/A-10/B-3/B-6/B-8/C-4) — `cd40ebe`, `72cb982`,
+  `12880d4`, `cfb0836`, `541ecd3`, `e63d15a`, `2c3c75c`; B-2 left BLOCKED (R-H1, below), closed
+  instead by Task 8's stop-list.
+- **Task 3 fix round** (F-H1 Critical, F-H2, F-H3, raised by the batch-1 review) — `45c9d6b`,
+  `bbcaef6`, `2b64f14`.
+- **Task 4** (U-1/U-2/U-3/U-6/U-7/U-8/A-3/A-7, plus D-H-1) — `ab1ae38`, `96fcbb9`, `a628f72`,
+  `86befb1`, `d5f4e3a`, `96435fd`, `614ed0e`.
+- **Task 5** (G-1..G-11) — `0938625`, `ad95864`, `f0f4231`, `557e71a`, `9ee33fe`; G-2/G-3/G-6/G-8/G-11's
+  own commit content landed inside `0fcb07a` (Task 6's commit) by a shared-index race — see the
+  git-race map below, no content lost.
+- **Task 6** (W-1..W-8) — `0fcb07a`, `c747362`, `52b5f3e`, `52be37d`.
+- **Task 7** (M-1..M-9/U-9) — `0938625` (the State-at-HEAD block, same race as Task 5's G-1),
+  `f4d9d77`, `f0c203d`, `93b51c9`+`edd379d` (one intended commit split in two by a background race),
+  `0712927`.
+- **Task 8** (B-2a, the pinned turns, harness kinds, B-7, episode 34) — `9147ac1`, `90c9264`,
+  `ced6672`, `60db150`, `8c76c57`, `57b4140`.
+- **Task 8b** (B-9, save request, «vuelve al anterior», the drill asks, `_SPLIT_BY_NAMES` reorder,
+  the ratchets brought back to ceiling) — `c530efb`, `94bae8d`, `423f7c9`, `1bfec6e`, `df43db4`,
+  `133e973`.
+- **Task 9** (docs) — this task's own commit.
+
+**Rulings, one line each:**
+- **R-H1** — B-2 splits into a CLOSED stop-list (Task 8, zero calls) and the pinned corpus turns
+  that had fixed the old guess-then-retract as expected behaviour, corrected once confirmed a
+  confident wrong answer rather than an honest retraction; the stop-list is an interim measure,
+  superseded by a general capitalised-or-known-merchant rule once no pinned episode still breaks
+  under it.
+- **R-H2** — a ratchet ceiling (`UNMEASURED`, `MUTE`) is never raised: Task 8 measured both over
+  ceiling by driving episode 34's real sentences through the harness, and Task 8b brought both back
+  to their ceiling — 22/22 and 43/43 — by claiming the sentences with real readers, never by
+  widening the literal.
+
+**Deferred D-H-N, open or closed:**
+- **D-H-1** — CLOSED (Task 4): `QuestionResponse.about_chart_id` added, read-never-authoritative.
+- **D-H-1b** (gateway `chart_identity` reading `about_chart_id`) — OPEN, gateway-side, not this wave's.
+- **D-H-2** — OPEN: PCM audio frames carry no turn id on the wire; the web's W-3 fix narrows the
+  barge-in race, the complete fix needs a gateway-side wire tag (ADR-010 now notes it explicitly).
+- **D-H-3** — CLOSED: the five `Co-Authored-By` trailers stripped, the SHA map above is the result.
+- **D-H-4** — OPEN, minor: the promoted-only floor recompute in `visual_planning_policy.py` is
+  correct by control-flow tracing, not an explicit mode guard.
+- **D-H-5** — OPEN, minor: `llm_controller.py` imports the private `_COMPARISON_LIMIT_REASON`
+  across the domain/infrastructure boundary.
+- **D-H-6** — OPEN: nothing forces a future continuation reader to stamp
+  `plan_continues_conversation` itself; a reader-registry-walking test was proposed, not written.
+- **D-H-7** — OPEN, IMPORTANT: the season clarification's draft carries only `direction`; a
+  breakdown-asking season sentence still resolves to a total, not the ranking it asks for.
+- **D-H-8** — OPEN, docs (this task): `scripts/handover_cases.py`'s "measured" set reads only
+  `planning/conversations.yaml`, never `dev.yaml` — Task 8b's `dev.yaml` addition documents a plan
+  shape but does not itself move the UNMEASURED ratchet; what moved it was the routing fix that
+  stopped the sentence reaching the planner at all.
+
+**The git-race attribution map** (so the history reads honestly rather than looking tampered — no
+content was lost in any of the three incidents below, each confirmed by direct file inspection at
+HEAD, independently, by the batch-1 review):
+- `0938625` (`fix(voice): a refused voice payment does not silence the session`) carries Task 5's
+  own G-1 files **plus** Task 7's `RESULTS.md` State-at-HEAD block — two implementers' commits
+  landed as one, in a shared worktree, caught and mapped rather than rewritten while both were live.
+- `0fcb07a` (`fix(web): the client accepts the answers the orchestrator really sends`) carries
+  Task 6's W-1/W-2/W-3/W-4/W-6 web files **plus** Task 5's G-2/G-3/G-6/G-8/G-11 gateway files.
+- `93b51c9`/`edd379d` share one subject line for two different files (`latency_gate.py` new,
+  `RESULTS.md` edited) — a background race split one intended commit into two, not a duplication.
+- The METHOD RULE this wave converged on — `git commit -m "<msg>" -- <paths>` in one call, never a
+  separate `git add` — closed the race for every implementer from the point each adopted it onward.
+
 Then: whole-branch review (opus, base `d88324c`), one fix wave, scoped re-review, CLOSED line; push and fast-forward on the user's word.

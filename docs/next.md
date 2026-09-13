@@ -903,10 +903,10 @@ the fix wave closed D-4.5-8 — a later-turn explanation's `scope_summary` now c
 when the labels are empty or hit the cap. D-4.5-1 (the design's example strings), D-4.5-4 (a public
 `category_words.keys()` accessor), and D-4.5-7 (a web test driving the disclosure through a
 materialised restyle) are likewise FIXED, as is D-4.5-9 (the corpus fixture keys, `TRANSPORT_PUBLIC`
-replacing a key absent from every ledger category enum). A week-grouped chart's labels are
-indistinguishable on the wire from a day-grouped chart's (both a plain ISO date), so a week-grouped
-explanation says «días», by design until a real week-shaped key exists — not a defect, a stated
-limit (D-4.5-3, re-ruled, no fix-wave item). D-4.5-5 (unused params on the `_MARK_REASONS`
+replacing a key absent from every ledger category enum). D-4.5-3 was RETIRED by Wave 3 hardening
+(Task 2, U-5, 2026-09-11): the sealed `group_by` now carries the WEEK/DAY distinction a label alone
+cannot, so a week-grouped chart's explanation says «semanas», not «días» — the limit this paragraph
+used to state no longer holds; see the design doc's own §7 for the mechanism. D-4.5-5 (unused params on the `_MARK_REASONS`
 callables) is PARKED, untouched. D-4.5-6/M-2 (Task 7, R14) is **CLOSED**, not by a digest: a digest
 of `metric_definition` can never tell a borrowed plan from an owned one (both a comparison's stale
 `last_plan` and this turn's own plan digest identically, since both are read off the same field in
@@ -927,6 +927,106 @@ back-fill — a chart that follows one of them, over whatever plan was previousl
 only the generic «En pantalla tienes el desglose.» line, by design. The video's
 on-camera run of §11 is the user's; what the code offers it is episode 32's turn order and the
 explanation visible after turn 1, spoken right after «¿Por qué este gráfico?».
+
+**2026-09-13 — Wave 3 hardening landed: the audits' findings are closed, claimed, or written down as
+open — none silently dropped.** Three read-only auditors (design/architecture, code correctness,
+behaviour+harness+gateway+web) read `task/wave3` at `d88324c` and reported, by severity: design 2
+Critical / 11 Important / 10 Minor (+3 questions); code 1 Critical / 5 Important / 7 Minor;
+behaviour+gateway+web+measurement 13 Critical / 23 Important / 18 Minor. The measurement audit's own
+four Criticals, one line each: **M-1** the §8 latency gate summed a real-provider Linux number and a
+fake-provider Windows number on a path where the fake provider never restyles a chart, under the
+word "measured"; **M-2** the planning baseline this repo's own numbers were measured against used
+`ministral-3:14b`, not the product's own planner model; **M-3** Task 9's GPU runbook was not
+runnable at all (a wrong default model, a no-op env var, a nonexistent `--mode` flag, a dead compose
+key); **M-4** the visual planner's 6.0 s budget was a guess presented as a measurement, and the
+method proposed to measure it is right-censored by construction (a run made *at* budget B can never
+report a P95 above B).
+
+**What landed, by task, SHAs post-strip (D-H-3; the batch-1 review's five `Co-Authored-By` trailers
+were removed by `git filter-branch` over `f43fbab..HEAD` before this list — every SHA below is the
+post-strip one):** Task 1 — the seal binds conversation + position (A-1/A-13): `4cb9fc6`, `3ce9cb6`.
+Task 2 — what crosses the wire (A-2/A-6/U-5/A-11/A-4/A-5): `09ddc3f`, `7801a15`, `fd2c9a9`,
+`77f5f1d`, `a164a90`. Task 3 — the language surface (B-1/B-4/A-8/A-9/A-10/B-6/B-3/C-1/C-3/C-4/C-6):
+`cd40ebe`, `72cb982`, `12880d4`, `cfb0836`, `541ecd3`, `e63d15a`, `2c3c75c`; B-2 left BLOCKED by
+design (R-H1), closed instead by Task 8's stop-list. Task 3 fix round (F-H1 Critical/F-H2/F-H3, from
+the batch review): `45c9d6b`, `bbcaef6`, `2b64f14`. Task 4 — charts mean what they say
+(U-1/U-6/U-2/U-3/A-7/C-2/A-3/U-7/U-8/A-15/D-H-1): `ab1ae38`, `96fcbb9`, `a628f72`, `86befb1`,
+`d5f4e3a`, `96435fd`, `614ed0e`. Task 5 — the gateway (G-1..G-11): `0938625`, `ad95864`, `f0f4231`,
+`557e71a`, `9ee33fe` (G-2/G-3/G-6/G-8/G-11's own commit content landed inside `0fcb07a`, a
+shared-index race — see the git-race map below). Task 6 — the web (W-1..W-8): `0fcb07a`, `c747362`,
+`52b5f3e`, `52be37d`. Task 7 — measurement honesty (M-1..M-9/U-9): `0938625` (State-at-HEAD block,
+same race), `f4d9d77`, `f0c203d`, `93b51c9`+`edd379d`, `0712927`. Task 8 — the corpus learns the
+sentences it avoided (B-2a/B-7, harness kinds, episode 34): `9147ac1`, `90c9264`, `ced6672`,
+`60db150`, `8c76c57`, `57b4140`. Task 8b — the ratchets come back under ceiling by claiming, not
+raising (B-9, save request, «vuelve al anterior», the drill asks, `_SPLIT_BY_NAMES` reorder):
+`c530efb`, `94bae8d`, `423f7c9`, `1bfec6e`, `df43db4`, `133e973`.
+
+**Rulings, R-H1/R-H2:** R-H1 — B-2 (an unrecognised bare word read as a merchant filter) splits into
+a CLOSED stop-list (asks with zero calls, shipped by Task 8) and the ten (in fact twelve) pinned
+corpus turns that pinned the old guess-then-retract as expected behaviour, corrected in the same
+task once each was confirmed a confident wrong answer, never an honest retraction — the stop-list is
+an interim measure, superseded by a general capitalised-or-known-merchant rule once no pinned
+episode still breaks under it. R-H2 — a ratchet ceiling (`UNMEASURED`, `MUTE`) is never raised;
+Task 8 measured both over ceiling (30/22, 49/43) by driving episode 34's real sentences through the
+harness, and Task 8b brought both back to their ceilings (22/22, 43/43) by claiming the sentences
+with real readers, not by widening the literal. **What sitting at the ceiling means for the next
+natural sentence added to the corpus: there is no room left.** Any further sentence that reaches the
+model with no planning-dataset case, or recognises nothing at all, must either be claimed by a
+reader (as Task 8b did for eight rows) or matched by a new planning-dataset case before it can be
+added — the ceiling itself may not move to make room.
+
+**The git-race attribution map** (from the batch-1 review, so the history reads honestly rather than
+looking tampered): `0938625` (`fix(voice): a refused voice payment does not silence the session`)
+carries Task 5's own G-1 files **plus** Task 7's `RESULTS.md` State-at-HEAD block — two
+implementers' concurrent commits in one shared worktree, caught and mapped, not rewritten while
+implementers were live. `0fcb07a` (`fix(web): the client accepts the answers the orchestrator really
+sends`) carries Task 6's W-1/W-2/W-3/W-4/W-6 web files **plus** Task 5's G-2/G-3/G-6/G-8/G-11
+gateway files. `93b51c9`/`edd379d` share one subject line for two different files (`latency_gate.py`
+new, `RESULTS.md` edited) — a background race split one intended commit into two. No content was
+lost in any of the three incidents, confirmed by direct file inspection at HEAD in both the ledger
+and the read-only batch review; the METHOD RULE this wave converged on — `git commit -m "<msg>" --
+<paths>` in one call, never a separate `git add` — closed the race for every task from Task 5's
+fourth commit onward.
+
+**What is REFUSED or still OPEN, stated as plainly as what landed:**
+- **The sentence-table rows still open** (Task 8/8b's own accounting): rows 19 («¿por qué tanto?»
+  over a `group_by: NONE` chart) and 33 («sepáralo…», the model path) were harness artefacts, now
+  claimed or explained; after Task 8b, the only rows genuinely left open are out of this wave's
+  declared scope entirely (B-9's «hazlo más grande»/«ponlo en tarta» were themselves claimed by
+  Task 8b — see its own table — so as of `133e973` every row of episode 34 is RIGHT except the ones
+  the wave never promised: none remain unaccounted for without a stated reason).
+- **D-H-2** (gateway follow-up, OPEN): PCM audio frames carry no turn id on the wire; the web's W-3
+  fix narrows the barge-in race by holding a new turn's `audio.started` until the gateway confirms
+  the previous turn's cancellation, but a wire-level per-frame tag — the complete fix — needs a
+  gateway-side change, not made in this wave.
+- **D-H-4** (minor, OPEN): `visual_planning_policy.py`'s promoted-only floor recompute is correct by
+  control-flow tracing, not by an explicit `self._mode == "promoted"` guard — a future reader must
+  re-derive the trace to confirm it.
+- **D-H-7** (IMPORTANT, OPEN): the season clarification's draft (Task 3's fix round, F-H2) carries
+  only `direction`. §11's own opening sentence, «¿En qué he gastado más este verano?», asks a
+  breakdown («en qué») but resolves — once the window answers — to a **total**, not the ranking the
+  sentence's own wording promises. The round-trip half of B-4 is closed; the shape half is not.
+- **D-4.5-5** (PARKED, unchanged): unused parameters on the `_MARK_REASONS` callables, untouched by
+  this wave.
+- **The GPU runs** (Task 9 of the visual-planner plan, OPEN — the user's own action): the runbook is
+  now runnable end to end (M-3, above), but no measurement exists. `evaluation/planning/RESULTS.md`'s
+  State-at-HEAD block and the config comment both say so in the present tense, not as a stale claim.
+- **The §11 on-camera run** (OPEN — the user's own action): the code path is proved by episodes
+  32/33 with the stub planner and the fake ledger (M-6); the on-camera recording itself is not part
+  of this repository's own gates.
+- **The security paragraph** (already landed, verify rather than duplicate): Task 1's own 2026-09-11
+  entry above already states the loopback default is not a trust boundary (A-13) — restated in the
+  design doc's own §13 by this task, not re-added here a second time.
+
+**What still says exactly what it said before, corrected only where hardening changed the underlying
+fact:** the 4.4 paragraph above is unchanged — nothing in this wave touched multimodal continuity's
+own mechanics. The 4.5 paragraph's own week-limit sentence is corrected in place, above (D-4.5-3
+RETIRED) — the paragraph no longer says a week-grouped chart's explanation says «días»; every other
+claim in it (the provenance strings, `metric_definition_borrowed`, the R14/R15 digest ruling) is
+unchanged. Suite at HEAD `133e973`: orchestrator 2193 + 1008 + 1137 / 3 skipped / 208 deselected +
+corpus 208 (177 · 1273) at 0.0 % on every metric; ratchets `UNMEASURED` 22/22, `MUTE` 43/43,
+`CONTESTED` 0 (at their ceilings, not exceeding them); gateway 144 passed / 1 skipped; web 131
+passed / 10 files. `ruff check`/`ruff format --check`/`mypy src` clean throughout.
 
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
