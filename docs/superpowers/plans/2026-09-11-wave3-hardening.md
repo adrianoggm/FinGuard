@@ -58,11 +58,18 @@ Design, `docs/next.md`, `conversational-capabilities.md`, this plan's Landed; th
 
 ## Landed
 
-One line per task, SHAs post-strip (D-H-3's `git filter-branch` over `f43fbab..HEAD` removed the
-`Co-Authored-By` trailer from five Task 7 commits and remapped every SHA in the batch — the list
-below is the remapped one, not the one any individual task report first announced):
+One line per task. F-6 (fix wave, Important 5): the list below was regenerated from `git log
+d88324c..4feff6e` rather than hand-copied from task reports — the previous version named 15
+pre-strip SHAs (Task 1, all of Task 5, all of Task 6, all of Task 7) that `git merge-base
+--is-ancestor` shows are not reachable from HEAD. The reason is honest and stated once here rather
+than per line: `git filter-branch --msg-filter` ran once, over `f43fbab..HEAD`, on 2026-09-11
+(D-H-3, to strip a `Co-Authored-By` trailer from five Task 7 commits) and rewrote every commit
+after `f43fbab` in the process, the way `filter-branch` always does — each task's own report had
+already announced its SHAs before that rewrite, and only the tasks landing after it were ever
+re-mapped in this file. The SHAs below are the post-strip ones a fresh clone can actually `git
+show`:
 
-- **Task 1** (A-1/A-13) — `4cb9fc6`, `3ce9cb6`.
+- **Task 1** (A-1/A-13) — `6e1c350`, `b9e8231`.
 - **Task 2** (A-2/U-4/C-5/A-6/A-11/A-4/A-5/U-5) — `09ddc3f`, `7801a15`, `fd2c9a9`, `77f5f1d`, `a164a90`.
 - **Task 3** (B-1/B-2/B-4/C-1/C-6/C-3/A-8/A-9/A-10/B-3/B-6/B-8/C-4) — `cd40ebe`, `72cb982`,
   `12880d4`, `cfb0836`, `541ecd3`, `e63d15a`, `2c3c75c`; B-2 left BLOCKED (R-H1, below), closed
@@ -71,13 +78,13 @@ below is the remapped one, not the one any individual task report first announce
   `bbcaef6`, `2b64f14`.
 - **Task 4** (U-1/U-2/U-3/U-6/U-7/U-8/A-3/A-7, plus D-H-1) — `ab1ae38`, `96fcbb9`, `a628f72`,
   `86befb1`, `d5f4e3a`, `96435fd`, `614ed0e`.
-- **Task 5** (G-1..G-11) — `0938625`, `ad95864`, `f0f4231`, `557e71a`, `9ee33fe`; G-2/G-3/G-6/G-8/G-11's
-  own commit content landed inside `0fcb07a` (Task 6's commit) by a shared-index race — see the
+- **Task 5** (G-1..G-11) — `0938625`, `d6593ad`, `f630636`, `177d426`, `93004d6`; G-2/G-3/G-6/G-8/G-11's
+  own commit content landed inside `6a6ea71` (Task 6's commit) by a shared-index race — see the
   git-race map below, no content lost.
-- **Task 6** (W-1..W-8) — `0fcb07a`, `c747362`, `52b5f3e`, `52be37d`.
+- **Task 6** (W-1..W-8) — `6a6ea71`, `ca1efac`, `450c42b`, `e84919e`.
 - **Task 7** (M-1..M-9/U-9) — `0938625` (the State-at-HEAD block, same race as Task 5's G-1),
-  `f4d9d77`, `f0c203d`, `93b51c9`+`edd379d` (one intended commit split in two by a background race),
-  `0712927`.
+  `19447e3`, `d2a4515`, `0860db7`+`153d497` (one intended commit split in two by a background race),
+  `69f095b`.
 - **Task 8** (B-2a, the pinned turns, harness kinds, B-7, episode 34) — `9147ac1`, `90c9264`,
   `ced6672`, `60db150`, `8c76c57`, `57b4140`.
 - **Task 8b** (B-9, save request, «vuelve al anterior», the drill asks, `_SPLIT_BY_NAMES` reorder,
@@ -101,7 +108,9 @@ below is the remapped one, not the one any individual task report first announce
 - **D-H-1b** (gateway `chart_identity` reading `about_chart_id`) — OPEN, gateway-side, not this wave's.
 - **D-H-2** — OPEN: PCM audio frames carry no turn id on the wire; the web's W-3 fix narrows the
   barge-in race, the complete fix needs a gateway-side wire tag (ADR-010 now notes it explicitly).
-- **D-H-3** — CLOSED: the five `Co-Authored-By` trailers stripped, the SHA map above is the result.
+- **D-H-3** — CLOSED: the five `Co-Authored-By` trailers stripped by one `git filter-branch` over
+  `f43fbab..HEAD` on 2026-09-11, which rewrote every commit after `f43fbab` in the process; the SHA
+  map above is the post-strip result (F-6, fix wave, regenerated it after 15 entries went stale).
 - **D-H-4** — OPEN, minor: the promoted-only floor recompute in `visual_planning_policy.py` is
   correct by control-flow tracing, not an explicit mode guard.
 - **D-H-5** — OPEN, minor: `llm_controller.py` imports the private `_COMPARISON_LIMIT_REASON`
@@ -121,9 +130,9 @@ HEAD, independently, by the batch-1 review):
 - `0938625` (`fix(voice): a refused voice payment does not silence the session`) carries Task 5's
   own G-1 files **plus** Task 7's `RESULTS.md` State-at-HEAD block — two implementers' commits
   landed as one, in a shared worktree, caught and mapped rather than rewritten while both were live.
-- `0fcb07a` (`fix(web): the client accepts the answers the orchestrator really sends`) carries
+- `6a6ea71` (`fix(web): the client accepts the answers the orchestrator really sends`) carries
   Task 6's W-1/W-2/W-3/W-4/W-6 web files **plus** Task 5's G-2/G-3/G-6/G-8/G-11 gateway files.
-- `93b51c9`/`edd379d` share one subject line for two different files (`latency_gate.py` new,
+- `0860db7`/`153d497` share one subject line for two different files (`latency_gate.py` new,
   `RESULTS.md` edited) — a background race split one intended commit into two, not a duplication.
 - The METHOD RULE this wave converged on — `git commit -m "<msg>" -- <paths>` in one call, never a
   separate `git add` — closed the race for every implementer from the point each adopted it onward.
