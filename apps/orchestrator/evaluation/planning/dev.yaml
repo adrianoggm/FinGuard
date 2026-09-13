@@ -719,6 +719,25 @@ cases:
     # which is the failure mode of context that carries too much.
     plan: {period: {period: TODAY}, direction: EXPENSE, groupBy: NONE}
 
+  - id: follow_split_by_two_named_categories
+    group: follow_up
+    # Wave 3 hardening, Task 8b, item 5 ("the eighth handed-over row" of the audit's own
+    # table): "sepáralo en transporte público y gasolina" over a NONE-grouped total. The
+    # deterministic reader (`_SPLIT_BY_NAMES` in `application/queries/readers/follow_up.py`)
+    # claims this precisely — it is the same split "Separa transporte público y gasolina"
+    # already reads — so this case documents the model's own answer for the same sentence
+    # asked of a plain sentence with no prior turn, which the reader never sees (it requires
+    # a query already in view). Real conversations always have one; see
+    # `evaluation/conversations/34-natural-visual-sentences.yaml` row 33 for that path.
+    question: Sepáralo en transporte público y gasolina.
+    previous: {period: {period: LAST_N_MONTHS, n: 3}, direction: EXPENSE}
+    expect: plan
+    plan:
+      period: {period: LAST_N_MONTHS, n: 3}
+      direction: EXPENSE
+      categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL]
+      groupBy: CATEGORY
+
   - id: follow_without_context_must_ask
     group: follow_up
     question: ¿Y en gasolina?

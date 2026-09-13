@@ -36,7 +36,12 @@ from finguard_orchestrator.domain.services import answer_writer, category_words,
 DRILL_DOWN: Final = re.compile(
     r"\bpor que\b.*\b(?:tan|tanto|alto|alta|bajo|baja|sube|subio|subido|pico)\b|"
     r"\bque movimientos\b|\bque comercio\b|"
-    r"\b(?:ensename|muestrame) (?:los|las) (?:movimientos|compras|operaciones)\b"
+    r"\b(?:ensename|muestrame) (?:los|las) (?:movimientos|compras|operaciones)\b|"
+    # Item 5 (Wave 3 hardening, T8b): "¿cuál es el mayor?" over the chart in view -- the bare
+    # superlative `_TOP` already reads for a *resolved* reference, asked here as its own question
+    # rather than named at the tail of one. Qualified to "cual es" so it never fires on an
+    # unrelated "la mayor parte de mis gastos" -- only the shape of the actual question.
+    r"\bcual es (?:el|la) mayor\b"
 )
 
 # YYYY-MM, the same shape `answer_writer.month_group_name` parses -- a full match, not a search,

@@ -123,6 +123,7 @@ from finguard_orchestrator.domain.services.visual_interpreter import (
     apply_visual_intent,
     interpret_visual,
     resolve_target,
+    wants_to_save_chart,
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import (
     _COMPARISON_LIMIT_REASON,
@@ -429,6 +430,71 @@ def _explanation_response(why: WhyAsked, conversation: Conversation) -> Question
     )
 
 
+def _save_response(
+    conversation: Conversation,
+    *,
+    holder_reference: str,
+    metric_tokens: MetricTokenCodec,
+    metrics_on: bool,
+) -> QuestionResponse:
+    """Item 2 (Wave 3 hardening, T8b): "guarda este gráfico" answered from the chart already on
+    screen -- zero ledger calls, zero model calls. `VISUAL_UNCHANGED` is reused as the outcome
+    (nothing about the chart changes) with a save-affordance sentence in its `text`, the same
+    outcome the corpus already routes to `VISUAL` for a no-op restyle.
+
+    Metrics off is the channel gate `question_to_dto`'s own `offer_saving` already enforces for
+    every other save candidate; this path states the same rule as an honest refusal rather than
+    silently answering as though a candidate existed.
+    """
+    context = conversation.visual_context(None)
+    if context is None:
+        return QuestionResponse(
+            outcome="VISUAL_NEEDS_TARGET",
+            text="Indica qué gráfico quieres guardar.",
+            conversation=conversation_mapper.to_payload(conversation),
+            about_chart_id=None,
+        )
+    if not metrics_on:
+        return QuestionResponse(
+            outcome="VISUAL_INCOMPATIBLE",
+            text="No puedo guardar gráficos ahora mismo: guardar métricas está desactivado.",
+            conversation=conversation_mapper.to_payload(conversation),
+            about_chart_id=context.chart_id,
+        )
+    if not context.trusted:
+        return QuestionResponse(
+            outcome="VISUAL_UNTRUSTED",
+            text=_untrusted_text(context),
+            conversation=conversation_mapper.to_payload(conversation),
+            about_chart_id=context.chart_id,
+        )
+    candidate = None
+    if isinstance(context.source_plan, FinancialPlan):
+        try:
+            token = metric_tokens.issue(
+                holder_reference,
+                SavedMetricDefinition(context.source_plan, context.spec),
+                chart_id=context.chart_id,
+            )
+        except CodecError:
+            pass
+        else:
+            candidate = SaveCandidate(chart_id=context.chart_id, definition_token=token)
+    text = (
+        "Puedes guardar este gráfico con el botón de guardar."
+        if candidate is not None
+        else "Este gráfico no tiene datos que guardar todavía."
+    )
+    return QuestionResponse(
+        outcome="VISUAL_UNCHANGED",
+        text=text,
+        conversation=conversation_mapper.to_payload(conversation),
+        about_chart_id=context.chart_id,
+        save_candidate=candidate,
+        suggestions=llm_mapper._chart_suggestions(context),
+    )
+
+
 def _visual_only_response(
     intent: VisualIntent,
     conversation: Conversation,
@@ -439,6 +505,18 @@ def _visual_only_response(
     seal: Callable[[Conversation], Conversation] | None = None,
 ) -> QuestionResponse:
     if intent.explanation:
+        # Item 3 (Wave 3 hardening, T8b): `ask_chips` set means the interpreter itself is asking
+        # a genuine either/or question (§5's own AMBIGUOUS shape), never a refusal -- the same
+        # outcome the two-claimant AMBIGUOUS rows above already use, with these as `suggestions`
+        # rather than the empty list every other `VISUAL_INCOMPATIBLE` answers with.
+        if intent.ask_chips:
+            return QuestionResponse(
+                outcome="VISUAL_AMBIGUOUS",
+                text=intent.explanation,
+                conversation=conversation_mapper.to_payload(conversation),
+                about_chart_id=intent.target,
+                suggestions=list(intent.ask_chips),
+            )
         return QuestionResponse(
             outcome="VISUAL_INCOMPATIBLE",
             text=intent.explanation,
@@ -1764,6 +1842,16 @@ async def ask(
         # Nothing is recorded here; the outcome itself (`VISUAL_EXPLAINED`) is the record.
         return _explanation_response(why, was)
 
+    # Item 2 (Wave 3 hardening, T8b): "guarda este gráfico" is a question about the chart, exactly
+    # like `why` above, not a financial one -- gated the same way, on there being a chart at all.
+    if wants_to_save_chart(request.question) and was.visual_contexts:
+        return _save_response(
+            was,
+            holder_reference=who.holder_reference,
+            metric_tokens=metric_tokens,
+            metrics_on=metrics_on,
+        )
+
     if isinstance(was.active, PaymentConfirmation):
         # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
         # not a new instruction: the deterministic confirmation reader leaves the preview open.
@@ -1962,6 +2050,20 @@ async def ask_streaming(
             yield _sse({"type": "answer", **answer.model_dump()})
 
         return StreamingResponse(explanation_events(), media_type="text/event-stream")
+
+    # Item 2 (Wave 3 hardening, T8b): the same short-circuit as the question route, one frame.
+    if wants_to_save_chart(request.question) and was.visual_contexts:
+        save_answer = _save_response(
+            was,
+            holder_reference=who.holder_reference,
+            metric_tokens=metric_tokens,
+            metrics_on=metrics_on,
+        )
+
+        async def save_events() -> AsyncIterator[str]:
+            yield _sse({"type": "answer", **save_answer.model_dump()})
+
+        return StreamingResponse(save_events(), media_type="text/event-stream")
 
     if isinstance(was.active, PaymentConfirmation):
         # Here too, and for the reason every payment branch is duplicated: the browser types into

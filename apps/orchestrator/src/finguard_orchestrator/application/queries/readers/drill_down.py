@@ -42,9 +42,15 @@ class DrillDown:
 
 @dataclass(frozen=True)
 class DrillAsk:
-    """Two or more bars fit: the question that names them, in the chart's order."""
+    """Two or more bars fit: the question that names them, in the chart's order.
+
+    `suggestions` (item 5, Wave 3 hardening, T8b) is empty for that ordinary case -- the question
+    already names its own alternatives in words -- and non-empty only for the NONE-grouped ask
+    below, whose two chips are the breakdown itself rather than a bar's label.
+    """
 
     text: str
+    suggestions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -150,6 +156,17 @@ def read_drill_down(
         # fact only the producer holds; ask honestly rather than narrow the latest window as if it
         # were the chart's own.
         return DrillUnbound(_UNBOUND_TEXT)
+    if plan.group_by is GroupBy.NONE:
+        # Item 5 (Wave 3 hardening, T8b): a chart drawn as one undivided total has nothing this
+        # reader could narrow to -- there is no bar to resolve `resolve_reference` against -- but
+        # "¿por qué tanto?" over one is not an unrelated question either, so it asks which
+        # breakdown the holder wants rather than falling through to the planner and answering the
+        # same total again. Read before `_DRILLABLE_GROUPINGS` on purpose: NONE is not in that set
+        # and would otherwise fall into its ordinary "cannot be drilled at all" `None`.
+        return DrillAsk(
+            "¿Tanto en qué? Puedo desglosarlo por categoría o por mes.",
+            suggestions=("Desglósalo por categoría", "Desglósalo por mes"),
+        )
     if plan.group_by not in _DRILLABLE_GROUPINGS:
         return None
     if plan.group_by is GroupBy.MONTH and newest.window is None:

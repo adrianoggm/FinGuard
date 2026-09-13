@@ -26,6 +26,12 @@ class VisualIntent:
     # `application/queries/readers/visual_follow_up.py` reads this to record AMBIGUOUS instead of
     # PRESENTATION_ONLY, without re-deriving "mixed" from the explanation text.
     mixed: bool = False
+    # Item 3 (Wave 3 hardening, T8b): set only by the "go back" ask below. `explanation` alone
+    # already means "no patch, speak this instead" (a refusal); a non-empty `ask_chips` on top of
+    # that means the sentence is genuinely ambiguous about *which* chart-related thing was meant,
+    # not merely unsupported -- `llm_controller._visual_only_response` reads this to answer
+    # `VISUAL_AMBIGUOUS` with these as `suggestions` instead of `VISUAL_INCOMPATIBLE` with none.
+    ask_chips: tuple[str, ...] | None = None
 
 
 _FINANCIAL = re.compile(
@@ -67,12 +73,23 @@ _DATA_ASKING = re.compile(
 # and reached the financial planner as a query no vocabulary here had claimed.
 _VISUAL = re.compile(
     r"\b(?:barras?|lineas?|areas?|puntos?|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
-    r"top\s*\d+|circular|donut|anillo|horizontal|vertical|tumba\w*|de\s+pie)\b"
+    r"top\s*\d+|circular|donut|anillo|tarta|pastel|quesito|horizontal|vertical|tumba\w*|de\s+pie)\b"
 )
 _VISUAL_STYLE = re.compile(
     r"\b(?:barras?|lineas?|areas?|puntos?|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
-    r"circular|donut|anillo|horizontal|vertical|tumba\w*|de\s+pie)\b"
+    r"circular|donut|anillo|tarta|pastel|quesito|horizontal|vertical|tumba\w*|de\s+pie)\b"
 )
+# B-9 (Wave 3 hardening, T8b): a request about the chart's own *size*, never its shape, order or
+# data -- "hazlo más grande/pequeño", "agrándalo", "amplía", "zoom". Read as its own signal (not
+# folded into `_VISUAL`) because it never produces a patch: every match below is refused with the
+# one honest reason, "the screen decides the size", regardless of what else the sentence names.
+_SIZE = re.compile(r"\b(?:mas\s+grand\w*|mas\s+pequen\w*|agrand\w*|ampli[ae]\w*|zoom\w*)\b")
+# Item 3 (Wave 3 hardening, T8b): "vuelve al anterior", "el de antes" with no style word beside it
+# -- genuinely ambiguous between "show the previous chart" and "undo the last change", which is
+# why it asks rather than restyles (§5's own AMBIGUOUS shape, not a refusal). "Deshaz" alone is
+# already a closed-stop-list word (B-2a) answered before this ever runs; this regex is for the
+# longer phrasings the stop-list's own two-word ceiling cannot reach.
+_GO_BACK = re.compile(r"\bvuelve\s+al?\s+anterior\b|\b(?:el|lo)\s+de\s+antes\b")
 # U-1 (Wave 3 hardening): "desapil\w*" already fires `_VISUAL`/`_VISUAL_STYLE` above (it contains
 # "apil"), but the plain substring check below used to read that same "apil" as "apila" (stack
 # zero) and only "desapil" as "clear the stack" -- leaving "sin apilar" (no "desapil" substring)
@@ -146,7 +163,11 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
     financial = _FINANCIAL.search(folded)
     show_every_row = _VISUAL_ALL.fullmatch(folded.strip(" ¿?¡!.,")) is not None
     limit_phrase = _LIMIT_PHRASE.search(folded)
-    visual_signal = _VISUAL.search(folded) or show_every_row or limit_phrase is not None
+    size_only = _SIZE.search(folded) is not None
+    go_back = _GO_BACK.search(folded) is not None
+    visual_signal = (
+        _VISUAL.search(folded) or show_every_row or limit_phrase is not None or size_only or go_back
+    )
     if financial:
         # In a financial sentence, "top N" is a query limit (for example "top 2 categories by
         # average ticket"), not a request to trim the already rendered rows. Only an actual style
@@ -181,6 +202,33 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
     if word is not None and "segund" in word and len(contexts) < 2:
         return VisualIntent(None, None, "No existe un segundo gráfico anterior.")
     target = resolve_target(word, contexts)
+    # B-9: a bare size word, with no real style word beside it, never reaches the mark/orientation/
+    # sort logic below -- the honest refusal names what CAN change instead of silently answering an
+    # unrelated total.
+    if size_only and not _VISUAL_STYLE.search(folded) and limit_phrase is None:
+        return VisualIntent(
+            None,
+            target,
+            "El tamaño lo decide la pantalla; puedo cambiar el tipo de gráfico, el orden o "
+            "los datos.",
+        )
+    # Item 3: "vuelve al anterior"/"el de antes" with no style word beside it, over two or more
+    # charts, is genuinely ambiguous -- it could mean "show me the previous chart" or "undo the
+    # last change" -- so it asks rather than guesses. The two chips are sentences the interpreter
+    # already claims on its own: "Deshacer el último cambio" is `deshaz` (B-2a's own closed-list
+    # word, answered as a CLARIFY before this function ever runs -- offered here as a chip, not
+    # read back through this module) and "Pon el gráfico anterior en barras" is an ordinary
+    # restyle this same function claims (a style word, "barras", beside a target it already
+    # resolves). With fewer than two charts there is nothing to go back TO, so this falls through
+    # unclaimed exactly as before -- the ordinary, single-chart case this task's scope never
+    # touched.
+    if go_back and not _VISUAL_STYLE.search(folded) and limit_phrase is None and len(contexts) >= 2:
+        return VisualIntent(
+            None,
+            target,
+            "¿Quieres ver el gráfico anterior o deshacer el último cambio?",
+            ask_chips=("Pon el gráfico anterior en barras", "Deshacer el último cambio"),
+        )
     if show_every_row:
         # The one patch that clears rather than sets. `EncodingPatch.clear` exists for exactly this
         # and nothing produced it until now, so the limit the chart applies by default was one the
@@ -195,7 +243,7 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
         mark = "area"
     elif re.search(r"\bpuntos?\b", folded):
         mark = "point"
-    elif re.search(r"\b(?:circular|donut|anillo)\b", folded):
+    elif re.search(r"\b(?:circular|donut|anillo|tarta|pastel|quesito)\b", folded):
         mark = "donut"
     orientation: Orientation | None = None
     # M-10 (Wave 4.2b fix wave): a sentence naming both resolves to horizontal -- first-listed
@@ -286,3 +334,18 @@ def apply_visual_intent(intent: VisualIntent, context: VisualContext) -> VisualC
         merge_encoding_patch(context.spec, intent.patch, context.profile),
         context.profile,
     )
+
+
+# Item 2 (Wave 3 hardening, T8b): "guarda este gráfico"/"guárdamelo" -- a request about the chart
+# that is already on screen, not a financial one. Read here, beside the interpreter, rather than
+# folded into `interpret_visual`: the answer it gets (the save affordance the chart already
+# carries, or an honest refusal when metrics are off) is neither a restyle nor a refusal of one,
+# so it never produces a `VisualIntent` -- `llm_controller` reads this boolean directly, the same
+# shape `asks_why` already is for a different question about the same chart.
+_SAVE_CHART = re.compile(r"\bguarda(?:me|lo|la)?\b")
+_CHART_NOUN = re.compile(r"\bgrafic\w*\b")
+
+
+def wants_to_save_chart(sentence: str) -> bool:
+    folded = fold(sentence)
+    return _SAVE_CHART.search(folded) is not None and _CHART_NOUN.search(folded) is not None
