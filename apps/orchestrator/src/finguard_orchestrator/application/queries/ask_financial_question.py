@@ -482,6 +482,11 @@ RUNS: Final = (
     _ON_THE_QUERY_IN_VIEW,
     _ON_THE_SENTENCE_ITSELF,
 )
+# F-H3 (Wave 3 hardening, fix round): the two runs whose readers resolve their plan from
+# `focus_of(conversation)` -- a patch, a regroup or a split of whatever the conversation already
+# carried, never a fresh read of the sentence alone. `_answering` stamps
+# `plan_continues_conversation` from membership in this set.
+_CONTINUATION_READERS: Final = _ON_A_COMPARISON + _ON_THE_QUERY_IN_VIEW
 
 
 class AskFinancialQuestionHandler:
@@ -1310,7 +1315,15 @@ class AskFinancialQuestionHandler:
             if isinstance(drill, DrillDown):
                 yield Stage("planned", answer_writer.describe(drill.plan))
                 yield Stage("querying")
-                yield await self._answer(query, drill.plan, movements=MAX_SELECTED_TRANSACTIONS)
+                answered = await self._answer(
+                    query, drill.plan, movements=MAX_SELECTED_TRANSACTIONS
+                )
+                # F-H3 (Wave 3 hardening, fix round): `read_drill_down` clamps the previous plan's
+                # own window to the bar the sentence named -- a continuation exactly like a
+                # reshape or a regroup, and outside `_answering`'s reader-registry dispatch (this
+                # branch answers directly, before `contextual_follow_up_plan` is ever asked), so
+                # the causal flag `derived_from` reads is stamped here rather than there.
+                yield replace(answered, plan_continues_conversation=True)
                 return
 
         referenced_result = await self._referenced_result_plan(query)
@@ -1650,8 +1663,20 @@ class AskFinancialQuestionHandler:
         `query = replace(query, conversation=was)`. Passing it is how that stays true by
         construction instead of by inspection: this method uses exactly the variable the inline
         block it replaced used.
+
+        F-H3 (Wave 3 hardening, fix round): every reader this method ever dispatches to is one of
+        the five runs `_steps` asks in order, and `claimed.reader` names exactly which one claimed
+        the turn. `_CONTINUATION_READERS` is `_ON_A_COMPARISON` and `_ON_THE_QUERY_IN_VIEW` --
+        the two runs that resolve their own plan from `focus_of(conversation)`, i.e. patch,
+        regroup or split whatever the conversation already carried, as opposed to
+        `_ON_THE_SENTENCE_ITSELF` (a fresh plan the sentence alone produced) or
+        `_ON_A_NAMED_SUBJECT`. Stamped onto the result here, once, rather than in each of the
+        eleven producer methods those two runs dispatch to.
         """
+        continuation = claimed.reader in _CONTINUATION_READERS
         async for step in _ANSWERING[claimed.reader](self, query, was, claimed.plan):
+            if continuation and isinstance(step, AskFinancialQuestionResult):
+                step = replace(step, plan_continues_conversation=True)
             yield step
 
     async def _a_ratio(

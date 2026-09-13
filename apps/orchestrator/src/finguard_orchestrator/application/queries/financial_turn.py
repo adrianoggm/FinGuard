@@ -304,6 +304,16 @@ class AskFinancialQuestionResult:
     # prose -- the presenter's spoken noun -- must not when this is True, because naming a plan
     # nobody ran this turn is exactly M-2 (`branch-re-review.md`'s `probe_m2`).
     metric_definition_borrowed: bool = False
+    # F-H3 (Wave 3 hardening, fix round): True when `metric_definition` was built by one of the
+    # continuation readers (`contextual_follow_up_plan`, or one of the five comparison-continuity
+    # readers) -- a reshape, regroup, split or refinement of whatever plan/comparison the
+    # conversation already carried, as opposed to a fresh plan the sentence alone produced. This is
+    # the causal fact `llm_mapper._remember_visual_context` now reads to decide `derived_from`: the
+    # reader that built the plan states the lineage, and the mapper's own structural comparison
+    # (`_same_lineage`) stays only as a sanity check on top of it, never the sole test. Two turns
+    # that coincidentally ask about the same bare window are not lineage; a chart the reader
+    # actually reshaped is, whatever verb the sentence used to ask for it.
+    plan_continues_conversation: bool = False
     # A fingerprint of `metric_definition` (back-fill included), taken in `stream()` and fixed for
     # this turn -- the value `_remember_visual_context` seals onto a chart drawn THIS turn. Sealed
     # as data because 4.3's drill binds to it; not read by the presenter (see
