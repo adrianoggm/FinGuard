@@ -201,6 +201,23 @@ async def test_a_minimal_abstention_is_not_recorded_as_a_provider_error() -> Non
     assert len(provider.prompts) == 1  # no repair was needed
 
 
+async def test_a_contradictory_abstention_is_not_read_as_a_clean_one() -> None:
+    """U-7 (Wave 3 hardening): `{"mark": null}` and nothing else is the abstention the port
+    contract promises. `{"mark": null, "limit": 3}` still validates against the schema (`limit`
+    is optional) but is a different thing -- a model that both declined to propose and proposed a
+    row cut in the same breath -- and used to be read as the same clean abstention, silently
+    dropping the contradiction. The adapter no longer answers `None` for it: `plan()` returns a
+    draft with `mark=None` for `verify()` to refuse (`visual_planning_policy.py`'s own test
+    asserts what that refusal becomes), which this only checks is not the abstention value."""
+    provider = RecordingProvider([json.dumps({"mark": None, "encodings": [], "limit": 3})])
+    planner = LlmVisualPlanner(provider, model="m", temperature=0.0, max_output_tokens=256)
+    draft = await planner.plan("q", PROFILE, DEFAULT_PRESENTATION, budget_seconds=1.0)
+    assert draft is not None
+    assert draft.mark is None
+    assert draft.limit == 3
+    assert len(provider.prompts) == 1  # a contradiction is not a structure failure either
+
+
 async def test_a_boolean_limit_is_never_silently_repaired() -> None:
     """Finding 1 (blocker): `isinstance(True, int)` is `True` in Python, so a JSON boolean must
     not become `limit=1` -- it is a structure failure, repaired once, then raised."""

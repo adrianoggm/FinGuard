@@ -139,6 +139,23 @@ async def test_hybrid_falls_back_on_a_rejected_proposal_and_names_the_rule() -> 
     assert decision.rejected_rule == "structure" and decision.proposed_spec is None
 
 
+async def test_a_contradictory_abstention_is_invalid_proposal_never_a_clean_one() -> None:
+    """U-7 (Wave 3 hardening): `{"mark": null, "limit": 3}` -- a model that both declined to
+    propose and proposed a row cut in the same breath -- used to reach here as `None`, the port's
+    own "abstention and nothing else" value, and be recorded exactly like a model that said
+    nothing at all. `llm_visual_planner._draft` now hands the contradiction to this policy as a
+    draft with `mark=None` instead, and `verify()`'s own `_structure` rule (a `ChartSpec` mark
+    outside `get_args(Mark)`) refuses it -- the same `invalid_proposal:structure` an ordinary
+    malformed proposal (`test_hybrid_falls_back_on_a_rejected_proposal_and_names_the_rule`'s
+    `SIDEWAYS`) already gets, not a fifth reason invented for this one shape."""
+    contradictory_abstention = D(None, (), limit=3)  # type: ignore[arg-type]
+    decision = await policy(ScriptedVisualPlanner(contradictory_abstention), "hybrid").decide(
+        "q", PROFILE, DEFAULT_PRESENTATION
+    )
+    assert decision.source == "deterministic" and decision.fallback_reason == "invalid_proposal"
+    assert decision.rejected_rule == "structure" and decision.proposed_spec is None
+
+
 async def test_an_adapter_that_raises_anything_falls_back() -> None:
     """The adapter that parses a model's answer does not exist yet; whatever it throws while
     doing so is a fact about the experiment, not this turn, and the floor is still shown."""
