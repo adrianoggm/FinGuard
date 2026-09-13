@@ -862,6 +862,33 @@ class Turn:
     # `tests/test_visual_explanation.py`'s own business. `None` asserts nothing, matching every turn
     # written before this field existed.
     explanation: bool | None = None
+    # A substring the explanation's own words must contain, case-insensitively -- `explanation`
+    # above is presence-only (B-5, «Corpus blind spots» #2 in the behaviour audit: exactly one
+    # turn in the whole corpus pinned any explanation wording, and it did so through `says:`
+    # rather than a field of its own, so a defect confined to `explanation.text` -- the known
+    # "Datos: 0 grupos" bug named there -- was invisible to every other turn asserting
+    # `explanation: true`). Read the same way `spoken_says` reads `answer["spoken"]`:
+    # `answer["explanation"]["text"]` must be a string containing this substring. `None` asserts
+    # nothing, matching every turn written before this field existed.
+    explanation_says: str | None = None
+    # Every one of these strings, case-insensitively, must appear among `answer["suggestions"]`
+    # (blind spot #5: chips were asserted by no corpus turn at all, which is why B-7 -- a restyle
+    # offering none -- went unnoticed). `None` asserts nothing.
+    chips: list[str] | None = None
+    # The turn's `suggestions` must be empty. The two fields are separate rather than `chips: []`
+    # meaning the same thing, because an empty list is also every turn's dataclass default --
+    # `chips: []` on a turn nobody wrote would silently assert "no chips" by omission, and this
+    # says so in the file instead.
+    no_chips: bool | None = None
+    # B-5: whether the chart the conversation remembers agrees with the words the answer used to
+    # describe it. What is compared is exactly the two things the harness already has in hand for
+    # a charted turn -- the plan that actually ran (`ran[-1].group_by`, when it answered through a
+    # `FinancialPlan`) and the chart's own sealed `group_by` (`VisualContext.group_by`, the same
+    # field `_chart_complaints` reads) -- never a second reading of the prose. `True` requires the
+    # two to be the same `GroupBy`; `False` requires them to differ (a probe fixture, not a turn
+    # this service should ever produce). `None` asserts nothing, and asserting `True` on a turn
+    # with no chart or no plan is treated as a failure the same way `chart:` is above.
+    chart_text_agrees: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -1365,7 +1392,62 @@ def _complaints(
             )
     if turn.chart is not None:
         yield from _chart_complaints(turn.chart, answer)
+    if turn.explanation_says is not None:
+        explanation = answer.get("explanation")
+        explanation_text = explanation.get("text") if isinstance(explanation, dict) else None
+        if (
+            not isinstance(explanation_text, str)
+            or turn.explanation_says.lower() not in explanation_text.lower()
+        ):
+            yield (
+                f"the explanation does not say {turn.explanation_says!r}: "
+                f"{(explanation_text or '')[:90]!r}"
+            )
+    if turn.chips is not None:
+        offered = {chip.lower() for chip in (answer.get("suggestions") or [])}
+        missing = [chip for chip in turn.chips if chip.lower() not in offered]
+        if missing:
+            yield (
+                f"the suggestions should include {missing}, and offer {answer.get('suggestions')!r}"
+            )
+    if turn.no_chips and answer.get("suggestions"):
+        yield f"there should be no suggestions, and there are {answer['suggestions']!r}"
+    if turn.chart_text_agrees is not None:
+        yield from _chart_text_complaints(turn.chart_text_agrees, answer, ran)
     yield from _query_complaints(turn, ran)
+
+
+def _chart_text_complaints(
+    expected: bool, answer: dict[str, Any], ran: tuple[FinancialPlan | TopMovements, ...]
+) -> Iterator[str]:
+    """B-5: the chart's own dimension against the plan that actually drew it.
+
+    Neither side is read from prose. The plan side is `ran[-1].group_by` -- the last
+    `FinancialPlan` this turn ran, the same evidence `_query_complaints` already trusts over
+    `says:` — and the chart side is `VisualContext.group_by`, sealed onto the wire the same
+    turn (Task 2, Wave 3 hardening). A turn with no chart, or whose plan is not a `FinancialPlan`
+    (a comparison, a ratio), has nothing to compare and counts as disagreeing -- `chart_text_agrees:
+    true` on such a turn is the harness telling the episode it named the wrong turn.
+    """
+    conversation = conversation_mapper.to_domain(
+        ConversationPayload.model_validate(answer["conversation"])
+    )
+    plan = next((item for item in reversed(ran) if isinstance(item, FinancialPlan)), None)
+    agrees = (
+        plan is not None
+        and bool(conversation.visual_contexts)
+        and conversation.visual_contexts[-1].group_by == plan.group_by
+    )
+    if agrees != expected:
+        chart_group = (
+            conversation.visual_contexts[-1].group_by if conversation.visual_contexts else None
+        )
+        plan_group = plan.group_by if plan is not None else None
+        yield (
+            f"the chart's group_by ({chart_group}) should "
+            f"{'' if expected else 'not '}agree with the plan's ({plan_group}), "
+            f"and {'does' if agrees else 'does not'}"
+        )
 
 
 def _chart_complaints(expected: dict[str, Any], answer: dict[str, Any]) -> Iterator[str]:
