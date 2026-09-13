@@ -770,6 +770,35 @@ def test_desapilalo_disables_the_stack_the_verifier_can_accept() -> None:
     assert derived.spec.stack == "disabled"
 
 
+def test_solo_los_n_primeros_over_a_comparison_is_refused_with_its_own_clause() -> None:
+    """A-3: an ungrouped two-period comparison (`ask_financial_question.py`'s own
+    `comparison_visual_rows`'s `else` branch -- one row per period, no series) draws a plain
+    ranked bar with a MEASURE_DESC dimension, exactly the shape `_limit`'s family checks alone
+    would wave through. "solo el primero" asks for a row cut the same way it would on any
+    breakdown; the verifier's comparison-specific `_limit` rule refuses it, and the holder reads
+    the comparison's own reason, not the generic "no admite recortar filas" one.
+    """
+    dataset = VisualDataset(
+        metric="COMPARISON",
+        rows=(VisualRow("julio 2026", 100), VisualRow("junio 2026", 90)),
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    assert profile.comparison is False  # no series -- the shape the family checks miss
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    assert spec.mark == "bar"
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("solo los 1 primeros", conversation.visual_contexts)
+    assert intent is not None
+    assert intent.patch is not None
+    assert intent.patch.limit == 1
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_INCOMPATIBLE", response.text
+    assert "una comparación necesita sus dos periodos" in response.text
+    assert response.conversation is not None
+    assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
+
+
 def test_asking_a_line_to_turn_is_a_merge_refusal() -> None:
     """Refuse, never repair: orientation applies to bars only. A line asked to turn trips
     `merge_encoding_patch`'s own gate directly, before the verifier ever runs -- recorded exactly

@@ -23,6 +23,13 @@ _AXES = frozenset({"x", "y"})
 _OFFSETS = frozenset({"xOffset", "yOffset"})
 _OFFSET_FOR = {"x": "xOffset", "y": "yOffset"}
 _STACKABLE = frozenset({"bar", "area"})  # the two marks Vega-Lite stacks by default
+# A-3 (Wave 3 hardening): named and exported so `llm_controller._refusal_response` can recognise
+# this one `_limit` reason and speak its own Spanish clause, instead of the rule's generic
+# sentence -- the only distinction the holder actually needs to hear ("this chart cannot be
+# ranked" versus "a comparison keeps both its periods" are different claims about the data).
+_COMPARISON_LIMIT_REASON = (
+    "a comparison keeps both periods; limiting one is not a ranking transform"
+)
 
 
 def verify(draft: VisualPlanDraft, profile: VisualProfile) -> ChartSpec | Rejection:
@@ -295,6 +302,15 @@ def _limit(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
         return Rejection(
             "limit", "the plan already limited these rows; a second cut would double-truncate"
         )
+    if profile.metric == "COMPARISON":
+        # A-3 (Wave 3 hardening): an *ungrouped* two-period comparison (no series, so
+        # `profile.comparison` -- the shape marker AND a series -- is False) has `mark="bar"`,
+        # no series role and a `MEASURE_DESC` dimension: every earlier condition below reads it as
+        # an ordinary ranked breakdown, and `limit=1` verified, keeping one period's bar and
+        # deleting its pair -- a text/chart disagreement on the one gate the whole "the LLM never
+        # decides the financial information" argument rests on. `profile.metric`, not `.comparison`:
+        # the marker alone is what makes this a comparison at all, grouped or not.
+        return Rejection("limit", _COMPARISON_LIMIT_REASON)
     dimension = next((f for f in profile.role("dimension") if f.type == "nominal"), None)
     wrong_family = (
         spec.mark != "bar"

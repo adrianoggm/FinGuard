@@ -28,7 +28,10 @@ from finguard_orchestrator.domain.models.visual_plan import (
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
-from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_plan_verifier import (
+    _COMPARISON_LIMIT_REASON,
+    verify,
+)
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
@@ -59,6 +62,22 @@ def comparison():
                 VisualRow("OCIO", 50, series="2026-07"),
                 VisualRow("OCIO", 70, series="2026-06"),
             ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+
+def ungrouped_comparison():
+    """A-3 (Wave 3 hardening): the *other* shape `ask_financial_question.py` draws for
+    `metric="COMPARISON"` -- two rows, one per period, no `series` at all
+    (`comparison_visual_rows`'s own `else` branch, the ungrouped one). `profile.comparison` is
+    False here (it needs a series too), but `profile.metric` still reads "COMPARISON": the marker
+    `_limit` must key off."""
+    return visual_profile_of(
+        VisualDataset(
+            metric="COMPARISON",
+            rows=(VisualRow("julio 2026", 100), VisualRow("junio 2026", 90)),
         ),
         total_minor=None,
         group_by="NONE",
@@ -515,6 +534,19 @@ def test_limit_refuses_a_normalised_bar() -> None:
     alone let `limit` through onto it too -- the presenter's rank-and-filter transform over a
     composition, exactly the row Section D's limit table names."""
     assert rule_of(verify(_normalised_bar(limit=3), share())) == "limit"
+
+
+def test_limit_refuses_an_ungrouped_comparison_even_though_it_reads_as_ranked_bar() -> None:
+    """A-3: without this rule, `ranked_bar(limit=1)` over `ungrouped_comparison()` reads as an
+    ordinary ranked breakdown -- `mark == "bar"`, no series, a MEASURE_DESC dimension -- and
+    verifies, keeping one period's bar and silently deleting its pair. `profile.metric`, not
+    `.comparison` (False here: no series), is what must gate this."""
+    profile = ungrouped_comparison()
+    assert profile.comparison is False
+    result = verify(ranked_bar(limit=1), profile)
+    assert rule_of(result) == "limit"
+    assert isinstance(result, Rejection)
+    assert result.reason == _COMPARISON_LIMIT_REASON
 
 
 def test_a_grouped_comparison_needs_offset_and_disabled_stack() -> None:
