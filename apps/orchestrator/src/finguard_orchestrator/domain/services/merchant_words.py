@@ -95,6 +95,8 @@ _NEVER_A_MERCHANT_PHRASES: Final = frozenset(
         "en euros",
         "es que",
         "pues eso",
+        # F-2 (fix wave, Important 3): C-3's own named words -- folded, so "sin límite" hits.
+        "sin limite",
     }
 )
 
@@ -129,6 +131,13 @@ _NEVER_A_MERCHANT_WORDS: Final = frozenset(
         "queria",
         "dejalo",
         "confirmo",
+        # F-2 (fix wave, Important 3): C-3's own named words -- a bare "todos"/"todas"/"todo" or
+        # "límite" ran the merchant guess (three ledger calls, a confident total) for a word that
+        # named nothing, the exact defect B-2(a)'s stop-list exists to stop.
+        "todos",
+        "todas",
+        "todo",
+        "limite",
     }
 )
 

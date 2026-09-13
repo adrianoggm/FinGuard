@@ -751,6 +751,47 @@ async def test_a_closed_stop_list_word_is_asked_about_never_guessed_as_a_merchan
     assert ledger.plans == []
 
 
+@pytest.mark.parametrize("word", ["todos", "todas", "todo", "sin límite", "sin limite", "límite"])
+async def test_f2_the_stop_list_also_catches_todos_and_sin_limite(word: str) -> None:
+    """F-2 (fix wave, Important 3): C-3's own words -- `_NEVER_A_MERCHANT_WORDS`/`_PHRASES` did not
+    carry `todos`/`todas`/`todo`/`sin límite`/`límite`, so a bare "todos" with no chart and nothing
+    but a plan pending ran the merchant guess (three ledger calls, a confident total for a word
+    that named nothing) -- B-2's defect verbatim, on words the audit's own text already names."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
+    previous = plan(categories=("GROCERIES",))
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence=word,
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert ledger.plans == []
+
+
+async def test_f2_todos_mis_movimientos_still_plans() -> None:
+    """A real query naming "todos" as part of a longer sentence must still plan -- the stop-list
+    only ever matches a sentence that is *nothing but* stop-list words/phrases."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=12_345, movement_count=3))
+    previous = plan(categories=("GROCERIES",))
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="todos mis movimientos",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans != []
+
+
 async def test_a_financial_aside_suspends_a_half_built_payment_instead_of_erasing_it() -> None:
     """The financial answer is useful, but it is a change of subject. The Bizum survives visibly
     paused so a later bare amount cannot complete it without the user explicitly resuming it."""
