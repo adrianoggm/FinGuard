@@ -36,9 +36,12 @@ episodes:
       - say: 200 euros
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION
+      # B-2(a) (Wave 3 hardening, R-H1): "gracais" is the typo this file itself is about, and it is
+      # on the closed stop-list as the misspelling of "gracias" it actually is -- the honest ask
+      # now, not a three-call guess at a shop called "gracais".
       - say: gracais
-        route: QUERY
-        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: ['gracais'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
 
   - name: missing_accents_everywhere
     why: >
