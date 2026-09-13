@@ -139,6 +139,23 @@ async def test_hybrid_falls_back_on_a_rejected_proposal_and_names_the_rule() -> 
     assert decision.rejected_rule == "structure" and decision.proposed_spec is None
 
 
+async def test_a_contradictory_abstention_is_invalid_proposal_never_a_clean_one() -> None:
+    """U-7 (Wave 3 hardening): `{"mark": null, "limit": 3}` -- a model that both declined to
+    propose and proposed a row cut in the same breath -- used to reach here as `None`, the port's
+    own "abstention and nothing else" value, and be recorded exactly like a model that said
+    nothing at all. `llm_visual_planner._draft` now hands the contradiction to this policy as a
+    draft with `mark=None` instead, and `verify()`'s own `_structure` rule (a `ChartSpec` mark
+    outside `get_args(Mark)`) refuses it -- the same `invalid_proposal:structure` an ordinary
+    malformed proposal (`test_hybrid_falls_back_on_a_rejected_proposal_and_names_the_rule`'s
+    `SIDEWAYS`) already gets, not a fifth reason invented for this one shape."""
+    contradictory_abstention = D(None, (), limit=3)  # type: ignore[arg-type]
+    decision = await policy(ScriptedVisualPlanner(contradictory_abstention), "hybrid").decide(
+        "q", PROFILE, DEFAULT_PRESENTATION
+    )
+    assert decision.source == "deterministic" and decision.fallback_reason == "invalid_proposal"
+    assert decision.rejected_rule == "structure" and decision.proposed_spec is None
+
+
 async def test_an_adapter_that_raises_anything_falls_back() -> None:
     """The adapter that parses a model's answer does not exist yet; whatever it throws while
     doing so is a fact about the experiment, not this turn, and the floor is still shown."""
@@ -149,6 +166,27 @@ async def test_an_adapter_that_raises_anything_falls_back() -> None:
     assert decision.source == "deterministic" and decision.fallback_reason == "provider_error"
     assert decision.proposed is True
     assert canonical(decision.spec) == canonical(floor)
+    # U-8 (Wave 3 hardening): still `provider_error` (the closed four stay four), but named as a
+    # bug in this adapter, not the provider itself.
+    assert decision.error_detail == "code_error:ValueError"
+
+
+async def test_a_bug_in_the_adapter_is_told_apart_from_a_real_provider_failure(caplog) -> None:
+    """U-8: a `TypeError` -- the shape a real bug in the not-yet-written parsing adapter would
+    take, unlike `ProviderFailedError`/`TimeoutError`, the port's own two named failures -- still
+    falls back to the floor and still records `provider_error` (`FallbackReason` stays the four
+    the wire seals), but `error_detail` says which kind of `provider_error` this was, and the
+    exception is logged at ERROR with its own type and traceback, not silently swallowed."""
+    with caplog.at_level("ERROR"):
+        decision = await policy(ScriptedVisualPlanner(TypeError("boom")), "hybrid").decide(
+            "q", PROFILE, DEFAULT_PRESENTATION
+        )
+    assert decision.source == "deterministic" and decision.fallback_reason == "provider_error"
+    assert decision.error_detail == "code_error:TypeError"
+    assert any(
+        record.levelname == "ERROR" and "code_error" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 async def test_a_providers_own_timeout_is_told_apart_from_the_budget() -> None:

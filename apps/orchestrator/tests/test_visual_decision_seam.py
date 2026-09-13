@@ -181,6 +181,27 @@ async def test_a_rejected_proposal_records_the_rule_and_not_the_bare_reason() ->
     _assert_agrees_with_its_own_values(decision)
 
 
+async def test_a_bug_in_the_adapter_records_provider_error_with_its_own_detail() -> None:
+    """U-8 (Wave 3 hardening): a `TypeError` from the model adapter -- not `ProviderFailedError`
+    or a timeout, the port's own two named failures -- still records `FallbackReason`'s closed
+    `provider_error` (the wire seals four, never five), but `detail` says `code_error:TypeError`
+    rather than the bare `provider_error` a real provider outage gets -- the same "reason plus
+    which one" shape `test_a_rejected_proposal_records_the_rule_and_not_the_bare_reason` already
+    gives `invalid_proposal`."""
+    result = await _result(_ROWS)
+    with recording_turn() as turn:
+        await _decided_visual(
+            result,
+            _policy(ScriptedVisualPlanner(TypeError("boom")), "hybrid"),
+            DEFAULT_PRESENTATION,
+            "q",
+        )
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert decision.verdict is Verdict.FAILED
+    assert decision.detail == "code_error:TypeError"
+    _assert_agrees_with_its_own_values(decision)
+
+
 async def test_a_kpi_never_enters_the_policy() -> None:
     """One row is a KPI, not a chart -- Section G names this exactly: a planner that decorates a
     KPI fails quietly and no validity number would show it, so the guard has to stop it here."""

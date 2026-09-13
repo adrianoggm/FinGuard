@@ -89,7 +89,9 @@ class VisualPlanningPolicy:
         proposed_spec: ChartSpec | None = None
         rejected: Rejection | None = None
         reason: FallbackReason | None = None
+        error_detail: str | None = None
         proposed = False
+        draft: VisualPlanDraft | None = None
 
         async def _call() -> VisualPlanDraft | None:
             try:
@@ -106,6 +108,33 @@ class VisualPlanningPolicy:
         try:
             draft = await asyncio.wait_for(_call(), timeout=self._budget)
             proposed = True
+        except TimeoutError:
+            reason = "timeout"
+        except ProviderFailedError:
+            proposed = True
+            reason = "provider_error"
+        except Exception as exc:
+            # U-8 (Wave 3 hardening): this used to be one broad `except Exception` covering both
+            # "the adapter that parses a model's answer does not exist yet" (a fact about the
+            # experiment) *and* a real bug in that adapter -- and recorded both as an
+            # indistinguishable `provider_error`, with the traceback thrown away. `FallbackReason`
+            # stays the four the wire seals (Task 1 of 4.5): still `provider_error`, the floor
+            # still shows -- but logged at ERROR with the exception's own type and traceback, and
+            # `error_detail` carries `"code_error:<ExcType>"` into the promotion row, so a bug in
+            # this adapter is no longer indistinguishable from the provider actually being down.
+            # Safe for `CancelledError`, a `BaseException` since 3.8, which this clause never sees.
+            proposed = True
+            reason = "provider_error"
+            error_detail = f"code_error:{type(exc).__name__}"
+            logger.error("visual_planner.code_error type=%s", type(exc).__name__, exc_info=exc)
+        latency_ms = int((time.monotonic() - started) * 1000)
+
+        # A-15 (design audit): `verify()` used to run inside the try block above, so a bug in the
+        # *verifier* -- not the model adapter -- was caught by the same broad `except Exception`
+        # and misreported as a provider fallback. Nothing here catches it: a verifier bug is now
+        # an exception that reaches the caller as itself, the way U-8 already treats a bug in the
+        # adapter as a fact about this turn's code rather than about the provider.
+        if reason is None:
             if draft is None:
                 reason = "abstention"
             else:
@@ -114,20 +143,6 @@ class VisualPlanningPolicy:
                     rejected, reason = verified, "invalid_proposal"
                 else:
                     proposed_spec = verified
-        except TimeoutError:
-            reason = "timeout"
-        except ProviderFailedError:
-            proposed = True
-            reason = "provider_error"
-        except Exception:
-            # Deliberately broad, mirroring `turn_interpreters.py:116`: the adapter that parses a
-            # model's answer does not exist yet, and whatever it throws while doing so -- malformed
-            # JSON, a missing key -- is a fact about the experiment, not about this turn. The floor
-            # is the availability guarantee, and no adapter exception may take it down. Safe for
-            # `CancelledError`, a `BaseException` since 3.8, which this clause never sees.
-            proposed = True
-            reason = "provider_error"
-        latency_ms = int((time.monotonic() - started) * 1000)
 
         if floor is None and proposed_spec is None:
             floor = self._fallback.plan(profile, presentation)
@@ -172,4 +187,5 @@ class VisualPlanningPolicy:
             latency_ms=latency_ms,
             proposed_spec=proposed_spec,
             rejected_rule=rejected.rule if rejected is not None else None,
+            error_detail=None if self._mode == "shadow" else error_detail,
         )

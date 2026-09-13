@@ -78,9 +78,26 @@ class LlmVisualPlanner:
 
 def _draft(answer: VisualAnswer) -> VisualPlanDraft | None:
     if answer.mark is None:
-        return None  # abstention, the one meaning None has
+        # U-7 (Wave 3 hardening): `{"mark": null}` and nothing else is the abstention the port
+        # contract promises ("None means abstention and nothing else"). `{"mark": null, "limit":
+        # 3}` is a different thing -- a model that both declined to propose and proposed a
+        # row cut in the same breath -- and used to be read as the clean abstention anyway,
+        # silently dropping the contradictory fields with no record of them. Built into a draft
+        # instead (`mark=None`, `# type: ignore[arg-type]`: `VisualPlanDraft.mark` is `str`, the
+        # refusal is the point) and handed to `verify()` like any other proposal: `ChartSpec`'s
+        # own `mark not in get_args(Mark)` check refuses it as `Rejection("structure", ...)`, so
+        # the policy records `invalid_proposal:structure` -- the same rule/reason pair a
+        # malformed proposal already gets -- rather than inventing a new one.
+        if not (
+            answer.encodings
+            or answer.stack is not None
+            or answer.sort is not None
+            or answer.sort_field is not None
+            or answer.limit is not None
+        ):
+            return None  # abstention, the one meaning None has
     return VisualPlanDraft(
-        mark=answer.mark,
+        mark=answer.mark,  # type: ignore[arg-type]  # a contradictory abstention, refused at verify()
         encodings=tuple(
             ProposedEncoding(
                 item.channel,
