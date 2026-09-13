@@ -103,7 +103,7 @@ Server events:
 | `assistant.text.delta` / `assistant.text.final` | visible response text |
 | `audio.started` / binary frames / `audio.completed` | one active synthesis stream |
 | `turn.completed` | final conversation state and timings |
-| `chartId` / `visualTurnId` | optional on `assistant.text.final`, `audio.started`, `audio.completed` and `turn.completed` since Wave 4.4: the chart this turn drew and the identity of the decision that drew it (the newest visual context's `turn_id`), so a client never plays one turn's audio beside another turn's chart; absent on an uncharted turn; version 1 unchanged (additive) |
+| `chartId` / `visualTurnId` | optional on `assistant.text.final`, `audio.started`, `audio.completed` and `turn.completed` since Wave 4.4: the chart this turn drew and the identity of the decision that drew it (the newest visual context's `turn_id`), so a client never plays one turn's audio beside another turn's chart; absent on an uncharted turn; version 1 unchanged (additive). D-H-1b (fix wave): `chartId` alone (never `visualTurnId`) is also stamped when the answer names a chart without drawing one -- `VISUAL_EXPLAINED` and the refusal-shaped `VISUAL_*` outcomes, read from the orchestrator's `about_chart_id` (D-H-1) -- so an explanation or a refusal identifies its chart too; `VISUAL_NEEDS_TARGET` still carries neither when no target could be resolved at all. |
 | `response.cancelled` | interruption acknowledged and old turn fenced off |
 | `error` | typed recoverable or fatal failure |
 | `pong` | keepalive response and clock sample |

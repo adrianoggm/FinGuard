@@ -155,6 +155,14 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
     carries a stale context from an earlier turn, would wrongly borrow that stale identity. Known
     limitation, undetectable from this function's own inputs; not exercised by the fake, whose
     only `parts` case always charts its last part.
+
+    D-H-1b (fix wave): last resort, after every shape above -- `answer["about_chart_id"]`
+    (D-H-1, orchestrator side) when it is a str. `VISUAL_EXPLAINED` and the refusal-shaped
+    `VISUAL_*` outcomes draw no new chart at all (no `visualization`, no `visualization_
+    derivation`, no `parts`), but the answer still names which chart it is *about* -- an
+    explanation, or a refusal, of a chart already on screen. `chartId` is stamped from it;
+    `visualTurnId` never is, because naming a chart is not drawing one -- there is no fresh
+    decision identity this turn made, and a stale `turn_id` would claim one that was never made.
     """
     identity: dict[str, str] = {}
     visualization = answer.get("visualization")
@@ -184,6 +192,19 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
                     newest_chart_id = newest_context.get("chart_id")
                     if isinstance(newest_chart_id, str):
                         identity["chartId"] = newest_chart_id
+    if "chartId" not in identity:
+        # D-H-1b (fix wave): `VISUAL_EXPLAINED` and the refusal-shaped `VISUAL_*` outcomes draw no
+        # new chart at all -- no `visualization`, no `visualization_derivation`, no `parts` -- but
+        # the orchestrator's own `about_chart_id` (D-H-1) names which chart the answer is *about*.
+        # Read only as the last resort, after every shape above that means a chart was actually
+        # drawn or derived this turn. `visualTurnId` is never stamped for it (the `return` below
+        # skips the block that does): naming a chart is not drawing one, so there is no fresh
+        # decision identity to attach -- a stale `turn_id` borrowed from a turn that changed
+        # nothing would be worse than the honest gap this closes.
+        about_chart_id = answer.get("about_chart_id")
+        if isinstance(about_chart_id, str):
+            identity["chartId"] = about_chart_id
+        return identity
     if "chartId" in identity and isinstance(conversation, Mapping):
         visual_contexts = conversation.get("visual_contexts")
         if isinstance(visual_contexts, list) and visual_contexts:
