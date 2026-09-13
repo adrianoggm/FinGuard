@@ -166,6 +166,27 @@ async def test_an_adapter_that_raises_anything_falls_back() -> None:
     assert decision.source == "deterministic" and decision.fallback_reason == "provider_error"
     assert decision.proposed is True
     assert canonical(decision.spec) == canonical(floor)
+    # U-8 (Wave 3 hardening): still `provider_error` (the closed four stay four), but named as a
+    # bug in this adapter, not the provider itself.
+    assert decision.error_detail == "code_error:ValueError"
+
+
+async def test_a_bug_in_the_adapter_is_told_apart_from_a_real_provider_failure(caplog) -> None:
+    """U-8: a `TypeError` -- the shape a real bug in the not-yet-written parsing adapter would
+    take, unlike `ProviderFailedError`/`TimeoutError`, the port's own two named failures -- still
+    falls back to the floor and still records `provider_error` (`FallbackReason` stays the four
+    the wire seals), but `error_detail` says which kind of `provider_error` this was, and the
+    exception is logged at ERROR with its own type and traceback, not silently swallowed."""
+    with caplog.at_level("ERROR"):
+        decision = await policy(ScriptedVisualPlanner(TypeError("boom")), "hybrid").decide(
+            "q", PROFILE, DEFAULT_PRESENTATION
+        )
+    assert decision.source == "deterministic" and decision.fallback_reason == "provider_error"
+    assert decision.error_detail == "code_error:TypeError"
+    assert any(
+        record.levelname == "ERROR" and "code_error" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 async def test_a_providers_own_timeout_is_told_apart_from_the_budget() -> None:

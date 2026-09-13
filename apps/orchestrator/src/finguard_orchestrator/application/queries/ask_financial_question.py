@@ -5468,6 +5468,11 @@ def record_visual_decision(decision: VisualDecision, *, was: str | None = "deter
         detail: str = decision.fallback_reason
         if decision.rejected_rule is not None:
             detail = f"invalid_proposal:{decision.rejected_rule}"
+        elif decision.error_detail is not None:
+            # U-8 (Wave 3 hardening): a non-provider exception inside the planner still records
+            # `provider_error` (`FallbackReason` stays the four the wire seals), but names itself
+            # here so the row is not indistinguishable from the provider actually being down.
+            detail = decision.error_detail
         record(
             Step.VISUAL_PLANNER,
             Verdict.FAILED,

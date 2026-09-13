@@ -93,6 +93,13 @@ class VisualDecision:
     """The verified proposal, whatever was shown -- so suitability can be annotated afterwards
     from the record rather than reconstructed from a `changed` flag."""
     rejected_rule: str | None = None
+    error_detail: str | None = None
+    """U-8 (Wave 3 hardening): `"code_error:<ExcType>"` when the fallback was forced by a bug in
+    the model adapter itself (anything the planner raises beside its own two named failures,
+    `ProviderFailedError`/`TimeoutError`) rather than by the provider. `FallbackReason` stays the
+    closed four the wire seals (Task 1 of 4.5) -- this still records `provider_error` -- so a
+    later reader can tell "the provider was down" from "our own code broke" without a fifth
+    reason ever reaching the wire."""
 
     def __post_init__(self) -> None:
         # Constraint 7 ("closed sets are `Literal`s read through `get_args`") was true of this
@@ -107,6 +114,8 @@ class VisualDecision:
             )
         if self.accepted != (self.source in _ACCEPTED_SOURCES):
             raise ValueError("accepted means the model's or the patch's chart is what is shown")
+        if self.error_detail is not None and self.fallback_reason != "provider_error":
+            raise ValueError("error_detail only accompanies a provider_error fallback")
 
 
 class DeterministicVisualPlanner:
