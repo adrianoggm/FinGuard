@@ -836,6 +836,13 @@ def window_in(
     if natural is not None:
         return natural
 
+    # F-H2 (Wave 3 hardening, fix round): before `_A_MONTH`, which would otherwise match this
+    # phrase's own trailing "agosto de 2026" as a single bare month and answer with a third of the
+    # range asked for.
+    month_range = _a_month_range(folded)
+    if month_range is not None:
+        return month_range
+
     if asked_for is Slot.YEAR and _THIS_ONE.fullmatch(folded.strip(" ?¿.!¡,")):
         return RelativePeriod(period=Period.THIS_YEAR)
 
@@ -966,10 +973,17 @@ _THIS_SEASON: Final = re.compile(r"\best[ae]\s+(primavera|verano|otono|invierno)
 _LAST_SEASON: Final = re.compile(r"\b(primavera|verano|otono|invierno)\s+pasad[ao]\b")
 
 
-def _season_months(season: str, year: int) -> tuple[str, tuple[int, int, int]]:
+def _season_months(season: str, year: int) -> tuple[str, str, tuple[int, int, int]]:
     months = _SEASON_MONTHS[season]
     named = ", ".join(_MONTHS[month - 1] for month in months[:-1])
-    return f"{named} y {_MONTHS[months[-1] - 1]} de {year}", months
+    reading = f"{named} y {_MONTHS[months[-1] - 1]} de {year}"
+    # F-H2 (Wave 3 hardening, fix round): the reading above is what the *question* reads aloud,
+    # and it is not what the chip offers back -- a comma list is exactly the shape `_A_MONTH`
+    # cannot read (it matches only the last named month), so a holder answering with the chip
+    # verbatim used to get a single, silently wrong month back. The chip is a range phrase instead,
+    # read by `_a_month_range` below.
+    chip = f"de {_MONTHS[months[0] - 1]} a {_MONTHS[months[-1] - 1]} de {year}"
+    return reading, chip, months
 
 
 def season_ask(sentence: str, *, today: date) -> tuple[str, tuple[str, ...]] | None:
@@ -981,7 +995,10 @@ def season_ask(sentence: str, *, today: date) -> tuple[str, tuple[str, ...]] | N
     not say otherwise (`window_in`'s own "the last time it happened, counting the one under way").
 
     Never a guess: nothing here reads `window_in`'s vocabulary or touches a plan. The caller answers
-    with this question and these chips and asks the ledger nothing.
+    with this question and these chips and asks the ledger nothing -- but the chips themselves are a
+    window `window_in` can read back on the next turn (`_a_month_range` below), which is what closes
+    the round trip: the caller opens a `FinancialClarification` awaiting `Slot.WINDOW`, and the
+    ordinary reply-to-a-clarification path resolves it exactly like any other window answer would.
     """
     folded = spanish.folded(sentence)
     match = _SEASON.search(folded)
@@ -995,7 +1012,39 @@ def season_ask(sentence: str, *, today: date) -> tuple[str, tuple[str, ...]] | N
         years = (today.year - 1,)
     else:
         years = (today.year, today.year - 1)
-    readings = [_season_months(season, year)[0] for year in years]
-    chips = tuple(reading[0].upper() + reading[1:] for reading in readings)
+    pairs = [_season_months(season, year)[:2] for year in years]
+    readings = [reading for reading, _chip in pairs]
+    chips = tuple(chip[0].upper() + chip[1:] for _reading, chip in pairs)
     question = "¿Te refieres a " + " o a ".join(readings) + "?"
     return question, chips
+
+
+# "de junio a agosto de 2026" -- the season chip's own shape, and read narrowly on purpose: a
+# trailing year is required, which is exactly what keeps this apart from "de junio a septiembre"
+# (no year), the ambiguous range `_a_month_with_no_year` already refuses because it could be either
+# a span or two months contrasted (`test_ambiguous_month_ranges_are_not_rewritten_as_two_whole_
+# months`). Requiring the year is not a narrower version of that same guess -- it is a different,
+# unambiguous sentence, the one the chip actually offers.
+_A_MONTH_RANGE: Final = re.compile(
+    rf"\bde\s+(?P<start_month>{'|'.join(_MONTHS)})\s+a\s+(?P<end_month>{'|'.join(_MONTHS)})\s+"
+    rf"de\s+(?:el\s+)?(?P<year>20\d{{2}})\b"
+)
+
+
+def _a_month_range(folded: str) -> AbsoluteRange | None:
+    match = _A_MONTH_RANGE.search(folded)
+    if match is None:
+        return None
+    start_month = _MONTH_NUMBER[match.group("start_month")]
+    end_month = _MONTH_NUMBER[match.group("end_month")]
+    # The printed year anchors the *first* named month, the same convention `_season_months`
+    # already uses for winter -- "de diciembre a febrero de 2026" is December 2026 through
+    # February 2027, not February of the year December names.
+    start_year = int(match.group("year"))
+    end_year = start_year + 1 if end_month < start_month else start_year
+    start = whole_month(start_year, start_month).start
+    end = whole_month(end_year, end_month).end
+    try:
+        return AbsoluteRange(start=start, end=end)
+    except InvalidValueError:
+        return None

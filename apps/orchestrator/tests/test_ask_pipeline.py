@@ -43,6 +43,7 @@ from finguard_orchestrator.domain.models.result_reference import (
     answered_with_result,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
     FinancialPlan,
     FinancialPlanDraft,
     RelativePeriod,
@@ -1422,6 +1423,47 @@ async def test_a_season_asks_for_its_months_instead_of_answering_the_inherited_w
 
     assert result.outcome == Spoken.GUIDANCE.value
     assert result.text == "¿Te refieres a junio, julio y agosto de 2026?"
-    assert result.suggestions == ["Junio, julio y agosto de 2026"]
+    # F-H2 (Wave 3 hardening, fix round): the chip is a range phrase now ("de junio a agosto de
+    # 2026"), not the comma list the spoken question reads aloud -- see the round trip below.
+    assert result.suggestions == ["De junio a agosto de 2026"]
     assert planner.asked is None
     assert ledger.plans == []
+
+
+async def test_a_season_asks_answer_with_its_own_chip_runs_the_plan_over_the_named_months() -> None:
+    """F-H2 (Wave 3 hardening, fix round): the round trip B-4 left open. The season ask now opens
+    a `FinancialClarification` awaiting `Slot.WINDOW`, so the next turn -- the chip, answered
+    verbatim -- resolves through the ordinary reply-to-a-clarification path, exactly like any
+    other answer to "¿de qué periodo?" would, and runs the plan over June-August with one ledger
+    call rather than being read as an unrelated fresh sentence.
+    """
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = RecordingLedger(ANSWER)
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_N_MONTHS, n=3)
+    )
+    handler = chat(planner, ledger)
+    first = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿En qué he gastado más este verano?",
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+    (chip,) = first.suggestions
+
+    second = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence=chip,
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=first.conversation,
+        )
+    )
+
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].date_range == AbsoluteRange(
+        start=date(2026, 6, 1), end=date(2026, 8, 31)
+    )
+    assert second.outcome != Spoken.GUIDANCE.value

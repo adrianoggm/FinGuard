@@ -808,11 +808,30 @@ class AskFinancialQuestionHandler:
             # vocabulary here is more certain about what the sentence is missing, and answering
             # with the wrong months is worse than asking which ones were meant.
             question, chips = season
+            # F-H2 (Wave 3 hardening, fix round): the ask used to leave `conversation=was`
+            # unchanged -- an honest question with no state behind it, so the next turn (a bare
+            # "sí", "esos tres", or the chip itself) was read exactly like any fresh sentence, and
+            # the wrong-but-confident failure this whole finding exists to close just moved one
+            # turn later. Reusing the same clarification workflow the planner's own window
+            # question opens (`FinancialClarification`, `awaiting=Slot.WINDOW`) closes it: the
+            # direction is the one fact this sentence states or inherits, nothing else is settled,
+            # and `_finish_pending`'s ordinary reply-to-a-clarification path resolves the window on
+            # the next turn exactly like any other answer to "¿de qué periodo?" would -- the chip
+            # itself now being a range phrase `window_words.window_in` can read back (see its own
+            # module docstring).
+            facts = explicit_facts.read(query.sentence, today=query.today)
+            direction = facts.direction or (
+                previous.direction if isinstance(previous, FinancialPlan) else Direction.EXPENSE
+            )
             yield AskFinancialQuestionResult(
                 outcome=Spoken.GUIDANCE.value,
                 text=question,
                 question=question,
-                conversation=was,
+                conversation=was.with_active(
+                    FinancialClarification(
+                        draft=FinancialPlanDraft(direction=direction), awaiting=Slot.WINDOW
+                    )
+                ),
                 suggestions=list(chips),
             )
             return
