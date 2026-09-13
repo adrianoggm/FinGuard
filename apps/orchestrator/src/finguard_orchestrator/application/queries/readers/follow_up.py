@@ -139,6 +139,12 @@ _CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
     r"|^(?:no[\s,]+)?(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
     r"|^volvamos?\s+a\b"
     r"|^(?:quedate|dejame|deja)\s+solo\s+con\b"
+    # Item 4 (Wave 3 hardening, T8b): "ponme solo restaurantes" -- the same category-only filter
+    # as "solo restaurantes" above, said as an imperative to the assistant rather than as a bare
+    # fragment. "pon(me)?" alone would be too wide (it also opens a restyle, "ponlo en barras"),
+    # so this only ever fires beside `solo`/`solamente`, the word every sibling branch above also
+    # requires before it will narrow a filter.
+    r"|^pon(?:me|lo|la)?\s+(?:solo|solamente)\b"
 )
 
 
@@ -459,6 +465,39 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
             facts,
         )
 
+    # Item 5 (Wave 3 hardening, T8b, "the eighth handed-over row"): checked here, ahead of the
+    # ellipsis-length gate below, for the same reason the named-filter branch above already is --
+    # "sepáralo en transporte público y gasolina" is six words (the clitic "-lo" plus "en" add two
+    # to the verbatim "Separa transporte público y gasolina" this same branch already claims at
+    # five), and the length gate below exists to protect *ellipses* -- a short fragment that might
+    # introduce something this path cannot represent -- not an explicit split verb naming two
+    # categories the vocabulary already knows precisely. Moved, not widened: the match itself is
+    # unchanged.
+    if len(named) >= 2 and _SPLIT_BY_NAMES.search(folded):
+        # "Separa transporte público y gasolina" changes only the categories and the grouping
+        # that presents them. Bare `replace`, not `explicit_facts.enforce`: two coordinated names
+        # read as one *combined* total to `explicit_facts.read` (`_combined_total`), so its
+        # `facts.group_by` is `NONE` here -- `enforce` would apply that reading and undo the very
+        # `GroupBy.CATEGORY` this patch states. A precise split needs no calendar or presentation
+        # word to lean on beyond the verb itself, which is why this does not gate on
+        # `facts.group_by` the way the presentation-dimension branch above does.
+        #
+        # `merchants`, `merchant_terms` and `group_limit` are cleared like every sibling branch in
+        # this function (`_CATEGORY_REFERENCE`, `_CATEGORY_FILTER_FOLLOW_UP`, `_COUNT_FOLLOW_UP`)
+        # clears its own filters. Left in view, a merchant filter turns the split into an
+        # intersection nobody asked for -- "transporte público en Mercadona" -- and a row cut
+        # left over from a ranking draws one of the two categories the split just named (I-2, M-1,
+        # Wave 4.2b).
+        return replace(
+            previous,
+            categories=named,
+            excluded_categories=(),
+            merchants=(),
+            merchant_terms=(),
+            group_by=GroupBy.CATEGORY,
+            group_limit=None,
+        )
+
     # These are deliberately short ellipses. A complete question can introduce a merchant or a
     # category the closed vocabulary does not know, and inheriting the old filters there would
     # answer a different question with a plausible figure.
@@ -496,30 +535,6 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
                 metric=Metric.COUNT,
             ),
             facts,
-        )
-    if len(named) >= 2 and _SPLIT_BY_NAMES.search(folded):
-        # "Separa transporte público y gasolina" changes only the categories and the grouping
-        # that presents them. Bare `replace`, not `explicit_facts.enforce`: two coordinated names
-        # read as one *combined* total to `explicit_facts.read` (`_combined_total`), so its
-        # `facts.group_by` is `NONE` here -- `enforce` would apply that reading and undo the very
-        # `GroupBy.CATEGORY` this patch states. A precise split needs no calendar or presentation
-        # word to lean on beyond the verb itself, which is why this does not gate on
-        # `facts.group_by` the way the presentation-dimension branch above does.
-        #
-        # `merchants`, `merchant_terms` and `group_limit` are cleared like every sibling branch in
-        # this function (`_CATEGORY_REFERENCE`, `_CATEGORY_FILTER_FOLLOW_UP`, `_COUNT_FOLLOW_UP`)
-        # clears its own filters. Left in view, a merchant filter turns the split into an
-        # intersection nobody asked for -- "transporte público en Mercadona" -- and a row cut
-        # left over from a ranking draws one of the two categories the split just named (I-2, M-1,
-        # Wave 4.2b).
-        return replace(
-            previous,
-            categories=named,
-            excluded_categories=(),
-            merchants=(),
-            merchant_terms=(),
-            group_by=GroupBy.CATEGORY,
-            group_limit=None,
         )
     if named:
         return None
