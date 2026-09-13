@@ -202,7 +202,15 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
         # never sees a sentence this claims. Every other no-context visual signal (a mark, an
         # orientation, a sort, a size or limit word) is a genuine restyle instruction with nothing
         # to restyle, and the caller now answers that honestly instead of falling to the planner.
-        if show_every_row:
+        #
+        # F-3 regression (fix wave, found measuring D-H-8): `go_back` ("vuelve al anterior"/"el
+        # de antes") abstains for the same reason `show_every_row` does, and for one more of its
+        # own -- "el/lo de antes" is ordinary conversational Spanish for "what we were saying
+        # before", not only "the previous chart" ("Volviendo a lo de antes, ¿cuál fue la nómina
+        # más alta?", episode 14, a real ranking query with no chart in sight). Claiming it here
+        # answered a real question "Ese dato no tiene gráfico que cambiar." instead of letting the
+        # scope-restoration reader that already exists for exactly this sentence run.
+        if show_every_row or go_back:
             return None
         return VisualIntent(None, None, "No hay ningún gráfico anterior que pueda cambiar.")
     target_match = TARGET.search(folded)

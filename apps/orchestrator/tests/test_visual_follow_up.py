@@ -675,6 +675,39 @@ def test_f3_a_bare_restyle_with_no_chart_at_all_is_refused_not_planned() -> None
     assert len(draws.calls) == 0
 
 
+def test_f3_going_back_to_a_previous_topic_with_no_chart_still_plans() -> None:
+    """Regression found while measuring D-H-8's handover count: "Volviendo a lo de antes,
+    ¿cuál fue la nómina más alta?" (episode 14, `no_model: true` -- a deterministic ranking
+    query) contains "lo de antes", which `_GO_BACK` also reads as "go back to the previous
+    chart" (`vuelve al anterior`/`el de antes`). With no chart in context that used to fall
+    through unclaimed (F-3's own gate required `was.visual_contexts` truthy) -- F-3's new
+    no-context branch started answering it "Ese dato no tiene gráfico que cambiar." instead,
+    silencing a real ranking question and handing two more sentences to the planner
+    unmeasured (`scripts/handover_cases.py`, 22 -> 24). `show_every_row`'s own no-context
+    abstention is the fix: `go_back` gets the same one."""
+    draws = _DrawsOneChart()
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, draws)
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/questions",
+            json={"question": "Volviendo a lo de antes, ¿cuál fue la nómina más alta?"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.questions_enabled = previously_questions_enabled
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["outcome"] != "VISUAL_INCOMPATIBLE"
+    assert len(draws.calls) == 1
+
+
 async def test_a_visual_word_during_an_open_payment_preview_stays_in_the_payment_branch() -> None:
     """C-6: a payment preview is open (`PaymentConfirmation`) and a chart is also on screen. A
     reply carrying only a visual word («ponlo en barras») used to be claimed by `interpret_visual`
