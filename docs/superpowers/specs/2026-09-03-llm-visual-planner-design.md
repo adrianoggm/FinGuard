@@ -469,6 +469,17 @@ And the earlier claim *"the response never degrades"* was too strong. The fallba
 planner failure does not remove the visualisation; **the attempt still costs latency**, because the
 budget is spent before the floor answers. That is why shadow comes first.
 
+**Hardened, 2026-09-11 (Task 2, Wave 3 hardening, A-4/A-5).** The code did not yet match this
+section's own table: `shadow` mode recorded a `fallback_reason` even though nothing had fallen back
+(the "In `shadow` it stays empty even though the floor was shown, because nothing fell back" rule
+above was the design's own correct statement, not yet the running code's behaviour), and
+`promoted`'s `changed_from_baseline` was always `None` regardless of whether the model's proposal
+differed from the floor. Both are now fixed to the table above: `VisualPlanningPolicy.decide` sets
+`fallback_reason=None` unconditionally when `self._mode == "shadow"`, and the floor is computed and
+compared in `promoted` mode too, so `changed_from_baseline` states a real fact rather than a
+constant `None`. The floor's own decline is not allowed to retract an already-accepted proposal —
+`promoted` still trusts its own eligibility guard once a proposal has passed it.
+
 ## Section F — what is recorded
 
 **Seven fields per turn**, hung off the decision record the observability work already built:
@@ -513,6 +524,24 @@ figure that carries the argument is:
 
 > the share of cases where the model proposes a **valid and suitable** visualisation that differs
 > **semantically** from the baseline.
+
+**Hardened, 2026-09-11 (Task 4, Wave 3 hardening, U-7/U-8).** Two more gaps between this section's
+own contract and the running code, both closed. **The abstention contract:** `{"mark": null}` and
+nothing else is the one shape that means "no proposal" — but the port used to also read
+`{"mark": null, "limit": 3}` (or any other field set alongside a null mark) as the same clean
+abstention, when it is really a contradictory, invalid proposal. `_draft` now builds the
+contradictory shape into a real `VisualPlanDraft` and hands it to `verify()`, which refuses it
+through the existing `structure` rule — reusing `Rejection("structure", ...)` rather than inventing
+a fifth `FallbackReason`, so `fallback_reason` records `invalid_proposal:structure` for it, never a
+silent `None`. **Code errors logged as such:** the broad `except Exception` around the model call
+used to also catch a bug in the verifier itself, filing it under `fallback_reason="provider_error"`
+— the same words a genuine timeout or a down provider would produce, so a defect in this process's
+own code was indistinguishable from an external outage on every dashboard reading that field.
+`verify()` now runs outside that `except` entirely (a verifier bug propagates uncaught rather than
+being misreported), and the model-call exception path gains a new `VisualDecision.error_detail =
+"code_error:<ExcType>"` alongside the unchanged `fallback_reason`, logged at ERROR with the
+exception's type and traceback — the four `FallbackReason` values on the wire are unchanged; the
+new field is a diagnostic addition, not a fifth outcome.
 
 ## Section G — how it is measured
 

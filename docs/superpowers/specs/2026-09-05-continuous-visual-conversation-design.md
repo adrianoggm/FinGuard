@@ -85,7 +85,21 @@ older client still holds — it validates, but a sort restyle asked of that char
 — `row_count`/`plan_metric` still off the wire, and a contradictory wire `role`/`type` refused at the
 DTO (422, not a 500).
 
-**Fix wave, I1: verification is a second, deliberate visible change, not only the asking in §5.**
+**Hardened, 2026-09-11 (Task 3, Wave 3 hardening, A-8/A-10/B-8).** The vocabulary above claimed its
+own §3.1 examples less than the audit found: «Prefiero líneas», «Ponlo en líneas», «solo los cinco
+primeros» (word form, not only the digit), and «Ordena las categorías de mayor a menor» either
+refused outright (an unknown plural mark, a limit written in words) or, for the last one, answered
+`VISUAL_AMBIGUOUS` because `categorías` is itself a `_FINANCIAL` word — none of §3.1's own sentences
+is exempt from being read as a restyle by this reader any more. A word-or-digit limit phrase now
+reads into a 1-20 range (`_LIMIT_PHRASE`, distinct from `top`'s 1-100) and refuses out of range with
+a reason rather than silently clamping. The fix round (F-H1, a second implementer, Critical)
+found and closed a regression the first pass introduced: a sentence naming a real financial word
+beside a style word, with nothing left for the narrow `_FINANCIAL_QUERY_SIGNAL`/named-category
+checks to catch («Ordena mis gastos por categoría y dime el total»), used to fall through to the
+restyle path with zero ledger calls — the actual question silently discarded. A `_DATA_ASKING`
+check (`dime`, `cuánto(s/as)`, `total`, `gasté`, `ingres-`, `saldo`, a month name, a digit) now
+routes that shape to the planner instead; the two named §3.1 examples above are unaffected
+(`mixed=False`, still pure restyles).
 Probed across the interpreter's whitelist × the eight floor families: 29 of the 62 restyles base
 accepted are now refused (`mark`, `order` or `grouped`) — a 47% reduction, and every one a chart the
 refusing rule exists to refuse (a line over unordered categories, a value sort on a temporal axis, a
@@ -177,6 +191,18 @@ the label itself instead), with zero banking calls and nothing merged — and on
 plan can actually be drilled (`group_by` MONTH or CATEGORY, checked before the ask, fix round I-4):
 a MERCHANT-grouped chart with two tied labels never asks, because no reply to that question could
 ever be acted on.
+
+**Hardened, 2026-09-11 (Task 3, Wave 3 hardening, A-9/B-6).** This section's own two named
+examples were previously misclaimed: «Explícame el gráfico» fell to the planner (a real ledger
+call to re-explain a chart already on screen) instead of being claimed by `asks_why`'s zero-call
+path, and «¿Qué comercio es responsable?» — this section's own third sentence — likewise reached
+the planner instead of the drill, dropping the narrowed window the drill exists to keep. `asks_why`
+now claims `explica(me)?`/`cuentame`/`que significa … grafico`; the drill's own `_TOP` vocabulary
+widened with `tanto`/`responsable`/`de donde sale` so a "why" that is really a drill (not a request
+to re-explain the chart's own shape) is told apart and routed correctly. «¿Por qué tanto?» over a
+chart whose plan is `group_by: NONE` is a further, narrower case (Task 8b): the drill has nothing
+to narrow into, so it now asks «¿Tanto en qué? Puedo desglosarlo por categoría o por mes.» with
+chips, zero ledger calls, rather than reaching the planner for an unrelated total.
 
 ## 4. Visual conversational context
 
@@ -305,6 +331,30 @@ asserts exactly that member is the one nothing produces.
 Recorded as one `Decision` on the existing record: `Step.VISUAL_FOLLOW_UP`, `now=<kind>`,
 `detail=<reader that claimed | model | asked>`. A twelfth seam, justified in its commit.
 
+**Hardened, 2026-09-11 (Tasks 3/8, Wave 3 hardening, B-1/B-2/B-4).** Three shapes of follow-up
+sentence used to resolve to a wrong-but-confident answer instead of the honest outcome above.
+**Exclusions:** «quita restaurantes», «elimina los taxis», and every other imperative or
+prepositional exclusion form (`quita(r)`, `elimina(r)`, `borra(r)`, `saca(r)`, `excluye(ndo)`,
+`fuera de`) now exclude the named category — before this fix, the sentence read as if the category
+were the *only* one wanted, inverting the ask. **Seasons:** «¿En qué he gastado más este verano?»
+and its siblings no longer silently answer whatever window was already in view; `season_ask`
+opens a `FinancialClarification` (the same `Slot.WINDOW` machinery an ordinary «¿de qué periodo?»
+question uses) naming the season's own months as a range chip the window vocabulary can read back
+verbatim, so the ask is a real round trip, not only an honest question with no way to hear the
+answer. This closes the round-trip half of B-4; **still open (D-H-7):** the draft this ask opens
+carries only `direction`, so a season sentence that also implies a category breakdown («¿en qué…»)
+still resolves to a total once the window answers, not the ranking the sentence's own wording asks
+for — tracked for the next fix wave, not closed here. **Bare words:** an unrecognised bare word or
+short phrase («deshaz», «en euros», «nada») used to be read as a merchant filter — a confident,
+three-call guess-then-retract for a word that named no merchant at all. A closed stop-list
+(`domain/services/merchant_words.never_a_merchant`) now asks instead, zero ledger calls, for every
+word or two-word phrase on the list; corpus episodes that pinned the old guess-then-retract as
+"expected" behaviour were corrected in the same task (Task 8) once the pinned turns were confirmed
+to be confident wrong answers, never an honest retraction. The stop-list is an interim measure,
+by design: a general "capitalised-or-known-merchant" rule would close the same ten pinned turns and
+the open set the stop-list still leaves unprotected, but only once every episode that would break
+under it has been corrected — R-H1, `.superpowers/sdd/2026-09-11-wave3-hardening/progress.md`.
+
 ## 6. Continuity across voice, text and chart
 
 The conversation belongs to the user, not to the channel. **What exists:** the voice gateway
@@ -376,12 +426,23 @@ not whether the data happens to make every band distinct). mark → `chart_reaso
 own `EncodingSort` → `ordering_reason`; `window` and `len(context.labels)` → `scope_summary`
 (I-2, fix wave: not `profile.row_count`, which does not survive the wire — see "Scope" below);
 `source`/`fallback_reason` → `provenance`. The noun inside
-`chart_reason`/`ordering_reason`/`scope_summary` (mes/día/categoría/grupo) comes from the drawn
-`labels` themselves, never from a plan's `GroupBy` or a field's name — the plan is not on the wire
-(§4) and every producer names its dimension field by role, never by what it holds — while the
-measure word (importe/número de movimientos/peso) comes from `profile.measure_metric()` (R11).
+`chart_reason`/`ordering_reason`/`scope_summary` (mes/día/categoría/grupo/semana/comercio) comes
+from the drawn `labels` themselves for the shapes a label alone can name, and — **hardened,
+2026-09-11 (Task 2, U-5)** — from the sealed `group_by` (§4) for the one shape a label alone
+cannot: a WEEK bucket's key is byte-identical to a DAY bucket's, so `_nouns_of(group_by, labels)`
+reads `group_by` first (WEEK → semana(s), MERCHANT → comercio(s)) and only falls back to the label
+guess when `group_by` is `NONE` or absent (an older, pre-hardening context). The plan itself is
+still not on the wire (§4); `group_by` is sealed as its own shape fact precisely so the noun does
+not need it. The measure word (importe/número de movimientos/importe medio/peso) comes from
+`profile.measure_metric()` (R11) — **hardened, 2026-09-11 (Task 4, U-2/U-3/A-7/C-2):** `_MEASURE_WORDS`
+is now closed over every `Metric` member plus `RATIO_SHARE`/`COMPARISON`, asserted complete at
+import time; RECURRENCE moved from «número de movimientos» to «importe» (its rows are amounts, not
+counts), and COUNT/FREQUENCY → «número de movimientos», AVERAGE/PERIOD_AVERAGE → «importe medio»
+are now covered where they were previously missing.
 
-**Provenance wording** (the closed sets `VisualSource`/`FallbackReason` actually carry, never the
+**Provenance wording** — unchanged by Wave 3 hardening; none of the five sentences below, or the
+rule that omits the line entirely when `source is None`, was touched by any hardening task (the
+closed sets `VisualSource`/`FallbackReason` actually carry, never the
 invented `AI_VERIFIED`/`DETERMINISTIC_FALLBACK`/`USER_PATCH` of the first draft):
 
 - `source == "llm"` → «Propuesto por el asistente y comprobado por las reglas de FinGuard.»
@@ -408,12 +469,17 @@ stating that as a bare number would read as a total rather than a floor. It neve
 states an amount, a total or a percentage — the evidence (movement) count does not survive the
 wire (§4) and so is never claimed, honestly rather than by omission alone.
 
-D-4.5-3 (re-ruled, no fix-wave item): a WEEK group's key is its bucket's Monday written as a plain
-ISO date — the identical shape a DAY group's key already has, and there is no format left in a WEEK
-label that a DAY label does not also have. `_nouns_of` cannot tell the two apart from the label
-alone, so a week-grouped chart's explanation says «días» — a stated limit, not a bug, and not a
-heuristic this module invents (spacing labels seven days apart was considered and rejected: a
-sparse day chart can space that way by coincidence).
+**D-4.5-3 — RETIRED, 2026-09-11 (Task 2, Wave 3 hardening, U-5).** The limit above stood on a false
+premise: a WEEK label's shape is identical to a DAY label's, so a noun read from the label alone
+cannot tell them apart — but the noun no longer has to. `VisualContext.group_by` (§4) now seals the
+plan's own grouping, and `_nouns_of(group_by, labels)` reads it first: `GroupBy.WEEK` →
+«semana»/«semanas»/«una semana», `GroupBy.MERCHANT` → «comercio»/«comercios», falling back to the
+label guess only for `GroupBy.NONE` (deliberately absent from the noun table) or an older,
+pre-hardening context with no `group_by` sealed. A week-grouped chart's explanation now says
+«semanas», never «días» — `test_nouns_of_a_week_group_says_semanas_even_with_day_shaped_labels` and
+`test_a_week_chart_says_semanas_after_a_round_trip` pin the round trip, both green. Measure words
+(the second half of the noun table, importe/número de movimientos/importe medio/peso) are unchanged
+by this fix and are covered separately below (§7, "Landed, 4.5" and Task 4's own table).
 
 **Two surfaces, one derivation.** `explain_chart` runs once per charted answer and feeds both:
 `QuestionResponse.explanation` on every answer that carries a chart — a discreet «¿Por qué este
@@ -462,8 +528,9 @@ categoría con mayor gasto…», «…por categorías»). The other four produce
 `_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely run no single
 `FinancialPlan` of that shape, stamp nothing, and stay on the back-fill — a chart that follows one
 of those, over whatever plan was previously in view, speaks only the generic desglose line, by
-design, not as an unclosed limit. Also still open, by design rather than by omission: a week-grouped chart's explanation says
-«días» (D-4.5-3, above).
+design, not as an unclosed limit. **Hardened, 2026-09-11 (Task 2, Wave 3 hardening):** a
+week-grouped chart's explanation no longer says «días» — D-4.5-3 is RETIRED, above; the noun now
+comes from the sealed `group_by`, not a guess off the label's own shape.
 
 ## 8. Performance
 
@@ -490,6 +557,28 @@ gateway's follow-up-turn benchmark reports `followUp:inputStartToTurnCompletedMs
 over 20 samples (`apps/voice-gateway/evaluation/RESULTS.md`); the gate reads Wave 3's real-provider
 single-turn P95 (5,076 ms, 17 August 2026) plus this fake-provider row; the real-provider follow-up
 row itself is pending the operator's run (Task 9's runbook).
+
+**Hardened, 2026-09-11 (Task 7, Wave 3 hardening, M-1/M-3/M-4/M-9).** The paragraph above summed two
+numbers that were never comparable — a real-provider P95 measured on Linux against a fake-provider
+P95 measured on Windows, on a path where the fake provider never restyles a chart — under the word
+"measured", to 5,092.250 ms. `apps/voice-gateway/evaluation/RESULTS.md`'s §8 now states the two
+quantities separately, each with its own provenance (OS, date, provider class), says plainly they
+are not addable and not comparable, and names what a real gate needs: a same-machine,
+same-provider-class pair. A new script, `apps/orchestrator/scripts/latency_gate.py` (stdlib only),
+computes the gate from two such numbers and refuses to compare across provider classes rather than
+silently mixing them; `benchmark_e2e.py` gained `--follow-up-pcm-file` so a real-provider follow-up
+row is now producible at all (it never was before this task — the follow-up turn's audio was always
+UTF-8 text standing in for PCM16). **Task 9's own runbook status:** the runbook
+(`docs/superpowers/plans/2026-09-05-visual-planner-shadow.md`'s own Task 9) is now runnable end to
+end — every command in it exists and reaches the setting it names (M-3: the wrong default model, a
+no-op env var, a nonexistent `--mode` flag, and a dead compose key were each fixed or rewritten to
+describe the real mechanism) — but **it has never been run.** The GPU measurement itself is the
+user's own action, standing authorisation given separately; this document states the runbook is
+ready, not that a number exists. The `visual_planner_budget_seconds` config comment no longer claims
+to be "set from the P95 of `latency_ms` in the evaluation, not chosen" (M-4): it now says plainly
+that the 6.0 s figure is a guess, not a measurement, and that the method is right-censored — a run
+made *at* budget B can never report a P95 above B, so "measuring" the budget from such a run would
+only ratify the guess.
 
 ## 9. Conversational visual evaluation
 
@@ -519,15 +608,33 @@ silent scope widening · **zero banking calls for presentation-only changes** ·
 discarded spec · continuity across channels on every episode · every drill-down linked to verifiable
 evidence · every rejected proposal ends in a valid answer.
 
+**Hardened, 2026-09-11 (Task 8, Wave 3 hardening).** "Zero text/chart disagreement" above was an
+invariant with no test behind it (B-5) — nothing compared what the explanation's prose said against
+what the sealed chart actually carried. `tests/support/episodes.py`'s harness now has one:
+`chart_text_agrees`, a new episode-turn field wired to `_chart_text_complaints`, which compares the
+last `FinancialPlan` a turn actually ran (`ran[-1].group_by`) against the chart's own sealed
+`VisualContext.group_by` — never a second reading of the prose, so it cannot be fooled by an
+explanation that merely sounds consistent with itself. It fails (never passes vacuously) whenever
+the turn has no chart or no `FinancialPlan` — a comparison, a ratio, a donut with no direct plan
+lineage — so `chart_text_agrees: true` is a claim that must be earned per turn, exercised for real
+in episode 34's «por semanas» row (WEEK vs WEEK). Two more harness kinds landed alongside it in the
+same task: `explanation_says` (a case-insensitive substring check on the explanation's own text) and
+`chips`/`no_chips` (what the answer offered as its next restyles) — closing the blind spot where a
+turn's `route`/`ran` assertions passed while its actual words or offered chips went unchecked.
+
 ## 10. Incremental delivery — each sub-wave is a plan of its own
 
 | sub-wave | delivers | done when |
 | --- | --- | --- |
 | **4.1 Context and classification** | `VisualContext` extended (§4); `VisualFollowUpKind` and the deterministic readers (§5); `Step.VISUAL_FOLLOW_UP`; invariant tests | every follow-up kind is classified and recorded; no visible change yet |
-| **4.2 Continuous visual conversation — done (3b, 4.2b)** | presentation patches through the verifier with `source="patch"`, on a context the server has sealed (3b); reshape linkage `derived_from`; the corpus's episode reshaped, regrouped and restyled in §9's own words (4.2b) | done — `evaluation/conversations/32-visual-continuation.yaml` runs every turn end to end with the banking-call assertion: turn 2, «Separa transporte público y gasolina.», re-queries the plan in view (one call, `derived_from: true`) instead of a planning-dataset stand-in; turn 3, «Ahora compáralo por meses.», regroups it into a month-by-month series instead of the comparison reader's refusal; turns 4-5 restyle a bar by number (turn 3's own chart is a line, which refuses an orientation change) and by «el gráfico anterior», each an effective, verified change. Turn 1 stays the planning-dataset anchor sentence — `window_words.py` excludes «este verano» by design, so nothing here could give it a window without guessing. Turns 4-5 of §9's own sketch — a drill-down into a split category — are 4.3's. **Fix wave, I-4:** in §9's own order the restyle bullet (§11) is refused right after turn 3's month line, with no chart between them for a bar to be turned — episode 32 reaches it only because turn 4 names a bar by number first; the scenario in §9's own sequence closes once 4.3 leaves a chart behind for «el gráfico anterior» to resolve to |
+| **4.2 Continuous visual conversation — done (3b, 4.2b)** | presentation patches through the verifier with `source="patch"`, on a context the server has sealed (3b); reshape linkage `derived_from`; the corpus's episode reshaped, regrouped and restyled in §9's own words (4.2b) | done — `evaluation/conversations/32-visual-continuation.yaml` runs every turn end to end **with the
+stub planner and the fake ledger** (M-6, Wave 3 hardening — the corpus harness's own docstring says
+so, and every claim site that could be read as "verbatim against the real service" now says so too)
+with the banking-call assertion: turn 2, «Separa transporte público y gasolina.», re-queries the plan in view (one call, `derived_from: true`) instead of a planning-dataset stand-in; turn 3, «Ahora compáralo por meses.», regroups it into a month-by-month series instead of the comparison reader's refusal; turns 4-5 restyle a bar by number (turn 3's own chart is a line, which refuses an orientation change) and by «el gráfico anterior», each an effective, verified change. Turn 1 stays the planning-dataset anchor sentence — `window_words.py` excludes «este verano» by design, so nothing here could give it a window without guessing. Turns 4-5 of §9's own sketch — a drill-down into a split category — are 4.3's. **Fix wave, I-4:** in §9's own order the restyle bullet (§11) is refused right after turn 3's month line, with no chart between them for a bar to be turned — episode 32 reaches it only because turn 4 names a bar by number first; the scenario in §9's own sequence closes once 4.3 leaves a chart behind for «el gráfico anterior» to resolve to |
 | **4.3 Financial drill-down — done** | reference resolution over result labels; bounded drill-down plan; movements linked to evidence; "back" | done — turns 4-5 pass verbatim in episode 32; an ambiguous reference asks (`DRILL_AMBIGUOUS`, harness route `CLARIFY`); the drill's chart is a merchant bar deriving from the chart it drilled |
 | **4.4 Multimodal continuity — done** | `chart_id`/`visualTurnId` on voice events; the chart-derived spoken summary; the multimodal cases | done — four of the five multimodal cases run in episode 33 (a, b, d, e); the fifth (c, the interruption) is the gateway's own protocol cancellation test; full-turn latency measured with fake providers, the real-provider row pending the operator's run |
-| **4.5 Explainability and product — done on the code side** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | done on the code side — the §11 scenario's code path is proved by episodes 32/33 (`docs/superpowers/plans/2026-09-11-visual-explainability.md`); the on-camera run is the operator's |
+| **4.5 Explainability and product — done on the code side** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | done on the code side — the §11 scenario's code path is proved by episodes 32/33 **with the stub
+planner and the fake ledger** (M-6, Wave 3 hardening; `docs/superpowers/plans/2026-09-11-visual-explainability.md`); the on-camera run is the operator's |
 
 Sub-waves 4.1-4.2 are worth landing on their own: they make the corpus see charts and make every
 visual follow-up verified, without a single new product surface.
@@ -598,3 +705,18 @@ collaboration between users · proactive alerts.
   an index it was never issued for, is exactly as untrusted as a tampered one (§4, Task 1, Wave 3
   hardening, A-1). Nobody's chart is trusted merely because the signature over its bytes still
   checks out.
+
+**Hardened, 2026-09-11 (Wave 3 hardening) — re-confirmed and what still stands as refused.** Every
+bullet above still holds exactly as stated; nothing this wave landed loosened one of them — the
+seal's four bindings, the drill's narrowed plan, the honest exclusion/season/bare-word asks, the
+group_by-carried noun, and the two-number latency gate are all additions on top of these refusals,
+never exceptions to them. One thing the seal still does not bind, named by Task 1's own review
+rather than left implicit: a *duplicated* context (the same `chart_id` sealed twice in one echoed
+list) is refused before the trust gate ever runs, by `Conversation.__post_init__`'s own
+chart-id-uniqueness invariant (a 422) — not by `verify_context` itself. The plan's own wording
+implied the seal would be what catches a duplicate; in practice a stronger, earlier check does, and
+the seal's own four bindings are proven instead by reorder and drop-middle, the shapes where a
+*distinct* context moves to an index its seal does not name. Still refused, unchanged: no cross-device
+trust; no expiry beyond key rotation; no server-side store. The loopback default is not a trust
+boundary either way (A-13) — restated here rather than left only in `docs/next.md`, since a reader
+of this design's own refusal list should not have to go looking for it elsewhere.

@@ -119,6 +119,16 @@ the session is listening; binary server frames are meaningful only between `audi
 `audio.completed`. Version 1 uses mono little-endian PCM16: 16 kHz input and 24 kHz output, with
 20 ms target chunks. Local loopback does not justify adding a codec before the behaviour works.
 
+D-H-2 (Wave 3 hardening, open, planned): a binary PCM frame carries no turn identity of its own —
+`turnId` names a JSON event, never a byte in the audio stream that follows it. A barge-in's own
+race (a straggler frame from the just-cancelled turn's TTS task, enqueued after the new turn's own
+`audio.started` clears the fence) is today narrowed on the web client's side by holding the new
+turn's `audio.started` until this gateway's own `response.cancelled` for the *previous* turn is
+observed (W-3) — a real, defensible narrowing of the race window, not the complete fix. The
+complete fix is a wire-level per-frame tag, so a frame's origin can be read off the bytes rather
+than inferred from event ordering; it needs a protocol change on this gateway's side and is not
+made by this document or this wave.
+
 ### 4. The state machine is explicit
 
 ```text
