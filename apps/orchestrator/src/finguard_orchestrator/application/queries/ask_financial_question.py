@@ -1173,10 +1173,57 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, account_follow_up)
             return
 
+        # N-H1 (Wave 3 hardening, round 2): `_a_bare_shop_name`'s own stop-list check only ever
+        # runs with `was.last_plan` set, because narrowing a *plan* is what that function does.
+        # From the state every settled conversation actually opens in -- nothing pending, no chart
+        # -- the same bare "todos"/"límite" fell through here to the planner instead, and came
+        # back a confident total with an invented LAST_MONTH window (a euro figure for a word that
+        # named nothing, Important 6's shape one route over). Checked here, before the planner and
+        # before `_a_bare_shop_name`'s narrowing, so the honest ask is reached with a plan pending
+        # or without one.
+        #
+        # `merchant_words.names_no_scope_at_all` rather than the broader `never_a_merchant`: most
+        # of that list is conversation control ("sí", "no", "gracias", "déjalo") and each already
+        # has its own deliberate fallback when nothing is pending -- a cancelled payment's stray
+        # "sí" becomes an ordinary LAST_MONTH query, and the corpus pins exactly that
+        # (`07-cancellations.yaml`, `08-confirmations.yaml`). Only F-2's own words carry no such
+        # second job. `was.active is None` keeps this from a workflow already open on this very
+        # sentence, for the same reason -- a clarification slot or a half-built payment reads its
+        # own answer here, and the repeated-question recovery further down this pipeline
+        # (`_asks_the_same_thing_again`) is what must still run for those, unchanged.
+        stopword_only_sentence = (
+            intent is Intent.FINANCIAL_QUERY
+            and was.active is None
+            and merchant_words.names_no_scope_at_all(query.sentence)
+        )
+        if stopword_only_sentence:
+            stopword_said = query.sentence.strip(" ¿?¡!.,;:")
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=(
+                    f"No sé a qué te refieres con «{stopword_said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                question=(
+                    f"No sé a qué te refieres con «{stopword_said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                plan=(
+                    answer_writer.describe(was.last_plan)
+                    if isinstance(was.last_plan, FinancialPlan)
+                    else None
+                ),
+                conversation=was,
+            )
+            return
+
         narrowing = _a_bare_shop_name(query, was) if intent is Intent.FINANCIAL_QUERY else None
         if isinstance(narrowing, _NeverAMerchant):
-            # B-2(a): a word the closed stop-list already knows is never a shop's name. The honest
-            # ask, never a merchant filter -- zero ledger calls, the conversation unchanged.
+            # Unreachable in practice now that `stopword_only_sentence` above catches every
+            # sentence `merchant_words.never_a_merchant` claims before this call is even made --
+            # kept as the sentinel's own defensive branch rather than deleted, so a future caller
+            # of `_a_bare_shop_name` that skips the earlier gate still gets the honest ask instead
+            # of a silent merchant guess.
             yield AskFinancialQuestionResult(
                 outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
                 text=(

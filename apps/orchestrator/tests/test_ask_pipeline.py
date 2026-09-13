@@ -792,6 +792,60 @@ async def test_f2_todos_mis_movimientos_still_plans() -> None:
     assert ledger.plans != []
 
 
+@pytest.mark.parametrize("word", ["todos", "todas", "todo", "límite", "sin límite"])
+async def test_n_h1_the_stop_list_asks_from_the_opening_state_too(word: str) -> None:
+    """N-H1 (Wave 3 hardening, round 2): `_a_bare_shop_name`'s own stop-list gate only ever ran
+    with `was.last_plan` set. From the state every settled conversation actually opens in --
+    `Conversation()`, nothing pending, no chart -- the same bare word fell through to the planner
+    and came back a confident total with an invented LAST_MONTH window; "sin límite" came back
+    worse, an invented `excluded_merchants=('limite',)` and "sin limite" spliced into the text.
+    The honest ask must be reached at zero ledger calls here too, on both routes."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=46_556, movement_count=3))
+    a_last_month_plan_the_gate_must_never_reach = plan()
+    handler = chat(
+        FakePlanner(PlanningResult.planned(a_last_month_plan_the_gate_must_never_reach)), ledger
+    )
+    query = AskFinancialQuestionQuery(
+        sentence=word,
+        account_id=ACCOUNT,
+        today=TODAY,
+        conversation=Conversation(),
+    )
+
+    handled = await handler.handle(query)
+    streamed = [step async for step in handler.stream(query)]
+    streamed_result = next(step for step in streamed if not isinstance(step, Stage))
+
+    for result in (handled, streamed_result):
+        assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+        assert "sin limite" not in (result.text or "").lower()
+    assert ledger.plans == []
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["todos mis movimientos", "sin restaurantes", "cuánto gasté sin contar el alquiler"],
+)
+async def test_n_h1_positive_controls_still_plan_from_the_opening_state(sentence: str) -> None:
+    """The stop-list only ever matches a sentence that folds to *nothing but* stop-list words --
+    a real question that merely contains one of them must still reach the planner, from the
+    opening state exactly as it always has."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=12_345, movement_count=3))
+    result = await chat(
+        FakePlanner(PlanningResult.planned(plan(categories=("GROCERIES",)))), ledger
+    ).handle(
+        AskFinancialQuestionQuery(
+            sentence=sentence,
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans != []
+
+
 async def test_a_financial_aside_suspends_a_half_built_payment_instead_of_erasing_it() -> None:
     """The financial answer is useful, but it is a change of subject. The Bizum survives visibly
     paused so a later bare amount cannot complete it without the user explicitly resuming it."""

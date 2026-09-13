@@ -185,6 +185,23 @@ def test_a_vague_exclusion_names_no_merchant(sentence: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "sentence",
+    [
+        # N-H1 (Wave 3 hardening, round 2): "límite" is on `merchant_words`'s closed
+        # never-a-merchant list, so a tail of exactly that word names no shop -- before this fix
+        # the exclusion reader claimed it anyway, and a holder was told a total was computed
+        # excluding a shop called "limite" that does not exist.
+        "sin límite",
+        "Cuánto gasté sin límite",
+        "Cuánto gasté sin límite este mes",
+    ],
+)
+def test_the_exclusion_reader_also_consults_never_a_merchant(sentence: str) -> None:
+    assert explicit_facts.excluded_merchants_in(sentence) == ()
+    assert explicit_facts.read(sentence, today=TODAY).excluded_merchants == ()
+
+
+@pytest.mark.parametrize(
     ("sentence", "merchant"),
     [
         ("Cuánto gasté en gasolina sin Mercadona", "mercadona"),

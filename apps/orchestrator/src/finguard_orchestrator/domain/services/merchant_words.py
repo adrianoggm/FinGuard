@@ -162,6 +162,36 @@ def never_a_merchant(sentence: str) -> bool:
     return bool(words) and all(word in _NEVER_A_MERCHANT_WORDS for word in words)
 
 
+# N-H1 (Wave 3 hardening, round 2): the words F-2 added above, and *only* those. Most of
+# `_NEVER_A_MERCHANT_WORDS` are conversational control -- "sí", "no", "gracias", "vale", "déjalo" --
+# and each already has its own deliberate fallback when nothing is pending (a cancelled workflow's
+# stray "sí" becomes an ordinary LAST_MONTH query; the corpus pins exactly that in
+# `07-cancellations.yaml` and `08-confirmations.yaml`). "Todos"/"todas"/"todo"/"límite" and "sin
+# límite" carry no such second job: nobody types them to close a workflow, so there is nothing lost
+# in asking instead of guessing, in *every* state -- not only while a plan is pending, which is what
+# `never_a_merchant` alone reaches (via `_a_bare_shop_name`, gated on `was.last_plan`).
+_NAMES_NO_SCOPE_AT_ALL_WORDS: Final = frozenset({"todos", "todas", "todo", "limite"})
+_NAMES_NO_SCOPE_AT_ALL_PHRASES: Final = frozenset({"sin limite"})
+
+
+def names_no_scope_at_all(sentence: str) -> bool:
+    """Whether `sentence` folds to exactly one of F-2's own words -- never a shop, never a window,
+    never a direction, and never anything else's answer either.
+
+    Narrower than `never_a_merchant` on purpose: that function's word list also covers "sí", "no"
+    and the rest of conversation control, and those must keep falling through to whatever state was
+    waiting on them (a cancelled payment, a repeated clarification) rather than being asked about
+    here unconditionally. This is the subset safe to gate the planner on from *any* state.
+    """
+    folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
+    if not folded:
+        return False
+    if folded in _NAMES_NO_SCOPE_AT_ALL_PHRASES:
+        return True
+    words = folded.split()
+    return len(words) == 1 and words[0] in _NAMES_NO_SCOPE_AT_ALL_WORDS
+
+
 def close_to(searched: str, merchants: tuple[str, ...], limit: int = 3) -> tuple[str, ...]:
     """The shops that look like what was asked for, best first.
 
