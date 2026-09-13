@@ -162,11 +162,12 @@ class FakeAssistantClient:
             # G-8/G-6: `VISUAL_EXPLAINED`, mirroring `_explanation_response` -- `explanation`
             # is a full `VisualExplanationResponse`, `conversation` is unchanged (no new
             # context), and there is no `visualization`/`visualization_derivation` anywhere on
-            # this answer: the real controller never puts one there. `chart_identity` therefore
-            # has nothing that names the chart being explained -- a real gap on the
-            # orchestrator's side (NEEDS_CONTEXT), not something this gateway can read around.
+            # this answer. D-H-1b (fix wave): the real controller now names the chart being
+            # explained through `about_chart_id` (D-H-1, orchestrator side) instead -- mirrored
+            # here so `chart_identity`'s own fallback for it is exercised end to end.
             answer["outcome"] = "VISUAL_EXPLAINED"
             answer["text"] = "Es un gráfico de barras porque compara categorías."
+            answer["about_chart_id"] = _CHART_ID
             answer["explanation"] = {
                 "chart_reason": "Es un gráfico de barras porque compara categorías.",
                 "ordering_reason": None,
@@ -176,30 +177,39 @@ class FakeAssistantClient:
             }
         elif "sin grafico" in folded:
             # G-8/G-6: `VISUAL_NEEDS_TARGET` -- no chart named anywhere on the answer, matching
-            # `_visual_only_response`/`_explanation_response`'s own shape for this outcome.
+            # `_visual_only_response`/`_explanation_response`'s own shape for this outcome: no
+            # target could be resolved, so there is genuinely nothing to name (D-H-1's own
+            # comment on the orchestrator side, `about_chart_id=None`). Unlike the other
+            # refusal-shaped outcomes below, this one carries no `about_chart_id` for real.
             answer["outcome"] = "VISUAL_NEEDS_TARGET"
             answer["text"] = "Indica qué gráfico quieres cambiar."
         elif "grafico viejo" in folded:
-            # G-8/G-6: `VISUAL_UNTRUSTED`.
+            # G-8/G-6: `VISUAL_UNTRUSTED`. D-H-1b: `about_chart_id` names the untrusted chart.
             answer["outcome"] = "VISUAL_UNTRUSTED"
             answer["text"] = "No reconozco ese gráfico; pide uno nuevo y podré cambiarlo."
+            answer["about_chart_id"] = _CHART_ID
         elif "ya esta asi" in folded:
             # G-8/G-6: `VISUAL_UNCHANGED` -- a restyle that draws the same chart already on
-            # screen mints nothing.
+            # screen mints nothing. D-H-1b: `about_chart_id` names that unchanged chart.
             answer["outcome"] = "VISUAL_UNCHANGED"
             answer["text"] = "El gráfico ya está así; lo dejo como está."
+            answer["about_chart_id"] = _CHART_ID
         elif "regla rota" in folded:
-            # G-8/G-6: `VISUAL_INCOMPATIBLE` -- a refused restyle (`_refusal_response`).
+            # G-8/G-6: `VISUAL_INCOMPATIBLE` -- a refused restyle (`_refusal_response`). D-H-1b:
+            # `about_chart_id` names the chart the refused change would have applied to.
             answer["outcome"] = "VISUAL_INCOMPATIBLE"
             answer["text"] = (
                 "No puedo aplicar ese cambio a este gráfico: ese tipo de gráfico no encaja "
                 "con estos datos; el anterior se mantiene."
             )
+            answer["about_chart_id"] = _CHART_ID
         elif "ambiguo" in folded:
             # G-8/G-6: `VISUAL_AMBIGUOUS` -- two readers (financial vs. visual) both claim the
-            # sentence and only the holder can say which; nothing merged, no chart named.
+            # sentence and only the holder can say which; nothing merged. D-H-1b: `about_chart_id`
+            # names the chart the ambiguous sentence was read against.
             answer["outcome"] = "VISUAL_AMBIGUOUS"
             answer["text"] = "¿Preguntas por un dato o por cómo se ve el gráfico?"
+            answer["about_chart_id"] = _CHART_ID
         elif "compuesta" in folded:
             # G-8: a compound (`parts`) answer. Its own top-level `text` is the real
             # controller's own numbered join (`_compound_read_reply`) -- "1. … \n2. …" -- read

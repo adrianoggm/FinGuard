@@ -279,6 +279,34 @@ def test_chart_identity_ignores_a_chart_id_on_an_unknown_visualization_kind() ->
     assert chart_identity(kpi_answer, None) == {}
 
 
+def test_chart_identity_reads_about_chart_id_when_nothing_else_names_a_chart() -> None:
+    """D-H-1b (fix wave): `VISUAL_EXPLAINED` and the refusal-shaped `VISUAL_*` outcomes carry no
+    `visualization`/`visualization_derivation` -- they draw no new chart -- but the orchestrator's
+    `about_chart_id` (D-H-1, orchestrator side) names the chart the answer is *about*. `chartId`
+    is stamped from it; `visualTurnId` never is, because this turn drew nothing new to date."""
+    answer = {"about_chart_id": "chart-old"}
+    assert chart_identity(answer, None) == {"chartId": "chart-old"}
+    # Even with a conversation carrying a visual context, no `visualTurnId` is stamped: the turn
+    # named a chart, it did not draw one, so there is no fresh decision identity to attach.
+    conversation = {"visual_contexts": [{"chart_id": "chart-old", "turn_id": "turn-old-id"}]}
+    assert chart_identity(answer, conversation) == {"chartId": "chart-old"}
+
+
+def test_chart_identity_prefers_a_drawn_chart_over_about_chart_id() -> None:
+    """`about_chart_id` is the last resort -- a turn that actually drew or derived a chart names
+    it through `visualization`/`visualization_derivation`, which win first, exactly as before."""
+    answer = {
+        "visualization": {"kind": "chart", "chart_id": "chart-new"},
+        "about_chart_id": "chart-old",
+    }
+    assert chart_identity(answer, None) == {"chartId": "chart-new"}
+
+
+def test_chart_identity_ignores_a_non_string_about_chart_id() -> None:
+    assert chart_identity({"about_chart_id": None}, None) == {}
+    assert chart_identity({"about_chart_id": 7}, None) == {}
+
+
 def test_chart_identity_picks_the_newest_of_three_contexts() -> None:
     """G-9: `app.py:131-143`'s own assumption -- `conversation["visual_contexts"][-1]` is this
     turn's chart -- was never exercised against a list longer than one before this test, because
@@ -417,6 +445,43 @@ def _run_one_turn(
     return received, indices
 
 
+def test_every_binary_audio_frame_is_named_by_its_own_turn_id() -> None:
+    """D-H-2 (fix wave): a straggler PCM frame used to carry no turn identity of its own -- the
+    web's W-3 mitigation could only fence it by ordering (a drain-confirmation handshake). Every
+    binary frame is now immediately preceded by its own `audio.frame` event naming the turn, so a
+    stale frame can be dropped for certain rather than by inference."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            socket.send_text(_control("input.start", session_id, 1, "turn-1"))
+            socket.send_bytes(b"quiero ver el grafico")
+            socket.send_text(_control("input.commit", session_id, 2, "turn-1"))
+            pending_frame_turn_id: str | None = None
+            binary_frame_count = 0
+            while True:
+                item = socket.receive()
+                if item.get("bytes") is not None:
+                    binary_frame_count += 1
+                    assert pending_frame_turn_id == "turn-1"
+                    pending_frame_turn_id = None
+                    continue
+                payload = json.loads(item["text"])
+                if payload["type"] == "audio.frame":
+                    assert payload["turnId"] == "turn-1"
+                    pending_frame_turn_id = payload["turnId"]
+                if payload["type"] == "turn.completed":
+                    break
+            assert binary_frame_count > 0
+    sessions.clear()
+
+
 def test_kpi_visualization_carries_no_chart_identity() -> None:
     """G-8: zero coverage before this test for a KPI answer -- `chart_identity`'s own docstring
     already claimed a KPI has no `chart_id` to stamp; nothing exercised that claim."""
@@ -443,17 +508,12 @@ def test_kpi_visualization_carries_no_chart_identity() -> None:
     sessions.clear()
 
 
-def test_explanation_answer_carries_no_chart_identity_needs_context_on_the_orchestrator_side() -> (
-    None
-):
-    """G-6/G-8: `VISUAL_EXPLAINED` mirrors `_explanation_response` -- the answer names no chart
-    anywhere (no `visualization`, no `visualization_derivation`), so `chart_identity` correctly
-    stamps nothing. This is not a gateway bug to fix: the orchestrator's own `QuestionResponse`
-    for this outcome has no field naming which chart it explains (confirmed by reading
-    `llm_controller.py`'s `_explanation_response` and `VisualExplanationResponse`), so a gateway
-    that guessed "the newest context" would be wrong exactly on "el primer gráfico"/"el segundo
-    gráfico" (`resolve_target`). NEEDS_CONTEXT for the orchestrator side; the gateway stamps
-    nothing, honestly."""
+def test_explanation_answer_carries_the_chart_identity_it_is_about() -> None:
+    """D-H-1b (fix wave): `VISUAL_EXPLAINED` mirrors `_explanation_response` -- the answer draws
+    no new chart (no `visualization`, no `visualization_derivation`), but the orchestrator now
+    names which chart it explains through `about_chart_id` (D-H-1). `chart_identity` stamps
+    `chartId` from it and never `visualTurnId`: naming a chart is not drawing one, so there is no
+    fresh decision identity to attach."""
     with TestClient(app) as client:
         body = client.post(
             "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
@@ -477,7 +537,7 @@ def test_explanation_answer_carries_no_chart_identity_needs_context_on_the_orche
             assert answer.get("visualization_derivation") is None
             for event_type in IDENTITY_EVENT_TYPES:
                 event_payload = received[indices[event_type]]
-                assert "chartId" not in event_payload
+                assert event_payload["chartId"] == "chart-fake-1"
                 assert "visualTurnId" not in event_payload
     sessions.clear()
 
@@ -485,20 +545,19 @@ def test_explanation_answer_carries_no_chart_identity_needs_context_on_the_orche
 @pytest.mark.parametrize(
     "phrase,outcome",
     [
-        ("sin grafico por favor ", "VISUAL_NEEDS_TARGET"),
         ("un grafico viejo", "VISUAL_UNTRUSTED"),
         ("ya esta asi gracias ", "VISUAL_UNCHANGED"),
         ("esa regla rota no ", "VISUAL_INCOMPATIBLE"),
         ("eso es ambiguo", "VISUAL_AMBIGUOUS"),
     ],
 )
-def test_every_visual_outcome_the_orchestrator_emits_carries_no_chart_identity(
+def test_every_refusal_shaped_visual_outcome_carries_the_chart_identity_it_is_about(
     phrase: str, outcome: str
 ) -> None:
-    """G-6/G-8: the refusal-shaped `VISUAL_*` outcomes (`_visual_only_response`,
-    `_compound_read_reply`'s `AMBIGUOUS` branch) all echo `conversation` unchanged and name no
-    chart on the answer itself -- `chart_identity` must stamp nothing for any of them, the same
-    honest gap `VISUAL_EXPLAINED` has (NEEDS_CONTEXT for the orchestrator side)."""
+    """D-H-1b (fix wave): the refusal-shaped `VISUAL_*` outcomes (`_visual_only_response`,
+    `_compound_read_reply`'s `AMBIGUOUS` branch) draw no new chart, but each now names which
+    chart it is about through `about_chart_id` (D-H-1) -- `chart_identity` stamps `chartId` from
+    it, never `visualTurnId` (no fresh decision was made this turn)."""
     with TestClient(app) as client:
         body = client.post(
             "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
@@ -513,6 +572,33 @@ def test_every_visual_outcome_the_orchestrator_emits_carries_no_chart_identity(
             answer = received[indices["assistant.text.final"]]["answer"]
             assert isinstance(answer, dict)
             assert answer["outcome"] == outcome
+            for event_type in IDENTITY_EVENT_TYPES:
+                event_payload = received[indices[event_type]]
+                assert event_payload["chartId"] == "chart-fake-1"
+                assert "visualTurnId" not in event_payload
+    sessions.clear()
+
+
+def test_visual_needs_target_carries_no_chart_identity_when_none_could_be_resolved() -> None:
+    """D-H-1b's own exception: `VISUAL_NEEDS_TARGET` means no target could be resolved at all
+    (D-H-1's own comment on the orchestrator side, `about_chart_id=None`) -- there is genuinely
+    no chart to name, so `chart_identity` stamps nothing, honestly, same as before this fix."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            received, indices = _run_one_turn(
+                socket, session_id, 1, "turn-1", b"sin grafico por favor "
+            )
+            answer = received[indices["assistant.text.final"]]["answer"]
+            assert isinstance(answer, dict)
+            assert answer["outcome"] == "VISUAL_NEEDS_TARGET"
             for event_type in IDENTITY_EVENT_TYPES:
                 event_payload = received[indices[event_type]]
                 assert "chartId" not in event_payload
