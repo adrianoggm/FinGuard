@@ -647,6 +647,12 @@ def test_f3_an_uncharted_why_is_answered_not_planned() -> None:
     assert body["outcome"] == "VISUAL_NEEDS_TARGET"
     assert body["text"] == "No hay ningún gráfico en pantalla todavía; pregúntame algo y lo dibujo."
     assert len(draws.calls) == 0
+    # Minor 1 (re-review, round 2): a dead end became a way forward -- two sentences the planner
+    # already claims, so a holder who taps one gets a chart instead of the same question again.
+    assert body["suggestions"] == [
+        "¿Cuánto gasté el mes pasado?",
+        "Muéstrame el gasto por categorías",
+    ]
 
 
 def test_f3_a_bare_restyle_with_no_chart_at_all_is_refused_not_planned() -> None:
@@ -673,6 +679,11 @@ def test_f3_a_bare_restyle_with_no_chart_at_all_is_refused_not_planned() -> None
     assert body["outcome"] == "VISUAL_INCOMPATIBLE"
     assert body["text"] == "Ese dato no tiene gráfico que cambiar."
     assert len(draws.calls) == 0
+    # Minor 1 (re-review, round 2): same two chips as the uncharted-why response, above.
+    assert body["suggestions"] == [
+        "¿Cuánto gasté el mes pasado?",
+        "Muéstrame el gasto por categorías",
+    ]
 
 
 def test_f3_going_back_to_a_previous_topic_with_no_chart_still_plans() -> None:

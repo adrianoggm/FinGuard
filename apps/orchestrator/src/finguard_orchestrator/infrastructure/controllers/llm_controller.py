@@ -399,6 +399,10 @@ def _no_chart_why_response(conversation: Conversation) -> QuestionResponse:
         text="No hay ningún gráfico en pantalla todavía; pregúntame algo y lo dibujo.",
         conversation=conversation_mapper.to_payload(conversation),
         about_chart_id=None,
+        # Minor 1 (re-review, round 2): a way forward instead of a dead end -- the same two
+        # sentences F-3's own report already claims elsewhere in this file (`_chart_suggestions`'s
+        # callers), so a holder who taps one gets a chart, not a repeat of this question.
+        suggestions=["¿Cuánto gasté el mes pasado?", "Muéstrame el gasto por categorías"],
     )
 
 
@@ -419,6 +423,9 @@ def _no_chart_restyle_response(
         text="Ese dato no tiene gráfico que cambiar.",
         conversation=conversation_mapper.to_payload(conversation),
         about_chart_id=None,
+        # Minor 1 (re-review, round 2): see `_no_chart_why_response` -- the same two sentences,
+        # so a restyle instruction with nothing to restyle still ends in a chart on offer.
+        suggestions=["¿Cuánto gasté el mes pasado?", "Muéstrame el gasto por categorías"],
     )
 
 

@@ -81,6 +81,7 @@ from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.services import (
     category_words,
     explicit_lexicon,
+    merchant_words,
     spanish,
     window_words,
 )
@@ -208,6 +209,13 @@ def _excluded_merchants(sentence: str, excluded_categories: tuple[str, ...]) -> 
     if set(tail.split()) <= _NOT_A_MERCHANT:
         return ()
     if _VAGUE_TAIL.match(tail):
+        return ()
+    if merchant_words.never_a_merchant(tail):
+        # N-H1 (Wave 3 hardening, round 2): the closed stop-list guarded the *inclusion* reader
+        # only. "Sin límite" folds to "sin" + tail "limite", and "limite" is a stop word this
+        # service already knows names no shop -- without this check the exclusion reader claimed
+        # it anyway, and the answer told the holder a total was computed excluding a shop called
+        # "limite" that does not exist.
         return ()
     return (tail,)
 
