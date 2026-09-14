@@ -247,9 +247,14 @@ def almost_named_in(sentence: str, merchants: tuple[str, ...], limit: int = 3) -
     about it with a note is honest. A near miss is a guess, and a guess that produces a figure is
     the one thing this service does not do — so this returns candidates for a question and the
     caller has to ask.
+
+    The words the category vocabulary claims are dropped rather than the sentence, for the reason
+    `named_in` gives above and one of its own: a fuzzy reader let loose on «suscripciones» would
+    go looking for a shop whose name is one letter from a word the holder used to mean the
+    category, and that guess is worse than the silence it replaces.
     """
-    said = _tokens(sentence) - _NOT_A_NAME
-    if not said or not merchants or category_words.named_in(sentence):
+    said = _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
+    if not said or not merchants:
         return ()
     found: dict[str, None] = {}
     for word in sorted(said):
@@ -278,13 +283,22 @@ def named_in(sentence: str, merchants: tuple[str, ...]) -> str | None:
     matches. "Gimnasio Altafit" is a merchant and "gimnasio" is how somebody says SUBSCRIPTIONS,
     so a question about the gym is about the category and this must not narrow it to one shop.
 
+    **Those words are dropped, not the sentence.** Until 2026-09-14 a sentence that named any
+    category at all was refused here outright, which is a different and much wider rule: it also
+    gave up on «¿cuánto he gastado en suscripciones de Netflix este mes?», where the shop is named
+    in words the category vocabulary does not claim. The plan that answered SUBSCRIPTIONS entire
+    passed the verifier -- the category the sentence named really is there -- so this was the only
+    reader left that could notice, and it had switched itself off. What came back was a true
+    figure for a wider question than the one asked, which is the failure this whole path exists to
+    stop. Reported by review; the gym above keeps working because «gimnasio» is still dropped.
+
     Returns the merchant as the ledger spells it, because that is what a filter has to be given
     and what the user should read back.
     """
     if not merchants:
         return None
-    said = _tokens(sentence) - _NOT_A_NAME
-    if not said or category_words.named_in(sentence):
+    said = _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
+    if not said:
         return None
     for merchant in merchants:
         if _tokens(merchant) & said:

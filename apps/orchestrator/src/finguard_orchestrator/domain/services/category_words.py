@@ -234,8 +234,21 @@ _WORDS: Final = re.compile(r"[a-z0-9]+")
 
 
 def _matches(sentence: str, vocabulary: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    found = _hits(sentence, vocabulary)
+    return tuple(sorted(found, key=lambda category: found[category][0]))
+
+
+def _hits(
+    sentence: str, vocabulary: dict[str, tuple[str, ...]]
+) -> dict[str, tuple[int, frozenset[str]]]:
+    """Every category the sentence names: where it was named, and the words that named it.
+
+    `_matches` only ever needed the position. `words_named_in` needs the words themselves, and
+    reading them out of the vocabulary a second time is how two readings of one sentence drift
+    apart -- so the rule lives here once and both callers take it from the same place.
+    """
     haystack = spanish.folded(sentence)
-    found: dict[str, int] = {}
+    found: dict[str, tuple[int, frozenset[str]]] = {}
     for category, words in vocabulary.items():
         for word in sorted(words, key=len, reverse=True):
             folded = spanish.folded(word)
@@ -243,14 +256,28 @@ def _matches(sentence: str, vocabulary: dict[str, tuple[str, ...]]) -> tuple[str
             if match is None and " " not in folded and _one_wrong_letter(folded, haystack):
                 # Position unknown, so it sorts last among the categories the sentence names. A
                 # misspelling is still a mention; where it sits only decides the order of an answer.
-                found.setdefault(category, len(haystack))
+                #
+                # The words recorded are the sentence's own spelling and not the vocabulary's: a
+                # caller subtracting them from the sentence's tokens has to find them there, and
+                # "suscripcionse" is what the holder typed.
+                found.setdefault(
+                    category,
+                    (
+                        len(haystack),
+                        frozenset(
+                            token
+                            for token in _WORDS.findall(haystack)
+                            if spanish.one_edit_apart(token, folded)
+                        ),
+                    ),
+                )
                 break
             if match:
                 # The earliest position at which this category is mentioned, so the order of the
                 # answer follows the order of the question.
-                found.setdefault(category, match.start())
+                found.setdefault(category, (match.start(), frozenset(_WORDS.findall(folded))))
                 break
-    return tuple(sorted(found, key=lambda category: found[category]))
+    return found
 
 
 def named_in(sentence: str) -> tuple[str, ...]:
@@ -264,6 +291,24 @@ def named_in(sentence: str) -> tuple[str, ...]:
     that needed the exact spelling would answer "I do not know that word" to a word it knows.
     """
     return _matches(sentence, _GLOSS)
+
+
+def words_named_in(sentence: str) -> frozenset[str]:
+    """The words this sentence used to name a category, folded, as whole tokens.
+
+    `named_in` answers *which* categories a sentence mentions; this answers *with which words*, and
+    the difference is what lets a shop be recognised inside a sentence that also names a category.
+    «Gimnasio Altafit» matched by «gimnasio» is this vocabulary talking and must not narrow a
+    question about the gym to one gym; «Netflix» inside «suscripciones de Netflix» is not, and a
+    reader that gave up on the whole sentence because it mentioned a category answered the wider
+    question with a real figure -- the one failure this service is built around.
+
+    Empty for a sentence that names no category, which is the common case and the cheap one.
+    """
+    named: set[str] = set()
+    for _, words in _hits(sentence, _GLOSS).values():
+        named |= words
+    return frozenset(named)
 
 
 def precisely_named_in(sentence: str) -> tuple[str, ...]:
