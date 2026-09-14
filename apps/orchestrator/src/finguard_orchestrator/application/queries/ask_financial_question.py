@@ -1219,11 +1219,17 @@ class AskFinancialQuestionHandler:
 
         narrowing = _a_bare_shop_name(query, was) if intent is Intent.FINANCIAL_QUERY else None
         if isinstance(narrowing, _NeverAMerchant):
-            # Unreachable in practice now that `stopword_only_sentence` above catches every
-            # sentence `merchant_words.never_a_merchant` claims before this call is even made --
-            # kept as the sentinel's own defensive branch rather than deleted, so a future caller
-            # of `_a_bare_shop_name` that skips the earlier gate still gets the honest ask instead
-            # of a silent merchant guess.
+            # Reached, and this comment used to claim otherwise -- reported by review on
+            # 2026-09-14. The gate above is `merchant_words.names_no_scope_at_all`, which is five
+            # words and one phrase («todos», «todas», «todo», «límite», «sin límite») and is
+            # deliberately narrower than `never_a_merchant`: that list also holds «sí», «no»,
+            # «gracias», «nada» and the rest of conversation control, and those have to keep
+            # falling through to whatever state was waiting on them -- a cancelled payment, a
+            # repeated clarification -- rather than being asked about from anywhere.
+            #
+            # So «nada», with a plan already answered, still arrives here, and is asked about
+            # instead of guessed at as a shop. A comment that calls a live branch dead is an
+            # invitation to delete it, and deleting this one reopens the bug it closes.
             yield AskFinancialQuestionResult(
                 outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
                 text=(
