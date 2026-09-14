@@ -1,14 +1,32 @@
 # Planning accuracy — measured, not argued
 
-## State at HEAD (2026-09-11)
+## State at HEAD (2026-09-14)
 
-The last held-out measurement is 28 August 2026, below, and it **failed its own gate**: held-out
-`unsafe` was **11.4 %** against the ≤ 10 % bar, with `qwen3.5:9b` as the planner (see the model
-table in [next.md](../../../../docs/next.md) and the `visual_planner` row further down this file
-for how that name is used elsewhere). Wave 3 hardening (this branch) and Wave 4 (4.1-4.5, the
-visual-conversation work) have both landed on top of that failing measurement — **no measurement
-at the current HEAD exists**, so nothing in the repository shows the gate holding today, and
-nothing shows it still failing by how much.
+**Three things, and the version of this section written on 2026-09-11 ran them together.** It
+called the failing run of 28 August "the last held-out measurement" while this same file records a
+later and better one two hundred lines below, and `next.md` records the passing sitting that came
+between them. Reported by review on 2026-09-14: for a branch that uses this number as its promotion
+criterion, reading the top of the file and reading the middle gave opposite verdicts. In order,
+then:
+
+**1. The last complete measurement passed its gate.** All five sets in one sitting,
+**2026-08-30 at `7156038`**, `qwen3.5:9b`: held-out `unsafe` **6.3 %**, dev 8.3 %, adversarial
+8.3 %, drift 5.3 %, metamorphic 0 % — every one under the ≤ 10 % bar. The same row is in
+[next.md](../../../../docs/next.md). A later change measured on the held-out set alone — the
+`metric_without_a_bucket` rule, [further down this file](#the-held-out-remainder-was-one-defect-and-it-was-not-in-the-prompt)
+— took held-out `unsafe` to **4/79 · 5.1 %**, and nothing entered the unsafe list to pay for it.
+
+**2. The measurement that failed is history, and stays written down.** **2026-08-28 at `a149b20`**:
+held-out `unsafe` **11.4 %** against the same bar, the table below. It is kept because the three
+deterministic-reader fixes that took it to 6.3 % are kept, and a record that only shows the good run
+is not a record.
+
+**3. HEAD is not measured, and that is the sentence that governs.** `e06f732` is **376 commits**
+past `7156038` — Wave 3.5, Wave 4 (4.1-4.5) and the whole Wave 3 hardening have landed since. **No
+run exists at this commit.** So nothing here says the gate holds *today*; what it says is that it
+held on 30 August, on a tree this one no longer resembles. Promoting on this file as it stands is
+promoting on a measurement nobody re-took — which is a decision somebody may make deliberately, but
+not one this file should let them make by accident.
 
 A re-run needs: the GPU alone (`nvidia-smi` shows only Ollama), `qwen3.5:9b` warm
 (`curl -s localhost:11434/api/ps`), and the five sets this file already reports —
