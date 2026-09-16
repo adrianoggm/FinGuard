@@ -5,6 +5,9 @@
 \usepackage{lmodern,microtype,geometry,booktabs,tabularx,array,xcolor,tikz,hyperref}
 \usetikzlibrary{arrows.meta,positioning}
 \geometry{margin=2.85cm}
+% Fijamos explícitamente A4 vertical para que ningún visor herede una orientación apaisada.
+\pdfpagewidth=210mm
+\pdfpageheight=297mm
 \hypersetup{colorlinks=true,linkcolor=blue!45!black,urlcolor=blue!55!black,pdftitle={FinGuard: memoria de la prueba de concepto}}
 \setlength{\parskip}{0.65em}\setlength{\parindent}{0pt}\setlength{\emergencystretch}{2em}\sloppy
 \linespread{1.14}
@@ -65,20 +68,20 @@ Los casos de uso se organizan como una progresión natural de la interacción: \
 \begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.22\linewidth}X}
 \toprule
 
-\textbf{Caso} & \textbf{Qué permite validar} \
+\textbf{Caso} & \textbf{Qué permite validar} \\
 \midrule
 
 Consulta &
-Resolver directamente preguntas como «¿he recibido mi nómina?» o «¿cuánto he gastado este mes?», obteniendo la respuesta a partir de los datos financieros disponibles y conservando su trazabilidad. \
+Resolver directamente preguntas como «¿he recibido mi nómina?» o «¿cuánto he gastado este mes?», obteniendo la respuesta a partir de los datos financieros disponibles y conservando su trazabilidad. \\
 
 Profundización &
-Continuar sobre una consulta previa mediante expresiones como «compáralo con el mes anterior», «solo en restaurantes» o «¿cuál fue el movimiento más alto?», sin obligar al usuario a reconstruir la consulta inicial. \
+Continuar sobre una consulta previa mediante expresiones como «compáralo con el mes anterior», «solo en restaurantes» o «¿cuál fue el movimiento más alto?», sin obligar al usuario a reconstruir la consulta inicial. \\
 
 Representación &
-Transformar los mismos resultados en explicaciones, métricas o visualizaciones cuando estas permitan comprender mejor la información, manteniendo separados el dato obtenido y su forma de presentación. \
+Transformar los mismos resultados en explicaciones, métricas o visualizaciones cuando estas permitan comprender mejor la información, manteniendo separados el dato obtenido y su forma de presentación. \\
 
 Acción &
-Pasar de consultar información a solicitar una operación, como un pago o un traspaso, manteniendo una separación explícita entre comprender la intención, preparar la operación, revisarla y ejecutarla. \
+Pasar de consultar información a solicitar una operación, como un pago o un traspaso, manteniendo una separación explícita entre comprender la intención, preparar la operación, revisarla y ejecutarla. \\
 
 \bottomrule
 \end{tabularx}
