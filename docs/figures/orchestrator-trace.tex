@@ -1,0 +1,82 @@
+% Figura 2: coordenadas fijas para que las ramas no se crucen ni se reduzca el texto.
+\begin{tikzpicture}[
+  x=1cm,y=1cm,
+  font=\scriptsize,
+  core/.style={draw=green!50!black,fill=green!8,rounded corners=2pt,
+    align=center,text width=3.05cm,minimum height=.65cm,inner sep=3pt},
+  shared/.style={core,text width=4.2cm,fill=green!13},
+  edge/.style={draw=orange!70!black,fill=orange!10,rounded corners=2pt,
+    align=center,text width=2.55cm,minimum height=.67cm,inner sep=3pt},
+  channel/.style={draw=blue!60!black,fill=blue!8,rounded corners=2pt,
+    align=center,text width=2.55cm,minimum height=.67cm,inner sep=3pt},
+  observability/.style={draw=gray!60!black,fill=gray!12,rounded corners=2pt,
+    align=center,text width=14.25cm,minimum height=.58cm,inner sep=3pt},
+  flow/.style={-{Latex[length=1.7mm]},semithick},
+  boundary/.style={-{Latex[length=1.7mm]},semithick,dashed},
+  newturn/.style={-{Latex[length=1.7mm]},semithick,dashed,blue!70!black}
+]
+  % El fondo marca inequívocamente la propiedad de cada decisión.
+  \filldraw[fill=green!3,draw=green!55!black,rounded corners=5pt]
+    (3.15,-1.15) rectangle (11.85,-15.55);
+  \node[anchor=west,font=\tiny\bfseries,text=green!40!black]
+    at (3.37,-1.32) {ORQUESTADOR};
+
+  \node[channel,text width=3.2cm] (web) at (7.50,0) {Web o voz\\petición de la persona};
+  \node[shared] (turn) at (7.50,-1.90) {1. Recibir el turno y correlacionarlo};
+  \node[shared] (context) at (7.50,-2.95) {2. Recuperar contexto útil de la conversación};
+  \node[shared] (reader) at (7.50,-4.00) {3. Resolver la intención};
+  \node[core] (rules) at (5.25,-5.15) {Lector determinista\\si reconoce la petición};
+  \node[core] (model) at (9.65,-5.15) {Modelo de lenguaje\\si hace falta interpretar};
+  \node[edge] (llm) at (13.47,-5.15) {Proveedor LLM\\propone, no autoriza};
+  \node[shared] (validate) at (7.50,-6.38) {4. Construir y validar un plan tipado};
+  \node[core] (clarify) at (5.25,-7.62) {Falta información o\\se rechaza la petición};
+  \node[core] (choose) at (9.65,-7.62) {Plan válido\\elegir consulta o acción};
+
+  % Rama de lectura: Banking devuelve datos y evidencia; el orquestador deriva.
+  \node[core] (query) at (5.25,-8.88) {CONSULTA\\pedir datos financieros};
+  \node[edge] (bankread) at (1.48,-9.52) {Banking API\\consulta controlada};
+  \node[core] (evidence) at (5.25,-10.12) {Recibir cifras, filtros\\y evidencia};
+  \node[core] (derive) at (5.25,-11.40) {Derivar comparación,\\texto o gráfico};
+
+  % Rama de escritura: dos turnos separados por la aprobación de la persona.
+  \node[core] (action) at (9.65,-8.88) {ACCIÓN\\preparar una operación};
+  \node[edge] (bankprep) at (13.47,-10.12) {Banking API\\crear intención pendiente};
+  \node[core] (preview) at (9.65,-10.12) {Recibir y presentar\\la previsualización};
+  \node[channel] (approval) at (13.47,-11.85) {Persona en la web\\revisa y responde};
+  \node[core] (confirm) at (9.65,-13.52) {Nuevo turno: confirmar\\o cancelar};
+  \node[edge] (bankconfirm) at (13.47,-13.52) {Banking API\\confirmar o cancelar};
+  \node[shared] (answer) at (7.50,-14.80) {5. Componer respuesta y contexto para el canal};
+  \node[observability] (otel) at (7.50,-16.47)
+    {Observabilidad: spans correlacionados, tiempos, decisiones y errores a lo largo de cualquiera de las rutas};
+
+  \draw[flow] (web) -- (turn);
+  \draw[flow] (turn) -- (context);
+  \draw[flow] (context) -- (reader);
+  \draw[flow] (reader.south) -- ++(0,-.22) -| (rules.north);
+  \draw[flow] (reader.south) -- ++(0,-.22) -| (model.north);
+  \draw[boundary,<->] (model.east) -- (llm.west);
+  \draw[flow] (rules.south) -- ++(0,-.22) -| (validate.north);
+  \draw[flow] (model.south) -- ++(0,-.22) -| (validate.north);
+  \draw[flow] (validate.south) -- ++(0,-.20) -| (clarify.north);
+  \draw[flow] (validate.south) -- ++(0,-.20) -| (choose.north);
+  \draw[flow] (choose.west) -- (7.45,-7.62) --
+    node[left,font=\tiny]{consulta} (7.45,-8.35) -| (query.north);
+  \draw[flow] (choose) -- (action);
+
+  \draw[boundary] (query.west) -- ++(-.25,0) |- (bankread.north);
+  \draw[boundary] (bankread.south) |- (evidence.west);
+  \draw[flow] (evidence) -- (derive);
+  \draw[flow] (derive.south) -- ++(0,-2.85) -| (answer.west);
+  \draw[flow] (clarify.west) -- ++(-1.50,0) |- (answer.west);
+
+  \draw[boundary] (action.east) -- ++(.30,0) |- (bankprep.north);
+  \draw[boundary] (bankprep.west) -- (preview.east);
+  \draw[boundary] (preview.east) -- ++(.25,0) |- (approval.west);
+  \draw[newturn] (approval.west) -- ++(-.35,0) |- (confirm.east);
+  \draw[boundary] (confirm.east) -- (bankconfirm.west);
+  \draw[boundary] (bankconfirm.south) -- ++(0,-.43) --
+    ++(-1.35,0) |- (answer.east);
+
+  \node[anchor=west,font=\tiny,text=blue!60!black]
+    at (11.72,-12.66) {respuesta en otro turno};
+\end{tikzpicture}
