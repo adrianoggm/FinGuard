@@ -2,7 +2,7 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[spanish,es-nodecimaldot,es-noshorthands]{babel}
-\usepackage{lmodern,microtype,geometry,booktabs,tabularx,array,xcolor,tikz,hyperref,float}
+\usepackage{lmodern,microtype,geometry,booktabs,tabularx,array,xcolor,tikz,graphicx,float,hyperref}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric}
 \geometry{margin=2.85cm}
 % Fijamos explícitamente A4 vertical para que ningún visor herede una orientación apaisada.
@@ -11,19 +11,35 @@
 \hypersetup{colorlinks=true,linkcolor=blue!45!black,urlcolor=blue!55!black,pdftitle={FinGuard: memoria de la prueba de concepto}}
 \setlength{\parskip}{0.65em}\setlength{\parindent}{0pt}\setlength{\emergencystretch}{2em}\sloppy
 \linespread{1.14}
+% Las figuras grandes pueden ocupar casi toda la página y dejar texto debajo.
+\renewcommand{\topfraction}{0.92}\renewcommand{\textfraction}{0.05}\renewcommand{\floatpagefraction}{0.85}
 \renewcommand{\arraystretch}{1.15}
 \definecolor{lightblue}{HTML}{EAF2F8}\definecolor{lightgreen}{HTML}{E8F6F1}\definecolor{lightgray}{HTML}{F3F4F6}
 \newcommand{\FinGuard}{\textsc{FinGuard}}\newcommand{\code}[1]{\texttt{#1}}\newcommand{\doc}[1]{\href{../#1}{\path{#1}}}
 \newcommand{\decision}[1]{\begin{center}\colorbox{lightgreen}{\parbox{0.92\linewidth}{\textbf{Idea clave.} #1}}\end{center}}
+% Sustituye el recuadro automáticamente cuando existe la captura indicada.
+% La altura limita también la imagen final para mantener la extensión de la memoria.
+\newcommand{\captura}[3]{%
+  \IfFileExists{#1}{%
+    \includegraphics[width=\linewidth,height=#2,keepaspectratio]{#1}%
+  }{%
+    \fbox{\begin{minipage}[c][#2][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}
+      \centering\small\textbf{Espacio reservado para captura}\\[0.7em]
+      #3
+    \end{minipage}}%
+  }%
+}
 \title{\textbf{FinGuard}\\[0.35em]\large Memoria breve de la prueba de concepto}
-\author{Visión, funcionamiento, arquitectura y evaluación}\date{16 de septiembre de 2026}
+\author{Visión, funcionamiento, arquitectura y evaluación}\date{18 de septiembre de 2026}
 \begin{document}\maketitle
 \begin{abstract}
-\FinGuard es una prueba de concepto de asistente financiero conversacional. Permite consultar movimientos y saldos, explorar la información con gráficos y preparar operaciones como pagos o traspasos mediante lenguaje natural. La propuesta central es sencilla: el modelo ayuda a entender la intención, pero no obtiene autoridad para inventar cifras ni para mover dinero. Los servicios deterministas consultan el dominio, validan las reglas y ejecutan sólo una operación que la persona ha revisado y autorizado.
+\FinGuard es una prueba de concepto de asistente financiero conversacional. Permite consultar movimientos y saldos, explorar la información con gráficos y preparar pagos o traspasos mediante lenguaje natural. Su núcleo es un orquestador que combina reglas y modelos de lenguaje para comprender cada petición, mantener el contexto y elegir el siguiente paso. Las cifras proceden del servicio bancario y las operaciones requieren que la persona revise y autorice lo que se va a ejecutar.
 
-Esta memoria presenta la idea de producto, el alcance de la PoC, los casos de uso, la arquitectura general, las decisiones principales y las pruebas realizadas. El detalle de componentes, contratos, migraciones y procedimientos operativos se mantiene en la documentación del repositorio y se enlaza desde aquí para que pueda ampliarse sin saturar la lectura principal.
+La memoria parte de la visión de producto, sigue el recorrido de una conversación y presenta la implementación de los servicios que lo hacen posible. Cierra con las pruebas y los resultados de evaluación. Los contratos, componentes y procedimientos se amplían en la documentación enlazada del repositorio.
 \end{abstract}
-\tableofcontents\newpage
+\newpage
+{\small\setlength{\parskip}{0pt}\tableofcontents}
+\newpage
 
 \section{Qué problema resuelve la PoC}
 \subsection{Visión de producto}
@@ -44,25 +60,13 @@ La validación se realiza sobre un entorno financiero sintético que representa 
 Todos estos mecanismos comparten el mismo núcleo de interpretación, contexto y reglas. De esta forma, la PoC puede comprobar si las garantías del sistema se mantienen independientemente de cómo se formule o se presente una interacción.
 
 Quedan deliberadamente fuera del alcance la conexión con entidades financieras reales, la autenticación y gestión de secretos propias de un entorno de producción, los mecanismos completos de prevención del fraude, el asesoramiento financiero regulado y cualquier autonomía del modelo para tomar decisiones económicas en nombre del usuario.
-\section{Una conversación que cambia de propósito}
-La propuesta se entiende mejor siguiendo una situación completa. Una persona revisa sus gastos antes de saldar una cena compartida. No llega con un «caso de uso» cerrado: empieza preguntando, descubre algo que quiere examinar y termina pidiendo una acción. El reto para FinGuard es acompañar ese cambio sin confundir una pregunta con una autorización.
+\section{Cómo funciona FinGuard}
+La propuesta se entiende siguiendo una conversación: «¿cuánto he gastado en restaurantes este mes?», «¿y comparado con el anterior?», «enséñamelo en un gráfico» y, finalmente, «envía 25 euros a Laura para la cena». La persona cambia de tarea sin salir de la conversación. FinGuard debe reconocer esos cambios, conservar el contexto útil y distinguir una consulta de una operación que requiere aprobación.
 
-\textbf{«¿Cuánto he gastado en restaurantes este mes?»} Una cifra por sí sola sería insuficiente. La respuesta tiene que corresponder a sus cuentas, a un periodo definido y a movimientos que permitan entender de dónde sale el total. Si el sistema no puede identificar la cuenta o el periodo, debe aclararlo antes de afirmar una cantidad.
+\subsection{Quién interviene en la conversación}
+La Figura~\ref{fig:system-overview} sitúa a los participantes. El azul representa la interacción; el verde, al orquestador; el naranja, sus dependencias; y el gris, la observabilidad. Las flechas dobles indican intercambios de petición y respuesta; las punteadas, señales que permiten examinar el recorrido.
 
-\textbf{«¿Y comparado con el anterior?»} \emph{Anterior} se refiere al mes; \emph{restaurantes} sigue siendo el foco, aunque ya no se mencione. FinGuard debe conservar una parte del contexto y cambiar otra. Si arrastrase todos los filtros indiscriminadamente, respondería a una pregunta distinta; si olvidase todo, obligaría a la persona a empezar de nuevo.
-
-\textbf{«Enséñame este mes por semanas».} Al ver el gráfico, pregunta \textbf{«¿qué movimientos explican la semana más alta?»}. La conversación pasa de una cifra a una vista y de esa vista a sus movimientos. El gráfico representa resultados del dominio financiero; no inventa importes. «La semana más alta» sólo tiene sentido si se conoce el gráfico y el periodo. Si hay dos barras posibles, FinGuard pide aclaración.
-
-\newpage
-\textbf{«Envía 25 euros a Laura para la cena».} Sigue siendo la misma conversación, pero cambia el tipo de compromiso. FinGuard puede preparar una propuesta con importe, destinataria y cuenta de origen; no puede interpretar esa frase como permiso para ejecutarla sin revisión. La persona ve la previsualización y confirma o cancela en un turno posterior. Un cambio de importe o destino obliga a revisar una propuesta nueva. En esta PoC las operaciones son simuladas y la confirmación del pago se realiza en la web, aunque la consulta haya comenzado por voz.
-
-El hilo de esta historia tiene tres exigencias: \textbf{continuidad} para entender cada turno en su contexto, \textbf{evidencia} para respaldar lo que se muestra y \textbf{control} cuando la conversación pasa a una operación. La arquitectura de la Figura~\ref{fig:system-overview} reparte esas exigencias entre servicios; la Figura~\ref{fig:orchestrator-trace-lanes} mostrará después las rutas que decide el orquestador.
-
-\section{Arquitectura general}
-\subsection{Vista del sistema}
-La escena anterior atraviesa varios límites, pero la persona sólo ve una conversación. La Figura~\ref{fig:system-overview} sitúa esos límites antes de entrar en el detalle del recorrido. Se lee desde la persona hacia la derecha: el color indica \emph{qué papel} desempeña cada elemento; las flechas indican \emph{con quién intercambia información}, no quién manda sobre quién.
-
-\begin{figure}[H]
+\begin{figure}[tbp]
 \centering
 \begin{tikzpicture}[
   x=1cm,y=1cm,font=\small,
@@ -99,131 +103,214 @@ La escena anterior atraviesa varios límites, pero la persona sólo ve una conve
 \caption{Fronteras de FinGuard. Las flechas dobles representan petición y respuesta, no autoridad compartida; las punteadas, señales de observabilidad.}
 \label{fig:system-overview}
 \end{figure}
-\newpage
 
-Sigamos la primera pregunta de la historia. La persona la expresa en la web o por voz (azul). El canal entrega el turno al orquestador (verde) y, al final, presenta lo que éste devuelve. Por eso la flecha tiene dos sentidos. No significa que la interfaz calcule saldos ni que pueda decidir por sí misma cómo interpretar «el anterior».
+El canal web o de voz entrega el mensaje al orquestador y presenta su respuesta. El orquestador concentra la coordinación: interpreta la petición, mantiene el contexto y elige qué necesita consultar o preparar. Puede apoyarse en un modelo de lenguaje, pero comprueba su propuesta antes de utilizarla.
 
-En el centro está el orquestador. Recupera el contexto de la conversación, determina si el turno abre una pregunta, continúa una anterior o solicita una acción, y construye una petición estructurada. Puede entender algunas expresiones mediante reglas; para otras solicita apoyo al LLM (naranja, arriba). Ese intercambio sólo aporta una \emph{propuesta de interpretación}. El modelo no ve el libro mayor, no redacta una consulta SQL y no puede convertir «envía» en un pago autorizado. Tanto si interviene como si no, la decisión sobre el siguiente paso vuelve al orquestador.
+La Banking API aplica las reglas financieras y accede a los datos de PostgreSQL. Devuelve cifras, movimientos de respaldo o el estado de una operación. Aunque el modelo y la API aparecen en naranja, sus responsabilidades son distintas: el primero ayuda a comprender; la segunda tiene autoridad sobre los datos y las operaciones. La observabilidad permite revisar las decisiones y los tiempos de ese intercambio.
 
-Cuando hace falta una cifra o se prepara un pago, el orquestador cruza la frontera de la derecha con una petición ya estructurada. La Banking API (naranja) valida su contrato y aplica las reglas financieras. Para responder al gasto en restaurantes consulta el estado que conserva en PostgreSQL; para el pago prepara una intención pendiente o ejecuta una confirmación válida. La flecha de vuelta trae \emph{datos verificados o el estado de la operación}; el modelo no es la fuente de ninguno de ellos. El libro mayor y la auditoría financiera pertenecen a este lado de la frontera. El estado conversacional necesario para continuar entre turnos se mantiene separado en el orquestador.
+\subsection{Las rutas que decide el orquestador}
+La Figura~\ref{fig:orchestrator-trace-lanes} amplía el bloque verde. El comienzo es común: recibir el turno, recuperar el contexto y resolver la intención. A partir de ahí, la petición puede terminar en una consulta, una aclaración o la preparación de una operación. Las flechas discontinuas muestran cuándo se llama a otro servicio. La confirmación de un pago llega en un turno posterior.
 
-La pieza gris no es otra etapa que deba «aprobar» la petición. La observabilidad recibe señales del recorrido ---decisiones, tiempos y errores--- para que después pueda investigarse por qué se eligió una ruta. Las líneas punteadas distinguen esas señales de las peticiones funcionales. Tampoco sustituyen a la auditoría bancaria: una traza explica \emph{cómo llegó el sistema} a un resultado; la auditoría deja constancia de \emph{qué ocurrió} en una operación.
-
-Esta figura responde, por tanto, a \emph{quién interviene y dónde termina su autoridad}. No dibuja cada paso interno ni todas las conexiones físicas de almacenamiento. La Figura~\ref{fig:orchestrator-trace-lanes} amplía precisamente el bloque verde: muestra cómo un mismo comienzo se bifurca hacia una consulta, una aclaración o una acción que espera confirmación. Los contratos y la distribución técnica completa pueden consultarse en \doc{docs/architecture/monorepo.md} y en los README de \code{apps/orchestrator/} y \code{apps/banking-api/}.
-
-\section{Cómo decide el orquestador}
-La Figura~\ref{fig:orchestrator-trace-lanes} amplía el bloque verde de la arquitectura: una conversación no sigue siempre la misma ruta. El orquestador decide cuándo bastan las reglas, cuándo usar el modelo y cuándo consultar a la Banking API, pedir una aclaración o esperar aprobación. Las flechas discontinuas cruzan los límites entre servicios.
-
-\begin{figure}[H]
+\begin{figure}[tbp]
 \centering
 \input{figures/orchestrator-trace.tex}
-\caption{Rutas posibles de un turno. El área verde es el orquestador; azul, interacción; naranja, dependencias externas. Un pago aprobado vuelve como un turno nuevo. La barra inferior recuerda que cada ruta puede observarse mediante decisiones correlacionadas.}
+\caption{Rutas posibles de un turno. El área verde pertenece al orquestador; los bloques azules son la interacción y los naranjas, servicios externos a él. La observabilidad acompaña todas las rutas.}
 \label{fig:orchestrator-trace-lanes}
 \end{figure}
-\newpage
 
-\subsection{Reconocer la petición sin adivinar}
-El orquestador recupera un contexto concreto: cuenta, periodo, operación pendiente o resultado mostrado. Así, «¿y el mes anterior?» conserva \emph{restaurantes} y cambia el periodo; una pregunta nueva sobre ingresos no hereda ese filtro. El modelo no tiene que deducirlo todo de una transcripción.
+\subsection{De la pregunta a los datos}
+La pregunta sobre restaurantes se convierte en un \emph{plan}: cuenta, periodo, categoría y cálculo. El contexto permite después entender «¿y el anterior?» como un cambio de mes, conservando la categoría.
 
-Las reglas se ocupan primero de las peticiones cuya lectura es segura:
-
+El lector determinista resuelve expresiones reconocibles mediante reglas. Sus principales casos son:
 \begin{itemize}
-\item \textbf{Respuestas de ruta directa:} saldo y cuentas, tarjetas, contactos, categorías disponibles y ayuda sobre FinGuard.
-\item \textbf{Continuidad de la conversación:} saludos, correcciones, preguntas sobre una respuesta anterior y contestaciones a una aclaración pendiente.
-\item \textbf{Solicitudes de actuar:} pagos a otra persona y traspasos entre cuentas propias. Reconocer la orden sólo abre la preparación; nunca mueve dinero.
-\item \textbf{Consultas reconocibles:} comparaciones, rankings, medias, recurrencia, frecuencia y seguimiento de consultas o gráficos, cuando el contexto fija una lectura inequívoca.
+\item saldo, cuentas, tarjetas, contactos, categorías y ayuda;
+\item saludos, correcciones, respuestas a aclaraciones y continuaciones que el contexto permite interpretar;
+\item comparaciones, rankings, medias, recurrencia y frecuencia con una formulación reconocida;
+\item solicitudes de pago o traspaso, que abren su preparación.
 \end{itemize}
 
-El modelo entra donde amplía la cobertura sin asumir la autoridad. En modo híbrido, ante una consulta genérica que podría ser saldo, contactos o ayuda, propone una etiqueta entre intenciones conocidas. Nunca deshace una lectura segura ni inicia pagos o traspasos; si falla, se conserva la ruta general.
+El modelo amplía la comprensión cuando las reglas no bastan. La clasificación híbrida conserva las rutas reconocidas y no crea por sí sola pagos o traspasos. Para planificar una consulta, el modelo recibe la frase, la fecha, las categorías admitidas y, si corresponde, el plan anterior. Devuelve campos definidos, pide aclaración o indica que la consulta no está admitida.
 
-Esa intervención sólo clasifica. Una consulta aún necesita decidir qué datos pedir; los saludos y la ayuda pueden terminar antes de la parte financiera que muestra la figura.
+El orquestador valida el plan y la API bancaria lo convierte en una consulta controlada; el modelo no escribe SQL. Los datos obtenidos sustentan la respuesta, la comparación o el gráfico. Si después se pregunta por agosto sobre una vista del año por meses, esa referencia se resuelve sobre el resultado mostrado.
 
-\subsection{Responder con datos comprobables}
-Tomemos «¿cuánto he gastado en restaurantes este mes?». El orquestador necesita una instrucción precisa: \emph{sumar gastos de restaurantes en el mes actual, dentro de las cuentas autorizadas}. A esa instrucción estructurada la llamamos \emph{plan}. Contiene el periodo, la dirección del dinero, los filtros y la operación solicitada; no contiene una cifra imaginada por el asistente.
+\subsection{De una petición de pago a su confirmación}
+«Envía 25 euros a Laura» abre la rama de acción. Las reglas reconocen la solicitud y el modelo puede extraer sus datos, que se contrastan con el mensaje y los contactos. La API prepara una operación pendiente y muestra cuánto, a quién y desde qué cuenta. Preparar todavía no mueve dinero.
 
-Cuando las reglas no construyen el plan, interviene el planificador con modelo. Recibe la frase, la fecha, las categorías válidas y, si es una continuación, el plan anterior. Devuelve campos de un contrato cerrado, pide aclaración o declara la petición no admitida. Así interpreta expresiones variadas sin añadir una regla por frase; no puede inventar categorías ni escribir SQL.
+La persona confirma o cancela en otro turno. Cambiar importe, destino o cuenta exige una propuesta nueva. Tras la aprobación, la API comprueba el estado, ejecuta el pago simulado y registra su resultado, controlando los reintentos para evitar duplicados. En la PoC se confirma en la web, aunque la conversación empiece por voz.
 
-La propuesta no viaja directamente a PostgreSQL. El orquestador comprueba que respete lo que la persona dijo explícitamente ---por ejemplo, \emph{restaurantes} y \emph{este mes}---, que la capacidad esté admitida y que el plan sea válido. La Banking API aplica después sus propias reglas y devuelve datos y evidencia. Sólo con ese resultado se calcula una comparación o se prepara un gráfico. En «¿y el anterior?», la categoría permanece y cambia el periodo; en «enséñamelo por semanas», cambia la forma de agrupar. El modelo ayuda a traducir lenguaje variable, mientras que las cifras siguen saliendo de la autoridad financiera.
-
-Así se puede seguir el origen de una respuesta: pregunta, plan aceptado, lectura bancaria y presentación. Si una cifra no convence, no hay que discutir con una frase generada: puede comprobarse qué cuentas, filtros y fechas se utilizaron. El detalle de planes y visualizaciones está en \doc{docs/vision.md} y \doc{docs/architecture/adr-011-derived-charts-and-saved-metrics.md}.
-
-\subsection{Preparar un pago y pedir aprobación}
-Al decir «envía 25 euros a Laura», la persona ya no pide una lectura. Las reglas reconocen una solicitud de pago y evitan que se trate como una pregunta sobre movimientos. Un lector con modelo puede extraer el importe y la destinataria, pero su propuesta se contrasta con las palabras pronunciadas y con los contactos disponibles. Si falta un dato, se pregunta; un nombre o un importe que el modelo invente no llega a la previsualización.
-
-Con los datos suficientes, la Banking API prepara una operación \emph{pendiente} y devuelve exactamente lo que la persona debe revisar: cuánto, a quién y desde qué cuenta. Hasta aquí no se ha ejecutado ningún pago. La confirmación llega como un turno distinto y se vincula a esa propuesta concreta. Si cambian importe, destino o cuenta, se prepara otra propuesta; un «sí» anterior no puede autorizarla en silencio.
-
-Sólo tras la aprobación explícita la Banking API comprueba de nuevo el estado, ejecuta la operación simulada y registra el resultado. La idempotencia y el control de concurrencia pertenecen a esa frontera financiera, no al modelo. En la PoC el pago se confirma en la web, aunque la conversación haya empezado por voz. El recorrido completo de estados y contratos se amplía en \doc{docs/vision.md} y \doc{apps/banking-api/README.md}.
+Si falta un dato o hay dos contactos llamados Laura, el orquestador conserva lo entendido y pide aclaración. Esa rama vuelve al usuario sin ejecutar la operación y permite continuar la tarea en el siguiente turno.
 
 \newpage
-\subsection{Preguntar cuando falta información}
-No todas las frases admiten una interpretación responsable. «¿Cuánto he gastado últimamente?» necesita un periodo; «envía dinero a Laura» necesita un importe; dos contactos llamados Laura requieren elegir destinataria. En esas situaciones, FinGuard no responde con una suposición ni deja que el modelo complete el vacío con una cifra plausible. Conserva lo que ya se entendió y pregunta sólo por el dato que falta, de forma que el siguiente turno pueda continuar la misma tarea.
+\section{Cómo se ha implementado}
+El recorrido anterior se apoya en servicios separados. Veamos cómo están construidos y cómo esa organización permite ampliarlos.
 
-El modelo también puede indicar que necesita una aclaración cuando planifica una consulta. Esa posibilidad forma parte de su contrato, pero no le concede la última palabra sobre los límites del producto: las capacidades no admitidas se filtran mediante reglas y un plan que contradice la petición se rechaza o se corrige de forma controlada. Una negativa útil explica el límite y permite reformular; una negativa automática a todo reduciría el riesgo a costa de hacer inútil la conversación.
+\subsection{Orquestador: capas y módulos}
+El orquestador utiliza Python y FastAPI y sigue una \emph{arquitectura hexagonal}. Esta separa el núcleo ---reglas y casos de uso--- de las tecnologías con las que se comunica. El núcleo define \emph{puertos}: interfaces que expresan qué necesita, como interpretar una petición o consultar movimientos. Los \emph{adaptadores} implementan esas interfaces y traducen entre los datos internos y el protocolo de cada servicio.
 
-\subsection{Reconstruir lo que decidió el sistema}
-La figura muestra rutas posibles, no una lista literal de funciones. En una traza se puede reconstruir qué turno llegó, qué contexto se utilizó, qué lector o modelo propuso la interpretación, qué validación decidió continuar o parar y qué resultado se presentó. Esa separación importa especialmente cuando algo falla: permite distinguir una pérdida de contexto de un plan incorrecto, una respuesta inesperada de la Banking API o un problema de presentación.
-
-La observabilidad registra decisiones, tiempos y errores del recorrido del orquestador cuando está activada. No reemplaza la auditoría financiera: la primera ayuda a explicar \emph{cómo se llegó} a una respuesta; la segunda registra \emph{qué ocurrió} al ejecutar una operación. Tampoco exige confiar ciegamente en el modelo: su propuesta y la decisión final son cosas distintas y pueden evaluarse por separado. La verificación de las trazas y sus límites se documenta en \doc{docs/architecture/observability.md}; las capacidades y sus pruebas conversacionales, en \doc{docs/conversational-capabilities.md}.
-
-\section{Qué se ha comprobado y qué no}
-Las pruebas buscan responder una pregunta más exigente que «¿funciona el ejemplo de la demo?». Separan reglas financieras, interpretación de lenguaje, continuidad entre turnos y representación visual, porque un acierto en una capa no demuestra las demás.
+Por ejemplo, el caso de uso pide una interpretación mediante una interfaz común; el adaptador se encarga de hablar con Ollama o con otro proveedor. Cambiar esa conexión no obliga a reescribir el caso de uso. En una prueba, la misma interfaz puede tener una implementación simulada. La ventaja es acotar los cambios tecnológicos y poder comprobar las reglas sin depender de servicios externos.
 
 \begin{table}[H]
 \centering\small
 \begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.24\linewidth}X}
 \toprule
-\textbf{Foco} & \textbf{Evidencia que se busca}\\
+\textbf{Capa} & \textbf{Responsabilidad}\\
 \midrule
-Dato y dominio & Importes exactos, aislamiento entre titulares, periodos y filtros, consultas parametrizadas, estados e integridad de pagos.\\
-Conversación & Variaciones de una misma petición, correcciones, aclaraciones, continuidad de cuenta o periodo y rechazo cuando el plan no es seguro.\\
-Presentación & Correspondencia de texto y gráfico con el resultado consultado; seguimiento de una visualización sin perder su fuente.\\
-Canales y operación & Estados de la web, sesiones e interrupciones de voz, preparación, confirmación, cancelación e idempotencia.\\
+\code{domain/} & Conversación, planes, reglas de interpretación y validación, pagos y visualizaciones; define las interfaces que necesita del exterior.\\
+\code{application/} & Casos de uso que coordinan las operaciones. Separa lecturas (consultas) y cambios de estado (comandos), siguiendo el patrón CQRS.\\
+\code{infrastructure/} & Controladores HTTP, formatos de entrada y salida, clientes de banca, adaptadores de modelos y persistencia.\\
+\code{bootstrap/} & Construye y conecta las dependencias según la configuración del despliegue.\\
 \bottomrule
 \end{tabularx}
-\caption{Niveles de evidencia que acompañan los recorridos de la figura.}
+\caption{Organización del orquestador y papel de cada capa.}
 \end{table}
 
-Las pruebas automatizadas viven junto a cada servicio: \doc{apps/orchestrator/tests/}, \doc{apps/banking-api/tests/}, \doc{apps/web/src/} y \doc{apps/voice-gateway/tests/}. Los episodios de \doc{apps/orchestrator/evaluation/conversations/} ejercitan conversaciones completas; los conjuntos de planificación y robustez exploran formulaciones alternativas. Hay además comprobaciones de integración y una verificación documentada del recorrido observabilidad--traza. Estos materiales permiten inspeccionar \emph{qué} se probó, no sólo aceptar una afirmación de cobertura.
+Dentro de esa estructura, \code{intent\_router} y \code{turn\_interpreters} deciden la intención y su relación con el contexto. El caso de uso \code{ask\_financial\_question} coordina los lectores, el planificador y la llamada a banca. Las reglas de hechos explícitos y el verificador contrastan la propuesta; los módulos de respuesta y visualización preparan lo que recibirá el canal. Los comandos de pago gestionan preparación, confirmación y cancelación.
 
-Conviene leer esa evidencia con cautela. Una prueba unitaria puede demostrar que un importe se calcula bien y no detectar que una frase fue enviada a la ruta equivocada; un episodio conversacional puede recorrer la ruta correcta y no comprobar un detalle del dato. La auditoría por mutaciones de \doc{docs/audits/2026-08-28-do-the-tests-prove-anything.md} encontró defectos que entonces sobrevivían incluso a suites amplias. Es una fotografía fechada, no un resultado actual ni una garantía de que todos esos huecos sigan abiertos. Su valor aquí es metodológico: obliga a distinguir pruebas que \emph{pasan} de pruebas que \emph{detectan un fallo relevante}.
+El controlador adapta HTTP y el contexto conserva los datos entre turnos. La \href{../apps/orchestrator/README.md}{guía} y los \href{../apps/orchestrator/src/finguard_orchestrator/}{módulos del orquestador} amplían el detalle.
 
-Tampoco se afirma que la PoC esté validada para producción bancaria. No hay banco real ni una campaña de fraude, accesibilidad, carga y seguridad operativa equivalente a la exigible a un producto financiero. Las evaluaciones con proveedores, idiomas y expresiones espontáneas deben repetirse al cambiar modelos, datos o interfaz.
+\newpage
+\subsection{Ampliar capacidades e idiomas}
+La misma separación permite incorporar nuevas capacidades. Imaginemos una búsqueda de alojamiento mediante un agente de Booking o una comparación de seguros mediante uno de Rastreator. Son ejemplos de evolución, no integraciones disponibles en la PoC. Para cada capacidad definiríamos un contrato con la solicitud, el resultado y las operaciones admitidas. Varios proveedores de alojamiento podrían implementar el mismo contrato; las cotizaciones de seguros tendrían el suyo.
 
-\section{Las decisiones que hacen coherente el conjunto}
-La primera decisión es \textbf{separar comprensión y autoridad}. El lenguaje natural reduce fricción, pero sólo los contratos tipados y los servicios de dominio pueden producir una cifra financiera o modificar el estado. Se gana explicabilidad y control; a cambio, cada nueva capacidad requiere modelar su plan y sus validaciones. Esa fricción es deliberada cuando el coste de improvisar es alto.
+Los cambios quedarían localizados: el dominio definiría esos modelos e interfaces; la aplicación coordinaría el nuevo caso de uso; la infraestructura implementaría la comunicación con cada agente; y el arranque registraría el adaptador elegido. Si sólo cambia el proveedor de una capacidad existente, se reutilizan sus modelos y su caso de uso. Si entra un canal nuevo, su adaptador traduce los mensajes a las operaciones ya disponibles. El diseño contempla A2A para la comunicación entre agentes, manteniendo su protocolo fuera de las reglas del negocio.
 
-La segunda es \textbf{tratar el contexto como datos concretos, no como recuerdo ilimitado}. Una cuenta, un periodo, una referencia a un resultado o una operación pendiente tienen reglas distintas de vigencia. Modelarlas permite continuaciones útiles y facilita detectar cuándo una frase ya no puede heredar el foco anterior. El coste es más trabajo de diseño para cada tipo de seguimiento conversacional.
+\textbf{Ampliación a otros idiomas.} La PoC está centrada en español: tiene vocabulario y lectores específicos, textos de respuesta y formatos de interfaz. El idioma configurable del reconocimiento de voz no basta para hacer multilingüe todo el sistema.
 
-La tercera es \textbf{hacer que la presentación derive del resultado}. Una explicación o un gráfico pueden cambiar de forma, pero no deben convertirse en fuentes nuevas de cifras. Esto da continuidad entre pregunta, visualización y profundización. También obliga a mantener identificable el resultado de origen cuando la persona señala «esa barra» o «ese movimiento».
+La ampliación propuesta consiste en seleccionar un perfil lingüístico por conversación: normalización, vocabulario, lectores, instrucciones del modelo, mensajes de interfaz y voz. Todos producirían los mismos planes internos; por ejemplo, «el mes anterior» y «last month» deberían resolver el mismo periodo. El formato regional, la zona horaria y la moneda se tratarían por separado. Cada idioma necesitaría sus propios casos de evaluación, especialmente para fechas, importes, nombres y confirmaciones.
 
-La cuarta es \textbf{separar preparar de ejecutar}. En un pago, el sistema muestra un plan antes de pedir autorización y vuelve a comprobarlo al confirmar. La pausa añade un turno y cierta complejidad operativa; precisamente por eso hace visible el límite entre ayuda conversacional y decisión económica de la persona.
+\textbf{Crecimiento del despliegue.} La separación de servicios también permite asignar recursos distintos a la inferencia, la voz y las APIs. Antes de añadir réplicas habría que coordinar la configuración compartida y las sesiones de voz; la política de modelos actual vive en cada proceso. Compose organiza el entorno local, pero no implementa autoescalado.
 
-Ninguna de estas decisiones pretende que el modelo sea infalible. Construyen un recorrido en el que su posible error puede localizarse y, cuando importa, detenerse antes de producir un efecto.
+La \href{../docs/architecture/extensibility.md}{propuesta de extensibilidad} desarrolla estos ejemplos, los cambios por capa y el trabajo pendiente para otros idiomas.
 
-\section{Límites y camino para continuar}
-Esta PoC trabaja con datos sintéticos y operaciones simuladas. Su valor está en probar el diseño de la interacción y las fronteras entre componentes; no en afirmar que ya resuelve identidad, fraude, privacidad operacional o integración con una entidad financiera. La voz añade además exigencias propias de latencia, interrupción y accesibilidad. Esas dimensiones requieren evaluación específica antes de ampliar el alcance.
+\newpage
+\subsection{Modelos y proveedores}
+Se han probado modelos de las familias Qwen, Mistral/Ministral y Granite. Ollama permite ejecutarlos localmente; los adaptadores de Groq y Cloudflare permiten comparar con servicios externos. Todos se conectan mediante interfaces del orquestador.
 
-El siguiente paso razonable es fortalecer la evidencia sobre conversaciones reales y cambios de modelo, cerrar los huecos de prueba que afecten a cifras y autorización, y comprobar el comportamiento conjunto bajo fallos y carga. Sólo después tendría sentido plantear integraciones reales. El principio a conservar no es un proveedor o una tecnología concreta, sino que cada respuesta y cada acción tengan una ruta reconstruible y una autoridad bien definida.
+La prioridad es utilizar modelos abiertos, con pesos disponibles para ejecución propia. En un entorno bancario queremos controlar dónde se procesan las conversaciones y qué datos salen de la organización. Enviarlos a un servicio externo puede ser incompatible con requisitos de confidencialidad o condiciones contractuales. Por eso se prueba una solución desplegable en infraestructura propia, incluyendo la voz.
 
-Esta memoria deja intencionadamente fuera los esquemas, endpoints, migraciones y clases. Para profundizar sin perder el hilo, la documentación del repositorio se puede recorrer por preguntas:
+Los proveedores remotos se usan para experimentar con datos sintéticos. La configuración local debe seleccionar proveedores locales también como alternativa ante fallos y respetar la licencia de cada modelo.
+
+Interpretar, planificar y proponer una visualización son tareas distintas. El catálogo de respuesta tampoco determina el modelo del planificador. Los valores versionados mantienen \code{qwen2.5-coder:7b} como base de planificación; las evaluaciones posteriores han utilizado \code{qwen3.5:9b}. Los resultados se presentan al final. El \href{../apps/orchestrator/config/llm.toml}{catálogo} y la \href{../apps/orchestrator/.env.defaults}{configuración del orquestador} explican estos controles.
+
+\subsection{Interfaz web}
+La web utiliza React y TypeScript sobre Vite. Reúne cuentas, movimientos, tarjetas y pagos con una conversación que puede abrirse sobre esas vistas. Permite consultar hablando o escribiendo y revisar el resultado en pantalla.
+
+Obtiene los datos financieros a través del orquestador y muestra progreso, aclaraciones y previsualizaciones. Vega-Lite representa los gráficos con los datos recibidos. La persona puede consultar qué respalda una cifra o continuar sobre el gráfico. La confirmación del pago vuelve al servidor, que la contrasta con la operación pendiente.
+
+La Figura~\ref{fig:web-conversation} reserva una vista de la interacción. Las pantallas se describen en la \href{../apps/web/README.md}{guía de la web}.
+
+\newpage
+\begin{figure}[H]
+\centering
+\captura{figures/web-conversation.png}{6.5cm}{Interfaz web: conversación, gráfico y acceso a los datos de respaldo.}
+\caption{Vista de la aplicación y de una respuesta conversacional. Captura pendiente de incorporar.}
+\label{fig:web-conversation}
+\end{figure}
+
+\subsection{Canal de voz}
+El servicio \code{voice-gateway} adapta el audio al mismo orquestador. Mantiene una sesión por WebSocket, recibe la voz, obtiene una transcripción y envía el turno. Después devuelve el resultado y el audio sintetizado, manteniendo la correspondencia entre turno, texto y gráfico.
+
+Para ejecución local se han integrado Faster Whisper en el reconocimiento de voz y Piper en la síntesis. La entrada y la salida de audio están separadas del razonamiento financiero, de modo que cambiar el transcriptor no exige modificar cómo se valida una consulta. El canal también gestiona cancelaciones e interrupciones para que una respuesta antigua no siga reproduciéndose después de abandonar el turno.
+
+El entorno básico utiliza proveedores de voz simulados para arrancar sin descargar modelos; la configuración de voz real instala los adaptadores y monta sus modelos. La confirmación de pagos permanece en la web. El protocolo y la configuración se amplían en la \href{../apps/voice-gateway/README.md}{guía del canal de voz}.
+
+\newpage
+\subsection{Servicio bancario y base de datos}
+La Banking API es un servicio Python con FastAPI y una separación propia entre dominio, casos de uso y persistencia. Recibe planes y comandos estructurados. Su compilador de consultas selecciona operaciones admitidas y pasa los valores como parámetros; las operaciones de pago comprueban estados, saldo y reintentos antes de modificar el libro mayor.
+
+PostgreSQL conserva los datos sintéticos, los movimientos, las operaciones y su auditoría. Los importes se representan en unidades menores, como céntimos, junto con su moneda. El libro mayor de doble partida y las restricciones de base de datos respaldan la consistencia financiera.
+
+El mismo servidor de desarrollo aloja bases y roles separados para banca y orquestación. El motor de consultas dispone de un rol de lectura, y el orquestador mantiene su persistencia propia para funciones como las métricas guardadas. Esa persistencia no le concede acceso directo al libro mayor. Las migraciones versionan los cambios de esquema. El modelo de datos y las reglas se desarrollan en la \href{../apps/banking-api/README.md}{guía de la Banking API} y en sus \href{../apps/banking-api/migrations/}{migraciones}.
+
+\subsection{Monitorización y trazas}
+OpenTelemetry instrumenta el recorrido del orquestador. Cuando está activado, registra las decisiones del turno y puede mostrar la secuencia de lectores deterministas consultados. Un identificador de conversación relaciona los turnos, permitiendo investigar, por ejemplo, por qué «el mes anterior» conservó una categoría o cambió de ruta.
+
+El Collector recibe la telemetría, Tempo almacena las trazas, Prometheus conserva las métricas y Grafana permite consultarlas. Los paneles muestran qué peticiones resolvieron las reglas, cuándo se corrigió una propuesta y cuánto tardó el recorrido. Desde una medida se puede llegar a la traza del turno que la produjo. Las Figuras~\ref{fig:grafana-dashboard} y~\ref{fig:conversation-trace} reservan espacio para ambas vistas.
+
+La auditoría bancaria registra el resultado de las operaciones; las trazas ayudan a explicar las decisiones que llevaron hasta ellas. La instrumentación limita los datos que admite en sus registros y evita usar la conversación completa como etiqueta de una métrica. La configuración y las verificaciones están en la \href{../docs/architecture/observability.md}{documentación de observabilidad}.
+
+\newpage
+\begin{figure}[H]
+\centering
+\captura{figures/grafana-dashboard.png}{3.5cm}{Grafana: distribución de resultados, decisiones y tiempos del orquestador.}
+\caption{Panel de monitorización del orquestador. Captura pendiente de incorporar.}
+\label{fig:grafana-dashboard}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\captura{figures/conversation-trace.png}{4cm}{Traza de un turno: lectores consultados, validaciones y tiempos.}
+\caption{Detalle de una traza correlacionada con la conversación. Captura pendiente de incorporar.}
+\label{fig:conversation-trace}
+\end{figure}
+
+\subsection{Ejecución conjunta con Docker Compose}
+Docker Compose coordina los servicios del entorno local mediante perfiles. \code{core} y \code{poc} incluyen PostgreSQL, la API bancaria, el orquestador y las tareas de inicialización y migración. El perfil \code{voice} añade el canal de audio; \code{observability} incorpora Collector, Tempo, Prometheus y Grafana.
+
+Las dependencias de arranque esperan las comprobaciones de salud o la finalización de las migraciones. Los volúmenes conservan datos y modelos entre reinicios, y las configuraciones se montan donde corresponde. Esto permite reconstruir los servicios sin confundir la imagen de una aplicación con su estado persistente.
+
+En la configuración actual, la web se ejecuta con Vite fuera de Compose y Ollama funciona en el anfitrión, donde dispone de la GPU. El orquestador llega a él mediante la dirección configurada para el host. El archivo adicional de voz real habilita Whisper y Piper; la observabilidad requiere activar también la exportación en el orquestador. El conjunto se describe en \href{../compose.yaml}{Compose}, su \href{../compose.voice-real.yaml}{configuración de voz real} y las \href{../justfile}{recetas de ejecución}. Es un entorno reproducible de desarrollo, sobre el que preparar posteriormente un despliegue operativo.
+
+\newpage
+\section{Pruebas y resultados de evaluación}
+La validación distingue el comportamiento del software de la calidad y el coste de los modelos. Una prueba de una regla puede ser reproducible sin un proveedor real; medir la comprensión y la latencia exige ejecutar el modelo en unas condiciones conocidas.
+
+\subsection{Pruebas del sistema}
+Las pruebas unitarias comprueban reglas concretas; las de integración ejercitan contratos y persistencia. Los episodios conversacionales encadenan turnos y declaran qué ruta o consulta se esperaba. La web y la voz tienen pruebas propias sobre estados, eventos y presentación.
 
 \begin{table}[H]
 \centering\small
-\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.34\linewidth}X}
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.29\linewidth}X}
 \toprule
-\textbf{Si interesa entender\ldots} & \textbf{Continuar en\ldots}\\
+\textbf{Área} & \textbf{Ejemplos de comprobaciones}\\
 \midrule
-La propuesta y los límites funcionales & \href{../docs/vision.md}{Visión del producto} y \href{../docs/conversational-capabilities.md}{capacidades conversacionales}.\\
-Las fronteras entre servicios y sus decisiones & \href{../docs/architecture/monorepo.md}{Arquitectura del monorepo}, \href{../docs/architecture/hexagonal-review.md}{revisión de límites} y README del \href{../apps/orchestrator/README.md}{orquestador} y de la \href{../apps/banking-api/README.md}{Banking API}.\\
-Gráficos, voz y trazas & \href{../docs/architecture/adr-011-derived-charts-and-saved-metrics.md}{Decisión sobre visualizaciones}, \href{../apps/voice-gateway/README.md}{canal de voz} y \href{../docs/architecture/observability.md}{observabilidad}.\\
-Las pruebas y sus límites & \href{../apps/orchestrator/evaluation/conversations/RESULTS.md}{Evaluación de conversaciones} y \href{../docs/audits/2026-08-28-do-the-tests-prove-anything.md}{auditoría de pruebas por mutaciones}.\\
+Consulta y contexto & Periodos, cuentas y filtros; conservar la categoría al cambiar el mes; completar una aclaración sin reiniciar la tarea.\\
+Pagos & Preparar sin mover dinero, confirmar el destino presentado, rechazar operaciones caducadas y evitar duplicados ante reintentos.\\
+Presentación & Correspondencia entre datos y gráfico; referencias ambiguas; reformulaciones visuales que no repiten consultas innecesarias.\\
+Canales & Estados de la interfaz, eventos del turno correcto, interrupciones de audio y confirmación del pago en pantalla.\\
 \bottomrule
 \end{tabularx}
-\caption{La memoria orienta la lectura; la documentación viva conserva el detalle.}
+\caption{Comportamientos que se ejercitan en las pruebas del repositorio.}
 \end{table}
 
-\section{Conclusión}
-FinGuard muestra que una conversación financiera puede ser fluida sin convertir al modelo en la autoridad sobre el dinero. Su aportación no es una respuesta espectacular aislada, sino la continuidad entre intención, plan, evidencia, presentación y ---si hay una acción--- aprobación explícita.
+El \href{../docs/conversational-capabilities.md}{mapa de capacidades} conecta cada función con sus pruebas y distingue los casos construidos de los que aún requieren más evidencia. La \href{../docs/audits/2026-08-28-do-the-tests-prove-anything.md}{auditoría por mutaciones del 28 de agosto} complementó esa revisión introduciendo fallos deliberados: encontró algunos que las pruebas no detectaban y señaló comprobaciones que reforzar. Así se evalúa también la capacidad de las pruebas para descubrir errores.
 
-La figura del orquestador resume esa promesa y también sus límites: hay varios caminos legítimos, incluido detenerse. La PoC ofrece una base verificable para seguir explorándolos; la documentación y las pruebas enlazadas permiten examinar el mecanismo con la profundidad que esta memoria, deliberadamente, no intenta contener.
+\newpage
+\subsection{Evaluación de los modelos}
+Se han comparado modelos con preguntas de desarrollo, validación reservada, casos adversarios, variaciones lingüísticas y cambios controlados de una petición. Se mide la decisión tomada, la coincidencia del plan esperado, las aclaraciones innecesarias y los planes incorrectos que llegarían a producir una cifra. Esta última medida se denomina \code{unsafe} en los informes; no representa una tasa de pagos no autorizados.
+
+Un experimento de clasificación del 6 de agosto comparó modelos con el encaminamiento determinista sobre 818 turnos evaluados. Estas son las dos ejecuciones completas comparables:
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.29\linewidth}XX}
+\toprule
+\textbf{Modelo} & \textbf{Acuerdo con las reglas} & \textbf{Tiempo por turno}\\
+\midrule
+\code{qwen3:8b} & 81,3\,\% & 722 ms\\
+\code{qwen3.5:9b} & 83,3\,\% & 1.869 ms\\
+\bottomrule
+\end{tabularx}
+\caption{Comparación histórica de clasificación; el acuerdo con las reglas no equivale a exactitud financiera.}
+\end{table}
+
+El modelo mayor corrigió algunas confusiones y reconoció formulaciones que escapaban a las reglas, pero introdujo otras y necesitó más tiempo. El resultado apoya una selección por tarea y el uso híbrido del modelo. Las otras familias ensayadas, las condiciones y los tipos de error están en el \href{../apps/orchestrator/evaluation/conversations/RESULTS.md}{informe de clasificación}.
+
+En planificación, la ejecución completa del 30 de agosto, sobre la revisión \code{7156038} con \code{qwen3.5:9b}, registró un 6,3\,\% de casos \code{unsafe} en la validación reservada. Los cinco conjuntos quedaron bajo el umbral experimental interno del 10\,\%. Es una medida del modelo junto con las validaciones del recorrido evaluado, no del modelo aislado ni de toda la conversación. Los \href{../apps/orchestrator/evaluation/planning/RESULTS.md}{resultados de planificación} conservan también las ejecuciones anteriores y sus fallos.
+
+Estas cifras describen versiones y configuraciones concretas. No se ha realizado una nueva campaña de evaluación para esta memoria, y los informes no acreditan por sí solos el comportamiento de la revisión actual. Repetirlos sobre una misma versión es necesario para comparar mejoras con rigor.
+
+\newpage
+\subsection{Latencia del recorrido de voz}
+La evaluación local del 17 de agosto recorrió reconocimiento de voz, orquestador, modelo, banca y síntesis. Utilizó una frase sintética en español, dos turnos de calentamiento y veinte muestras, con Whisper \code{small} y Piper en CPU y \code{ministral-3:14b} servido por Ollama en un equipo con Ryzen 7700X y RTX 3060.
+
+El tiempo de inicio de entrada a turno completado fue de 4,93 s de mediana y 5,08 s en el percentil 95. El informe separa los tiempos por etapa para localizar el coste; la llegada del audio al cliente no mide cuándo empieza a oírse en el dispositivo. Por tratarse de una frase repetida, esta ejecución valida ese recorrido y no sustituye una evaluación con habla espontánea y más usuarios.
+
+La \href{../apps/voice-gateway/evaluation/RESULTS.md}{evaluación de voz} recoge además ensayos posteriores en contenedores y diferencias observadas desde el navegador. Sus cifras se mantienen separadas porque cambian el modelo de reconocimiento, la petición y el uso del planificador. Esa distinción permite saber qué mejora realmente cuando se modifica una parte del sistema.
+
+\section{Conclusión}
+FinGuard convierte una necesidad expresada en lenguaje natural en un recorrido que puede consultarse, revisarse y probarse. El orquestador conecta contexto, interpretación y validación; la API bancaria aporta los datos y ejecuta las operaciones; la web y la voz acercan ese proceso a la persona.
+
+La PoC aporta una base para explorar esa experiencia con modelos desplegables en infraestructura propia. El siguiente paso es repetir las evaluaciones sobre una versión común y ampliar las conversaciones y condiciones de uso. La integración con una entidad real requeriría completar las garantías operativas previstas fuera del alcance de esta prueba.
+
+Para profundizar, la \href{../docs/vision.md}{visión funcional} desarrolla las capacidades, la \href{../docs/architecture/monorepo.md}{arquitectura del repositorio} explica la distribución de servicios y los documentos enlazados en cada apartado conservan la implementación y la evidencia. La memoria presenta el recorrido completo; esas referencias permiten examinar cada decisión con el detalle que necesite el lector.
 \end{document}
