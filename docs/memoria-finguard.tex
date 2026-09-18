@@ -190,7 +190,7 @@ La prioridad es utilizar modelos abiertos, con pesos disponibles para ejecución
 
 Los proveedores remotos se usan para experimentar con datos sintéticos. La configuración local debe seleccionar proveedores locales también como alternativa ante fallos y respetar la licencia de cada modelo.
 
-Interpretar, planificar y proponer una visualización son tareas distintas. El catálogo de respuesta tampoco determina el modelo del planificador. Los valores versionados mantienen \code{qwen2.5-coder:7b} como base de planificación; las evaluaciones posteriores han utilizado \code{qwen3.5:9b}. Los resultados se presentan al final. El \href{../apps/orchestrator/config/llm.toml}{catálogo} y la \href{../apps/orchestrator/.env.defaults}{configuración del orquestador} explican estos controles.
+Interpretar, planificar y proponer una visualización son tareas distintas. El catálogo de respuesta tampoco determina el modelo del planificador. La configuración base conserva \code{qwen2.5-coder:7b}, mientras que la campaña más reciente de esta memoria utiliza localmente \code{ministral-3:14b}, disponible en Ollama y servido por una RTX 3060 de 12 GB. El modelo visual puede configurarse por separado para no alterar las medidas del planificador financiero. El \href{../apps/orchestrator/config/llm.toml}{catálogo} y la \href{../apps/orchestrator/.env.defaults}{configuración del orquestador} explican estos controles.
 
 \subsection{Interfaz web}
 La web utiliza React y TypeScript sobre Vite. Reúne cuentas, movimientos, tarjetas y pagos con una conversación que puede abrirse sobre esas vistas. Permite consultar hablando o escribiendo y revisar el resultado en pantalla.
@@ -275,6 +275,8 @@ Canales & Estados de la interfaz, eventos del turno correcto, interrupciones de 
 
 El \href{../docs/conversational-capabilities.md}{mapa de capacidades} conecta cada función con sus pruebas y distingue los casos construidos de los que aún requieren más evidencia. La \href{../docs/audits/2026-08-28-do-the-tests-prove-anything.md}{auditoría por mutaciones del 28 de agosto} complementó esa revisión introduciendo fallos deliberados: encontró algunos que las pruebas no detectaban y señaló comprobaciones que reforzar. Así se evalúa también la capacidad de las pruebas para descubrir errores.
 
+La ejecución realizada sobre la revisión actual produjo \textbf{4.645 pruebas superadas y 4 omitidas}. El único fallo corresponde a una prueba de integración que intenta arrancar \code{qwen2.5-coder:7b}; ese modelo no está instalado en el demonio local, por lo que el error es una dependencia del entorno y no un fallo funcional de Wave 3. Las pruebas que no requieren ese modelo comprobaron las reglas, los contratos, el contexto conversacional, los pagos, las visualizaciones y los canales.
+
 \newpage
 \subsection{Evaluación de los modelos}
 Se han comparado modelos con preguntas de desarrollo, validación reservada, casos adversarios, variaciones lingüísticas y cambios controlados de una petición. Se mide la decisión tomada, la coincidencia del plan esperado, las aclaraciones innecesarias y los planes incorrectos que llegarían a producir una cifra. Esta última medida se denomina \code{unsafe} en los informes; no representa una tasa de pagos no autorizados.
@@ -295,9 +297,35 @@ Un experimento de clasificación del 6 de agosto comparó modelos con el encamin
 
 El modelo mayor corrigió algunas confusiones y reconoció formulaciones que escapaban a las reglas, pero introdujo otras y necesitó más tiempo. El resultado apoya una selección por tarea y el uso híbrido del modelo. Las otras familias ensayadas, las condiciones y los tipos de error están en el \href{../apps/orchestrator/evaluation/conversations/RESULTS.md}{informe de clasificación}.
 
-En planificación, la ejecución completa del 30 de agosto, sobre la revisión \code{7156038} con \code{qwen3.5:9b}, registró un 6,3\,\% de casos \code{unsafe} en la validación reservada. Los cinco conjuntos quedaron bajo el umbral experimental interno del 10\,\%. Es una medida del modelo junto con las validaciones del recorrido evaluado, no del modelo aislado ni de toda la conversación. Los \href{../apps/orchestrator/evaluation/planning/RESULTS.md}{resultados de planificación} conservan también las ejecuciones anteriores y sus fallos.
+En planificación, la nueva campaña se realizó el 18 de septiembre sobre la revisión \code{2cd2990}, con \code{ministral-3:14b}, contexto de 4096 tokens, semilla 0 y Ollama local. La validación reservada se repitió tres veces: obtuvo entre 76 y 77 respuestas correctas de 79 (96,2--97,5\,\%), entre 61 y 62 planes exactos de 66 (92,4--93,9\,\%), un 5,1\,\% de ejecuciones \code{unsafe} y cero estructuras inválidas. La variación de un caso entre repeticiones muestra por qué no se toma una única ejecución como resultado definitivo.
 
-Estas cifras describen versiones y configuraciones concretas. No se ha realizado una nueva campaña de evaluación para esta memoria, y los informes no acreditan por sí solos el comportamiento de la revisión actual. Repetirlos sobre una misma versión es necesario para comparar mejoras con rigor.
+La matriz completa quedó así:
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.24\linewidth}XXXX}
+\toprule
+\textbf{Conjunto} & \textbf{Casos} & \textbf{Resultado correcto} & \textbf{Unsafe} & \textbf{Inválido}\\
+\midrule
+Validación reservada & 79 & 96,2--97,5\,\% & 5,1\,\% & 0\,\%\\
+Desarrollo & 123 & 95,9\,\% & 4,9\,\% & 0\,\%\\
+Adversarial & 36 & 75,0\,\% & 8,3\,\% & 0\,\%\\
+Drift lingüístico & 75 & 98,7\,\% & 4,0\,\% & 0\,\%\\
+Metamórfico & 19 & 94,7\,\% & 0,0\,\% & 0\,\%\\
+\bottomrule
+\end{tabularx}
+\caption{Benchmark de planificación de Wave 3 con \code{ministral-3:14b}.}
+\end{table}
+
+El benchmark no pretende medir sólo si la salida es un JSON válido. Cada caso contiene una pregunta en español y un plan esperado; se comprueban por separado la ventana temporal, dirección, categorías, comercio, agrupación y métrica. \code{unsafe} identifica un plan que produciría una cifra incorrecta o que ejecutaría una pregunta que debía aclararse. El conjunto adversarial introduce inyecciones, límites y peticiones fuera de dominio; \emph{drift} cambia la redacción sin cambiar el significado; y el conjunto metamórfico empareja preguntas que modifican una sola dimensión, comprobando que el resto del plan permanezca estable. De este modo se evalúan exactitud, seguridad y robustez, no sólo fluidez lingüística. Los \href{../apps/orchestrator/evaluation/planning/RESULTS.md}{resultados de planificación} conservan el detalle de cada caso.
+
+\subsection{Planificador visual: modos \code{deterministic}, \code{shadow} y \code{hybrid}}
+Para los gráficos se separa la propuesta del modelo de la decisión que llega a la pantalla. El planificador determinista, llamado \emph{suelo}, construye un gráfico seguro a partir del perfil de los datos. En modo \code{shadow}, el LLM recibe la pregunta y la forma del conjunto, propone un borrador y atraviesa el mismo verificador que cualquier otra propuesta, pero el usuario sigue viendo siempre el suelo. Este modo permite medir el modelo sin introducir cambios visibles ni riesgos.
+
+En modo \code{hybrid}, una propuesta válida y semánticamente adecuada puede sustituir al suelo; si el modelo se abstiene, tarda más que el presupuesto o incumple una regla, se conserva el gráfico determinista. Por ello \code{hybrid} no se activa por calendario: exige evidencia de que el modelo produce propuestas válidas, adecuadas, estables y suficientemente distintas del suelo para justificar el coste adicional. El modelo nunca recibe importes ni acceso a la banca, y no puede emitir Vega-Lite arbitrario: devuelve una estructura cerrada que el dominio verifica.
+
+El benchmark visual sigue esa idea. Contiene 16 casos, de los que 14 entran en la política, 4 pares de paráfrasis equivalentes, 2 instrucciones explícitas de forma y 2 preguntas que no deben producir gráfico. La validez comprueba la estructura; la adecuación comprueba la marca y los requisitos semánticos anotados (por ejemplo, conservar una serie o un orden); y la sensibilidad comprueba que una instrucción como «muéstramelo como un donut» provoque el cambio esperado. Se ejecutó tres veces con la GPU sin concurrencia para evitar confundir variabilidad del modelo con una mejora.
+
+Las tres ejecuciones con \code{ministral-3:14b} dieron el mismo resultado: sólo 3 de 14 propuestas fueron válidas; las 3 válidas fueron adecuadas, pero sólo 2 de 14 fueron además distintas del suelo. La estabilidad observada fue 0 de 1 par evaluable y la latencia añadida fue aproximadamente 5,1 s en P50 y 6,03 s en P95. Por tanto, el resultado no justifica promocionar de \code{shadow} a \code{hybrid}: la validez está muy por debajo del 100\,\% del suelo y el beneficio visible es pequeño frente a la espera adicional. La política desplegada conserva \code{deterministic}; \code{shadow} queda como instrumento de evaluación. El detalle de la corrida se conserva en \href{../apps/orchestrator/evaluation/visual/RESULTS.md}{RESULTS.md} y \href{../apps/orchestrator/evaluation/visual/last-run.json}{last-run.json}.
 
 \newpage
 \subsection{Latencia del recorrido de voz}
