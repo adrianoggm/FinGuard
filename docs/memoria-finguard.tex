@@ -30,7 +30,7 @@
   }%
 }
 \title{\textbf{FinGuard}\\[0.35em]\large Memoria breve de la prueba de concepto}
-\author{Visión, funcionamiento, arquitectura y evaluación}\date{18 de septiembre de 2026}
+\author{Visión, funcionamiento, arquitectura y evaluación}\date{21 de septiembre de 2026}
 \begin{document}\maketitle
 \begin{abstract}
 \FinGuard es una prueba de concepto de asistente financiero conversacional. Permite consultar movimientos y saldos, explorar la información con gráficos y preparar pagos o traspasos mediante lenguaje natural. Su núcleo es un orquestador que combina reglas y modelos de lenguaje para comprender cada petición, mantener el contexto y elegir el siguiente paso. Las cifras proceden del servicio bancario y las operaciones requieren que la persona revise y autorice lo que se va a ejecutar.
@@ -131,7 +131,11 @@ El lector determinista resuelve expresiones reconocibles mediante reglas. Sus pr
 
 El modelo amplía la comprensión cuando las reglas no bastan. La clasificación híbrida conserva las rutas reconocidas y no crea por sí sola pagos o traspasos. Para planificar una consulta, el modelo recibe la frase, la fecha, las categorías admitidas y, si corresponde, el plan anterior. Devuelve campos definidos, pide aclaración o indica que la consulta no está admitida.
 
-El orquestador valida el plan y la API bancaria lo convierte en una consulta controlada; el modelo no escribe SQL. Los datos obtenidos sustentan la respuesta, la comparación o el gráfico. Si después se pregunta por agosto sobre una vista del año por meses, esa referencia se resuelve sobre el resultado mostrado.
+Esta propuesta todavía no es una orden de ejecución. El orquestador comprueba su estructura y contrasta sus campos con los hechos explícitos del mensaje: una pregunta sobre gastos no debe convertirse en una consulta de todos los movimientos. Si no puede aceptar la interpretación, devuelve una aclaración o un rechazo. La API bancaria recibe únicamente operaciones admitidas y construye consultas parametrizadas; el modelo no escribe SQL.
+
+Los datos obtenidos sustentan la respuesta, la comparación y el gráfico. La continuación «ponlo en horizontal» modifica la presentación sin volver a consultar la banca; «¿y el mes anterior?» cambia el periodo y necesita nuevos datos. Distinguir estos dos recorridos evita trabajo innecesario y conserva el significado de lo que la persona está viendo.
+
+La traza de la Figura~\ref{fig:orchestrator-trace-lanes} permite seguir esas decisiones: qué contexto se recuperó, qué lector reconoció la petición, si se consultó al modelo, qué propuesta se aceptó y qué servicio aportó el resultado. No representa el razonamiento interno del LLM, sino las decisiones observables del software. Así, una cifra inesperada puede investigarse separando interpretación, consulta y presentación.
 
 \subsection{De una petición de pago a su confirmación}
 «Envía 25 euros a Laura» abre la rama de acción. Las reglas reconocen la solicitud y el modelo puede extraer sus datos, que se contrastan con el mensaje y los contactos. La API prepara una operación pendiente y muestra cuánto, a quién y desde qué cuenta. Preparar todavía no mueve dinero.
@@ -166,9 +170,10 @@ Por ejemplo, el caso de uso pide una interpretación mediante una interfaz comú
 
 Dentro de esa estructura, \code{intent\_router} y \code{turn\_interpreters} deciden la intención y su relación con el contexto. El caso de uso \code{ask\_financial\_question} coordina los lectores, el planificador y la llamada a banca. Las reglas de hechos explícitos y el verificador contrastan la propuesta; los módulos de respuesta y visualización preparan lo que recibirá el canal. Los comandos de pago gestionan preparación, confirmación y cancelación.
 
-El controlador adapta HTTP y el contexto conserva los datos entre turnos. La \href{../apps/orchestrator/README.md}{guía} y los \href{../apps/orchestrator/src/finguard_orchestrator/}{módulos del orquestador} amplían el detalle.
+Esta organización concreta tres decisiones de diseño. Las reglas reconocibles se resuelven sin esperar al modelo; la variación lingüística se delega en una propuesta que después se verifica; y el acceso financiero queda detrás de un contrato independiente. No se busca que el LLM haga todo, sino aprovecharlo donde aporta comprensión sin entregarle el control del recorrido.
 
-\newpage
+El controlador adapta HTTP y el contexto transporta la información necesaria entre turnos; no convierte todo el historial en instrucciones para el modelo. La separación entre consultas y comandos hace además visible qué caminos pueden modificar el estado. La \href{../apps/orchestrator/README.md}{guía} y los \href{../apps/orchestrator/src/finguard_orchestrator/}{módulos del orquestador} amplían el detalle.
+
 \subsection{Ampliar capacidades e idiomas}
 La misma separación permite incorporar nuevas capacidades. Imaginemos una búsqueda de alojamiento mediante un agente de Booking o una comparación de seguros mediante uno de Rastreator. Son ejemplos de evolución, no integraciones disponibles en la PoC. Para cada capacidad definiríamos un contrato con la solicitud, el resultado y las operaciones admitidas. Varios proveedores de alojamiento podrían implementar el mismo contrato; las cotizaciones de seguros tendrían el suyo.
 
@@ -180,9 +185,8 @@ La ampliación propuesta consiste en seleccionar un perfil lingüístico por con
 
 \textbf{Crecimiento del despliegue.} La separación de servicios también permite asignar recursos distintos a la inferencia, la voz y las APIs. Antes de añadir réplicas habría que coordinar la configuración compartida y las sesiones de voz; la política de modelos actual vive en cada proceso. Compose organiza el entorno local, pero no implementa autoescalado.
 
-La \href{../docs/architecture/extensibility.md}{propuesta de extensibilidad} desarrolla estos ejemplos, los cambios por capa y el trabajo pendiente para otros idiomas.
+La \href{../docs/architecture/extensibility.md}{propuesta de extensibilidad} detalla los cambios por capa e idioma.
 
-\newpage
 \subsection{Modelos y proveedores}
 Se han probado modelos de las familias Qwen, Mistral/Ministral y Granite. Ollama permite ejecutarlos localmente; los adaptadores de Groq y Cloudflare permiten comparar con servicios externos. Todos se conectan mediante interfaces del orquestador.
 
@@ -195,9 +199,11 @@ Interpretar, planificar y proponer una visualización son tareas distintas. El c
 \subsection{Interfaz web}
 La web utiliza React y TypeScript sobre Vite. Reúne cuentas, movimientos, tarjetas y pagos con una conversación que puede abrirse sobre esas vistas. Permite consultar hablando o escribiendo y revisar el resultado en pantalla.
 
-Obtiene los datos financieros a través del orquestador y muestra progreso, aclaraciones y previsualizaciones. Vega-Lite representa los gráficos con los datos recibidos. La persona puede consultar qué respalda una cifra o continuar sobre el gráfico. La confirmación del pago vuelve al servidor, que la contrasta con la operación pendiente.
+Obtiene los datos financieros a través del orquestador y muestra progreso, aclaraciones y previsualizaciones. Vega-Lite representa los gráficos con los datos recibidos. Texto y gráfico deben contar la misma historia: cambiar la forma de dibujar no puede cambiar el periodo, ocultar una serie necesaria ni alterar un importe. Por eso la especificación visual también se valida antes de representarla.
 
-La Figura~\ref{fig:web-conversation} reserva una vista de la interacción. Las pantallas se describen en la \href{../apps/web/README.md}{guía de la web}.
+La persona puede consultar qué respalda una cifra o continuar sobre el gráfico. La confirmación del pago vuelve al servidor, que la contrasta con la operación pendiente: el botón expresa la decisión del usuario, pero no sustituye la validación financiera.
+
+La Figura~\ref{fig:web-conversation} reserva una captura; la \href{../apps/web/README.md}{guía web} amplía las pantallas.
 
 \newpage
 \begin{figure}[H]
@@ -227,7 +233,7 @@ OpenTelemetry instrumenta el recorrido del orquestador. Cuando está activado, r
 
 El Collector recibe la telemetría, Tempo almacena las trazas, Prometheus conserva las métricas y Grafana permite consultarlas. Los paneles muestran qué peticiones resolvieron las reglas, cuándo se corrigió una propuesta y cuánto tardó el recorrido. Desde una medida se puede llegar a la traza del turno que la produjo. Las Figuras~\ref{fig:grafana-dashboard} y~\ref{fig:conversation-trace} reservan espacio para ambas vistas.
 
-La auditoría bancaria registra el resultado de las operaciones; las trazas ayudan a explicar las decisiones que llevaron hasta ellas. La instrumentación limita los datos que admite en sus registros y evita usar la conversación completa como etiqueta de una métrica. La configuración y las verificaciones están en la \href{../docs/architecture/observability.md}{documentación de observabilidad}.
+La auditoría bancaria registra el resultado de las operaciones; las trazas ayudan a explicar las decisiones que llevaron hasta ellas. Esta distinción permite investigar tanto un pago como una consulta que no llegó a ejecutarse. También permite separar el tiempo del modelo del de la banca o la presentación antes de decidir qué optimizar. La instrumentación limita los datos que admite en sus registros y evita usar la conversación completa como etiqueta de una métrica. La configuración y las verificaciones están en la \href{../docs/architecture/observability.md}{documentación de observabilidad}.
 
 \newpage
 \begin{figure}[H]
@@ -252,93 +258,88 @@ Las dependencias de arranque esperan las comprobaciones de salud o la finalizaci
 En la configuración actual, la web se ejecuta con Vite fuera de Compose y Ollama funciona en el anfitrión, donde dispone de la GPU. El orquestador llega a él mediante la dirección configurada para el host. El archivo adicional de voz real habilita Whisper y Piper; la observabilidad requiere activar también la exportación en el orquestador. El conjunto se describe en \href{../compose.yaml}{Compose}, su \href{../compose.voice-real.yaml}{configuración de voz real} y las \href{../justfile}{recetas de ejecución}. Es un entorno reproducible de desarrollo, sobre el que preparar posteriormente un despliegue operativo.
 
 \newpage
-\section{Pruebas y resultados de evaluación}
-La validación distingue el comportamiento del software de la calidad y el coste de los modelos. Una prueba de una regla puede ser reproducible sin un proveedor real; medir la comprensión y la latencia exige ejecutar el modelo en unas condiciones conocidas.
+\section{Qué demuestran las pruebas}
+La evaluación responde a tres preguntas: ¿se cumplen las reglas del sistema?, ¿interpreta bien el modelo una petición nueva? y ¿resulta utilizable el recorrido completo? Separarlas evita presentar las pruebas automáticas como una garantía de comprensión, o un buen resultado del modelo como una validación de toda la aplicación.
 
-\subsection{Pruebas del sistema}
-Las pruebas unitarias comprueban reglas concretas; las de integración ejercitan contratos y persistencia. Los episodios conversacionales encadenan turnos y declaran qué ruta o consulta se esperaba. La web y la voz tienen pruebas propias sobre estados, eventos y presentación.
+\subsection{Comprobar el comportamiento, no sólo la respuesta}
+Las pruebas unitarias aíslan reglas y casos de uso con adaptadores simulados. Las de integración comprueban contratos y persistencia. Los episodios conversacionales encadenan turnos, mientras que las pruebas de web y voz verifican qué llega a la persona. La arquitectura hexagonal permite ensayar el mismo caso de uso sin GPU y, después, contrastarlo con servicios reales.
 
 \begin{table}[H]
 \centering\small
-\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.29\linewidth}X}
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.27\linewidth}X}
 \toprule
-\textbf{Área} & \textbf{Ejemplos de comprobaciones}\\
+\textbf{Situación} & \textbf{Qué debe mantenerse} \\
 \midrule
-Consulta y contexto & Periodos, cuentas y filtros; conservar la categoría al cambiar el mes; completar una aclaración sin reiniciar la tarea.\\
-Pagos & Preparar sin mover dinero, confirmar el destino presentado, rechazar operaciones caducadas y evitar duplicados ante reintentos.\\
-Presentación & Correspondencia entre datos y gráfico; referencias ambiguas; reformulaciones visuales que no repiten consultas innecesarias.\\
-Canales & Estados de la interfaz, eventos del turno correcto, interrupciones de audio y confirmación del pago en pantalla.\\
+«¿Y el mes anterior?» & Cambia el periodo, pero se conservan la cuenta y los filtros pertinentes; una ambigüedad provoca una aclaración.\\
+Preparar y confirmar un pago & Preparar no mueve dinero. Se confirma la operación presentada y un reintento no debe duplicar su efecto.\\
+«Ponlo en horizontal» & Cambia la presentación, no los datos; esta ruta no necesita otra consulta bancaria ni otra llamada al modelo.\\
+Continuar por voz & Texto, gráfico y audio pertenecen al mismo turno; una interrupción no debe reproducir una respuesta antigua.\\
+Consultar otro titular & Los permisos y el aislamiento se comprueban en el servicio financiero, no se dejan a la interpretación del LLM.\\
 \bottomrule
 \end{tabularx}
-\caption{Comportamientos que se ejercitan en las pruebas del repositorio.}
+\caption{Ejemplos de comportamientos comprobables y de la frontera que protegen.}
 \end{table}
 
-El \href{../docs/conversational-capabilities.md}{mapa de capacidades} conecta cada función con sus pruebas y distingue los casos construidos de los que aún requieren más evidencia. La \href{../docs/audits/2026-08-28-do-the-tests-prove-anything.md}{auditoría por mutaciones del 28 de agosto} complementó esa revisión introduciendo fallos deliberados: encontró algunos que las pruebas no detectaban y señaló comprobaciones que reforzar. Así se evalúa también la capacidad de las pruebas para descubrir errores.
+El \href{../docs/conversational-capabilities.md}{mapa de capacidades} conecta las funciones con sus pruebas. Además, la \href{../docs/audits/2026-08-28-do-the-tests-prove-anything.md}{auditoría por mutaciones} introdujo fallos deliberados para comprobar si las pruebas los detectaban. Encontrar errores que sobrevivían a una suite aparentemente correcta permitió reforzar las comprobaciones: el valor no está sólo en cuántas pruebas pasan, sino en qué regresiones consiguen detener.
 
-La ejecución realizada sobre la revisión actual produjo \textbf{4.645 pruebas superadas y 4 omitidas}. El único fallo corresponde a una prueba de integración que intenta arrancar \code{qwen2.5-coder:7b}; ese modelo no está instalado en el demonio local, por lo que el error es una dependencia del entorno y no un fallo funcional de Wave 3. Las pruebas que no requieren ese modelo comprobaron las reglas, los contratos, el contexto conversacional, los pagos, las visualizaciones y los canales.
+La revisión anterior de esta memoria consignó 4.645 pruebas superadas, 4 omitidas y un fallo atribuido a la ausencia local de \code{qwen2.5-coder:7b}. Se conserva como resultado comunicado, no como una nueva ejecución ni como una suite completamente superada: falta enlazar su registro y delimitar qué aplicaciones incluye. La \href{../docs/audits/2026-09-21-memoria-evidence.md}{nota de evidencia} identifica esta limitación y las fuentes utilizadas.
 
-\newpage
-\subsection{Evaluación de los modelos}
-Se han comparado modelos con preguntas de desarrollo, validación reservada, casos adversarios, variaciones lingüísticas y cambios controlados de una petición. Se mide la decisión tomada, la coincidencia del plan esperado, las aclaraciones innecesarias y los planes incorrectos que llegarían a producir una cifra. Esta última medida se denomina \code{unsafe} en los informes; no representa una tasa de pagos no autorizados.
+\subsection{Comprensión: acertar la ruta no basta}
+En planificación se distinguen tres medidas. La \emph{decisión} indica si corresponde proponer un plan, pedir aclaración o declarar una petición no admitida. El \emph{plan exacto} comprueba sus campos ---periodo, dirección, categorías, comercio, agrupación y métrica--- frente a lo esperado. Por último, \code{unsafe} identifica interpretaciones que llegarían a producir una cifra equivocada o ejecutarían una consulta que debía aclararse. No mide pagos no autorizados.
 
-Un experimento de clasificación del 6 de agosto comparó modelos con el encaminamiento determinista sobre 818 turnos evaluados. Estas son las dos ejecuciones completas comparables:
+La campaña consignada en la memoria el 18 de septiembre utiliza \code{ministral-3:14b}, Ollama local, contexto de 4096 tokens y semilla 0, sobre la revisión \code{2cd2990}. Sus tres repeticiones de validación reservada recogen 76--77 decisiones correctas de 79 y 61--62 planes exactos de 66 casos que esperaban un plan. Son denominadores distintos: ninguna de esas cifras significa que el 97\,\% de las respuestas financieras de la aplicación sean correctas.
+
 \begin{table}[H]
 \centering\small
-\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.29\linewidth}XX}
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.28\linewidth}rXX}
 \toprule
-\textbf{Modelo} & \textbf{Acuerdo con las reglas} & \textbf{Tiempo por turno}\\
+\textbf{Conjunto} & \textbf{Casos} & \textbf{Decisión correcta} & \textbf{Unsafe}\\
 \midrule
-\code{qwen3:8b} & 81,3\,\% & 722 ms\\
-\code{qwen3.5:9b} & 83,3\,\% & 1.869 ms\\
+Validación reservada & 79 & 96,2--97,5\,\% & 5,1\,\%\\
+Desarrollo & 123 & 95,9\,\% & 4,9\,\%\\
+Adversarial & 36 & 75,0\,\% & 8,3\,\%\\
+Variación lingüística & 75 & 98,7\,\% & 4,0\,\%\\
+Cambios controlados & 19 & 94,7\,\% & 0,0\,\%\\
 \bottomrule
 \end{tabularx}
-\caption{Comparación histórica de clasificación; el acuerdo con las reglas no equivale a exactitud financiera.}
+\caption{Resultados de planificación consignados el 18 de septiembre. Pendientes de incorporar al informe de evaluación con sus registros de ejecución.}
 \end{table}
 
-El modelo mayor corrigió algunas confusiones y reconoció formulaciones que escapaban a las reglas, pero introdujo otras y necesitó más tiempo. El resultado apoya una selección por tarea y el uso híbrido del modelo. Las otras familias ensayadas, las condiciones y los tipos de error están en el \href{../apps/orchestrator/evaluation/conversations/RESULTS.md}{informe de clasificación}.
+La validación reservada separa los ejemplos de evaluación de los usados para ajustar el sistema. Los adversarios ensayan instrucciones maliciosas, límites y peticiones fuera del dominio; las variaciones lingüísticas cambian la forma de preguntar; los cambios controlados modifican una sola dimensión y comprueban que las demás permanezcan estables.
 
-En planificación, la nueva campaña se realizó el 18 de septiembre sobre la revisión \code{2cd2990}, con \code{ministral-3:14b}, contexto de 4096 tokens, semilla 0 y Ollama local. La validación reservada se repitió tres veces: obtuvo entre 76 y 77 respuestas correctas de 79 (96,2--97,5\,\%), entre 61 y 62 planes exactos de 66 (92,4--93,9\,\%), un 5,1\,\% de ejecuciones \code{unsafe} y cero estructuras inválidas. La variación de un caso entre repeticiones muestra por qué no se toma una única ejecución como resultado definitivo.
+La lectura importante es la distancia entre estructura y significado: se comunicaron cero estructuras inválidas, pero persistieron planes \code{unsafe}. Un JSON válido puede preguntar por los datos equivocados. Además, estas medidas incluyen las defensas del planificador, no sólo al modelo aislado; las reglas que imponen filtros explícitos contribuyen al resultado. Esa es la razón de mantener la verificación posterior y no confiar únicamente en las instrucciones del modelo.
 
-La matriz completa quedó así:
-\begin{table}[H]
-\centering\small
-\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.24\linewidth}XXXX}
-\toprule
-\textbf{Conjunto} & \textbf{Casos} & \textbf{Resultado correcto} & \textbf{Unsafe} & \textbf{Inválido}\\
-\midrule
-Validación reservada & 79 & 96,2--97,5\,\% & 5,1\,\% & 0\,\%\\
-Desarrollo & 123 & 95,9\,\% & 4,9\,\% & 0\,\%\\
-Adversarial & 36 & 75,0\,\% & 8,3\,\% & 0\,\%\\
-Drift lingüístico & 75 & 98,7\,\% & 4,0\,\% & 0\,\%\\
-Metamórfico & 19 & 94,7\,\% & 0,0\,\% & 0\,\%\\
-\bottomrule
-\end{tabularx}
-\caption{Benchmark de planificación de Wave 3 con \code{ministral-3:14b}.}
-\end{table}
+Los \href{../apps/orchestrator/evaluation/planning/RESULTS.md}{informes históricos de planificación} documentan cómo se llegó a esa separación. Por ejemplo, una inyección que pretendía convertir una pregunta sobre gasto en movimientos de cualquier dirección pasó a ser rechazada por una regla de dominio. La defensa redujo el riesgo aunque rechazar no equivalga a responder correctamente. El mismo informe aún no incorpora la campaña de septiembre: sus cifras se conservan aquí con esa reserva, sin atribuirles una verificación independiente.
 
-El benchmark no pretende medir sólo si la salida es un JSON válido. Cada caso contiene una pregunta en español y un plan esperado; se comprueban por separado la ventana temporal, dirección, categorías, comercio, agrupación y métrica. \code{unsafe} identifica un plan que produciría una cifra incorrecta o que ejecutaría una pregunta que debía aclararse. El conjunto adversarial introduce inyecciones, límites y peticiones fuera de dominio; \emph{drift} cambia la redacción sin cambiar el significado; y el conjunto metamórfico empareja preguntas que modifican una sola dimensión, comprobando que el resto del plan permanezca estable. De este modo se evalúan exactitud, seguridad y robustez, no sólo fluidez lingüística. Los \href{../apps/orchestrator/evaluation/planning/RESULTS.md}{resultados de planificación} conservan el detalle de cada caso.
+\subsection{Visualización: el modelo debe justificar su coste}
+La elección del modelo se hace por tarea. Los ensayos históricos de \href{../apps/orchestrator/evaluation/conversations/RESULTS.md}{clasificación} ya mostraban el compromiso: sobre 818 turnos, \code{qwen3:8b} coincidió con las reglas en el 81,3\,\% y \code{qwen3.5:9b} en el 83,3\,\%, con 722 y 1.869 ms por turno respectivamente. Ese acuerdo no demuestra exactitud financiera ni permite comparar directamente modelos medidos en campañas distintas.
 
-\subsection{Planificador visual: modos \code{deterministic}, \code{shadow} y \code{hybrid}}
-Para los gráficos se separa la propuesta del modelo de la decisión que llega a la pantalla. El planificador determinista, llamado \emph{suelo}, construye un gráfico seguro a partir del perfil de los datos. En modo \code{shadow}, el LLM recibe la pregunta y la forma del conjunto, propone un borrador y atraviesa el mismo verificador que cualquier otra propuesta, pero el usuario sigue viendo siempre el suelo. Este modo permite medir el modelo sin introducir cambios visibles ni riesgos.
+La propuesta de gráficos tiene su propia evaluación. En modo \code{deterministic}, las reglas construyen la visualización de referencia. En \code{shadow}, el modelo propone una alternativa y se verifica, pero se sigue mostrando la referencia. En \code{hybrid}, una propuesta admitida puede sustituirla; ante un fallo o al agotarse el tiempo, se conserva la alternativa determinista. El modelo recibe el perfil de los datos, no los importes, y devuelve una estructura cerrada, no código Vega-Lite libre.
 
-En modo \code{hybrid}, una propuesta válida y semánticamente adecuada puede sustituir al suelo; si el modelo se abstiene, tarda más que el presupuesto o incumple una regla, se conserva el gráfico determinista. Por ello \code{hybrid} no se activa por calendario: exige evidencia de que el modelo produce propuestas válidas, adecuadas, estables y suficientemente distintas del suelo para justificar el coste adicional. El modelo nunca recibe importes ni acceso a la banca, y no puede emitir Vega-Lite arbitrario: devuelve una estructura cerrada que el dominio verifica.
+El \href{../apps/orchestrator/evaluation/visual/RESULTS.md}{informe visual} y su \href{../apps/orchestrator/evaluation/visual/last-run.json}{registro} conservan una ejecución con \code{ministral-3:14b}: 16 casos, de los que 14 entran en la política y 2 no deben generar un gráfico.
+\begin{itemize}
+\item Sólo 3 de las 14 propuestas fueron válidas; esas 3 fueron adecuadas y únicamente 2 aportaron un cambio respecto a la referencia.
+\item La estabilidad falló en el único par de paráfrasis evaluable; otros tres pares quedaron sin propuesta. Es una muestra insuficiente para generalizar.
+\item La espera añadida fue de 5,14 s de mediana y 6,03 s en P95. El modo \code{shadow} también añade esa espera, aunque no cambie el gráfico mostrado.
+\end{itemize}
 
-El benchmark visual sigue esa idea. Contiene 16 casos, de los que 14 entran en la política, 4 pares de paráfrasis equivalentes, 2 instrucciones explícitas de forma y 2 preguntas que no deben producir gráfico. La validez comprueba la estructura; la adecuación comprueba la marca y los requisitos semánticos anotados (por ejemplo, conservar una serie o un orden); y la sensibilidad comprueba que una instrucción como «muéstramelo como un donut» provoque el cambio esperado. Se ejecutó tres veces con la GPU sin concurrencia para evitar confundir variabilidad del modelo con una mejora.
+La decisión es mantener la vía determinista como referencia de uso y utilizar \code{shadow} para investigar mejoras. El registro disponible no basta para acreditar tres repeticiones independientes ni para recomendar el paso a \code{hybrid}. Esta comparación ilustra el criterio del proyecto: incorporar un modelo sólo cuando su aportación observada compensa los errores y el coste de interacción.
 
-Las tres ejecuciones con \code{ministral-3:14b} dieron el mismo resultado: sólo 3 de 14 propuestas fueron válidas; las 3 válidas fueron adecuadas, pero sólo 2 de 14 fueron además distintas del suelo. La estabilidad observada fue 0 de 1 par evaluable y la latencia añadida fue aproximadamente 5,1 s en P50 y 6,03 s en P95. Por tanto, el resultado no justifica promocionar de \code{shadow} a \code{hybrid}: la validez está muy por debajo del 100\,\% del suelo y el beneficio visible es pequeño frente a la espera adicional. La política desplegada conserva \code{deterministic}; \code{shadow} queda como instrumento de evaluación. El detalle de la corrida se conserva en \href{../apps/orchestrator/evaluation/visual/RESULTS.md}{RESULTS.md} y \href{../apps/orchestrator/evaluation/visual/last-run.json}{last-run.json}.
+\subsection{Del plan al uso real}
+Las evaluaciones de extremo a extremo envían preguntas por HTTP y comprueban propiedades de la respuesta: que las cifras estén respaldadas, que los desgloses correspondan al resultado y que la conversación conserve su contexto. Son distintas del benchmark que termina al construir un plan. Los informes de \href{../apps/orchestrator/evaluation/planning/RESULTS-E2E.md}{consultas completas} y \href{../apps/orchestrator/evaluation/conversations/RESULTS-E2E.md}{episodios conversacionales} documentan fallos, correcciones del evaluador y diferencias de versión; no constituyen una certificación de la revisión actual.
 
-\newpage
-\subsection{Latencia del recorrido de voz}
-La evaluación local del 17 de agosto recorrió reconocimiento de voz, orquestador, modelo, banca y síntesis. Utilizó una frase sintética en español, dos turnos de calentamiento y veinte muestras, con Whisper \code{small} y Piper en CPU y \code{ministral-3:14b} servido por Ollama en un equipo con Ryzen 7700X y RTX 3060.
+Una lección de esos ensayos es que «cero inconsistencias» no sirve si ninguna petición llegó a producir una respuesta. Por eso hay que observar también cuántos casos se contestaron realmente. Rechazar todo puede evitar errores de cifras y, a la vez, hacer inútil el asistente.
 
-El tiempo de inicio de entrada a turno completado fue de 4,93 s de mediana y 5,08 s en el percentil 95. El informe separa los tiempos por etapa para localizar el coste; la llegada del audio al cliente no mide cuándo empieza a oírse en el dispositivo. Por tratarse de una frase repetida, esta ejecución valida ese recorrido y no sustituye una evaluación con habla espontánea y más usuarios.
+En voz, la \href{../apps/voice-gateway/evaluation/RESULTS.md}{medición local del 17 de agosto} recorrió reconocimiento, orquestación, modelo, banca y síntesis. Con una frase sintética en español, dos turnos de calentamiento y veinte muestras, obtuvo 4,93 s de mediana y 5,08 s en P95 hasta completar el turno. Utilizó Whisper \code{small} y Piper en CPU, y \code{ministral-3:14b} con Ollama sobre Ryzen 7700X y RTX 3060.
 
-La \href{../apps/voice-gateway/evaluation/RESULTS.md}{evaluación de voz} recoge además ensayos posteriores en contenedores y diferencias observadas desde el navegador. Sus cifras se mantienen separadas porque cambian el modelo de reconocimiento, la petición y el uso del planificador. Esa distinción permite saber qué mejora realmente cuando se modifica una parte del sistema.
+Ese resultado acredita el recorrido ensayado, no una conversación espontánea ni el instante en que el usuario empieza a oír el audio. Las mediciones posteriores usan otras configuraciones y se mantienen separadas. Tampoco procede sumar su latencia a la del benchmark visual: no son etapas medidas juntas en una misma ejecución.
 
-\section{Conclusión}
-FinGuard convierte una necesidad expresada en lenguaje natural en un recorrido que puede consultarse, revisarse y probarse. El orquestador conecta contexto, interpretación y validación; la API bancaria aporta los datos y ejecuta las operaciones; la web y la voz acercan ese proceso a la persona.
+\section{Conclusión y siguientes pasos}
+FinGuard demuestra una forma de organizar la interacción financiera en la que conversar no significa ceder el control al modelo. El orquestador conserva el contexto, elige entre reglas y comprensión asistida y verifica las propuestas; la banca aporta los datos y controla los cambios de estado; la web y la voz presentan un resultado que puede seguirse mediante trazas.
 
-La PoC aporta una base para explorar esa experiencia con modelos desplegables en infraestructura propia. El siguiente paso es repetir las evaluaciones sobre una versión común y ampliar las conversaciones y condiciones de uso. La integración con una entidad real requeriría completar las garantías operativas previstas fuera del alcance de esta prueba.
+La arquitectura permite sustituir proveedores y añadir capacidades sin mezclar sus protocolos con las reglas financieras. Las pruebas justifican mantener la verificación semántica, conservar la visualización determinista y evaluar cada modelo por su aportación y su coste.
 
-Para profundizar, la \href{../docs/vision.md}{visión funcional} desarrolla las capacidades, la \href{../docs/architecture/monorepo.md}{arquitectura del repositorio} explica la distribución de servicios y los documentos enlazados en cada apartado conservan la implementación y la evidencia. La memoria presenta el recorrido completo; esas referencias permiten examinar cada decisión con el detalle que necesite el lector.
+El siguiente paso es adjuntar los registros recientes y repetir los recorridos completos sobre una misma revisión. Después, ampliar los casos que producen planes incorrectos y las pruebas de voz espontánea y continuidad. La conexión con una entidad real exigiría completar las garantías de seguridad y operación excluidas de la PoC.
+
+La \href{../docs/vision.md}{visión funcional}, la \href{../docs/architecture/monorepo.md}{arquitectura} y los informes enlazados permiten continuar esa revisión: de la experiencia de uso a los contratos, las pruebas y los resultados que la sustentan.
 \end{document}
