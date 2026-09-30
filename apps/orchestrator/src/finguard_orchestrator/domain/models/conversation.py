@@ -33,10 +33,12 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
+    MAX_AGENT_NAME,
     MAX_ENTITY_ALIAS_LENGTH,
     MAX_ENTITY_ALIASES,
     MAX_GROUP_RANK,
     MAX_MERCHANT_LENGTH,
+    MAX_OFFERS,
     MAX_REMEMBERED_TURNS,
     MAX_SELECTED_ACCOUNTS,
     MAX_TURN_NOTE,
@@ -47,6 +49,7 @@ from finguard_orchestrator.domain.enums import CounterpartyType, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import CHART_ID_PATTERN, VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.models.expert_agents import AGENT_ID, ActivitySlot
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -334,6 +337,48 @@ type ActiveWorkflow = (
     | TransferInProgress
     | PaymentConfirmation
 )
+
+
+@dataclass(frozen=True)
+class ActivityOffers:
+    """The last search's verified slots, and per agent its card name and A2A `contextId` (§5.3).
+
+    Memory rather than a workflow, like the visual contexts: a booking resolves «la de las 19:00»
+    against these, and only while `trusted` -- an echo whose seal does not check out is unusable,
+    never repaired. `token` is that seal, kept only when it verified, so a turn about something
+    else carries the offers forward still sealed; a set a search has just built has none until the
+    edge seals it (`conversation_mapper.seal_offers_payload`).
+    """
+
+    slots: tuple[ActivitySlot, ...]  # at most MAX_OFFERS, ordered by start
+    agent_names: tuple[tuple[str, str], ...]  # (agent_id, card name as shown)
+    contexts: tuple[tuple[str, str], ...]  # (agent_id, A2A contextId)
+    trusted: bool = True
+    token: str | None = None
+
+    def __post_init__(self) -> None:
+        if len(self.slots) > MAX_OFFERS:
+            raise InvalidValueError(f"at most {MAX_OFFERS} offers")
+        starts = [slot.start for slot in self.slots]
+        if starts != sorted(starts):
+            raise InvalidValueError("offers are ordered by start")
+        named = [agent_id for agent_id, _ in self.agent_names]
+        if len(set(named)) != len(named) or any(
+            not AGENT_ID.fullmatch(agent_id) or not 1 <= len(name) <= MAX_AGENT_NAME
+            for agent_id, name in self.agent_names
+        ):
+            raise InvalidValueError("each offering agent is named once, by a bounded name")
+        if any(slot.agent_id not in named for slot in self.slots):
+            raise InvalidValueError("every offered slot comes from a named agent")
+        continued = [agent_id for agent_id, _ in self.contexts]
+        if len(set(continued)) != len(continued) or any(
+            agent_id not in named or not context_id for agent_id, context_id in self.contexts
+        ):
+            raise InvalidValueError("each context belongs to one offering agent")
+
+    def name_of(self, agent_id: str) -> str:
+        """The card name the holder was shown for this agent, or its id."""
+        return dict(self.agent_names).get(agent_id, agent_id)
 
 
 @dataclass(frozen=True)
@@ -709,6 +754,7 @@ __all__ = [
     "AccountScopeClarification",
     "AccountSelection",
     "AccountSelectionMode",
+    "ActivityOffers",
     "CounterpartyAlias",
     "ActiveWorkflow",
     "Conversation",
