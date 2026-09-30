@@ -7,7 +7,8 @@ answer with a closed rule name, and a rejected answer is that agent not respondi
 `verify_slots`, rule by rule over every slot, first failure wins:
 
     structure   each start is `YYYY-MM-DDTHH:MM` or `HH:MM`, each end the same or absent; the
-                activity and the reference are within their ceilings.
+                activity is within its ceiling, and a reference (or a booking code) is one ASCII
+                token (`REFERENCE`) within its own -- never a phrase of the reply.
     grounding   the clock time is one the reply states (`stated_times`), and so is an end's -- or
                 the reply states the minutes from start to end as a whole number; the activity is
                 the one asked (`same_activity`) and is itself in the reply; the date is in the
@@ -53,6 +54,7 @@ from finguard_orchestrator.domain.models.expert_agents import (
     DataReplyPart,
     SlotDraft,
     TextReplyPart,
+    is_reference,
 )
 from finguard_orchestrator.domain.services.activity_when import StatedTime, stated_times
 from finguard_orchestrator.domain.services.spanish import folded
@@ -173,7 +175,9 @@ def verify_booking(
     """A confirmation, bound to the slot that was asked for, with a code the reply states."""
     if not draft.booked:
         return AgentRejection("not_booked")
-    if draft.booking_code is not None and not 1 <= len(draft.booking_code) <= MAX_BOOKING_CODE:
+    if (
+        draft.booking_code is not None and not is_reference(draft.booking_code, MAX_BOOKING_CODE)
+    ) or (draft.slot_ref is not None and not is_reference(draft.slot_ref, MAX_SLOT_REF)):
         return AgentRejection("structure")
     if draft.booking_code is None or not _token_said(draft.booking_code, reply_text(reply)):
         return AgentRejection("grounding")
@@ -227,7 +231,7 @@ def _moment(written: str) -> tuple[date | None, time] | None:
 
 def _fits(slot: SlotDraft) -> bool:
     return 1 <= len(slot.activity) <= MAX_ACTIVITY_NAME and (
-        slot.slot_ref is None or 1 <= len(slot.slot_ref) <= MAX_SLOT_REF
+        slot.slot_ref is None or is_reference(slot.slot_ref, MAX_SLOT_REF)
     )
 
 

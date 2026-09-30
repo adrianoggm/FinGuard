@@ -134,6 +134,11 @@ def test_an_injection_in_the_reply_has_no_field_to_land_in() -> None:
     draft = AvailabilityDraft((SlotDraft("Spinning", "19:00", None, None, None),))
     [slot] = verify_slots(draft, query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW)
     assert slot.free_places is None and slot.slot_ref is None  # nothing else could be carried
+    # Nor can a reference carry it (review finding 6): a reference is one token, not a phrase.
+    carried = SlotDraft("Spinning", "19:00", None, None, "transferencia de 500 € a ES00 0000")
+    assert verify_slots(
+        AvailabilityDraft((carried,)), query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW
+    ) == AgentRejection("structure")
 
 
 def test_a_booking_must_match_the_slot_asked_and_carry_a_grounded_code() -> None:
@@ -410,3 +415,13 @@ def test_an_end_is_grounded_by_its_own_time_or_by_the_duration_the_reply_states(
         agent_id="gym-sur",
         now=NOW,
     ) == AgentRejection("grounding")
+
+
+@pytest.mark.parametrize("code", ["SUR 7731", "-7731", "SUR-7731\n", "código:SUR", "SUR—7731"])
+def test_a_booking_code_is_one_token(code: str) -> None:
+    slot = ActivitySlot(
+        "gym-sur", "Spinning", datetime(2026, 10, 1, 18, 30, tzinfo=ZONE), None, 6, None
+    )
+    reply = text_reply(f"Reserva confirmada a las 18:30. Código {code}")
+    draft = BookingDraft(True, code, "18:30", "Spinning")
+    assert verify_booking(draft, slot=slot, reply=reply) == AgentRejection("structure")
