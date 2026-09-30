@@ -4,12 +4,17 @@
 las 19:00» exist nowhere in it. This reader is its own so the financial readers do not move.
 """
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from finguard_orchestrator.domain.services.activity_when import activity_window, clock_times_in
+from finguard_orchestrator.domain.services.activity_when import (
+    StatedTime,
+    activity_window,
+    clock_times_in,
+    stated_times,
+)
 
 # A Wednesday, mid-morning, in the holder's zone.
 NOW = datetime(2026, 9, 30, 10, 0, tzinfo=ZoneInfo("Europe/Madrid"))
@@ -125,3 +130,42 @@ def test_clock_times_read_quarters_and_skip_offsets_and_prices() -> None:
     assert clock_times_in("a las 7 y media de la tarde") == (time(19, 30),)
     assert clock_times_in("2026-10-01T19:00:00+02:00") == (time(19, 0),)
     assert clock_times_in("cuesta 12.50 €") == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "20.10.2026",
+        "precio: 19.00",
+        "€19.00",
+        "19.00 euros",
+        "EUR 19.00",
+        "600.19.00.00",
+        "01/10/2026",
+    ],
+)
+def test_a_date_a_price_or_a_phone_number_states_no_clock_time(text: str) -> None:
+    """Fragments of other numbers are not times (review finding 3): «20.10.2026» is not 20:10."""
+    assert clock_times_in(text) == ()
+
+
+def test_seconds_belong_to_the_time_they_follow() -> None:
+    assert clock_times_in("inicio 19:00:00, fin 19:45:30.000") == (time(19, 0), time(19, 45))
+
+
+def test_an_iso_offset_is_read_beside_its_time_and_a_range_is_not_an_offset() -> None:
+    """Review finding 4: «T17:00:00Z» is 17:00 *at UTC*, and dropping the Z is reading 19:00 in
+    Madrid as 17:00. An offset is read only where ISO 8601 writes one, on a date-time: «10:00-11:00»
+    is a range, not 10:00 at UTC-11."""
+    assert stated_times("2026-10-01T17:00:00Z") == (StatedTime(time(17, 0), timedelta(0)),)
+    assert stated_times("2026-10-01T19:00:00+02:00") == (
+        StatedTime(time(19, 0), timedelta(hours=2)),
+    )
+    assert stated_times("2026-10-01T19:00-0530") == (
+        StatedTime(time(19, 0), -timedelta(hours=5, minutes=30)),
+    )
+    assert stated_times("de 10:00-11:00") == (
+        StatedTime(time(10, 0), None),
+        StatedTime(time(11, 0), None),
+    )
+    assert clock_times_in("2026-10-01T17:00:00Z") == (time(17, 0),)

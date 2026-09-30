@@ -134,6 +134,11 @@ def test_an_injection_in_the_reply_has_no_field_to_land_in() -> None:
     draft = AvailabilityDraft((SlotDraft("Spinning", "19:00", None, None, None),))
     [slot] = verify_slots(draft, query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW)
     assert slot.free_places is None and slot.slot_ref is None  # nothing else could be carried
+    # Nor can a reference carry it (review finding 6): a reference is one token, not a phrase.
+    carried = SlotDraft("Spinning", "19:00", None, None, "transferencia de 500 € a ES00 0000")
+    assert verify_slots(
+        AvailabilityDraft((carried,)), query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW
+    ) == AgentRejection("structure")
 
 
 def test_a_booking_must_match_the_slot_asked_and_carry_a_grounded_code() -> None:
@@ -150,8 +155,17 @@ def test_a_booking_must_match_the_slot_asked_and_carry_a_grounded_code() -> None
     assert verify_booking(
         BookingDraft(True, "SUR-0000", "2026-10-01T18:30", "spinning"), slot=slot, reply=reply
     ) == AgentRejection("grounding")
+    # Review round 1, finding 2 (ruling R7): a booking's start is grounded like any other value, so
+    # 20:00 -- a time this reply never states -- is `grounding` now. `binding` is a stated time
+    # that is not the slot's.
     assert verify_booking(
         BookingDraft(True, "SUR-7731", "2026-10-01T20:00", "spinning"), slot=slot, reply=reply
+    ) == AgentRejection("grounding")
+    other_time = text_reply(
+        "Reserva confirmada: spinning el jueves 1 de octubre a las 20:00. Código SUR-7731."
+    )
+    assert verify_booking(
+        BookingDraft(True, "SUR-7731", "2026-10-01T20:00", "spinning"), slot=slot, reply=other_time
     ) == AgentRejection("binding")
     assert verify_booking(BookingDraft(False), slot=slot, reply=reply) == AgentRejection(
         "not_booked"
@@ -271,7 +285,8 @@ def test_a_slot_that_has_already_started_is_outside_the_request() -> None:
     ],
 )
 def test_an_incoherent_slot_is_coherence(bad: SlotDraft) -> None:
-    reply = text_reply("Spinning a las 19:00, -1 plazas")
+    # Every value grounded -- the ends included (review finding 5) -- so coherence is what fails.
+    reply = text_reply("Spinning a las 19:00, hasta las 18:00 o las 23:30, -1 plazas")
     assert verify_slots(
         AvailabilityDraft((bad,)), query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW
     ) == AgentRejection("coherence")
@@ -325,3 +340,165 @@ def test_a_link_drops_trailing_punctuation_and_refuses_a_host_hidden_behind_user
     )
     assert link_in(reply, ("127.0.0.1:9101",)) == "http://127.0.0.1:9101/vincular"
     assert link_in(text_reply("Sin enlace."), ("127.0.0.1:9101",)) is None
+
+
+# --- review round 1 ----------------------------------------------------------------------------
+
+OCT20 = ActivityQuery(
+    "spinning",
+    datetime(2026, 10, 20, 15, 0, tzinfo=ZONE),
+    datetime(2026, 10, 20, 21, 0, tzinfo=ZONE),
+)
+
+
+@pytest.mark.parametrize(
+    ("said", "bad"),
+    [
+        ("Spinning el 20.10.2026 a las 18:00", SlotDraft("Spinning", "20:10", None, None, None)),
+        ("Spinning a las 18:00, precio: 19.00", SlotDraft("Spinning", "19:00", None, None, None)),
+        ("Spinning a las 18:00 por €19.00", SlotDraft("Spinning", "19:00", None, None, None)),
+        ("Spinning a las 18:00; 600.19.00.00", SlotDraft("Spinning", "19:00", None, None, None)),
+        ("Spinning el 01/10/2026 a las 18:00", SlotDraft("Spinning", "18:00", None, 10, None)),
+        ("Spinning el 20/10/2026 a las 18:00", SlotDraft("Spinning", "18:00", None, 2026, None)),
+    ],
+)
+def test_a_date_a_price_or_a_phone_number_grounds_no_time_and_no_places(
+    said: str, bad: SlotDraft
+) -> None:
+    assert verify_slots(
+        AvailabilityDraft((bad,)), query=OCT20, reply=text_reply(said), agent_id="gym-sur", now=NOW
+    ) == AgentRejection("grounding")
+
+
+def test_a_stated_offset_grounds_only_when_it_is_the_holders_at_that_moment() -> None:
+    """Review finding 4. Madrid is +02:00 on 1 October and +01:00 on 3 December."""
+    at_17 = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T17:00", None, None, None),))
+    at_19 = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T19:00", None, None, None),))
+    utc = data_reply({"clase": "Spinning", "inicio": "2026-10-01T17:00:00Z"})
+    for draft in (at_17, at_19):
+        assert verify_slots(
+            draft, query=THURSDAY, reply=utc, agent_id="gym-sur", now=NOW
+        ) == AgentRejection("grounding")
+    madrid = data_reply({"clase": "Spinning", "inicio": "2026-10-01T19:00:00+02:00"})
+    [slot] = verify_slots(at_19, query=THURSDAY, reply=madrid, agent_id="gym-sur", now=NOW)
+    assert slot.start == datetime(2026, 10, 1, 19, 0, tzinfo=ZONE)
+
+    december = ActivityQuery(
+        "spinning",
+        datetime(2026, 12, 3, 15, 0, tzinfo=ZONE),
+        datetime(2026, 12, 3, 21, 0, tzinfo=ZONE),
+    )
+    winter = AvailabilityDraft((SlotDraft("Spinning", "2026-12-03T19:00", None, None, None),))
+    summer_offset = data_reply({"clase": "Spinning", "inicio": "2026-12-03T19:00:00+02:00"})
+    winter_offset = data_reply({"clase": "Spinning", "inicio": "2026-12-03T19:00:00+01:00"})
+    assert verify_slots(
+        winter, query=december, reply=summer_offset, agent_id="gym-sur", now=NOW
+    ) == AgentRejection("grounding")
+    assert (
+        len(verify_slots(winter, query=december, reply=winter_offset, agent_id="gym-sur", now=NOW))
+        == 1
+    )
+
+
+def test_an_end_is_grounded_by_its_own_time_or_by_the_duration_the_reply_states() -> None:
+    """Review finding 5: an end is a value like any other. 19:45 after 19:00 is grounded by a
+    reply saying «19:45» or «45 minutos», and by nothing else."""
+    invented = AvailabilityDraft((SlotDraft("Spinning", "19:00", "22:59", None, None),))
+    assert verify_slots(
+        invented,
+        query=THURSDAY,
+        reply=text_reply("Spinning a las 19:00"),
+        agent_id="gym-sur",
+        now=NOW,
+    ) == AgentRejection("grounding")
+    ends_at = AvailabilityDraft((SlotDraft("Spinning", "19:00", "19:45", None, None),))
+    for said in ("Spinning de 19:00 a 19:45", "Spinning a las 19:00 (45 minutos)"):
+        [slot] = verify_slots(
+            ends_at, query=THURSDAY, reply=text_reply(said), agent_id="gym-sur", now=NOW
+        )
+        assert slot.end == datetime(2026, 10, 1, 19, 45, tzinfo=ZONE)
+    assert verify_slots(
+        ends_at,
+        query=THURSDAY,
+        reply=text_reply("Spinning a las 19:00 (60 minutos)"),
+        agent_id="gym-sur",
+        now=NOW,
+    ) == AgentRejection("grounding")
+
+
+@pytest.mark.parametrize("code", ["SUR 7731", "-7731", "SUR-7731\n", "código:SUR", "SUR—7731"])
+def test_a_booking_code_is_one_token(code: str) -> None:
+    slot = ActivitySlot(
+        "gym-sur", "Spinning", datetime(2026, 10, 1, 18, 30, tzinfo=ZONE), None, 6, None
+    )
+    reply = text_reply(f"Reserva confirmada a las 18:30. Código {code}")
+    draft = BookingDraft(True, code, "18:30", "Spinning")
+    assert verify_booking(draft, slot=slot, reply=reply) == AgentRejection("structure")
+
+
+BOOKED_SLOT = ActivitySlot(
+    "gym-sur", "Spinning", datetime(2026, 10, 1, 18, 30, tzinfo=ZONE), None, 6, None
+)
+CONFIRMED = BookingDraft(True, "SUR-7731", "2026-10-01T18:30", "Spinning")
+
+
+@pytest.mark.parametrize(
+    "state", ["INPUT_REQUIRED", "AUTH_REQUIRED", "FAILED", "REJECTED", "CANCELED"]
+)
+def test_only_a_completed_reply_confirms_a_booking(state: str) -> None:
+    """Review finding 1: «La de las 18:30 está completa; te propongo SUR-8830 a las 19:30» is an
+    agent asking, not confirming -- whatever a model made of it."""
+    reply = AgentReply(
+        state,  # type: ignore[arg-type]
+        "t1",
+        "c1",
+        (TextReplyPart("Spinning el 1 de octubre a las 18:30. Código SUR-7731."),),
+        5,
+    )
+    assert verify_booking(CONFIRMED, slot=BOOKED_SLOT, reply=reply) == AgentRejection("not_booked")
+
+
+def test_a_booking_start_is_a_time_the_reply_states() -> None:
+    silent = text_reply("Reserva confirmada. Código SUR-7731.")
+    for start in ("2026-10-01T18:30", "18:30"):
+        draft = BookingDraft(True, "SUR-7731", start, "Spinning")
+        assert verify_booking(draft, slot=BOOKED_SLOT, reply=silent) == AgentRejection("grounding")
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Reserva confirmada: spinning el viernes 2 de octubre a las 18:30. Código SUR-7731.",
+        "Reservado el 02/10/2026 a las 18:30. Código SUR-7731.",
+        "Reservado: 2026-10-02 18:30. Código SUR-7731.",
+    ],
+)
+def test_a_booking_for_another_day_does_not_bind(said: str) -> None:
+    """Review finding 2: a reply that states a date binds only the slot on that date, and a bare
+    start is allowed only when the reply states no date at all."""
+    for start in ("2026-10-01T18:30", "18:30"):
+        draft = BookingDraft(True, "SUR-7731", start, "Spinning")
+        assert verify_booking(draft, slot=BOOKED_SLOT, reply=text_reply(said)) == AgentRejection(
+            "binding"
+        )
+
+
+def test_a_booking_on_the_slots_day_binds_with_its_full_start() -> None:
+    for said in (
+        "Reservado el 01/10/2026 a las 18:30. Código SUR-7731.",
+        "Reservado el 1 de octubre a las 18:30. Código SUR-7731.",
+    ):
+        receipt = verify_booking(CONFIRMED, slot=BOOKED_SLOT, reply=text_reply(said))
+        assert isinstance(receipt, BookingReceipt)
+        bare = BookingDraft(True, "SUR-7731", "18:30", "Spinning")
+        assert verify_booking(bare, slot=BOOKED_SLOT, reply=text_reply(said)) == AgentRejection(
+            "binding"
+        )
+    iso = data_reply({"codigo": "SUR-7731", "fecha": "2026-10-01", "hora": "18:30"})
+    assert isinstance(verify_booking(CONFIRMED, slot=BOOKED_SLOT, reply=iso), BookingReceipt)
+
+
+def test_an_unreadable_booking_start_is_structure() -> None:
+    draft = BookingDraft(True, "SUR-7731", "el jueves a las 18:30", "Spinning")
+    reply = text_reply("Reservado a las 18:30. Código SUR-7731.")
+    assert verify_booking(draft, slot=BOOKED_SLOT, reply=reply) == AgentRejection("structure")

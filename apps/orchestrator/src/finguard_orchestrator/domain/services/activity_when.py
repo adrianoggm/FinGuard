@@ -41,11 +41,22 @@ class ActivityWindow:
 
 
 @dataclass(frozen=True)
+class StatedTime:
+    """A clock time as a text states it, with the UTC offset written beside it, if any. An offset
+    is read only where ISO 8601 writes one, on a date-time (`2026-10-01T17:00:00Z`,
+    `…T19:00+02:00`): elsewhere «10:00-11:00» is a range, not 10:00 at UTC-11."""
+
+    at: time
+    offset: timedelta | None
+
+
+@dataclass(frozen=True)
 class _Clock:
     at: time
     begins: int
     ends: int
     explicit: bool  # «de la tarde» or a 24-hour figure said which half of the day it is
+    offset: timedelta | None = None
 
 
 _DAY_START: Final = time(6, 0)
@@ -76,28 +87,37 @@ _MONTHS: Final = (
 )
 
 # One pattern for every way a clock time is written, so the verifier and the window read the same
-# times. Three shapes, each guarded so it cannot fire inside something else:
-#   19:00 / 19.30   not after a digit, a colon or a sign (the minutes of «19:00:00», the «02:00» of
-#                   an offset `+02:00`), not before a currency (a price «12.50 €» is not 12:50)
-#   19h / 19h30     not inside a number or a decimal
+# times. Four shapes, each guarded so it cannot fire inside another number:
+#   …T19:00:00+02   the time of an ISO 8601 date-time, with its offset (`Z`, `±hh`, `±hh:mm`) --
+#                   the one place an offset is read (`StatedTime`)
+#   19:00 / 19.30   not after a digit, a colon, a sign or `\d.` / `\d/` (the «10.20» of a date
+#                   «20.10.2026», the «19.00» of a phone «600.19.00.00», the «02:00» of an offset
+#                   `+02:00`), not before `.d`, `:d` or `/d`, not before a currency (a price
+#                   «12.50 €» is not 12:50); seconds («19:00:00», «19:45:30.000») belong to it
+#   19h / 19h30     not inside a number, a decimal or a date
 #   las 7 / la 1    a bare hour needs its article, and yields to the two shapes above
 # then an optional «y media / y cuarto / menos cuarto», and «de la mañana/tarde/noche» or
-# «del mediodía».
+# «del mediodía». A time right after a price word («precio: 19.00», «€19.00») is skipped too.
 _CLOCK: Final = re.compile(
     r"""
     (?:
-        (?<![\d:+])(?<!\d\d:\d\d:\d\d-)
-        (?P<h1>\d{1,2})[:.](?P<m1>\d{2})(?!\d)(?!\s*(?:€|eur))
+        (?<=\d{4}-\d{2}-\d{2}t)
+        (?P<h0>\d{2}):(?P<m0>\d{2})(?::\d{2}(?:\.\d+)?)?
+        (?P<offset>z(?![a-z])|[+-]\d{2}(?::?\d{2})?)?(?![\d:])
       |
-        (?<![\d:.,])(?P<h2>\d{1,2})\s?h(?P<m2>\d{2})?\b
+        (?<![\d:+])(?<!\d[./])(?<!\d\d:\d\d:\d\d-)
+        (?P<h1>\d{1,2})[:.](?P<m1>\d{2})(?::\d{2}(?:\.\d+)?)?(?!\d|[.:/]\d)(?!\s*(?:€|eur))
       |
-        \blas?\s+(?P<h3>\d{1,2})(?!\d|[:.]\d|\s?h\b)
+        (?<![\d:.,/])(?P<h2>\d{1,2})\s?h(?P<m2>\d{2})?\b
+      |
+        \blas?\s+(?P<h3>\d{1,2})(?!\d|[:./]\d|\s?h\b)
     )
     (?:\s+y\s+(?P<past>media|cuarto)|\s+menos\s+(?P<less>cuarto))?
     (?:\s+de\s+la\s+(?P<part>manana|tarde|noche)|\s+del\s+(?P<noon>mediodia))?
     """,
     re.VERBOSE,
 )
+_PRICE_BEFORE: Final = re.compile(r"(?:€|\beur(?:os)?|\bprecio)\s*:?\s*$")
 
 _PAST: Final = re.compile(
     r"\b(?:ayer|anteayer|anoche)\b"
@@ -134,11 +154,13 @@ _AND: Final = re.compile(r"\by\s+(?:las?\s+)?$")
 def clock_times_in(text: str) -> tuple[time, ...]:
     """Every clock time `text` states, in order, each once. An hour past 23 or a minute past 59 is
     not a time and is skipped."""
-    seen: list[time] = []
-    for clock in _clocks(folded(text)):
-        if clock.at not in seen:
-            seen.append(clock.at)
-    return tuple(seen)
+    return tuple(dict.fromkeys(stated.at for stated in stated_times(text)))
+
+
+def stated_times(text: str) -> tuple[StatedTime, ...]:
+    """`clock_times_in` with the offset each time was written with, each once, in order."""
+    found = (StatedTime(clock.at, clock.offset) for clock in _clocks(folded(text)))
+    return tuple(dict.fromkeys(found))
 
 
 def activity_window(sentence: str, *, now: datetime) -> ActivityWindow | None:
@@ -176,8 +198,13 @@ def _since_midnight(at: time) -> timedelta:
 def _clocks(text: str) -> list[_Clock]:
     found: list[_Clock] = []
     for match in _CLOCK.finditer(text):
-        hour = int(match["h1"] or match["h2"] or match["h3"])
-        minute = int(match["m1"] or match["m2"] or 0)
+        if _PRICE_BEFORE.search(text[max(0, match.start() - 16) : match.start()]):
+            continue
+        hour = int(match["h0"] or match["h1"] or match["h2"] or match["h3"])
+        minute = int(match["m0"] or match["m1"] or match["m2"] or 0)
+        offset = _offset(match["offset"]) if match["offset"] else None
+        if match["offset"] and offset is None:
+            continue  # an offset no zone has: the time it qualifies is unreadable, not local
         if match["past"]:
             minute += 30 if match["past"] == "media" else 15
         if match["less"]:
@@ -192,8 +219,20 @@ def _clocks(text: str) -> list[_Clock]:
         if not (0 <= hour <= 23 and 0 <= minute <= 59):
             continue
         explicit = part is not None or hour >= 13 or hour == 0
-        found.append(_Clock(time(hour, minute), match.start(), match.end(), explicit))
+        found.append(_Clock(time(hour, minute), match.start(), match.end(), explicit, offset))
     return found
+
+
+def _offset(written: str) -> timedelta | None:
+    """`z`, `+02`, `+0200`, `-05:30` as a UTC offset; `None` past the ±14:00 any zone uses."""
+    if written == "z":
+        return timedelta(0)
+    digits = written[1:].replace(":", "")
+    hours, minutes = int(digits[:2]), int(digits[2:] or 0)
+    if hours > 14 or minutes > 59:
+        return None
+    sign = -1 if written[0] == "-" else 1
+    return sign * timedelta(hours=hours, minutes=minutes)
 
 
 def _blank(text: str, spans: list[tuple[int, int]]) -> str:

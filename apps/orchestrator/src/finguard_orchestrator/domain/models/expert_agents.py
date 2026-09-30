@@ -33,6 +33,10 @@ from finguard_orchestrator.domain.errors import InvalidValueError
 # An agent id as the gateway derives it from the registered URL: `gym-norte:8000` -> `gym-norte`.
 # It goes into a request path, so it is checked wherever it is held.
 AGENT_ID: Final = re.compile(r"[a-z0-9-]{1,64}")
+# A slot reference or a booking code: one ASCII token, as an agent's own identifiers are. It is sent
+# back to the agent and shown to the holder, so a phrase of the reply -- «transferencia de 500 € a
+# ES00 0000» -- cannot travel in it. Checked with `fullmatch`; lengths are bounded apart.
+REFERENCE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*")
 
 
 class Capability(StrEnum):
@@ -75,6 +79,16 @@ def _aware(value: datetime, name: str) -> None:
 def _bounded(value: str, name: str, ceiling: int) -> None:
     if not 1 <= len(value) <= ceiling:
         raise InvalidValueError(f"{name} must be 1 to {ceiling} characters")
+
+
+def is_reference(value: str, ceiling: int) -> bool:
+    """One `REFERENCE` token of at most `ceiling` characters."""
+    return len(value) <= ceiling and REFERENCE.fullmatch(value) is not None
+
+
+def _reference(value: str, name: str, ceiling: int) -> None:
+    if not is_reference(value, ceiling):
+        raise InvalidValueError(f"{name} must be one token of at most {ceiling} characters")
 
 
 @dataclass(frozen=True)
@@ -182,7 +196,7 @@ class ActivitySlot:
         if self.free_places is not None and self.free_places < 0:
             raise InvalidValueError("free places cannot be negative")
         if self.slot_ref is not None:
-            _bounded(self.slot_ref, "slot reference", MAX_SLOT_REF)
+            _reference(self.slot_ref, "slot reference", MAX_SLOT_REF)
 
 
 @dataclass(frozen=True)
@@ -197,7 +211,7 @@ class BookingReceipt:
         _agent_id(self.agent_id)
         if self.agent_id != self.slot.agent_id:
             raise InvalidValueError("a receipt comes from the agent whose slot was booked")
-        _bounded(self.booking_code, "booking code", MAX_BOOKING_CODE)
+        _reference(self.booking_code, "booking code", MAX_BOOKING_CODE)
 
 
 @dataclass(frozen=True)

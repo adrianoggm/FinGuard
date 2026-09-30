@@ -104,3 +104,12 @@ def test_the_capability_catalogue_is_closed_and_an_error_carries_its_code() -> N
     error = ExpertAgentsError("agent_unusable", "credential_missing")
     assert (error.code, error.reason) == ("agent_unusable", "credential_missing")
     assert ExpertAgentsError("timeout").reason is None
+
+
+@pytest.mark.parametrize("bad", ["N 1001", "-N1001", "N-1001\n", "Ñ-1001", "a" * 65])
+def test_a_reference_and_a_code_are_one_ascii_token(bad: str) -> None:
+    with pytest.raises(InvalidValueError):
+        _slot(slot_ref=bad)
+    with pytest.raises(InvalidValueError):
+        BookingReceipt("gym-norte", _slot(), bad)
+    assert _slot(slot_ref="N-1001.19:00/a").slot_ref == "N-1001.19:00/a"

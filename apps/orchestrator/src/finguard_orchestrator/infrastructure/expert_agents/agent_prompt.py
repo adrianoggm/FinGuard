@@ -9,10 +9,11 @@ The schemas are closed at every level (`additionalProperties: false`) and have n
 intent, an instruction, an amount, an account or a URL (§6.2): whatever a reply says beyond a
 session's activity, time, places and reference has nowhere to go.
 
-The booking prompt names the session's activity and day but never its time or its reference. The
-verifier binds a confirmation to the slot by exactly those (§6.3 rule 4); a prompt that stated them
-would let a model copy the request instead of reading the reply, and the check would pass on
-nothing. What remains is a documented limit: the day could be copied, the time cannot.
+The booking prompt names the session's day and -- fenced, since the agent wrote it -- its activity,
+but never its time or its reference. The verifier binds a confirmation to the slot by exactly those
+(§6.3 rule 4); a prompt that stated them would let a model copy the request instead of reading the
+reply, and the check would pass on nothing. The day could be copied, but the verifier also grounds
+the start's time in the reply and binds any date the reply states to the slot's.
 """
 
 import json
@@ -36,7 +37,7 @@ _RULES: Final = (
     "leave a field null when the reply does not state it; return only the JSON the schema allows."
 )
 
-_MARKERS: Final = ("<<<SKILLS", "SKILLS>>>", "<<<REPLY", "REPLY>>>")
+_MARKERS: Final = ("<<<SKILLS", "SKILLS>>>", "<<<REPLY", "REPLY>>>", "<<<SESSION", "SESSION>>>")
 _WEEKDAYS: Final = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 _LISTED_DAYS: Final = 14
 
@@ -93,8 +94,9 @@ false. A reply with no sessions is {{"slots": [], "unsupportedRequest": false}}.
 """
 
 _BOOKING: Final = """\
-You read one external agent's reply to a booking FinGuard sent for one {activity} session on \
-{day}, and copy what the reply confirms.
+You read one external agent's reply to a booking FinGuard sent for one session on {day}, and copy \
+what the reply confirms. The session's activity, as the agent itself named it, is between the \
+SESSION fences.
 
 The reply's state is {state}.
 
@@ -106,6 +108,10 @@ the date or the weekday, "HH:MM" when it states only the time; otherwise null.
 - slotRef: the session's identifier, if the reply states it, copied exactly; otherwise null.
 
 {rules}
+
+## The session
+
+{session}
 
 ## The reply
 
@@ -196,8 +202,8 @@ def availability_schema() -> dict[str, Any]:
 def booking_prompt(slot: ActivitySlot, reply: AgentReply) -> str:
     day = slot.start.date()
     return _BOOKING.format(
-        activity=slot.activity,
         day=f"{day.isoformat()} ({_WEEKDAYS[day.weekday()]})",
+        session=_fenced(slot.activity, "SESSION"),
         state=reply.state,
         rules=_RULES,
         reply=_fenced(reply_text(reply), "REPLY"),
