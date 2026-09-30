@@ -6,7 +6,10 @@ about the financial readers moves. The line it draws is Review Focus 1: a timeta
 the gym goes to the gyms, a money question about the gym stays with the bank.
 """
 
+from pathlib import Path
+
 import pytest
+import yaml
 from support import episodes
 
 from finguard_orchestrator.domain.models.expert_agents import ExpertAgent
@@ -134,6 +137,68 @@ def test_a_capitalised_name_after_a_gym_word_is_a_claim_to_name_one() -> None:
     assert not claims_an_agent_name("¿qué clases hay en el gimnasio este fin de semana?")
     assert not claims_an_agent_name("¿Qué clases hay en el Gimnasio El jueves?")
     assert not claims_an_agent_name("¿hay yoga mañana?")
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # Ruling R14: a question about the ledger names what the ledger holds.
+        "¿Hay algún cargo del gimnasio este mes?",
+        "¿qué movimientos hay del gimnasio?",
+        "¿hay domiciliaciones del gimnasio?",
+        "¿hay facturas del gimnasio?",
+        "¿hay algún importe del gimnasio hoy?",
+        "¿hay compras en el gimnasio esta semana?",
+        "¿Hay un cargo específico para el uso del gimnasio?",
+        # A chart is drawn from the ledger, never from a gym.
+        "gimnasio esta semana en barras",
+        "muéstrame el gimnasio de este fin de semana",
+        "compara el gimnasio de esta semana con la semana que viene",
+        # A follow-up about the gym, read against the financial question before it.
+        "¿y el gimnasio hoy?",
+        "¿y mañana en el gimnasio?",
+        # «horario» alone is not about a class.
+        "¿Qué horario tiene el banco?",
+        "gracias por el horario",
+    ],
+)
+def test_the_ledger_a_chart_and_a_bare_horario_are_not_agent_requests(sentence: str) -> None:
+    assert not asks_an_expert_agent(sentence)
+
+
+def test_the_gym_alone_needs_a_timetable_word_not_just_a_day() -> None:
+    """With no activity and no «clase»/«sesión», «gimnasio» is a merchant as often as a place:
+    only a word that asks for a timetable makes it one."""
+    assert not asks_an_expert_agent("el gimnasio el jueves por la tarde")
+    assert asks_an_expert_agent("¿hay plazas en el gimnasio el jueves?")
+    assert asks_an_expert_agent("horario del gimnasio mañana")
+    assert asks_an_expert_agent("busca el gimnasio del sábado")
+    assert asks_an_expert_agent("¿qué clases hay mañana?")
+
+
+def _strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in _strings(item)]
+    if isinstance(value, list):
+        return [text for item in value for text in _strings(item)]
+    return []
+
+
+def test_no_string_of_any_evaluation_file_is_claimed() -> None:
+    """Every question, paraphrase, note and rejected case under `evaluation/`: nothing the planner
+    and the visual evaluations measure may reach an agent (Ruling R14)."""
+    evaluation = Path(__file__).resolve().parents[1] / "evaluation"
+    files = sorted(evaluation.rglob("*.yaml"))
+    assert len(files) > 30, "the sweep found the evaluation files"
+    claimed = [
+        (path.relative_to(evaluation).as_posix(), text)
+        for path in files
+        for text in _strings(yaml.safe_load(path.read_text(encoding="utf-8")))
+        if asks_an_expert_agent(text)
+    ]
+    assert claimed == []
 
 
 def test_no_existing_corpus_sentence_is_claimed() -> None:

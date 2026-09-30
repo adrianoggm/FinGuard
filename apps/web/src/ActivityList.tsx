@@ -48,10 +48,11 @@ function row(slot: ActivitySlot): string {
 /**
  * The wall-clock time the ISO string states, in the slot's own offset. Read off the string rather
  * than through `Date`, which would convert it into the browser's zone: a class at 18:30 in Madrid
- * is at 18:30 on a phone set to London too.
+ * is at 18:30 on a phone set to London too. A space in place of the `T` is read as well: it is
+ * what a date-time printed with `str()` looks like, and a time is still a time.
  */
 function clock(iso: string): string {
-  const found = /^\d{4}-\d{2}-\d{2}T(\d{2}):(\d{2})/.exec(iso);
+  const found = /^\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/.exec(iso);
   return found ? `${found[1]}:${found[2]}` : iso;
 }
 
