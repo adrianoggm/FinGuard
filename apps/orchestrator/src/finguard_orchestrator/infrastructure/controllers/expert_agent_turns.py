@@ -121,11 +121,14 @@ def _searched(
             )
             for slot in search.slots
         ],
+        # Only the agents that were sent something (ruling R16): a named gym never asked is not
+        # one that «no ha respondido de forma válida», and the text already says why it wasn't.
         agent_notices=[
             AgentNoticePayload.model_validate(
                 {"agent_name": notice.agent_name, "kind": notice.kind, "link": notice.link}
             )
             for notice in notices
+            if notice.asked
         ],
         suggestions=activity_writer.choose_suggestions(search.slots),
     )

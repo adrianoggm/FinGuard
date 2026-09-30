@@ -381,8 +381,9 @@ async def test_the_budget_bounds_each_agent() -> None:
         ("¿qué clases de yoga hubo ayer?", {}, "no_window"),
         (SENTENCE, {"classifier": {"gym-norte": {}, "gym-sur": {}}}, "no_agents"),
         ("¿hay spinning el jueves en el Gimnasio Oeste?", {}, "none_named"),
-        # Named, listed and usable, but it offers no timetable: nobody the sentence named is left.
-        ("¿hay spinning el jueves en el Norte?", {"classifier": {"gym-norte": {}}}, "none_named"),
+        # Ruling R16: named, listed and usable, but it offers no timetable. The gym exists, so
+        # «ninguno tiene ese nombre» would be false: nobody asked offers timetables.
+        ("¿hay spinning el jueves en el Norte?", {"classifier": {"gym-norte": {}}}, "no_agents"),
         (SENTENCE, {"listing": ExpertAgentsError("unreachable", "ConnectError")}, "unreachable"),
     ],
 )
@@ -422,9 +423,34 @@ async def test_a_named_agent_that_is_not_usable_says_why(reason: str, sentence: 
     [outcome] = result.outcomes
     assert (outcome.agent_id, outcome.kind, outcome.rule) == ("gym-antiguo", "unavailable", reason)
     assert activity_writer.notice(outcome) == sentence
+    assert not outcome.asked, "never sent anything, so it cannot have answered badly"
 
     unnamed = await search(agents=FakeAgents(listing=(NORTE, SUR, antiguo)))
     assert "gym-antiguo" not in {outcome.agent_id for outcome in unnamed.outcomes}
+
+
+async def test_an_agent_whose_card_could_not_be_read_was_never_asked() -> None:
+    class FailingClassifier(FakeClassifier):
+        async def classify(self, agent: ExpertAgent) -> Mapping[Capability, str]:
+            if agent.id == "gym-norte":
+                raise ProviderFailedError("ollama", "down")
+            return await super().classify(agent)
+
+    agents = FakeAgents()
+    result = await search(agents=agents, classifier=FailingClassifier())
+
+    norte = outcome_of(result, "gym-norte")
+    assert (norte.kind, norte.rule, norte.asked) == ("unavailable", "provider_failed", False)
+    assert outcome_of(result, "gym-sur").asked
+    assert [sent["agent_id"] for sent in agents.sent] == ["gym-sur"]
+
+
+async def test_every_agent_that_was_sent_something_says_so() -> None:
+    normaliser = FakeNormaliser()
+    normaliser.drafts["gym-norte"] = None
+    result = await search(normaliser=normaliser)
+
+    assert all(outcome.asked for outcome in result.outcomes)
 
 
 async def test_input_required_with_alternatives_on_search_is_read_as_slots() -> None:
