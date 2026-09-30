@@ -57,6 +57,12 @@ describe("the classes a search offered", () => {
     expect(html([slot({ start: "2026-10-01T09:15:00Z" })])).toContain("09:15 · Spinning");
   });
 
+  it("reads the time off a date-time written with a space as well as a T", () => {
+    const markup = html([slot({ start: "2026-10-01 18:30:00+02:00" })]);
+    expect(markup).toContain("18:30 · Spinning · Gimnasio Sur · 6 plazas");
+    expect(markup).not.toContain("2026-10-01");
+  });
+
   it("says nothing about places when the gym did not state them", () => {
     const markup = html([slot({ free_places: null })]);
     expect(markup).toContain("18:30 · Spinning · Gimnasio Sur</li>");
