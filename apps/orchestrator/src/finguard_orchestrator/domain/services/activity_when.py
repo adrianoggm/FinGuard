@@ -76,28 +76,31 @@ _MONTHS: Final = (
 )
 
 # One pattern for every way a clock time is written, so the verifier and the window read the same
-# times. Three shapes, each guarded so it cannot fire inside something else:
-#   19:00 / 19.30   not after a digit, a colon or a sign (the minutes of «19:00:00», the «02:00» of
-#                   an offset `+02:00`), not before a currency (a price «12.50 €» is not 12:50)
-#   19h / 19h30     not inside a number or a decimal
+# times. Three shapes, each guarded so it cannot fire inside another number:
+#   19:00 / 19.30   not after a digit, a colon, a sign or `\d.` / `\d/` (the «10.20» of a date
+#                   «20.10.2026», the «19.00» of a phone «600.19.00.00», the «02:00» of an offset
+#                   `+02:00`), not before `.d`, `:d` or `/d`, not before a currency (a price
+#                   «12.50 €» is not 12:50); seconds («19:00:00», «19:45:30.000») belong to it
+#   19h / 19h30     not inside a number, a decimal or a date
 #   las 7 / la 1    a bare hour needs its article, and yields to the two shapes above
 # then an optional «y media / y cuarto / menos cuarto», and «de la mañana/tarde/noche» or
-# «del mediodía».
+# «del mediodía». A time right after a price word («precio: 19.00», «€19.00») is skipped too.
 _CLOCK: Final = re.compile(
     r"""
     (?:
-        (?<![\d:+])(?<!\d\d:\d\d:\d\d-)
-        (?P<h1>\d{1,2})[:.](?P<m1>\d{2})(?!\d)(?!\s*(?:€|eur))
+        (?<![\d:+])(?<!\d[./])(?<!\d\d:\d\d:\d\d-)
+        (?P<h1>\d{1,2})[:.](?P<m1>\d{2})(?::\d{2}(?:\.\d+)?)?(?!\d|[.:/]\d)(?!\s*(?:€|eur))
       |
-        (?<![\d:.,])(?P<h2>\d{1,2})\s?h(?P<m2>\d{2})?\b
+        (?<![\d:.,/])(?P<h2>\d{1,2})\s?h(?P<m2>\d{2})?\b
       |
-        \blas?\s+(?P<h3>\d{1,2})(?!\d|[:.]\d|\s?h\b)
+        \blas?\s+(?P<h3>\d{1,2})(?!\d|[:./]\d|\s?h\b)
     )
     (?:\s+y\s+(?P<past>media|cuarto)|\s+menos\s+(?P<less>cuarto))?
     (?:\s+de\s+la\s+(?P<part>manana|tarde|noche)|\s+del\s+(?P<noon>mediodia))?
     """,
     re.VERBOSE,
 )
+_PRICE_BEFORE: Final = re.compile(r"(?:€|\beur(?:os)?|\bprecio)\s*:?\s*$")
 
 _PAST: Final = re.compile(
     r"\b(?:ayer|anteayer|anoche)\b"
@@ -176,6 +179,8 @@ def _since_midnight(at: time) -> timedelta:
 def _clocks(text: str) -> list[_Clock]:
     found: list[_Clock] = []
     for match in _CLOCK.finditer(text):
+        if _PRICE_BEFORE.search(text[max(0, match.start() - 16) : match.start()]):
+            continue
         hour = int(match["h1"] or match["h2"] or match["h3"])
         minute = int(match["m1"] or match["m2"] or 0)
         if match["past"]:

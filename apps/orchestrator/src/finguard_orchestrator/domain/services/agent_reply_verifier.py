@@ -252,8 +252,10 @@ def _date_said(day: date, text: str, words: tuple[str, ...]) -> bool:
 
 
 def _number_said(number: int, text: str) -> bool:
-    """A whole number: not a digit of «45», not the hour of «19:00», not a piece of «N-4»."""
-    return re.search(rf"(?<![\w.,:-]){re.escape(str(number))}(?!\w|[.,:]\d)", text) is not None
+    """A whole number: not a digit of «45», not the hour of «19:00», not a piece of «N-4» or of a
+    date «01/10/2026»."""
+    pattern = rf"(?<![\w.,:/-]){re.escape(str(number))}(?!\w|[.,:/]\d)"
+    return re.search(pattern, text) is not None
 
 
 def _token_said(token: str, text: str) -> bool:

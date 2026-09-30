@@ -325,3 +325,31 @@ def test_a_link_drops_trailing_punctuation_and_refuses_a_host_hidden_behind_user
     )
     assert link_in(reply, ("127.0.0.1:9101",)) == "http://127.0.0.1:9101/vincular"
     assert link_in(text_reply("Sin enlace."), ("127.0.0.1:9101",)) is None
+
+
+# --- review round 1 ----------------------------------------------------------------------------
+
+OCT20 = ActivityQuery(
+    "spinning",
+    datetime(2026, 10, 20, 15, 0, tzinfo=ZONE),
+    datetime(2026, 10, 20, 21, 0, tzinfo=ZONE),
+)
+
+
+@pytest.mark.parametrize(
+    ("said", "bad"),
+    [
+        ("Spinning el 20.10.2026 a las 18:00", SlotDraft("Spinning", "20:10", None, None, None)),
+        ("Spinning a las 18:00, precio: 19.00", SlotDraft("Spinning", "19:00", None, None, None)),
+        ("Spinning a las 18:00 por €19.00", SlotDraft("Spinning", "19:00", None, None, None)),
+        ("Spinning a las 18:00; 600.19.00.00", SlotDraft("Spinning", "19:00", None, None, None)),
+        ("Spinning el 01/10/2026 a las 18:00", SlotDraft("Spinning", "18:00", None, 10, None)),
+        ("Spinning el 20/10/2026 a las 18:00", SlotDraft("Spinning", "18:00", None, 2026, None)),
+    ],
+)
+def test_a_date_a_price_or_a_phone_number_grounds_no_time_and_no_places(
+    said: str, bad: SlotDraft
+) -> None:
+    assert verify_slots(
+        AvailabilityDraft((bad,)), query=OCT20, reply=text_reply(said), agent_id="gym-sur", now=NOW
+    ) == AgentRejection("grounding")
