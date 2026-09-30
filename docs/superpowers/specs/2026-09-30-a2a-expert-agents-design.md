@@ -175,7 +175,7 @@ never text, data or credentials. Same exporter settings as the other services, o
 1. **Intent.** Rules recognise `EXPERT_AGENT`. The activity comes from the activity lexicon; failing
    that, the planner extracts it under the rule already used for payment concepts: it must appear in the
    sentence.
-2. **Plan.** `ActivityQuery(activity="spinning", window=Thursday 2 Oct, band=15:00–21:00, agents=ALL)`.
+2. **Plan.** `ActivityQuery(activity="spinning", window=Thursday 1 Oct, band=15:00–21:00, agents=ALL)`.
    The date comes from the existing period reader. Weekday dates («el jueves») are added to it if it
    does not already resolve them, and **time-of-day bands** («por la mañana/tarde/noche», «a partir de
    las 18») are new either way; Task 4 checks the reader before extending it.
@@ -184,8 +184,8 @@ never text, data or credentials. Same exporter settings as the other services, o
    None left → «Ningún agente configurado ofrece horarios de clases».
 4. **Send in parallel**, one message per agent, each within `ORCHESTRATOR_A2A_AGENT_BUDGET_SECONDS`
    (default 15 s, covering the send and its normalisation; the gateway's own 10 s bounds the send alone):
-   - `text`: «Busco clases de spinning el jueves 2 de octubre de 2026 entre las 15:00 y las 21:00.»
-   - `data`: `{"activity": "spinning", "from": "2026-10-02T15:00:00+02:00", "to": "2026-10-02T21:00:00+02:00", "memberRef": "…"}`
+   - `text`: «Busco clases de spinning el jueves 1 de octubre de 2026 entre las 15:00 y las 21:00.»
+   - `data`: `{"activity": "spinning", "from": "2026-10-01T15:00:00+02:00", "to": "2026-10-01T21:00:00+02:00", "memberRef": "…"}`
 5. **Normalise and verify** each reply (§6). A rejected reply is dropped, not repaired.
 6. **Answer**, composed by template: slots merged and ordered by start, each with its agent and free
    places; one line per agent that failed («Gimnasio Sur no ha respondido de forma válida»). Chips:
@@ -197,7 +197,7 @@ never text, data or credentials. Same exporter settings as the other services, o
 1. **Reference.** Resolved against the sealed offers, as `visual_reference` resolves a bar: by time, by
    agent name, by ordinal («la primera»). Several match → ask which; none → «Esa clase no está entre las
    que te he ofrecido».
-2. **Prepare.** A booking id is minted. Preview: «Vas a reservar Spinning, jueves 2 de octubre,
+2. **Prepare.** A booking id is minted. Preview: «Vas a reservar Spinning, jueves 1 de octubre,
    19:00–19:45, en Gimnasio Norte. ¿Confirmas?». **Nothing is sent to the gym.**
 3. **Confirm** in a later turn, read by the same closed confirmation reader as payments
    (`domain/services/confirmation.py`). A confirmation arriving on the `VOICE` channel is refused with
