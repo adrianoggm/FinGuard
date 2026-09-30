@@ -57,4 +57,9 @@ class Scope(StrEnum):
     AGENTS_ASK = "agents:ask"
     """Ask the external expert agents a question -- a timetable -- through the A2A gateway. It
     sends a third party the activity, the window and a pairwise pseudonym and nothing else, and
-    books nothing; booking will be a scope of its own, as confirming a payment is (spec §14 A4)."""
+    books nothing. Preparing a booking's preview needs only this: nothing is sent to prepare one."""
+
+    AGENTS_BOOK = "agents:book"
+    """Send a booking the holder confirmed on screen. Deliberately not implied by `agents:ask`,
+    as `payments:confirm` is not by `payments:prepare` (spec §14 A4): a credential that can look
+    at a timetable is not thereby one that can take somebody's place in a class."""

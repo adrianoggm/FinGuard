@@ -45,6 +45,7 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyCommand,
     Stage,
 )
+from finguard_orchestrator.application.commands.book_activity import BookActivityHandler
 from finguard_orchestrator.application.queries.ask_financial_question import (
     record_context_untrusted,
     record_visual_decision,
@@ -197,6 +198,16 @@ def _expert_searches(request: Request) -> SearchActivitiesHandler | None:
 
 
 ExpertSearches = Annotated[SearchActivitiesHandler | None, Depends(_expert_searches)]
+
+
+def _expert_bookings(request: Request) -> BookActivityHandler | None:
+    """The booking, or `None` when no A2A gateway is configured -- read like the search, beside
+    which it is built (`bootstrap.main`)."""
+    bookings: BookActivityHandler | None = getattr(request.app.state, "expert_bookings", None)
+    return bookings
+
+
+ExpertBookings = Annotated[BookActivityHandler | None, Depends(_expert_bookings)]
 
 
 def _saved_visual_source(
@@ -1864,6 +1875,7 @@ async def ask(
     # Defaulted for the callers that invoke this function directly (the tests); FastAPI still
     # resolves the dependency for every request.
     searches: ExpertSearches = None,
+    bookings: ExpertBookings = None,
 ) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
@@ -1959,11 +1971,12 @@ async def ask(
             return immediate
 
     # A2A expert agents (spec §14 A1, A11): below the payment branches, which own their turns, and
-    # above the visual and financial paths, which a timetable question must never reach. `None`
-    # for every sentence the predicate does not claim, and the turn continues as it always did.
+    # above the visual and financial paths, which a timetable question or a booking must never
+    # reach. A booking waiting for a yes owns its turn here the way a payment preview owns one
+    # above. `None` for every other sentence, and the turn continues as it always did.
     if (
         agent_reply := await expert_agent_reply(
-            request, who, was, searches=searches, bookings=None, codec=metric_tokens
+            request, who, was, searches=searches, bookings=bookings, codec=metric_tokens
         )
     ) is not None:
         return agent_reply
@@ -2117,6 +2130,7 @@ async def ask_streaming(
     # Defaulted for the callers that invoke this function directly (the tests); FastAPI still
     # resolves the dependency for every request.
     searches: ExpertSearches = None,
+    bookings: ExpertBookings = None,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -2196,7 +2210,7 @@ async def ask_streaming(
     # the browser types into this endpoint. Its answer exists all at once, so it is one frame.
     if (
         agent_reply := await expert_agent_reply(
-            request, who, was, searches=searches, bookings=None, codec=metric_tokens
+            request, who, was, searches=searches, bookings=bookings, codec=metric_tokens
         )
     ) is not None:
         return _agent_events(agent_reply)

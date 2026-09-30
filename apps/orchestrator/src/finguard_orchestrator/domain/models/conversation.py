@@ -200,6 +200,8 @@ class Workflow(StrEnum):
     TRANSFER_IN_PROGRESS = "TRANSFER_IN_PROGRESS"
     PAYMENT_CONFIRMATION = "PAYMENT_CONFIRMATION"
     ACCOUNT_SCOPE = "ACCOUNT_SCOPE"
+    # A class chosen from an activity search's offers, waiting for a yes on screen (spec §5.2).
+    BOOKING_CONFIRMATION = "BOOKING_CONFIRMATION"
 
 
 class Slot(StrEnum):
@@ -358,6 +360,7 @@ type ActiveWorkflow = (
     | PaymentInProgress
     | TransferInProgress
     | PaymentConfirmation
+    | BookingConfirmation
 )
 
 
@@ -572,7 +575,7 @@ class Conversation:
             | TransferInProgress,
         ):
             return self.active.awaiting
-        if isinstance(self.active, PaymentConfirmation):
+        if isinstance(self.active, PaymentConfirmation | BookingConfirmation):
             return Slot.CONFIRMATION
         return None
 
@@ -757,6 +760,8 @@ def workflow_of(active: "ActiveWorkflow | None") -> Workflow | None:
             return Workflow.TRANSFER_IN_PROGRESS
         case PaymentConfirmation():
             return Workflow.PAYMENT_CONFIRMATION
+        case BookingConfirmation():
+            return Workflow.BOOKING_CONFIRMATION
         case _:
             return None
 

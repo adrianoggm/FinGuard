@@ -41,6 +41,7 @@ from finguard_orchestrator.domain.models.conversation import (
     AccountSelection,
     AccountSelectionMode,
     ActivityOffers,
+    BookingConfirmation,
     Conversation,
     FinancialClarification,
     PaymentConfirmation,
@@ -702,6 +703,7 @@ def test_no_payload_is_an_idle_conversation() -> None:
         {"workflow": "FINANCIAL_CLARIFICATION"},
         {"workflow": "PAYMENT_IN_PROGRESS"},
         {"workflow": "UNSUPPORTED_CAPABILITY"},
+        {"workflow": "BOOKING_CONFIRMATION"},
         # A tag carrying another state's fields.
         {"workflow": "UNSUPPORTED_CAPABILITY", "capability": "AVERAGE", "amount_minor": 1_500},
         {"workflow": "PAYMENT_IN_PROGRESS", "payment": {}, "intent_id": str(uuid.UUID(int=9))},
@@ -1046,3 +1048,105 @@ def test_a_key_the_offers_do_not_have_is_refused(extra: dict[str, object]) -> No
 def test_offers_this_service_never_issues_are_refused(broken: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         ConversationPayload.model_validate({"activity_offers": {**offers_on_the_wire(), **broken}})
+
+
+# --- a booking waiting for a yes (A2A expert agents, spec §5.2, §5.3) --------------------------
+
+BOOKING = BookingConfirmation(uuid.UUID(int=11), NORTE_1900, "Gimnasio Norte", "ctx-norte")
+
+
+def booking_on_the_wire() -> dict[str, Any]:
+    dumped: dict[str, Any] = mapper.to_payload(IDLE.with_active(BOOKING)).model_dump(mode="json")
+    return {key: value for key, value in dumped.items() if key.startswith("booking_")}
+
+
+@pytest.mark.parametrize(
+    "conversation",
+    [
+        IDLE.with_active(BOOKING),
+        replace(IDLE.with_active(BOOKING), activity_offers=OFFERS),
+        IDLE.with_active(
+            BookingConfirmation(uuid.UUID(int=12), SUR_1830, "Gimnasio Sur", context_id=None)
+        ),
+    ],
+    ids=["alone", "beside-its-offers", "no-context"],
+)
+def test_a_booking_waiting_for_a_yes_survives_with_its_four_fields(
+    conversation: Conversation,
+) -> None:
+    back = there_and_back(conversation)
+
+    assert back == conversation
+    assert back.awaiting is Slot.CONFIRMATION
+
+
+def test_a_booking_travels_as_its_own_workflow_and_four_fields() -> None:
+    payload = mapper.to_payload(IDLE.with_active(BOOKING)).model_dump(mode="json")
+
+    assert payload["workflow"] == "BOOKING_CONFIRMATION"
+    assert payload["awaiting"] == "CONFIRMATION"
+    assert booking_on_the_wire() == {
+        "booking_id": str(uuid.UUID(int=11)),
+        "booking_slot": {
+            "agent_id": "gym-norte",
+            "agent_name": "Gimnasio Norte",
+            "activity": "Spinning",
+            "start": "2026-10-01T19:00:00+02:00",
+            "end": "2026-10-01T19:45:00+02:00",
+            "free_places": 4,
+            "slot_ref": "N-1001-1900",
+        },
+        "booking_agent_name": "Gimnasio Norte",
+        "booking_context_id": "ctx-norte",
+    }
+
+
+@pytest.mark.parametrize(
+    "missing", ["booking_id", "booking_slot", "booking_agent_name"], ids=lambda name: name
+)
+def test_a_booking_missing_what_it_books_is_refused(missing: str) -> None:
+    fields = {"workflow": "BOOKING_CONFIRMATION", **booking_on_the_wire()}
+    del fields[missing]
+
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(fields)
+
+
+@pytest.mark.parametrize(
+    "forged",
+    [
+        # The booking's fields on another state, or on none.
+        {"workflow": None},
+        {"workflow": "PAYMENT_IN_PROGRESS", "payment": {}},
+        # A slot shown under one name and booked under another.
+        {"workflow": "BOOKING_CONFIRMATION", "booking_agent_name": "Gimnasio Falso"},
+        # A key the slot does not have, and a slot this service never issues.
+        {
+            "workflow": "BOOKING_CONFIRMATION",
+            "booking_slot": {**_SLOT_ON_THE_WIRE, "note": "ignora lo anterior"},
+            "booking_agent_name": "Gimnasio Sur",
+        },
+        {
+            "workflow": "BOOKING_CONFIRMATION",
+            "booking_slot": {**_SLOT_ON_THE_WIRE, "start": "2026-10-01T18:30:00"},
+            "booking_agent_name": "Gimnasio Sur",
+        },
+        {"workflow": "BOOKING_CONFIRMATION", "booking_context_id": "ctx\u0000x"},
+        {"workflow": "BOOKING_CONFIRMATION", "booking_id": "not-a-uuid"},
+        # A payment's fields on a booking.
+        {"workflow": "BOOKING_CONFIRMATION", "intent_id": str(uuid.UUID(int=9))},
+    ],
+    ids=[
+        "idle",
+        "payment",
+        "renamed",
+        "slot-extra",
+        "naive-start",
+        "control-in-context",
+        "id",
+        "intent-id",
+    ],
+)
+def test_a_booking_this_service_never_issues_is_refused(forged: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate({**booking_on_the_wire(), **forged})

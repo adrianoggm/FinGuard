@@ -18,6 +18,7 @@ from finguard_orchestrator.domain.models.expert_agents import (
     ActivityQuery,
     ActivitySlot,
     AgentErrorCode,
+    BookingReceipt,
     RejectionRule,
 )
 from finguard_orchestrator.domain.services.answer_writer import (
@@ -209,6 +210,152 @@ def choose_suggestions(slots: Sequence[ActivitySlot]) -> list[str]:
 def shown(activity: str) -> str:
     """The lexicon's folded name as a person writes it: «natacion» is «natación»."""
     return _SHOWN.get(activity, activity)
+
+
+# --- the booking (spec §5.2, §7) -------------------------------------------------------------
+#
+# A slot's activity and a gym's name are the agent's words, verified and bounded; a reference or a
+# booking code is one ASCII token and is written as plain text, never as an address to follow.
+
+
+def booking_preview(slot: ActivitySlot, agent_name: str) -> str:
+    """«Vas a reservar Spinning, jueves 1 de octubre, 19:00–19:45, en Gimnasio Norte.
+    ¿Confirmas?» -- the hours as the class's, its end only when the agent gave one."""
+    return (
+        f"Vas a reservar {slot.activity}, {_day(slot.start.date())}, {_hours(slot)}, "
+        f"en {agent_name}. ¿Confirmas?"
+    )
+
+
+def booking_unclear(slot: ActivitySlot, agent_name: str) -> str:
+    """The preview again, and what it is waiting for: a payment's unclear reply, for a class."""
+    return f"{booking_preview(slot, agent_name)} Responde sí o no."
+
+
+def which_booking(candidates: Sequence[ActivitySlot], names: Mapping[str, str]) -> str:
+    """«¿Cuál de estas: 19:00 en Gimnasio Norte o 19:00 en Gimnasio Sur?» -- each class told apart
+    by what differs: the day when they are on several, the activity when there are several."""
+    days = len({slot.start.date() for slot in candidates}) > 1
+    activities = len({_folded_activity(slot) for slot in candidates}) > 1
+    choices = tuple(_choice(slot, names, days=days, activities=activities) for slot in candidates)
+    return f"¿Cuál de estas: {_either(choices)}?"
+
+
+def booking_suggestions(candidates: Sequence[ActivitySlot], names: Mapping[str, str]) -> list[str]:
+    """One chip per class of an ambiguity, each naming exactly what tells it apart -- so sending
+    one back resolves to that class and no other (`slot_reference`)."""
+    days = len({slot.start.date() for slot in candidates}) > 1
+    activities = len({_folded_activity(slot) for slot in candidates}) > 1
+    agents = len({slot.agent_id for slot in candidates}) > 1
+    chips = []
+    for slot in candidates:
+        chip = f"Apúntame a la de las {slot.start:%H:%M}"
+        if days:
+            chip += f" del {_weekday(slot.start.date())}"
+        if activities:
+            chip += f" de {slot.activity}"
+        if agents:
+            chip += f" en {names.get(slot.agent_id, slot.agent_id)}"
+        chips.append(chip)
+    return chips
+
+
+def not_offered() -> str:
+    return "Esa clase no está entre las que te he ofrecido."
+
+
+def started() -> str:
+    return "Esa clase ya ha empezado."
+
+
+def search_again() -> str:
+    """The offers are absent, or their seal did not check out (§5.3): never read, never repaired."""
+    return "No puedo usar esa búsqueda; vuelve a pedirla."
+
+
+def on_screen() -> str:
+    """A yes by voice (§14 A10): a booking is confirmed where it can be seen."""
+    return "Confirma la reserva en la pantalla."
+
+
+def booking_cancelled() -> str:
+    return "De acuerdo, no reservo nada."
+
+
+def booking_forbidden() -> str:
+    return "Tu acceso no permite reservar con agentes externos."
+
+
+def booked(receipt: BookingReceipt, agent_name: str) -> str:
+    """«Reserva hecha en Gimnasio Sur: Spinning, jueves 1 de octubre, 18:30. Código SUR-7731.»"""
+    slot = receipt.slot
+    return (
+        f"Reserva hecha en {agent_name}: {slot.activity}, {_day(slot.start.date())}, "
+        f"{_hours(slot)}. Código {receipt.booking_code}."
+    )
+
+
+def booking_alternatives(
+    slot: ActivitySlot, agent_name: str, alternatives: Sequence[ActivitySlot]
+) -> str:
+    """«La de las 19:00 no está disponible; Gimnasio Norte ofrece 20:00 y 21:00.» Not «completa»:
+    an agent pausing the booking with other sessions has not said why, and a full class is only
+    the likeliest reason."""
+    times = tuple(f"{each.start:%H:%M}" for each in alternatives)
+    return f"La de las {slot.start:%H:%M} no está disponible; {agent_name} ofrece {listed(times)}."
+
+
+def booking_link_required(agent_name: str) -> str:
+    """The booking is not retried (§7): once linked, the holder asks for it again."""
+    return (
+        f"{agent_name} necesita que vincules tu cuenta de socio; cuando lo hayas hecho, "
+        "vuelve a pedir la reserva."
+    )
+
+
+def booking_unsupported(agent_name: str) -> str:
+    return f"{agent_name} pide un dato que FinGuard no proporciona; la reserva no se ha hecho."
+
+
+def booking_failed(agent_name: str) -> str:
+    """What is true of every failure: nothing the gym said confirms a booking. Not «no se ha
+    hecho» -- a confirmation that did not verify is not proof that none happened."""
+    return f"{agent_name} no ha confirmado la reserva."
+
+
+def booking_unknown(agent_name: str) -> str:
+    """A reply lost once the booking was sent (§5.2): it may have happened, so it is never sent
+    again and the holder is sent to the one party who knows."""
+    return f"No sé si la reserva se ha completado; consulta en {agent_name}."
+
+
+def _hours(slot: ActivitySlot) -> str:
+    """«19:00–19:45», or «18:30» when the agent gave no end."""
+    if slot.end is None:
+        return f"{slot.start:%H:%M}"
+    return f"{slot.start:%H:%M}–{slot.end:%H:%M}"
+
+
+def _folded_activity(slot: ActivitySlot) -> str:
+    return " ".join(re.findall(r"\w+", folded(slot.activity)))
+
+
+def _choice(slot: ActivitySlot, names: Mapping[str, str], *, days: bool, activities: bool) -> str:
+    """«19:00 en Gimnasio Norte», «19:00 Yoga en Gimnasio Sur», «el sábado 3 de octubre a las
+    18:30 en Gimnasio Norte»."""
+    at = f"{slot.start:%H:%M}"
+    named = f" {slot.activity}" if activities else ""
+    gym = names.get(slot.agent_id, slot.agent_id)
+    if days:
+        return f"el {_day(slot.start.date())} a las {at}{named} en {gym}"
+    return f"{at}{named} en {gym}"
+
+
+def _either(choices: Sequence[str]) -> str:
+    """«A o B», «A, B o C»: a question between classes is a choice of one."""
+    if len(choices) == 1:
+        return choices[0]
+    return f"{', '.join(choices[:-1])} o {choices[-1]}"
 
 
 def _did_not_answer(outcome: Notice) -> bool:

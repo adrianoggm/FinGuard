@@ -23,7 +23,7 @@ from finguard_orchestrator.application.commands.book_activity import (
     BookActivityHandler,
     BookingOutcome,
 )
-from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.errors import InvalidValueError, ProviderFailedError
 from finguard_orchestrator.domain.models.conversation import ActivityOffers, BookingConfirmation
 from finguard_orchestrator.domain.models.expert_agents import (
     ActivityQuery,
@@ -508,6 +508,20 @@ async def test_a_reply_that_cannot_be_read_after_the_send_is_unknown() -> None:
         "unknown"
     )
     assert len(agents.sent) == 1
+
+
+def test_an_outcome_carries_exactly_what_its_kind_says() -> None:
+    """A turn reads the kind and the fields together, so the two can never disagree."""
+    receipt = BookingReceipt("gym-norte", NORTE_1900, "NT-4821")
+    for impossible in (
+        {"kind": "booked"},
+        {"kind": "failed", "receipt": receipt},
+        {"kind": "alternatives"},
+        {"kind": "unknown", "alternatives": (NORTE_1900,)},
+        {"kind": "failed", "link": LINK},
+    ):
+        with pytest.raises(InvalidValueError):
+            BookingOutcome(**impossible)  # type: ignore[arg-type]
 
 
 # --- one decision per booking ----------------------------------------------------------------

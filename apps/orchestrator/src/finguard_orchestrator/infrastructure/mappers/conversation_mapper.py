@@ -39,6 +39,7 @@ from finguard_orchestrator.domain.models.conversation import (
     AccountSelection,
     ActiveWorkflow,
     ActivityOffers,
+    BookingConfirmation,
     Conversation,
     CounterpartyAlias,
     FinancialClarification,
@@ -67,6 +68,7 @@ from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, Ra
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     ActivityOffersPayload,
+    ActivitySlotPayload,
     ConversationPayload,
     PaymentDraftPayload,
     PlanPayload,
@@ -557,18 +559,7 @@ def _offers_payload(offers: ActivityOffers | None) -> dict[str, object] | None:
     if offers is None:
         return None
     return {
-        "slots": [
-            {
-                "agent_id": slot.agent_id,
-                "agent_name": offers.name_of(slot.agent_id),
-                "activity": slot.activity,
-                "start": slot.start,
-                "end": slot.end,
-                "free_places": slot.free_places,
-                "slot_ref": slot.slot_ref,
-            }
-            for slot in offers.slots
-        ],
+        "slots": [_slot_payload(slot, offers.name_of(slot.agent_id)) for slot in offers.slots],
         "agent_names": [
             {"agent_id": agent_id, "name": name} for agent_id, name in offers.agent_names
         ],
@@ -603,17 +594,7 @@ def _offers(
     )
     trusted = trust == "ok"
     return ActivityOffers(
-        slots=tuple(
-            ActivitySlot(
-                slot.agent_id,
-                slot.activity,
-                slot.start,
-                slot.end,
-                slot.free_places,
-                slot.slot_ref,
-            )
-            for slot in item.slots
-        ),
+        slots=tuple(_slot(slot) for slot in item.slots),
         agent_names=tuple((name.agent_id, name.name) for name in item.agent_names),
         contexts=tuple((context.agent_id, context.context_id) for context in item.contexts),
         trusted=trusted,
@@ -910,8 +891,42 @@ def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
                 rail=payload.rail or Rail.BIZUM,
                 recipient_iban=payload.recipient_iban,
             )
+        case Workflow.BOOKING_CONFIRMATION:
+            assert payload.booking_id is not None  # the payload's validator requires all three
+            assert payload.booking_slot is not None
+            assert payload.booking_agent_name is not None
+            return BookingConfirmation(
+                booking_id=payload.booking_id,
+                slot=_slot(payload.booking_slot),
+                agent_name=payload.booking_agent_name,
+                context_id=payload.booking_context_id,
+            )
         case _:
             return None
+
+
+def _slot(payload: ActivitySlotPayload) -> ActivitySlot:
+    """One slot off the wire, through the domain type that refuses what a verifier never passed."""
+    return ActivitySlot(
+        payload.agent_id,
+        payload.activity,
+        payload.start,
+        payload.end,
+        payload.free_places,
+        payload.slot_ref,
+    )
+
+
+def _slot_payload(slot: ActivitySlot, agent_name: str) -> dict[str, object]:
+    return {
+        "agent_id": slot.agent_id,
+        "agent_name": agent_name,
+        "activity": slot.activity,
+        "start": slot.start,
+        "end": slot.end,
+        "free_places": slot.free_places,
+        "slot_ref": slot.slot_ref,
+    }
 
 
 def _payment_to_domain(payload: PaymentDraftPayload) -> PaymentDraft:
@@ -1137,5 +1152,14 @@ def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:
             "concept": active.concept,
             "rail": active.rail,
             "recipient_iban": active.recipient_iban,
+        }
+    if isinstance(active, BookingConfirmation):
+        return {
+            "booking_id": active.booking_id,
+            # The slot carries its gym's name too, as the offers' slots do; the payload refuses a
+            # slot and a booking that name the gym differently.
+            "booking_slot": _slot_payload(active.slot, active.agent_name),
+            "booking_agent_name": active.agent_name,
+            "booking_context_id": active.context_id,
         }
     return {}

@@ -39,7 +39,7 @@ from typing import Final, Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
-from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.errors import InvalidValueError, ProviderFailedError
 from finguard_orchestrator.domain.models.conversation import ActivityOffers, BookingConfirmation
 from finguard_orchestrator.domain.models.expert_agents import (
     ActivityQuery,
@@ -95,10 +95,21 @@ _DAY_CLOSES: Final = time(23, 59)
 
 @dataclass(frozen=True)
 class BookingOutcome:
+    """What one sent booking came to. A receipt exactly when it was booked and alternatives
+    exactly when some were offered, so a turn can never say «Reserva hecha» with no code."""
+
     kind: BookingOutcomeKind
     receipt: BookingReceipt | None = None
     alternatives: tuple[ActivitySlot, ...] = ()
     link: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.kind == "booked") != (self.receipt is not None):
+            raise InvalidValueError("a booking is booked exactly when it has its receipt")
+        if (self.kind == "alternatives") != bool(self.alternatives):
+            raise InvalidValueError("alternatives are offered exactly when there are some")
+        if self.link is not None and self.kind != "link_required":
+            raise InvalidValueError("only a gym asking for linking gives a link")
 
 
 _FAILED: Final = BookingOutcome("failed")
