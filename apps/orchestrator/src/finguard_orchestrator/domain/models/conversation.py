@@ -34,6 +34,7 @@ from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
     MAX_AGENT_NAME,
+    MAX_CONTEXT_ID,
     MAX_ENTITY_ALIAS_LENGTH,
     MAX_ENTITY_ALIASES,
     MAX_GROUP_RANK,
@@ -372,7 +373,8 @@ class ActivityOffers:
             raise InvalidValueError("every offered slot comes from a named agent")
         continued = [agent_id for agent_id, _ in self.contexts]
         if len(set(continued)) != len(continued) or any(
-            agent_id not in named or not context_id for agent_id, context_id in self.contexts
+            agent_id not in named or not 1 <= len(context_id) <= MAX_CONTEXT_ID
+            for agent_id, context_id in self.contexts
         ):
             raise InvalidValueError("each context belongs to one offering agent")
 
@@ -457,6 +459,9 @@ class Conversation:
     turns: tuple[Turn, ...] = ()
     # Structural chart contexts only; rows and financial values stay in the browser.
     visual_contexts: tuple[VisualContext, ...] = ()
+    # The last activity search's verified slots, sealed on the wire (spec §5.3). Memory like the
+    # visual contexts: every turn carries it forward, and only another search replaces it.
+    activity_offers: ActivityOffers | None = None
 
     def __post_init__(self) -> None:
         if len(self.visual_contexts) > MAX_VISUAL_CONTEXTS:

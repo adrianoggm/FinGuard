@@ -11,15 +11,20 @@ from datetime import date
 from typing import Annotated, Final, Literal, cast, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from finguard_orchestrator.domain.constants import (
+    MAX_ACTIVITY_NAME,
+    MAX_AGENT_NAME,
     MAX_CATEGORY_LENGTH,
+    MAX_CONTEXT_ID,
     MAX_ENTITY_ALIAS_LENGTH,
     MAX_ENTITY_ALIASES,
+    MAX_EXPERT_AGENTS,
     MAX_GROUP_RANK,
     MAX_GROUP_ROWS,
     MAX_MERCHANT_LENGTH,
+    MAX_OFFERS,
     MAX_PAYMENT_MINOR,
     MAX_PROMPT_LENGTH,
     MAX_RANK,
@@ -27,6 +32,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_REMEMBERED_TURNS,
     MAX_SELECTED_ACCOUNTS,
     MAX_SELECTED_TRANSACTIONS,
+    MAX_SLOT_REF,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
     MAX_VISUAL_CONTEXTS,
@@ -54,6 +60,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualField,
 )
 from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
+from finguard_orchestrator.domain.models.expert_agents import AGENT_ID, REFERENCE
 from finguard_orchestrator.domain.services.visual_profile import MAX_DRAWN_LABELS
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
@@ -538,6 +545,89 @@ class VisualContextPayload(_Payload):
         return self
 
 
+# --- expert agents (A2A, spec §5.3) --------------------------------------------------------------
+#
+# The domain's own patterns, read rather than copied: an agent id goes into a request path and a
+# slot reference back to the agent, so the wire refuses exactly what the domain would.
+_AGENT_ID_PATTERN: Final = rf"^{AGENT_ID.pattern}$"
+_NAME_PATTERN: Final = r"^[^\x00-\x1f\x7f]+$"
+
+
+class ActivitySlotPayload(_Payload):
+    """One verified slot, as the answer lists it and as the sealed offers carry it. Every value is
+    one the verifier found in the agent's reply; `agent_name` is the card name the holder is shown
+    (or the agent's id, when the card's was unfit to show)."""
+
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    agent_id: str = Field(pattern=_AGENT_ID_PATTERN)
+    agent_name: str = Field(min_length=1, max_length=MAX_AGENT_NAME, pattern=_NAME_PATTERN)
+    activity: str = Field(min_length=1, max_length=MAX_ACTIVITY_NAME, pattern=_NAME_PATTERN)
+    # ISO 8601 with the offset, so a client shows the slot's own wall-clock time.
+    start: AwareDatetime
+    end: AwareDatetime | None = None
+    free_places: int | None = Field(default=None, ge=0)
+    # Plain text wherever it is shown -- a reference may legally hold `:` and `/`, and is never a
+    # link (Task 3, ruling carried).
+    slot_ref: str | None = Field(
+        default=None, max_length=MAX_SLOT_REF, pattern=rf"^{REFERENCE.pattern}$"
+    )
+
+
+class AgentNoticePayload(_Payload):
+    """One agent that did not answer with slots, and why, in closed words. `link` is a linking
+    address on one of the agent's own link hosts (§14 A3), or none."""
+
+    agent_name: str
+    kind: Literal["unavailable", "link_required", "unsupported_request"]
+    link: str | None = None
+
+
+class AgentNamePayload(_Payload):
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    agent_id: str = Field(pattern=_AGENT_ID_PATTERN)
+    name: str = Field(min_length=1, max_length=MAX_AGENT_NAME, pattern=_NAME_PATTERN)
+
+
+class AgentContextPayload(_Payload):
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    agent_id: str = Field(pattern=_AGENT_ID_PATTERN)
+    context_id: str = Field(min_length=1, max_length=MAX_CONTEXT_ID, pattern=_NAME_PATTERN)
+
+
+class ActivityOffersPayload(_Payload):
+    """The last search's offers. Sealed; echoed, never read by a client.
+
+    The seal covers every field but itself (`conversation_mapper.offers_semantics`): a slot moved
+    by a minute, a name or a context swapped, and the offers read back untrusted.
+    """
+
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    slots: list[ActivitySlotPayload] = Field(max_length=MAX_OFFERS)
+    agent_names: list[AgentNamePayload] = Field(max_length=MAX_EXPERT_AGENTS)
+    contexts: list[AgentContextPayload] = Field(default=[], max_length=MAX_EXPERT_AGENTS)
+    # `VisualContextPayload.token`'s declaration, under the offers' own prefix: a visual seal is a
+    # 422 here, and an offers seal is one on a chart.
+    token: str | None = Field(
+        default=None, max_length=512, pattern=r"^o1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"
+    )
+
+    @model_validator(mode="after")
+    def _every_slot_is_from_a_named_agent(self) -> "ActivityOffersPayload":
+        names = {item.agent_id: item.name for item in self.agent_names}
+        if len(names) != len(self.agent_names):
+            raise ValueError("each offering agent is named once")
+        if any(names.get(slot.agent_id) != slot.agent_name for slot in self.slots):
+            raise ValueError("every offered slot comes from a named agent, under that name")
+        contexts = [item.agent_id for item in self.contexts]
+        if len(set(contexts)) != len(contexts) or not set(contexts) <= set(names):
+            raise ValueError("each context belongs to one offering agent")
+        return self
+
+
 class ConversationPayload(_Payload):
     """Where the conversation is, in one object.
 
@@ -625,6 +715,9 @@ class ConversationPayload(_Payload):
     # ellipsis three deep still resolve. Bounded, because it travels on every request.
     turns: list[TurnPayload] = Field(default=[], max_length=MAX_REMEMBERED_TURNS)
     visual_contexts: list[VisualContextPayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
+    # The last activity search's verified slots, sealed (A2A expert agents, spec §5.3). Memory, not
+    # a workflow, so it rides beside any state; absent in a payload from before it existed.
+    activity_offers: ActivityOffersPayload | None = None
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
@@ -1019,6 +1112,11 @@ class QuestionResponse(_Payload):
     # only the parent carries the conversation left behind after all parts have run.
     parts: list["QuestionResponse"] = []
     save_candidate: SaveCandidate | None = None
+    # An activity search's answer (A2A expert agents): the verified slots in the order offered, and
+    # one notice per agent that could not answer with any. Composed from verified fields only;
+    # nothing an agent wrote reaches a client raw (spec §6.4).
+    activities: list[ActivitySlotPayload] = []
+    agent_notices: list[AgentNoticePayload] = []
     # The half-built payment, the refused capability and the recipient choice all live on
     # `conversation` now: they are states of one conversation rather than four independent fields
     # a client had to combine.

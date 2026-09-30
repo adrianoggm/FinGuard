@@ -165,5 +165,9 @@ MAX_BOOKING_CODE = 32
 # a longer name, or one with a control or bidi character in it, is shown as the agent's id instead.
 MAX_AGENT_NAME = 64
 
+# The A2A `contextId` an agent answered in, kept in the sealed offers so a booking continues it. An
+# agent's own identifier, usually a UUID; a longer one is not kept and the booking starts afresh.
+MAX_CONTEXT_ID = 128
+
 # The longest session a slot may claim. Four hours covers any class; a longer "slot" is a day.
 MAX_SLOT_MINUTES = 240

@@ -1518,11 +1518,18 @@ def _conversation_of(
     untrusted is logged once, by reason, before this function returns -- `record_context_untrusted`
     reads `trust_reason` off each one, which is exactly why verification happens here rather than
     lazily, the first time some later branch happens to read `trusted`.
+
+    A2A expert agents (spec §5.3): a search's sealed offers are checked here too, under their own
+    `o1.` seal, so a booking only ever resolves against offers this holder was shown in this
+    conversation. Unverified offers come back `trusted=False` and tokenless.
     """
     conversation = conversation_mapper.to_domain(
         request.conversation,
         verify=lambda token, conversation_id, position, semantics: metric_tokens.verify_context(
             token, who.holder_reference, conversation_id, position, semantics
+        ),
+        verify_offers=lambda token, conversation_id, semantics: metric_tokens.verify_offers(
+            token, who.holder_reference, conversation_id, semantics
         ),
     )
     for context in conversation.visual_contexts:

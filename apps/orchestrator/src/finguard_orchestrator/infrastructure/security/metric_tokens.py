@@ -1,4 +1,4 @@
-"""Stateless HMAC envelopes for save candidates and signed visual contexts.
+"""Stateless HMAC envelopes for save candidates, signed visual contexts and a search's offers.
 
 A sealed context binds a holder reference, a conversation id and a position in that conversation's
 own ordered list of contexts to the SHA-256 digest of a piece of canonical-JSON content -- what was
@@ -152,6 +152,49 @@ class MetricTokenCodec:
             return "conversation"
         if raw.get("p") != position:
             return "position"
+        if raw.get("g") != _digest(semantics):
+            return "content"
+        return "ok"
+
+    def seal_offers(
+        self, holder_reference: str, conversation_id: UUID, semantics: dict[str, object]
+    ) -> str:
+        """A token binding `holder_reference` and `conversation_id` to the digest of a search's
+        offers (A2A expert agents, spec §5.3).
+
+        `seal_context`'s body and MAC under its own type, `o1`, in the prefix and in the signed
+        `"t"` -- so a visual seal can never open offers, nor an offers seal a chart: `_open` checks
+        both. No position: a conversation holds one set of offers, the last search's, not a list
+        they move through.
+        """
+        payload = {
+            "v": 1,
+            "t": "o1",
+            "k": self._active,
+            "h": holder_reference,
+            "c": str(conversation_id),
+            "g": _digest(semantics),
+        }
+        return "o1." + self._sign(payload)
+
+    def verify_offers(
+        self,
+        token: str | None,
+        holder_reference: str,
+        conversation_id: UUID,
+        semantics: dict[str, object],
+    ) -> ContextTrust:
+        """Why `token` does or does not seal these offers for this holder and conversation --
+        never raises, and never `"position"`: `verify_context`'s order, without that check."""
+        if token is None:
+            return "format"
+        raw = self._open(token, "o1")
+        if raw is None or set(raw) != {"v", "t", "k", "h", "c", "g"}:
+            return "format"
+        if raw.get("h") != holder_reference:
+            return "holder"
+        if raw.get("c") != str(conversation_id):
+            return "conversation"
         if raw.get("g") != _digest(semantics):
             return "content"
         return "ok"

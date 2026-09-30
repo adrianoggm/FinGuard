@@ -23,7 +23,12 @@ from typing import Final, Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from finguard_orchestrator.domain.constants import MAX_AGENT_NAME, MAX_EXPERT_AGENTS, MAX_OFFERS
+from finguard_orchestrator.domain.constants import (
+    MAX_AGENT_NAME,
+    MAX_CONTEXT_ID,
+    MAX_EXPERT_AGENTS,
+    MAX_OFFERS,
+)
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.models.conversation import ActivityOffers
 from finguard_orchestrator.domain.models.expert_agents import (
@@ -276,10 +281,14 @@ def _merged(query: ActivityQuery, parts: list[_Asked]) -> ActivitySearch:
         for part in parts
         if part.outcome.agent_id in offering
     )
+    # A context an agent named in a form the sealed offers cannot carry is not kept: a booking then
+    # starts a new one, which an agent must accept anyway (a context is a hint, not a key).
     contexts = tuple(
         (part.outcome.agent_id, part.context_id)
         for part in parts
-        if part.outcome.agent_id in offering and part.context_id
+        if part.outcome.agent_id in offering
+        and part.context_id is not None
+        and _plain(part.context_id, MAX_CONTEXT_ID)
     )
     offers = ActivityOffers(kept, names, contexts) if kept else None
     return ActivitySearch(query, kept, tuple(part.outcome for part in parts), offers, None)
@@ -294,12 +303,15 @@ def _verdict(part: _Asked) -> Verdict:
 
 
 def _shown(agent: ExpertAgent) -> str:
-    """The card name, when it is fit to show a person: bounded, and with no control, format or
-    unassigned character (a bidi override would reorder what the holder reads). Otherwise the id,
-    which the gateway derived from the registered URL and is always plain."""
+    """The card name, when it is fit to show a person; otherwise the id, which the gateway derived
+    from the registered URL and is always plain."""
     name = agent.name.strip()
-    if 1 <= len(name) <= MAX_AGENT_NAME and not any(
-        unicodedata.category(character).startswith("C") for character in name
-    ):
-        return name
-    return agent.id
+    return name if _plain(name, MAX_AGENT_NAME) else agent.id
+
+
+def _plain(text: str, ceiling: int) -> bool:
+    """Bounded, and with no control, format or unassigned character: a bidi override in a name
+    would reorder what the holder reads."""
+    return 1 <= len(text) <= ceiling and not any(
+        unicodedata.category(character).startswith("C") for character in text
+    )

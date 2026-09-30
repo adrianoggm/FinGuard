@@ -20,7 +20,7 @@ from finguard_orchestrator.application.queries.search_activities import (
     SearchActivitiesHandler,
     SearchActivitiesQuery,
 )
-from finguard_orchestrator.domain.constants import MAX_OFFERS
+from finguard_orchestrator.domain.constants import MAX_CONTEXT_ID, MAX_OFFERS
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.models.expert_agents import (
     ActivityQuery,
@@ -491,3 +491,18 @@ async def test_a_card_name_unfit_to_show_is_replaced_by_the_agent_id() -> None:
 
     assert dict(result.offers.agent_names) == {"gym-norte": "gym-norte"}
     assert outcome_of(result, "gym-norte").agent_name == "gym-norte"
+
+
+async def test_a_context_the_sealed_offers_cannot_carry_is_not_kept() -> None:
+    """An agent's `contextId` travels in the sealed offers so a booking can continue it; one too
+    long, or with a control character, is dropped and the slots are kept."""
+    agents = FakeAgents(
+        replies={
+            "gym-norte": norte_reply(context_id="c" * (MAX_CONTEXT_ID + 1)),
+            "gym-sur": sur_reply(context_id="ctx\nsur"),
+        }
+    )
+    result = await search(agents=agents)
+
+    assert result.offers is not None and result.offers.contexts == ()
+    assert len(result.offers.slots) == 2
