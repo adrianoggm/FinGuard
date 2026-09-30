@@ -330,6 +330,27 @@ class PaymentConfirmation:
     recipient_iban: str | None = None
 
 
+@dataclass(frozen=True)
+class BookingConfirmation:
+    """A class chosen from the sealed offers, waiting for a yes on screen (spec §5.2).
+
+    Unlike a payment preview nothing is held anywhere yet: the gym has been sent nothing, and the
+    booking id minted here is what the one message sent after a yes is named by (`uuid5`), so an
+    agent that deduplicates by message id sees one booking however often the yes arrives.
+    """
+
+    booking_id: UUID
+    slot: ActivitySlot
+    agent_name: str  # the name the holder was shown with the offers
+    context_id: str | None  # the search's A2A context with this agent, when it gave one
+
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.agent_name) <= MAX_AGENT_NAME:
+            raise InvalidValueError("a booking names its gym by a bounded name")
+        if self.context_id is not None and not 1 <= len(self.context_id) <= MAX_CONTEXT_ID:
+            raise InvalidValueError("a booking's context is bounded")
+
+
 type ActiveWorkflow = (
     FinancialClarification
     | AccountScopeClarification
@@ -760,6 +781,7 @@ __all__ = [
     "AccountSelection",
     "AccountSelectionMode",
     "ActivityOffers",
+    "BookingConfirmation",
     "CounterpartyAlias",
     "ActiveWorkflow",
     "Conversation",

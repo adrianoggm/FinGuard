@@ -84,6 +84,20 @@ def request_text(query: ActivityQuery) -> str:
     return f"Busco clases de {activity} entre el {_dated(first)} y el {_dated(last)}{hours}."
 
 
+def booking_request(slot: ActivitySlot, member_ref: str) -> str:
+    """«Quiero reservar la clase de Spinning del jueves 1 de octubre de 2026 a las 19:00.
+    Referencia: N-1001-1900. Socio: <memberRef>.» -- the reference only when the agent gave one.
+
+    Filled from the verified slot alone, in the slot's own day and time: the activity as the agent
+    wrote it, the reference it gave, and the pairwise pseudonym (§5.4). Never the holder's sentence.
+    """
+    reference = f" Referencia: {slot.slot_ref}." if slot.slot_ref is not None else ""
+    return (
+        f"Quiero reservar la clase de {slot.activity} del {_dated(slot.start.date())} "
+        f"a las {slot.start:%H:%M}.{reference} Socio: {member_ref}."
+    )
+
+
 def offers(
     slots: Sequence[ActivitySlot],
     notices: Sequence[Notice],
