@@ -12,9 +12,10 @@ answer with a closed rule name, and a rejected answer is that agent not respondi
     grounding   the clock time is one the reply states (`stated_times`), and so is an end's -- or
                 the reply states the minutes from start to end as a whole number; the activity is
                 the one asked (`same_activity`) and is itself in the reply; the date is in the
-                reply as `YYYY-MM-DD`, «D de <mes>» or its weekday -- or the query is a single day,
-                the only case in which a bare `HH:MM` has a date at all; places and reference, when
-                given, are in the reply whole.
+                reply as `YYYY-MM-DD`, `DD/MM/YYYY` or «D de <mes>», or as its weekday when the
+                window holds one day with that weekday and the mention announces no other date --
+                or the query is a single day, the only case in which a bare `HH:MM` has a date at
+                all; places and reference, when given, are in the reply whole.
     window      the start is inside the query's window and in the future.
     coherence   an end after the start and at most `MAX_SLOT_MINUTES` later, places not negative,
                 no two slots with one activity and start, at most `MAX_AGENT_SLOTS`.
@@ -131,13 +132,19 @@ def verify_slots(
     # grounding
     words = _words(text)
     stated = stated_times(text)
+    folded_text = folded(text)
+    dates = _dates_in(folded_text)
     for slot, day, start, end in read:
         grounded = (
             _time_said(start.time(), start, stated)
             and (end is None or _end_said(start, end, stated, text))
             and same_activity(query.activity, slot.activity)
             and _has_words(words, _words(slot.activity))
-            and (single_day if day is None else single_day or _date_said(day, text, words))
+            and (
+                single_day
+                if day is None
+                else single_day or _date_said(day, folded_text, dates, query)
+            )
             and (slot.free_places is None or _number_said(slot.free_places, text))
             and (slot.slot_ref is None or _token_said(slot.slot_ref, text))
         )
@@ -269,15 +276,6 @@ def _has_words(haystack: tuple[str, ...], needle: tuple[str, ...]) -> bool:
     return any(haystack[i : i + width] == needle for i in range(len(haystack) - width + 1))
 
 
-def _date_said(day: date, text: str, words: tuple[str, ...]) -> bool:
-    return (
-        day.isoformat() in text
-        or _has_words(words, (str(day.day), "de", _MONTHS[day.month - 1]))
-        or _has_words(words, (f"{day.day:02d}", "de", _MONTHS[day.month - 1]))
-        or _WEEKDAYS[day.weekday()] in words
-    )
-
-
 @dataclass(frozen=True)
 class _SaidDate:
     """A literal date in the (folded) reply: `YYYY-MM-DD`, `DD/MM/YYYY` or «D de <mes>[ de AAAA]».
@@ -314,6 +312,36 @@ def _dates_in(text: str) -> tuple[_SaidDate, ...]:
         month = _MONTHS.index(m[2]) + 1 if m[2] in _MONTHS else 9
         found.append(_SaidDate(int(m[3]) if m[3] else None, month, int(m[1]), m.start(), m.end()))
     return tuple(sorted(found, key=lambda said: said.begins))
+
+
+# What may sit between a weekday and the date it announces: «jueves 8 de octubre», «jueves, 8 de
+# octubre», «jueves el 8», «jueves día 08/10/2026».
+_ANNOUNCES: Final = re.compile(r"[\s,]*(?:(?:el|dia)\s+)*")
+
+
+def _date_said(
+    day: date, folded_text: str, dates: tuple[_SaidDate, ...], query: ActivityQuery
+) -> bool:
+    """`day` is a literal date of the reply, or its weekday names it (review finding 8): the window
+    holds only one day with that weekday, and this mention of it does not announce another date
+    («el jueves 8 de octubre» names the 8th, whatever else is a Thursday)."""
+    if any(said.names(day) for said in dates):
+        return True
+    first, last = query.start.date(), query.end.date()
+    same_weekday = sum(
+        1
+        for offset in range((last - first).days + 1)
+        if (first + timedelta(days=offset)).weekday() == day.weekday()
+    )
+    if same_weekday != 1:
+        return False
+    starts = {said.begins: said for said in dates}
+    for mention in re.finditer(rf"\b{_WEEKDAYS[day.weekday()]}s?\b", folded_text):
+        filler = _ANNOUNCES.match(folded_text, mention.end())
+        announced = starts.get(filler.end() if filler else mention.end())
+        if announced is None or announced.names(day):
+            return True
+    return False
 
 
 def _time_said(at: time, moment: datetime, stated: tuple[StatedTime, ...]) -> bool:

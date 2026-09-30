@@ -502,3 +502,38 @@ def test_an_unreadable_booking_start_is_structure() -> None:
     draft = BookingDraft(True, "SUR-7731", "el jueves a las 18:30", "Spinning")
     reply = text_reply("Reservado a las 18:30. Código SUR-7731.")
     assert verify_booking(draft, slot=BOOKED_SLOT, reply=reply) == AgentRejection("structure")
+
+
+def test_a_weekday_grounds_a_date_only_when_it_names_one_day_of_the_window() -> None:
+    """Review finding 8 (ruling R8). Asked on a Wednesday for the next seven days, «el miércoles»
+    is today *or* next week -- it names neither -- and «el jueves 8 de octubre» names the 8th,
+    so its «jueves» does not ground the 1st."""
+    for day in ("2026-09-30", "2026-10-07"):
+        draft = AvailabilityDraft((SlotDraft("Spinning", f"{day}T19:00", None, None, None),))
+        assert verify_slots(
+            draft,
+            query=WEEK,
+            reply=text_reply("Spinning el miércoles a las 19:00"),
+            agent_id="gym-sur",
+            now=NOW,
+        ) == AgentRejection("grounding")
+    first = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T19:00", None, None, None),))
+    for said in (
+        "Spinning el jueves 8 de octubre a las 19:00",
+        "Spinning el jueves, 8 de octubre, a las 19:00",
+        "Spinning el jueves día 08/10/2026 a las 19:00",
+    ):
+        assert verify_slots(
+            first, query=WEEK, reply=text_reply(said), agent_id="gym-sur", now=NOW
+        ) == AgentRejection("grounding")
+    for said in (
+        "Spinning el jueves, 1 de octubre, a las 19:00",
+        "Spinning el 01/10/2026 a las 19:00",
+        "Spinning el jueves a las 19:00",
+    ):
+        assert (
+            len(
+                verify_slots(first, query=WEEK, reply=text_reply(said), agent_id="gym-sur", now=NOW)
+            )
+            == 1
+        )
