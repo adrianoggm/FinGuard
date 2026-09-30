@@ -19,8 +19,16 @@ accents and case are optional.
     never       a chart (`_VISUAL_CUES`): «muéstrame el gimnasio de este fin de semana en barras» is
                 drawn from the ledger (ruling R14).
 
-`_MONEY_CUES` is shared with `is_a_booking_request` (Task 5), for the same reason: a sentence that
-mentions money is the bank's, whatever else it mentions.
+`is_a_booking_request` reads the other half of the conversation (spec §5.2), with the same two
+vetoes and for the same reason: a sentence that mentions money, or asks for a chart, is the bank's,
+whatever else it mentions.
+
+    verb        «apúntame», «resérvame», «me apunto», «quiero reservar», «reserva la/una
+                clase/plaza/sesión»: always a booking -- with nothing offered yet, the answer is to
+                search first, never a figure from the ledger.
+    pointer     «la de las 19:00», «quiero (ir a) la de…», «la primera/segunda/tercera/última»:
+                a booking only when a search's offers are in the conversation, because without
+                them the same words point at a chart's bar or a ranking's row.
 """
 
 import re
@@ -77,6 +85,18 @@ _MONEY_CUES: Final = re.compile(
 _VISUAL_CUES: Final = re.compile(
     r"\bbarras?\b|\bgrafic|\bcompar|\bmuestra(?:me)?\b|\bensena(?:me)?\b|\bdesglos|\btop\b"
     r"|\bponlo\b"
+)
+# Saying «book it», in the words the lexicon knows. «reserva» alone is a savings pot as often as a
+# class («la reserva de emergencia»), so as a verb it needs what it reserves.
+_BOOKING_VERB: Final = re.compile(
+    r"\bapuntame\b|\breservame\b|\bme\s+apunto\b|\bquiero\s+reservar\b"
+    r"|\breserva\s+(?:la|una)\s+(?:clase|plaza|sesion)\b"
+)
+# Pointing at something offered, with no verb: a booking only when there are offers to point at.
+_POINTER: Final = re.compile(
+    r"\bla\s+de\s+las\s+\d{1,2}(?::\d{2})?\b"
+    r"|\bquiero\s+(?:ir\s+a\s+)?la\s+de\b"
+    r"|\bla\s+(?:primera|segunda|tercera|ultima)\b"
 )
 
 # What every gym's name is made of, so it names no gym on its own: «en el gimnasio» asks them all.
@@ -157,6 +177,19 @@ def asks_an_expert_agent(sentence: str) -> bool:
     return bool(_GYM.search(text) and _CUE.search(text))
 
 
+def is_a_booking_request(sentence: str, *, has_offers: bool) -> bool:
+    """A booking verb, or a pointer at an offer while there are offers, and nothing about money or
+    a chart (module doc). `has_offers` is whether the conversation holds a search's offers at all,
+    trusted or not: a broken seal is still a booking the holder asked for, answered by asking them
+    to search again."""
+    text = _text(sentence)
+    if _MONEY_CUES.search(text) or _VISUAL_CUES.search(text):
+        return False
+    if _BOOKING_VERB.search(text):
+        return True
+    return has_offers and bool(_POINTER.search(text))
+
+
 def activity_in(sentence: str) -> str | None:
     """The first activity of `ACTIVITIES` the sentence names, as the lexicon writes it."""
     found = _ACTIVITY.search(_text(sentence))
@@ -170,10 +203,16 @@ def named_agents(sentence: str, agents: Sequence[ExpertAgent]) -> tuple[str, ...
     at least three letters long, and is not shared by every listed agent: with «Gimnasio Norte» and
     «Gimnasio Sur», «norte» names one and «gimnasio» names none.
     """
+    return named_in(sentence, [(agent.id, agent.name) for agent in agents])
+
+
+def named_in(sentence: str, names: Sequence[tuple[str, str]]) -> tuple[str, ...]:
+    """`named_agents` over `(agent_id, name)` pairs: how a booking reads «en el Norte» against the
+    names the holder was shown with the offers, which are names and not cards."""
     said = set(re.findall(r"\w+", folded(sentence)))
-    words = {agent.id: _name_words(agent.name) for agent in agents}
+    words = {agent_id: _name_words(name) for agent_id, name in names}
     shared = set.intersection(*words.values()) if len(words) > 1 else set()
-    return tuple(agent.id for agent in agents if (words[agent.id] - shared) & said)
+    return tuple(agent_id for agent_id, _ in names if (words[agent_id] - shared) & said)
 
 
 def claims_an_agent_name(sentence: str) -> bool:

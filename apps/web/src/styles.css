@@ -1548,6 +1548,20 @@ summary {
   font-variant-numeric: tabular-nums;
 }
 
+/* A booking's hours line up like the class list's. */
+.booking-detail dd {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A gym's own identifier for the class, to quote if something goes wrong: monospaced like the
+   IBAN, and allowed to break anywhere, because it may be one long token with `:` and `/` in it. */
+.preview-detail dd.booking-reference {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 /* A payment the user walked away from. The service remembers it; until now the screen did not,
    so resuming was something you had to know was possible. */
 .paused {

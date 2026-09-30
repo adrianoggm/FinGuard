@@ -30,6 +30,7 @@ import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 import { Chart, chartTitle } from "./Chart";
 import { ActivityList } from "./ActivityList";
+import { BookingPanel } from "./BookingPanel";
 
 type ChartVisualization = Extract<NonNullable<Answer["visualization"]>, { kind: "chart" }>;
 
@@ -138,6 +139,9 @@ const STAGES: Record<string, string> = {
 };
 
 const AWAITING = "AWAITING_CONFIRMATION";
+// A booking's preview has its own outcome (the service never reuses a payment's for a class), and
+// it is drawn as the same kind of bubble: something is about to happen on a yes.
+const PREVIEWS = new Set([AWAITING, "BOOKING_AWAITING_CONFIRMATION"]);
 
 export type Turn =
   | { who: "user"; text: string }
@@ -397,8 +401,9 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         )}
         {awaitingConfirmation(thread) && !busy && (
           <div className="confirm">
+            {/* Still «sí» on the wire: the service reads the same closed yes for both. */}
             <button className="yes" onClick={() => send("sí")}>
-              Sí, enviar
+              {awaitingBooking(thread) ? "Sí, reservar" : "Sí, enviar"}
             </button>
             <button className="no" onClick={() => send("no")}>
               No
@@ -481,9 +486,18 @@ export function settled(
   return { turns, conversation: answer.conversation ?? before.conversation };
 }
 
-/** Whether a payment is on the table waiting for a yes. The one thing the input box renders on. */
+/**
+ * Whether a payment or a booking is on the table waiting for a yes. The one thing the input box
+ * renders on.
+ */
 export function awaitingConfirmation(thread: Thread): boolean {
-  return thread.conversation?.workflow === "PAYMENT_CONFIRMATION";
+  const workflow = thread.conversation?.workflow;
+  return workflow === "PAYMENT_CONFIRMATION" || workflow === "BOOKING_CONFIRMATION";
+}
+
+/** Whether the yes on the table books a class rather than moving money. */
+export function awaitingBooking(thread: Thread): boolean {
+  return thread.conversation?.workflow === "BOOKING_CONFIRMATION";
 }
 
 /** The intent a confirmation is about, when there is one. */
@@ -637,7 +651,7 @@ function Bubble({ turn }: { turn: Turn }) {
   const className = [
     "bubble",
     "theirs",
-    answer.outcome === AWAITING ? "preview" : "",
+    PREVIEWS.has(answer.outcome) ? "preview" : "",
     hasVisualization ? "has-visualization" : "",
   ].filter(Boolean).join(" ");
   return (
@@ -678,6 +692,7 @@ function Bubble({ turn }: { turn: Turn }) {
         <ActivityList slots={answer.activities ?? []} notices={answer.agent_notices ?? []} />
       ) : null}
       <PaymentPanel state={answer.conversation} />
+      <BookingPanel state={answer.conversation} />
     </div>
   );
 }

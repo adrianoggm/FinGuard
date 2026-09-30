@@ -200,6 +200,8 @@ class Workflow(StrEnum):
     TRANSFER_IN_PROGRESS = "TRANSFER_IN_PROGRESS"
     PAYMENT_CONFIRMATION = "PAYMENT_CONFIRMATION"
     ACCOUNT_SCOPE = "ACCOUNT_SCOPE"
+    # A class chosen from an activity search's offers, waiting for a yes on screen (spec §5.2).
+    BOOKING_CONFIRMATION = "BOOKING_CONFIRMATION"
 
 
 class Slot(StrEnum):
@@ -330,6 +332,27 @@ class PaymentConfirmation:
     recipient_iban: str | None = None
 
 
+@dataclass(frozen=True)
+class BookingConfirmation:
+    """A class chosen from the sealed offers, waiting for a yes on screen (spec §5.2).
+
+    Unlike a payment preview nothing is held anywhere yet: the gym has been sent nothing, and the
+    booking id minted here is what the one message sent after a yes is named by (`uuid5`), so an
+    agent that deduplicates by message id sees one booking however often the yes arrives.
+    """
+
+    booking_id: UUID
+    slot: ActivitySlot
+    agent_name: str  # the name the holder was shown with the offers
+    context_id: str | None  # the search's A2A context with this agent, when it gave one
+
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.agent_name) <= MAX_AGENT_NAME:
+            raise InvalidValueError("a booking names its gym by a bounded name")
+        if self.context_id is not None and not 1 <= len(self.context_id) <= MAX_CONTEXT_ID:
+            raise InvalidValueError("a booking's context is bounded")
+
+
 type ActiveWorkflow = (
     FinancialClarification
     | AccountScopeClarification
@@ -337,6 +360,7 @@ type ActiveWorkflow = (
     | PaymentInProgress
     | TransferInProgress
     | PaymentConfirmation
+    | BookingConfirmation
 )
 
 
@@ -551,7 +575,7 @@ class Conversation:
             | TransferInProgress,
         ):
             return self.active.awaiting
-        if isinstance(self.active, PaymentConfirmation):
+        if isinstance(self.active, PaymentConfirmation | BookingConfirmation):
             return Slot.CONFIRMATION
         return None
 
@@ -736,6 +760,8 @@ def workflow_of(active: "ActiveWorkflow | None") -> Workflow | None:
             return Workflow.TRANSFER_IN_PROGRESS
         case PaymentConfirmation():
             return Workflow.PAYMENT_CONFIRMATION
+        case BookingConfirmation():
+            return Workflow.BOOKING_CONFIRMATION
         case _:
             return None
 
@@ -760,6 +786,7 @@ __all__ = [
     "AccountSelection",
     "AccountSelectionMode",
     "ActivityOffers",
+    "BookingConfirmation",
     "CounterpartyAlias",
     "ActiveWorkflow",
     "Conversation",

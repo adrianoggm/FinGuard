@@ -7,10 +7,13 @@ types into `/v1/questions/stream` and a branch wired into one route only is a br
 conversation never gets.
 """
 
+import ast
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, time
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -18,6 +21,10 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi.testclient import TestClient
 
+from finguard_orchestrator.application.commands.book_activity import (
+    BookActivityHandler,
+    BookingOutcome,
+)
 from finguard_orchestrator.application.queries.search_activities import (
     ActivitySearch,
     AgentOutcome,
@@ -31,10 +38,15 @@ from finguard_orchestrator.bootstrap.main import app, create_app
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.conversation import (
     ActivityOffers,
+    BookingConfirmation,
     Conversation,
     PaymentInProgress,
 )
-from finguard_orchestrator.domain.models.expert_agents import ActivityQuery, ActivitySlot
+from finguard_orchestrator.domain.models.expert_agents import (
+    ActivityQuery,
+    ActivitySlot,
+    BookingReceipt,
+)
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
@@ -102,21 +114,85 @@ class FakeSearches:
         return self.result
 
 
+# Wednesday 30 September 2026, 10:00 in Madrid: the eve of the Thursday the offers are for.
+NOW = datetime(2026, 9, 30, 10, 0, tzinfo=ZONE)
+BOOKER = Caller(
+    HOLDER,
+    ACCOUNT,
+    scopes=frozenset({Scope.QUESTIONS_READ, Scope.AGENTS_ASK, Scope.AGENTS_BOOK}),
+)
+
+
+class Unreachable:
+    """A gateway and two readers nothing may reach: preparing a booking is local (§5.2), so any
+    call to one of these is a send that should not have happened."""
+
+    def __init__(self) -> None:
+        self.sent: list[object] = []
+
+    async def agents(self) -> tuple[()]:
+        self.sent.append("agents")
+        raise AssertionError("nothing is listed while a booking is prepared")
+
+    async def send(self, *args: object, **kwargs: object) -> None:
+        self.sent.append((args, kwargs))
+        raise AssertionError("nothing is sent before a yes")
+
+
+def booked(pending: BookingConfirmation) -> BookingOutcome:
+    return BookingOutcome(
+        "booked", receipt=BookingReceipt(pending.slot.agent_id, pending.slot, "SUR-7731")
+    )
+
+
+class FakeBookings(BookActivityHandler):
+    """The real `prepare` and clock over a gateway nothing may reach, and a scripted `confirm`:
+    what each outcome of a send becomes is `test_book_activity.py`'s; this is what a turn says."""
+
+    def __init__(
+        self,
+        outcome: Callable[[BookingConfirmation], BookingOutcome] = booked,
+        *,
+        now: datetime = NOW,
+    ) -> None:
+        self.gateway = Unreachable()
+        super().__init__(
+            self.gateway,
+            self.gateway,  # type: ignore[arg-type]
+            self.gateway,  # type: ignore[arg-type]
+            pairwise_key=b"k" * 32,
+            budget_seconds=5.0,
+            clock=lambda zone: now.astimezone(zone),
+        )
+        self.outcome = outcome
+        self.confirmed: list[BookingConfirmation] = []
+
+    async def confirm(self, pending: BookingConfirmation, caller: Caller) -> BookingOutcome:
+        self.confirmed.append(pending)
+        return self.outcome(pending)
+
+    @property
+    def sent_nothing(self) -> bool:
+        return self.confirmed == [] and self.gateway.sent == []
+
+
 async def reply(
     sentence: str = SENTENCE,
     *,
     who: Caller = ASKER,
     was: Conversation | None = None,
     searches: FakeSearches | None = None,
+    bookings: FakeBookings | None = None,
     configured: bool = True,
+    channel: Any = "TEXT",
 ) -> QuestionResponse | None:
     was = was or conversation_mapper.to_domain(None)
     return await expert_agent_reply(
-        QuestionRequest(question=sentence),
+        QuestionRequest(question=sentence, channel=channel),
         who,
         was,
         searches=(searches or FakeSearches()) if configured else None,
-        bookings=None,
+        bookings=bookings if configured else None,
         codec=CODEC,
     )
 
@@ -324,19 +400,398 @@ async def test_each_refusal_says_its_sentence(refusal: Any, outcome: str, text: 
     assert answer.conversation.activity_offers is not None, "a refusal leaves the offers alone"
 
 
+# --- the booking (spec §5.2), in the helper's order of precedence --------------------------------
+
+SUR_1900 = ActivitySlot(
+    "gym-sur", "Spinning", datetime(2026, 10, 1, 19, 0, tzinfo=ZONE), None, 3, None
+)
+AT_SEVEN = ActivityOffers((SUR_1830, NORTE_1900, SUR_1900), OFFERS.agent_names, OFFERS.contexts)
+PREVIEW = "Vas a reservar Spinning, jueves 1 de octubre, 18:30, en Gimnasio Sur. ¿Confirmas?"
+PENDING = BookingConfirmation(UUID(int=21), SUR_1830, "Gimnasio Sur", "ctx-sur")
+
+
+def offering(offers: ActivityOffers = OFFERS) -> Conversation:
+    return replace(conversation_mapper.to_domain(None), activity_offers=offers)
+
+
+def pending(
+    booking: BookingConfirmation = PENDING, offers: ActivityOffers = OFFERS
+) -> Conversation:
+    return offering(offers).with_active(booking)
+
+
+async def test_a_booking_is_prepared_from_the_offers_and_nothing_is_sent() -> None:
+    bookings = FakeBookings()
+    searches = FakeSearches()
+
+    answer = await reply(
+        "apúntame a la de las 18:30", was=offering(), bookings=bookings, searches=searches
+    )
+
+    assert answer is not None
+    assert (answer.outcome, answer.text) == ("BOOKING_AWAITING_CONFIRMATION", PREVIEW)
+    assert answer.conversation is not None
+    assert answer.conversation.workflow == "BOOKING_CONFIRMATION"
+    assert answer.conversation.awaiting == "CONFIRMATION"
+    assert answer.conversation.booking_slot is not None
+    assert answer.conversation.booking_slot.start == SUR_1830.start
+    assert answer.conversation.booking_agent_name == "Gimnasio Sur"
+    assert answer.conversation.booking_context_id == "ctx-sur"
+    assert answer.conversation.activity_offers is not None, "the offers stay for the next turn"
+    assert bookings.sent_nothing and searches.queries == []
+
+
+async def test_a_class_with_an_end_is_previewed_with_its_hours() -> None:
+    answer = await reply(
+        "apúntame a la de las 19:00 en el Norte", was=offering(), bookings=FakeBookings()
+    )
+
+    assert answer is not None and answer.text == (
+        "Vas a reservar Spinning, jueves 1 de octubre, 19:00–19:45, en Gimnasio Norte. ¿Confirmas?"
+    )
+
+
+async def test_one_time_at_two_gyms_is_asked_about_with_a_chip_for_each() -> None:
+    bookings = FakeBookings()
+
+    answer = await reply("apúntame a la de las 19:00", was=offering(AT_SEVEN), bookings=bookings)
+
+    assert answer is not None
+    assert (answer.outcome, answer.text) == (
+        "BOOKING_AMBIGUOUS",
+        "¿Cuál de estas: 19:00 en Gimnasio Norte o 19:00 en Gimnasio Sur?",
+    )
+    assert answer.suggestions == [
+        "Apúntame a la de las 19:00 en Gimnasio Norte",
+        "Apúntame a la de las 19:00 en Gimnasio Sur",
+    ]
+    assert answer.conversation is not None and answer.conversation.workflow is None
+    assert bookings.sent_nothing
+
+
+async def test_a_chip_names_the_one_class_it_offers() -> None:
+    """Each suggestion of an ambiguity, sent back, prepares exactly its class."""
+    bookings = FakeBookings()
+    asked = await reply("apúntame a la de las 19:00", was=offering(AT_SEVEN), bookings=bookings)
+    assert asked is not None
+
+    for chip, chosen in zip(asked.suggestions, (NORTE_1900, SUR_1900), strict=True):
+        answer = await reply(chip, was=offering(AT_SEVEN), bookings=bookings)
+        assert answer is not None and answer.outcome == "BOOKING_AWAITING_CONFIRMATION"
+        assert answer.conversation is not None and answer.conversation.booking_slot is not None
+        assert answer.conversation.booking_slot.agent_id == chosen.agent_id
+
+
+@pytest.mark.parametrize(
+    ("sentence", "was", "now", "outcome", "text"),
+    [
+        (
+            "apúntame a la de las 21:00",
+            offering(),
+            NOW,
+            "BOOKING_NOT_OFFERED",
+            "Esa clase no está entre las que te he ofrecido.",
+        ),
+        (
+            "apúntame a la de las 18:30",
+            offering(),
+            datetime(2026, 10, 1, 18, 45, tzinfo=ZONE),
+            "BOOKING_STARTED",
+            "Esa clase ya ha empezado.",
+        ),
+        (
+            "apúntame a la de las 18:30",
+            offering(replace(OFFERS, trusted=False)),
+            NOW,
+            "BOOKING_SEARCH_AGAIN",
+            "No puedo usar esa búsqueda; vuelve a pedirla.",
+        ),
+        (
+            "la primera",
+            offering(replace(OFFERS, trusted=False)),
+            NOW,
+            "BOOKING_SEARCH_AGAIN",
+            "No puedo usar esa búsqueda; vuelve a pedirla.",
+        ),
+        (
+            "apúntame a spinning",
+            conversation_mapper.to_domain(None),
+            NOW,
+            "BOOKING_SEARCH_AGAIN",
+            "No puedo usar esa búsqueda; vuelve a pedirla.",
+        ),
+    ],
+    ids=["not-offered", "started", "untrusted", "untrusted-pointer", "no-offers"],
+)
+async def test_a_booking_that_cannot_be_prepared_says_why_and_leaves_everything_as_it_was(
+    sentence: str, was: Conversation, now: datetime, outcome: str, text: str
+) -> None:
+    bookings = FakeBookings(now=now)
+    searches = FakeSearches()
+
+    answer = await reply(sentence, was=was, bookings=bookings, searches=searches)
+
+    assert answer is not None and (answer.outcome, answer.text) == (outcome, text)
+    assert answer.conversation == conversation_mapper.to_payload(was)
+    assert bookings.sent_nothing and searches.queries == []
+
+
+@pytest.mark.parametrize(
+    ("sentence", "was"),
+    [
+        ("pasa 100 a la reserva", offering()),
+        ("la primera", conversation_mapper.to_domain(None)),
+        ("¿cuánto tengo en la reserva?", offering()),
+    ],
+    ids=["payment", "pointer-without-offers", "balance"],
+)
+async def test_money_and_a_pointer_at_nothing_are_left_to_the_bank(
+    sentence: str, was: Conversation
+) -> None:
+    bookings = FakeBookings()
+
+    assert await reply(sentence, was=was, bookings=bookings) is None
+    assert bookings.sent_nothing
+
+
+async def test_a_booking_without_the_capability_or_the_scope_says_so() -> None:
+    off = await reply("apúntame a la de las 18:30", was=offering(), configured=False)
+    assert off is not None and off.outcome == "EXPERT_AGENTS_OFF"
+
+    bookings = FakeBookings()
+    forbidden = await reply(
+        "apúntame a la de las 18:30", who=READER, was=offering(), bookings=bookings
+    )
+    assert forbidden is not None and forbidden.outcome == "EXPERT_AGENTS_FORBIDDEN"
+    assert forbidden.conversation is not None and forbidden.conversation.workflow is None
+    assert bookings.sent_nothing
+
+
+# --- the yes, on screen only ---------------------------------------------------------------------
+
+
+def alternatives(pending: BookingConfirmation) -> BookingOutcome:
+    later = [
+        ActivitySlot(
+            pending.slot.agent_id,
+            "Spinning",
+            datetime(2026, 10, 1, hour, 0, tzinfo=ZONE),
+            None,
+            places,
+            None,
+        )
+        for hour, places in ((20, 2), (21, 5))
+    ]
+    return BookingOutcome("alternatives", alternatives=tuple(later))
+
+
+LINK = "http://127.0.0.1:9102/vincular?ref=abc"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected", "text"),
+    [
+        (
+            booked,
+            "BOOKED",
+            "Reserva hecha en Gimnasio Sur: Spinning, jueves 1 de octubre, 18:30. Código SUR-7731.",
+        ),
+        (
+            alternatives,
+            "BOOKING_ALTERNATIVES",
+            "La de las 18:30 no está disponible; Gimnasio Sur ofrece 20:00 y 21:00.",
+        ),
+        (
+            lambda _: BookingOutcome("link_required", link=LINK),
+            "BOOKING_LINK_REQUIRED",
+            "Gimnasio Sur necesita que vincules tu cuenta de socio; cuando lo hayas hecho, "
+            "vuelve a pedir la reserva.",
+        ),
+        (
+            lambda _: BookingOutcome("unsupported_request"),
+            "BOOKING_UNSUPPORTED",
+            "Gimnasio Sur pide un dato que FinGuard no proporciona; la reserva no se ha hecho.",
+        ),
+        (
+            lambda _: BookingOutcome("failed"),
+            "BOOKING_FAILED",
+            "Gimnasio Sur no ha confirmado la reserva.",
+        ),
+        (
+            lambda _: BookingOutcome("unknown"),
+            "BOOKING_UNKNOWN",
+            "No sé si la reserva se ha completado; consulta en Gimnasio Sur.",
+        ),
+    ],
+    ids=["booked", "alternatives", "link", "unsupported", "failed", "unknown"],
+)
+async def test_a_yes_on_screen_confirms_once_and_closes_the_booking(
+    outcome: Callable[[BookingConfirmation], BookingOutcome], expected: str, text: str
+) -> None:
+    bookings = FakeBookings(outcome)
+
+    answer = await reply("sí", who=BOOKER, was=pending(), bookings=bookings)
+
+    assert answer is not None and (answer.outcome, answer.text) == (expected, text)
+    assert bookings.confirmed == [PENDING]
+    assert answer.conversation is not None and answer.conversation.workflow is None
+
+
+async def test_alternatives_become_the_new_offers_sealed() -> None:
+    was = pending()
+    answer = await reply("sí", who=BOOKER, was=was, bookings=FakeBookings(alternatives))
+
+    assert answer is not None and answer.conversation is not None
+    assert [f"{slot.start:%H:%M}" for slot in answer.activities] == ["20:00", "21:00"]
+    assert answer.suggestions == ["Apúntame a la de las 20:00", "Apúntame a la de las 21:00"]
+    offers = answer.conversation.activity_offers
+    assert offers is not None and offers.token is not None
+    assert [f"{slot.start:%H:%M}" for slot in offers.slots] == ["20:00", "21:00"]
+    assert [(name.agent_id, name.name) for name in offers.agent_names] == [
+        ("gym-sur", "Gimnasio Sur")
+    ]
+    assert [(ctx.agent_id, ctx.context_id) for ctx in offers.contexts] == [("gym-sur", "ctx-sur")]
+    assert (
+        CODEC.verify_offers(
+            offers.token,
+            HOLDER,
+            was.conversation_id,
+            conversation_mapper.offers_semantics(offers),
+        )
+        == "ok"
+    )
+
+
+async def test_a_gym_asking_for_linking_leaves_a_notice_with_its_link() -> None:
+    answer = await reply(
+        "sí",
+        who=BOOKER,
+        was=pending(),
+        bookings=FakeBookings(lambda _: BookingOutcome("link_required", link=LINK)),
+    )
+
+    assert answer is not None
+    assert [notice.model_dump() for notice in answer.agent_notices] == [
+        {"agent_name": "Gimnasio Sur", "kind": "link_required", "link": LINK}
+    ]
+
+
+async def test_a_yes_by_voice_is_sent_to_the_screen() -> None:  # §14 A10
+    bookings = FakeBookings()
+    was = pending()
+
+    answer = await reply("sí", who=BOOKER, was=was, bookings=bookings, channel="VOICE")
+
+    assert answer is not None
+    assert (answer.outcome, answer.text) == (
+        "BOOKING_ON_SCREEN",
+        "Confirma la reserva en la pantalla.",
+    )
+    assert answer.conversation == conversation_mapper.to_payload(was), "the booking waits on"
+    assert bookings.sent_nothing
+
+
+async def test_a_yes_without_agents_book_books_nothing() -> None:
+    bookings = FakeBookings()
+    was = pending()
+
+    answer = await reply("sí", who=ASKER, was=was, bookings=bookings)
+
+    assert answer is not None and answer.outcome == "EXPERT_AGENTS_FORBIDDEN"
+    assert answer.text == "Tu acceso no permite reservar con agentes externos."
+    assert answer.conversation == conversation_mapper.to_payload(was)
+    assert bookings.sent_nothing
+
+
+async def test_a_no_cancels_the_booking_and_sends_nothing() -> None:
+    bookings = FakeBookings()
+
+    answer = await reply("no", who=BOOKER, was=pending(), bookings=bookings)
+
+    assert answer is not None
+    assert (answer.outcome, answer.text) == ("BOOKING_CANCELLED", "De acuerdo, no reservo nada.")
+    assert answer.conversation is not None and answer.conversation.workflow is None
+    assert answer.conversation.activity_offers is not None, "the offers stay"
+    assert bookings.sent_nothing
+
+
+@pytest.mark.parametrize(
+    "sentence", ["sí pero a las 20:00", "¿cuánto tengo?", "apúntame a la de las 19:00", "gracias"]
+)
+async def test_anything_else_repeats_the_preview_and_waits(sentence: str) -> None:
+    bookings = FakeBookings()
+    searches = FakeSearches()
+    was = pending()
+
+    answer = await reply(sentence, who=BOOKER, was=was, bookings=bookings, searches=searches)
+
+    assert answer is not None
+    assert (answer.outcome, answer.text) == ("BOOKING_UNCLEAR", f"{PREVIEW} Responde sí o no.")
+    assert answer.conversation == conversation_mapper.to_payload(was)
+    assert bookings.sent_nothing and searches.queries == []
+
+
+@pytest.mark.parametrize(
+    "was",
+    [
+        pending(offers=replace(OFFERS, trusted=False)),
+        replace(pending(), activity_offers=None),
+        pending(replace(PENDING, slot=replace(SUR_1830, free_places=60))),
+        pending(replace(PENDING, agent_name="Gimnasio Falso")),
+        pending(replace(PENDING, context_id="ctx-other")),
+    ],
+    ids=["untrusted-offers", "no-offers", "retimed-slot", "renamed", "recontexted"],
+)
+async def test_a_booking_the_offers_do_not_vouch_for_is_never_sent(was: Conversation) -> None:
+    """The pending booking travels unsealed beside the sealed offers, so a yes sends only a class
+    those offers still hold, under the name and context they hold it with."""
+    bookings = FakeBookings()
+
+    answer = await reply("sí", who=BOOKER, was=was, bookings=bookings)
+
+    assert answer is not None
+    assert (answer.outcome, answer.text) == (
+        "BOOKING_SEARCH_AGAIN",
+        "No puedo usar esa búsqueda; vuelve a pedirla.",
+    )
+    assert answer.conversation is not None and answer.conversation.workflow is None
+    assert bookings.sent_nothing
+
+
+async def test_a_class_that_started_after_its_preview_is_not_sent() -> None:
+    bookings = FakeBookings(now=datetime(2026, 10, 1, 18, 31, tzinfo=ZONE))
+
+    answer = await reply("sí", who=BOOKER, was=pending(), bookings=bookings)
+
+    assert answer is not None
+    assert (answer.outcome, answer.text) == ("BOOKING_STARTED", "Esa clase ya ha empezado.")
+    assert answer.conversation is not None and answer.conversation.workflow is None
+    assert bookings.sent_nothing
+
+
+async def test_a_yes_with_no_gateway_closes_a_booking_nothing_can_send() -> None:
+    answer = await reply("sí", who=BOOKER, was=pending(), configured=False)
+
+    assert answer is not None and answer.outcome == "EXPERT_AGENTS_OFF"
+    assert answer.conversation is not None and answer.conversation.workflow is None
+
+
 # --- both routes (A11) ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def client() -> Any:
     before = getattr(app.state, "expert_searches", None)
+    booking_before = getattr(app.state, "expert_bookings", None)
     enabled = app.state.questions_enabled
     app.state.expert_searches = FakeSearches()
+    app.state.expert_bookings = FakeBookings()
     app.state.questions_enabled = True
-    app.dependency_overrides[authenticated_caller] = lambda: ASKER
+    app.dependency_overrides[authenticated_caller] = lambda: BOOKER
     yield TestClient(app)
     app.dependency_overrides.clear()
     app.state.expert_searches = before
+    app.state.expert_bookings = booking_before
     app.state.questions_enabled = enabled
 
 
@@ -392,6 +847,200 @@ def test_a_route_without_a_gateway_says_the_capability_does_not_exist(client: Te
         assert answer["outcome"] == "EXPERT_AGENTS_OFF"
 
 
+def _answer_of(client: TestClient, route: str, question: str, conversation: Any = None) -> Any:
+    body: dict[str, Any] = {"question": question}
+    if conversation is not None:
+        body["conversation"] = conversation
+    response = client.post(route, json=body)
+    assert response.status_code == 200, response.text
+    return events_of(response)[0] if route.endswith("stream") else response.json()
+
+
+@pytest.mark.parametrize("route", ["/v1/questions", "/v1/questions/stream"])
+def test_a_search_a_booking_and_a_yes_go_through_either_route(
+    client: TestClient, route: str
+) -> None:
+    """The whole booking over HTTP: the sealed offers the search left are verified on the way back
+    in (`_conversation_of`), the preview is prepared from them, and the yes is sent once."""
+    searched = _answer_of(client, route, SENTENCE)
+    prepared = _answer_of(client, route, "apúntame a la de las 18:30", searched["conversation"])
+
+    assert prepared["outcome"] == "BOOKING_AWAITING_CONFIRMATION"
+    assert prepared["conversation"]["workflow"] == "BOOKING_CONFIRMATION"
+    assert prepared["conversation"]["booking_slot"]["start"] == "2026-10-01T18:30:00+02:00"
+
+    done = _answer_of(client, route, "sí", prepared["conversation"])
+
+    assert done["outcome"] == "BOOKED"
+    assert done["text"].endswith("Código SUR-7731.")
+    assert done["conversation"]["workflow"] is None
+    assert len(app.state.expert_bookings.confirmed) == 1
+
+
+def _new_free_places(offers: dict[str, Any]) -> None:
+    offers["slots"][0]["free_places"] = 60
+
+
+def _forged_token(offers: dict[str, Any]) -> None:
+    offers["token"] = "o1.AAAA.BBBB"
+
+
+@pytest.mark.parametrize("route", ["/v1/questions", "/v1/questions/stream"])
+@pytest.mark.parametrize("tamper", [_new_free_places, _forged_token], ids=["places", "token"])
+def test_offers_tampered_in_the_browser_cannot_be_booked(
+    client: TestClient, route: str, tamper: Callable[[dict[str, Any]], None]
+) -> None:
+    """Task 4's review: `to_domain` trusts offers when no verifier is passed. This route passes
+    one, so an echo edited in the browser is offers nobody sealed, and a booking asks for the
+    search again instead of reading them."""
+    searched = _answer_of(client, route, SENTENCE)
+    echoed = json.loads(json.dumps(searched["conversation"]))
+    tamper(echoed["activity_offers"])
+
+    answer = _answer_of(client, route, "apúntame a la de las 18:30", echoed)
+
+    assert answer["outcome"] == "BOOKING_SEARCH_AGAIN"
+    assert app.state.expert_bookings.confirmed == []
+
+
+# --- the guard: every booking reads offers `_conversation_of` verified --------------------------
+
+_INFRASTRUCTURE = Path(__file__).resolve().parents[1] / "src" / "finguard_orchestrator"
+
+
+def _name_of(call: ast.Call) -> str | None:
+    target = call.func
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return None
+
+
+def _own_nodes(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.AST]:
+    """Every node of `function`'s body, and none of a function nested inside it."""
+    found: list[ast.AST] = []
+    pending: list[ast.AST] = list(function.body)
+    while pending:
+        node = pending.pop()
+        found.append(node)
+        pending.extend(
+            child
+            for child in ast.iter_child_nodes(node)
+            if not isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+        )
+    return found
+
+
+def _functions() -> list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+    found: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
+    for path in sorted((_INFRASTRUCTURE / "infrastructure").rglob("*.py")):
+        relative = path.relative_to(_INFRASTRUCTURE).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+        found.extend(
+            (relative, node)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        )
+    return found
+
+
+def _passes(call: ast.Call, keyword: str) -> bool:
+    """`keyword=` given a value -- a literal `None` does not count as given."""
+    return any(
+        item.arg == keyword
+        and not (isinstance(item.value, ast.Constant) and item.value.value is None)
+        for item in call.keywords
+    )
+
+
+def test_every_conversation_a_booking_reads_had_its_offers_verified() -> None:
+    """`to_domain(verify_offers=None)` trusts whatever offers were echoed (Task 4's review), so a
+    booking resolved against `ActivityOffers.trusted` is only as safe as the call that built the
+    conversation it reads. Two facts, walked over `infrastructure/`:
+
+    1. `to_domain` binds `verify_offers=` in `_conversation_of`, the one HTTP boundary, and nowhere
+       else is it called without one -- except `_compound_read_reply`, whose result is read for
+       its `visual_contexts` and nothing else, so no offers it builds reach anything.
+    2. Every call of `expert_agent_reply`, the booking path's one entry, hands it a conversation
+       that is `_conversation_of`'s, or derived from it by its own methods.
+
+    A new call site of either fails here until someone decides which shape it is.
+    """
+    verified: set[str] = set()
+    unverified: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef, ast.Call]] = []
+    entries: list[tuple[str, str]] = []
+    for relative, function in _functions():
+        nodes = _own_nodes(function)
+        for call in (node for node in nodes if isinstance(node, ast.Call)):
+            if _name_of(call) == "to_domain":
+                if _passes(call, "verify_offers"):
+                    verified.add(function.name)
+                else:
+                    unverified.append((relative, function, call))
+            if _name_of(call) == "expert_agent_reply":
+                entries.append((function.name, _conversation_argument(call, function, nodes)))
+
+    assert verified == {"_conversation_of"}
+    assert [(relative, function.name) for relative, function, _ in unverified] == [
+        ("infrastructure/controllers/llm_controller.py", "_compound_read_reply")
+    ]
+    [(_, compound, call)] = unverified
+    assert _read_only_for_visual_contexts(compound, call)
+    assert sorted(entries) == [
+        ("ask", "_conversation_of"),
+        ("ask_streaming", "_conversation_of"),
+    ]
+
+
+def _conversation_argument(
+    call: ast.Call, function: ast.FunctionDef | ast.AsyncFunctionDef, nodes: list[ast.AST]
+) -> str:
+    """Where the conversation handed to `expert_agent_reply` comes from: the one function every
+    assignment to it calls, when each is that function or one of the conversation's own methods."""
+    argument = call.args[2] if len(call.args) > 2 else None
+    argument = argument or next((item.value for item in call.keywords if item.arg == "was"), None)
+    assert isinstance(argument, ast.Name), ast.dump(call)
+    sources: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == argument.id for t in node.targets):
+            continue
+        value = node.value
+        assert isinstance(value, ast.Call), f"{function.name}: {ast.dump(value)}"
+        on_itself = (
+            isinstance(value.func, ast.Attribute)
+            and isinstance(value.func.value, ast.Name)
+            and value.func.value.id == argument.id
+        )
+        if not on_itself:
+            sources.add(_name_of(value) or "?")
+    assert len(sources) == 1, (function.name, sources)
+    return sources.pop()
+
+
+def _read_only_for_visual_contexts(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, call: ast.Call
+) -> bool:
+    parents = {
+        child: parent for parent in ast.walk(function) for child in ast.iter_child_nodes(parent)
+    }
+    assignment = parents[call]
+    assert isinstance(assignment, ast.Assign) and len(assignment.targets) == 1
+    [target] = assignment.targets
+    assert isinstance(target, ast.Name)
+    reads = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name) and node.id == target.id and isinstance(node.ctx, ast.Load)
+    ]
+    uses = [parents[read] for read in reads]
+    return bool(uses) and all(
+        isinstance(use, ast.Attribute) and use.attr == "visual_contexts" for use in uses
+    )
+
+
 # --- the composition root ------------------------------------------------------------------------
 
 # `base64.urlsafe_b64encode(b"x" * 32)`, as `ORCHESTRATOR_METRICS_SIGNING_KEYS` expects it.
@@ -415,6 +1064,7 @@ def test_without_a_gateway_url_no_search_is_built(monkeypatch: pytest.MonkeyPatc
     built = _create_app_with(monkeypatch, ORCHESTRATOR_A2A_GATEWAY_URL="")
 
     assert built.state.expert_searches is None
+    assert built.state.expert_bookings is None
 
 
 def test_a_gateway_on_a_public_origin_needs_a_pairwise_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -440,6 +1090,8 @@ def test_a_gateway_with_its_keys_builds_the_search(monkeypatch: pytest.MonkeyPat
     )
 
     assert isinstance(built.state.expert_searches, SearchActivitiesHandler)
+    # Beside the search, on the same gateway, classifier and normaliser.
+    assert isinstance(built.state.expert_bookings, BookActivityHandler)
 
 
 def test_a_gateway_on_loopback_runs_on_the_development_keys_and_says_so(

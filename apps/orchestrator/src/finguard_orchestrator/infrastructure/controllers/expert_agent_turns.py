@@ -6,27 +6,48 @@ payment branch in `llm_controller` repeats. Both routes call `expert_agent_reply
 after the payment branches that own their turns and before the visual and financial paths, and
 return its answer when it has one.
 
-It answers only a turn `asks_an_expert_agent` claims (spec §14 A1), and for every other turn
-returns `None`: the caller then continues exactly as it did before this existed. Task 5 adds the
-booking branches above the search -- a pending booking's reply first, then a booking request
-against the sealed offers -- which is what `bookings` is here for.
+Three branches, in this order, and `None` for every turn none of them claims -- the caller then
+continues exactly as it did before this existed:
 
-Every sentence is `activity_writer`'s, every value a verified one, and the offers leave sealed.
+    1. a booking waiting for a yes owns the turn, whatever its words, like a payment preview: a
+       yes on screen sends it once, a no drops it, a yes by voice is sent to the screen (§14 A10),
+       and anything else repeats the preview;
+    2. a booking request (`is_a_booking_request`) is prepared against the sealed offers, and
+       nothing is sent;
+    3. a timetable question (`asks_an_expert_agent`, §14 A1) is searched.
+
+The offers a booking reads are the ones `llm_controller._conversation_of` verified: an echo whose
+seal does not check out arrives untrusted and is never booked from (§5.3). Every sentence is
+`activity_writer`'s, every value a verified one, and the offers leave sealed.
 """
 
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Final
 from uuid import uuid4
 
+from finguard_orchestrator.application.commands.book_activity import (
+    BookActivityHandler,
+    BookingOutcome,
+    BookingOutcomeKind,
+)
 from finguard_orchestrator.application.queries.search_activities import (
     ActivitySearch,
     SearchActivitiesHandler,
     SearchActivitiesQuery,
 )
-from finguard_orchestrator.domain.models.conversation import Conversation
-from finguard_orchestrator.domain.models.expert_agents import ActivityQuery
-from finguard_orchestrator.domain.services import activity_writer
-from finguard_orchestrator.domain.services.expert_agent_words import asks_an_expert_agent
+from finguard_orchestrator.domain.models.conversation import (
+    ActivityOffers,
+    BookingConfirmation,
+    Conversation,
+)
+from finguard_orchestrator.domain.models.expert_agents import ActivityQuery, ActivitySlot
+from finguard_orchestrator.domain.services import activity_writer, confirmation
+from finguard_orchestrator.domain.services.expert_agent_words import (
+    asks_an_expert_agent,
+    is_a_booking_request,
+)
+from finguard_orchestrator.domain.services.slot_reference import SlotAmbiguous, SlotNotOffered
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
@@ -42,6 +63,16 @@ from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTo
 # A refusal about what the sentence asked, as opposed to who could answer it.
 _UNCLEAR: Final = frozenset({"no_activity", "no_window"})
 
+# What a sent booking came to, by the name the turn answers with.
+_BOOKED: Final[Mapping[BookingOutcomeKind, str]] = {
+    "booked": "BOOKED",
+    "alternatives": "BOOKING_ALTERNATIVES",
+    "link_required": "BOOKING_LINK_REQUIRED",
+    "unsupported_request": "BOOKING_UNSUPPORTED",
+    "failed": "BOOKING_FAILED",
+    "unknown": "BOOKING_UNKNOWN",
+}
+
 
 async def expert_agent_reply(
     request: QuestionRequest,
@@ -49,14 +80,18 @@ async def expert_agent_reply(
     was: Conversation,
     *,
     searches: SearchActivitiesHandler | None,
-    bookings: object | None,
+    bookings: BookActivityHandler | None,
     codec: MetricTokenCodec,
 ) -> QuestionResponse | None:
-    """The answer to an expert-agent turn, or `None` when this is not one.
+    """The answer to an expert-agent turn, or `None` when this is not one (module doc).
 
-    `searches` is `None` when no gateway is configured: the capability does not exist and says so
-    (spec §3.2). `bookings` is Task 5's `BookActivityHandler`, unused until its branches land.
+    `searches` and `bookings` are `None` when no gateway is configured: the capability does not
+    exist and says so (spec §3.2).
     """
+    if isinstance(was.active, BookingConfirmation):
+        return await _answering(request, who, was, was.active, bookings, codec)
+    if is_a_booking_request(request.question, has_offers=was.activity_offers is not None):
+        return _preparing(request, who, was, bookings, codec)
     if not asks_an_expert_agent(request.question):
         return None
     if searches is None:
@@ -71,11 +106,147 @@ async def expert_agent_reply(
     return _searched(search, search.query, who, was, codec)
 
 
-def _said(outcome: str, text: str, was: Conversation) -> QuestionResponse:
-    """A turn that asked no agent: the conversation is left exactly as it was, offers included."""
+# --- 2. a booking request: prepared, nothing sent ---------------------------------------------
+
+
+def _preparing(
+    request: QuestionRequest,
+    who: Caller,
+    was: Conversation,
+    bookings: BookActivityHandler | None,
+    codec: MetricTokenCodec,
+) -> QuestionResponse:
+    """A preview of the class the sentence points at, or why there is none. Nothing leaves.
+
+    Only `agents:ask`: a preview is a reading of offers a search already brought back, and the
+    booking itself waits for `agents:book` and a yes (§14 A4).
+    """
+    if bookings is None:
+        return _said("EXPERT_AGENTS_OFF", activity_writer.off(), was)
+    if not who.may(Scope.AGENTS_ASK):
+        return _said("EXPERT_AGENTS_FORBIDDEN", activity_writer.forbidden(), was)
+    offers = was.activity_offers
+    if offers is None or not offers.trusted:
+        return _said("BOOKING_SEARCH_AGAIN", activity_writer.search_again(), was)
+    prepared = bookings.prepare(request.question, offers, now=bookings.now(who))
+    if isinstance(prepared, SlotAmbiguous):
+        names = dict(offers.agent_names)
+        return QuestionResponse(
+            outcome="BOOKING_AMBIGUOUS",
+            text=activity_writer.which_booking(prepared.candidates, names),
+            conversation=conversation_mapper.to_payload(was),
+            suggestions=activity_writer.booking_suggestions(prepared.candidates, names),
+        )
+    if isinstance(prepared, SlotNotOffered):
+        return _said("BOOKING_NOT_OFFERED", activity_writer.not_offered(), was)
+    if not isinstance(prepared, BookingConfirmation):  # "started" (Review Focus 3)
+        return _said("BOOKING_STARTED", activity_writer.started(), was)
+    # A preview is a question like a payment's: it replaces whatever else was open, and ends the
+    # one-turn payment referent.
+    after = was.without_recent_payment().with_active(prepared)
     return QuestionResponse(
-        outcome=outcome, text=text, conversation=conversation_mapper.to_payload(was)
+        outcome="BOOKING_AWAITING_CONFIRMATION",
+        text=activity_writer.booking_preview(prepared.slot, prepared.agent_name),
+        conversation=_sealed(after, who, codec),
     )
+
+
+# --- 1. a booking waiting for a yes ------------------------------------------------------------
+
+
+async def _answering(
+    request: QuestionRequest,
+    who: Caller,
+    was: Conversation,
+    pending: BookingConfirmation,
+    bookings: BookActivityHandler | None,
+    codec: MetricTokenCodec,
+) -> QuestionResponse:
+    """The reply to a preview, read by the payments' own closed reader (`confirmation`).
+
+    Only a yes typed on screen, by a credential with `agents:book`, for a class the verified
+    offers still hold and that has not started, reaches `confirm` -- and `confirm` sends once.
+    """
+    reply = request.question
+    if confirmation.is_refusal(reply):
+        return _closed("BOOKING_CANCELLED", activity_writer.booking_cancelled(), was, who, codec)
+    if not confirmation.is_confirmation(reply):
+        text = activity_writer.booking_unclear(pending.slot, pending.agent_name)
+        return _said("BOOKING_UNCLEAR", text, was)
+    if request.channel == "VOICE":
+        # §14 A10: voice may search and prepare, never confirm. The booking waits on screen.
+        return _said("BOOKING_ON_SCREEN", activity_writer.on_screen(), was)
+    if bookings is None:
+        return _closed("EXPERT_AGENTS_OFF", activity_writer.off(), was, who, codec)
+    if not who.may(Scope.AGENTS_BOOK):
+        return _said("EXPERT_AGENTS_FORBIDDEN", activity_writer.booking_forbidden(), was)
+    if not _vouched_for(pending, was.activity_offers):
+        return _closed("BOOKING_SEARCH_AGAIN", activity_writer.search_again(), was, who, codec)
+    if pending.slot.start <= bookings.now(who):
+        return _closed("BOOKING_STARTED", activity_writer.started(), was, who, codec)
+    outcome = await bookings.confirm(pending, who)
+    return _sent(outcome, pending, was.with_active(None), who, codec)
+
+
+def _vouched_for(pending: BookingConfirmation, offers: ActivityOffers | None) -> bool:
+    """Whether the verified offers still hold this class, under this name and this context.
+
+    The pending booking travels beside the offers unsealed, so it is believed only as far as the
+    seal reaches: a slot the browser edited, or one whose offers no longer verify, is a class
+    nobody was shown, and nothing is sent for it.
+    """
+    agent_id = pending.slot.agent_id
+    return (
+        offers is not None
+        and offers.trusted
+        and pending.slot in offers.slots
+        and offers.name_of(agent_id) == pending.agent_name
+        and dict(offers.contexts).get(agent_id) == pending.context_id
+    )
+
+
+def _sent(
+    outcome: BookingOutcome,
+    pending: BookingConfirmation,
+    after: Conversation,
+    who: Caller,
+    codec: MetricTokenCodec,
+) -> QuestionResponse:
+    """What a booking sent once came to. The booking is closed whatever it was: a gym asking
+    for linking, offering other classes or not answering is not asked again (§5.2, §7)."""
+    name = pending.agent_name
+    slots: tuple[ActivitySlot, ...] = ()
+    notices: list[AgentNoticePayload] = []
+    match outcome.kind:
+        case "booked" if outcome.receipt is not None:
+            text = activity_writer.booked(outcome.receipt, name)
+        case "alternatives" if outcome.alternatives:
+            slots = outcome.alternatives
+            text = activity_writer.booking_alternatives(pending.slot, name, slots)
+            # The alternatives are what this gym offers now: the next «apúntame» reads them.
+            contexts = ((pending.slot.agent_id, pending.context_id),) if pending.context_id else ()
+            offers = ActivityOffers(slots, ((pending.slot.agent_id, name),), contexts)
+            after = replace(after, activity_offers=offers)
+        case "link_required":
+            text = activity_writer.booking_link_required(name)
+            notices = [AgentNoticePayload(agent_name=name, kind="link_required", link=outcome.link)]
+        case "unsupported_request":
+            text = activity_writer.booking_unsupported(name)
+        case "unknown":
+            text = activity_writer.booking_unknown(name)
+        case _:
+            text = activity_writer.booking_failed(name)
+    return QuestionResponse(
+        outcome=_BOOKED[outcome.kind],
+        text=text,
+        conversation=_sealed(after, who, codec),
+        activities=_slot_payloads(slots, {pending.slot.agent_id: name}),
+        agent_notices=notices,
+        suggestions=activity_writer.choose_suggestions(slots),
+    )
+
+
+# --- 3. a search -------------------------------------------------------------------------------
 
 
 def _searched(
@@ -109,18 +280,7 @@ def _searched(
         outcome=outcome,
         text=text,
         conversation=_sealed(after, who, codec),
-        activities=[
-            ActivitySlotPayload(
-                agent_id=slot.agent_id,
-                agent_name=names.get(slot.agent_id, slot.agent_id),
-                activity=slot.activity,
-                start=slot.start,
-                end=slot.end,
-                free_places=slot.free_places,
-                slot_ref=slot.slot_ref,
-            )
-            for slot in search.slots
-        ],
+        activities=_slot_payloads(search.slots, names),
         # Only the agents that were sent something (ruling R16): a named gym never asked is not
         # one that «no ha respondido de forma válida», and the text already says why it wasn't.
         agent_notices=[
@@ -134,12 +294,57 @@ def _searched(
     )
 
 
+# --- shared ------------------------------------------------------------------------------------
+
+
+def _said(outcome: str, text: str, was: Conversation) -> QuestionResponse:
+    """A turn that changed nothing: the conversation is left exactly as it was, offers included --
+    still sealed when they verified, still unusable when they did not."""
+    return QuestionResponse(
+        outcome=outcome, text=text, conversation=conversation_mapper.to_payload(was)
+    )
+
+
+def _closed(
+    outcome: str, text: str, was: Conversation, who: Caller, codec: MetricTokenCodec
+) -> QuestionResponse:
+    """A turn that closes the pending booking and changes nothing else."""
+    return QuestionResponse(
+        outcome=outcome, text=text, conversation=_sealed(was.with_active(None), who, codec)
+    )
+
+
+def _slot_payloads(
+    slots: Sequence[ActivitySlot], names: Mapping[str, str]
+) -> list[ActivitySlotPayload]:
+    return [
+        ActivitySlotPayload(
+            agent_id=slot.agent_id,
+            agent_name=names.get(slot.agent_id, slot.agent_id),
+            activity=slot.activity,
+            start=slot.start,
+            end=slot.end,
+            free_places=slot.free_places,
+            slot_ref=slot.slot_ref,
+        )
+        for slot in slots
+    ]
+
+
 def _sealed(
     conversation: Conversation, who: Caller, codec: MetricTokenCodec
 ) -> ConversationPayload:
-    """The conversation's wire shape with its offers sealed for this holder and conversation."""
+    """The conversation's wire shape with its offers sealed for this holder and conversation.
+
+    Only offers this service trusts: ones a search or a booking just built, or ones whose echoed
+    seal verified. Sealing an untrusted echo would launder offers nobody vouched for into a seal
+    that verifies, so those go out as they came in -- tokenless, and unusable next turn too.
+    """
     conversation_id = conversation.conversation_id or uuid4()
     payload = conversation_mapper.to_payload(replace(conversation, conversation_id=conversation_id))
+    offers = conversation.activity_offers
+    if offers is not None and not offers.trusted:
+        return payload
     return conversation_mapper.seal_offers_payload(
         payload, conversation_id, who.holder_reference, codec
     )

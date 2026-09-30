@@ -43,6 +43,7 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyCommand,
     ResetLlmPolicyHandler,
 )
+from finguard_orchestrator.application.commands.book_activity import BookActivityHandler
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
 from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
 from finguard_orchestrator.bootstrap.config import get_settings
@@ -487,8 +488,10 @@ def create_app() -> FastAPI:
     )
 
     # A2A expert agents (spec §3.2): **without the gateway's URL the capability does not exist** --
-    # nothing is built, and a timetable question is answered by saying no agents are configured.
+    # nothing is built, and a timetable question or a booking is answered by saying no agents are
+    # configured.
     expert_searches: SearchActivitiesHandler | None = None
+    expert_bookings: BookActivityHandler | None = None
     if settings.a2a_gateway_url is not None:
         pairwise = settings.a2a_pairwise_key
         # The signing-key refusal above, for the other key this service derives what it sends
@@ -514,37 +517,51 @@ def create_app() -> FastAPI:
             )
         # The planner's provider and model read the cards and the replies: one knob for the one
         # model this service trusts with a closed schema, like the payment reader beside it.
+        gateway = HttpExpertAgents(
+            base_url=settings.a2a_gateway_url,
+            token=(
+                gateway_token.get_secret_value()
+                if gateway_token is not None
+                else _DEVELOPMENT_GATEWAY_TOKEN
+            ),
+            timeout_seconds=settings.a2a_agent_budget_seconds,
+        )
+        # One classifier for both: it caches each card's reading by digest, so the card a search
+        # classified is not read again for the booking that follows it.
+        classifier = LlmSkillClassifier(
+            planner_provider,
+            model=settings.planner_model,
+            temperature=settings.planner_temperature,
+            max_output_tokens=settings.planner_max_output_tokens,
+        )
+        normaliser = LlmReplyNormaliser(
+            planner_provider,
+            model=settings.planner_model,
+            temperature=settings.planner_temperature,
+            max_output_tokens=settings.planner_max_output_tokens,
+        )
+        pairwise_key = (
+            pairwise.get_secret_value().encode()
+            if pairwise is not None
+            else _DEVELOPMENT_PAIRWISE_KEY
+        )
         expert_searches = SearchActivitiesHandler(
-            HttpExpertAgents(
-                base_url=settings.a2a_gateway_url,
-                token=(
-                    gateway_token.get_secret_value()
-                    if gateway_token is not None
-                    else _DEVELOPMENT_GATEWAY_TOKEN
-                ),
-                timeout_seconds=settings.a2a_agent_budget_seconds,
-            ),
-            LlmSkillClassifier(
-                planner_provider,
-                model=settings.planner_model,
-                temperature=settings.planner_temperature,
-                max_output_tokens=settings.planner_max_output_tokens,
-            ),
-            LlmReplyNormaliser(
-                planner_provider,
-                model=settings.planner_model,
-                temperature=settings.planner_temperature,
-                max_output_tokens=settings.planner_max_output_tokens,
-            ),
-            pairwise_key=(
-                pairwise.get_secret_value().encode()
-                if pairwise is not None
-                else _DEVELOPMENT_PAIRWISE_KEY
-            ),
+            gateway,
+            classifier,
+            normaliser,
+            pairwise_key=pairwise_key,
+            budget_seconds=settings.a2a_agent_budget_seconds,
+        )
+        expert_bookings = BookActivityHandler(
+            gateway,
+            classifier,
+            normaliser,
+            pairwise_key=pairwise_key,
             budget_seconds=settings.a2a_agent_budget_seconds,
         )
     # Read by both question routes through one helper (`expert_agent_turns`, spec §14 A11).
     app.state.expert_searches = expert_searches
+    app.state.expert_bookings = expert_bookings
 
     # Before the routers, because a rejected preflight never reaches one. The web client cannot
     # call this service at all without it: a browser refuses a cross-origin request unless the

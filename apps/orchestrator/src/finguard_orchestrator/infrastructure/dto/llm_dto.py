@@ -214,6 +214,8 @@ _SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
     # Two questions and no more: which of the holder's accounts, and how much.
     Workflow.TRANSFER_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.ACCOUNT}),
     Workflow.PAYMENT_CONFIRMATION: frozenset({Slot.CONFIRMATION}),
+    # A booking asks one thing, a yes or a no, exactly like a payment preview.
+    Workflow.BOOKING_CONFIRMATION: frozenset({Slot.CONFIRMATION}),
     None: frozenset(),
 }
 
@@ -774,6 +776,18 @@ class ConversationPayload(_Payload):
     # so a client written before transfers keeps round-tripping a state it does not understand.
     rail: Rail | None = None
     recipient_iban: str | None = Field(default=None, max_length=42)
+    # BOOKING_CONFIRMATION: the class a booking will be sent for after a yes on screen (spec §5.2).
+    # Nothing is held by the gym yet, so none of this is a claim anybody else vouches for: the
+    # slot is only ever sent while the sealed offers above still hold it, under this name and this
+    # context (`expert_agent_turns`), and the id is only what the one message is named by.
+    booking_id: UUID | None = None
+    booking_slot: ActivitySlotPayload | None = None
+    booking_agent_name: str | None = Field(
+        default=None, min_length=1, max_length=MAX_AGENT_NAME, pattern=_NAME_PATTERN
+    )
+    booking_context_id: str | None = Field(
+        default=None, min_length=1, max_length=MAX_CONTEXT_ID, pattern=_NAME_PATTERN
+    )
 
     @model_validator(mode="after")
     def _fields_match_the_workflow(self) -> "ConversationPayload":
@@ -799,6 +813,8 @@ class ConversationPayload(_Payload):
             # Neither field is required: the state exists precisely while one of them is missing.
             Workflow.TRANSFER_IN_PROGRESS: (),
             Workflow.PAYMENT_CONFIRMATION: ("intent_id", "recipient", "amount_minor"),
+            # The context is optional: an agent that named none is booked in a new one.
+            Workflow.BOOKING_CONFIRMATION: ("booking_id", "booking_slot", "booking_agent_name"),
             None: (),
         }
         # Which fields belong to which state. Anything set outside its own state is a caller
@@ -827,6 +843,9 @@ class ConversationPayload(_Payload):
                     "recipient_iban",
                 }
             ),
+            Workflow.BOOKING_CONFIRMATION: frozenset(
+                {"booking_id", "booking_slot", "booking_agent_name", "booking_context_id"}
+            ),
             None: frozenset(),
         }
         every = frozenset().union(*owned.values())
@@ -837,6 +856,12 @@ class ConversationPayload(_Payload):
         for name in every - owned[self.workflow]:
             if getattr(self, name):
                 raise ValueError(f"{name} does not belong to {self.workflow or 'an idle'} state")
+        # One name for the gym, as the offers carry it: the slot's copy and the booking's agree.
+        if (
+            self.booking_slot is not None
+            and self.booking_slot.agent_name != self.booking_agent_name
+        ):
+            raise ValueError("a booking names its gym as its slot does")
 
         if self.pending_requested_count is not None:
             if self.pending_plan is None or self.pending_plan.action is not Action.RANK_MOVEMENTS:

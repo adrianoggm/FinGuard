@@ -185,7 +185,10 @@ export type Workflow =
   | "UNSUPPORTED_CAPABILITY"
   | "PAYMENT_IN_PROGRESS"
   | "TRANSFER_IN_PROGRESS"
-  | "PAYMENT_CONFIRMATION";
+  | "PAYMENT_CONFIRMATION"
+  // A class chosen from a search's offers, waiting for a yes on screen. Nothing has been sent to
+  // the gym yet: the yes is what sends it, once.
+  | "BOOKING_CONFIRMATION";
 
 /** What the last turn asked the user for. */
 export type Slot =
@@ -338,6 +341,14 @@ export type ConversationState = {
   // Fondo indexado" over a transfer.
   rail: "BIZUM" | "TRANSFER" | "INTERNAL" | null;
   recipient_iban: string | null;
+  // BOOKING_CONFIRMATION: the class a yes would book, as the service verified it, and the gym's
+  // name as it was shown with the offers. Drawn by the booking panel and otherwise echoed: the
+  // service sends it only while the sealed offers still hold that class, so editing it here books
+  // nothing. The context is the gym's own conversation id, echoed and never read.
+  booking_id?: string | null;
+  booking_slot?: ActivitySlot | null;
+  booking_agent_name?: string | null;
+  booking_context_id?: string | null;
   // `rank` used to be here and left with the refusal it served. The service rejects fields it does
   // not know, so a stale one on this type is a 422 waiting for whoever fills it in.
 };

@@ -18,7 +18,9 @@ from finguard_orchestrator.domain.services.expert_agent_words import (
     activity_in,
     asks_an_expert_agent,
     claims_an_agent_name,
+    is_a_booking_request,
     named_agents,
+    named_in,
 )
 
 
@@ -203,11 +205,115 @@ def test_no_string_of_any_evaluation_file_is_claimed() -> None:
 
 def test_no_existing_corpus_sentence_is_claimed() -> None:
     """The corpus must not move (Global Constraints): no sentence of any existing episode reaches
-    an agent. Task 5 adds `is_a_booking_request(s, has_offers=False)` to the same sweep."""
+    an agent, as a question or as a booking. No episode has searched, so the booking predicate is
+    swept as it reads them: with no offers in the conversation."""
     claimed = [
         (episode.name, turn.say)
         for episode in episodes.load()
         for turn in episode.turns
-        if asks_an_expert_agent(turn.say)
+        if asks_an_expert_agent(turn.say) or is_a_booking_request(turn.say, has_offers=False)
     ]
     assert claimed == []
+
+
+def test_no_string_of_any_evaluation_file_is_a_booking() -> None:
+    """The evaluation sweep above, for the booking predicate with no offers."""
+    evaluation = Path(__file__).resolve().parents[1] / "evaluation"
+    claimed = [
+        (path.relative_to(evaluation).as_posix(), text)
+        for path in sorted(evaluation.rglob("*.yaml"))
+        for text in _strings(yaml.safe_load(path.read_text(encoding="utf-8")))
+        if is_a_booking_request(text, has_offers=False)
+    ]
+    assert claimed == []
+
+
+# --- a booking (Task 5, spec §5.2) ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Apúntame a la de las 19:00 en el Norte",
+        "apuntame a spinning",
+        "Resérvame la primera",
+        "reservame la de las 18:30",
+        "me apunto a la de las 20:00",
+        "quiero reservar la clase de yoga",
+        "reserva la clase de las 19:00",
+        "reserva una plaza en la de las 18:30",
+        "reserva una sesión de pilates",
+    ],
+)
+def test_a_booking_verb_is_a_booking_request_with_or_without_offers(sentence: str) -> None:
+    """Said with a verb, a booking is one whether or not anything was offered: with nothing to
+    book, the answer is to search first, not the bank."""
+    assert is_a_booking_request(sentence, has_offers=False)
+    assert is_a_booking_request(sentence, has_offers=True)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "la de las 19:00",
+        "la de las 7",
+        "quiero la de las 18:30",
+        "quiero ir a la de Norte",
+        "la primera",
+        "¿y la segunda?",
+        "la tercera",
+        "la última del Norte",
+    ],
+)
+def test_a_bare_pointer_is_a_booking_request_only_when_there_is_something_to_point_at(
+    sentence: str,
+) -> None:
+    assert is_a_booking_request(sentence, has_offers=True)
+    assert not is_a_booking_request(sentence, has_offers=False)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "pasa 100 a la reserva",
+        "¿cuánto tengo en la reserva?",
+        "apúntame 20 euros a la reserva",
+        "apúntame el gasto de la de las 19:00",
+        "resérvame 50 € para el gimnasio",
+        "quiero reservar dinero para la clase",
+        "¿cuánto cuesta la primera?",
+        # A chart's bars are pointed at with the same words, and a chart is the ledger's.
+        "la primera barra",
+        "muéstrame la última",
+    ],
+)
+def test_money_or_a_chart_keeps_a_pointer_away_from_the_gyms(sentence: str) -> None:
+    """The shared cues (`_MONEY_CUES`, `_VISUAL_CUES`) veto a booking the way they veto a search.
+    That includes «compra», so «¿puedo comprar esa clase?» is the bank's: a booking moves no money
+    in this design (D1), and a sentence that says it does is not one."""
+    assert not is_a_booking_request(sentence, has_offers=True)
+    assert not is_a_booking_request("¿puedo comprar la de las 19:00?", has_offers=True)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "reserva",
+        "la reserva de emergencia",
+        "¿cómo va mi reserva?",
+        "primera hora",
+        "la de siempre",
+        "hola",
+    ],
+)
+def test_the_word_reserva_and_other_near_misses_are_not_a_booking(sentence: str) -> None:
+    assert not is_a_booking_request(sentence, has_offers=True)
+
+
+def test_an_agent_is_named_by_its_shown_name_as_well_as_by_its_card() -> None:
+    """The offers keep the name the holder was shown, not the card: the same rule reads both."""
+    names = (("gym-norte", "Gimnasio Norte"), ("gym-sur", "Gimnasio Sur"))
+    assert named_in("la de las 19:00 en el Norte", names) == ("gym-norte",)
+    assert named_in("la de las 19:00 en el gimnasio", names) == ()
+    agents = (agent("gym-norte", "Gimnasio Norte"), agent("gym-sur", "Gimnasio Sur"))
+    assert named_agents("la del Sur", agents) == named_in("la del Sur", names) == ("gym-sur",)
