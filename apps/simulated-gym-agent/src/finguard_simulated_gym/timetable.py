@@ -61,7 +61,15 @@ class Timetable:
                 sessions[index] = replace(sessions[index], activity=activity)
         self.sessions: list[Session] = sorted(sessions, key=lambda s: (s.day, s.start))
 
-    def find(self, activity: str, start: datetime, end: datetime) -> list[Session]:
+    def find(
+        self,
+        activity: str,
+        start: datetime,
+        end: datetime,
+        band: tuple[time, time] | None = None,
+    ) -> list[Session]:
+        """Sessions of `activity` starting in `[start, end)`, and -- when a daily band is asked
+        for -- starting in `[band[0], band[1])` on whichever day they fall."""
         wanted = fold(activity)
         return [
             s
@@ -70,6 +78,7 @@ class Timetable:
             and start.replace(tzinfo=None)
             <= datetime.combine(s.day, s.start)
             < end.replace(tzinfo=None)
+            and (band is None or band[0] <= s.start < band[1])
         ]
 
     def by_ref(self, ref: str) -> Session | None:

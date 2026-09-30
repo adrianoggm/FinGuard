@@ -1,7 +1,7 @@
 import random
 import zlib
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -39,6 +39,13 @@ def _plazas(n: int) -> str:
 
 def _join(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " y " + items[-1]
+
+
+def _slots(sessions: list[Session]) -> list[str]:
+    return [
+        f"a las {s.start:%H:%M} ({'completa' if s.capacity == 0 else _plazas(s.capacity)})"
+        for s in sessions
+    ]
 
 
 class GymExecutor(AgentExecutor):
@@ -95,21 +102,33 @@ class GymExecutor(AgentExecutor):
     # -- availability -------------------------------------------------------------------------
 
     def _availability(self, request: Availability) -> _Reply:
-        found = self._timetable.find(request.activity, request.start, request.end)
+        found = self._timetable.find(request.activity, request.start, request.end, request.band)
         if self._norte:
             return _Reply(
                 TaskState.TASK_STATE_COMPLETED,
                 artifact=[new_data_part({"sesiones": [self._norte_session(s) for s in found]})],
             )
-        day = _long_day(request.start.date())
-        if not found:
-            text = f"No hay clases de {request.activity} el {day} en ese horario."
+        first = request.start.date()
+        last = (request.end - timedelta(microseconds=1)).date()
+        if first == last:
+            day = _long_day(first)
+            if not found:
+                text = f"No hay clases de {request.activity} el {day} en ese horario."
+            else:
+                text = f"Clases de {request.activity} el {day}: {_join(_slots(found))}."
+        elif not found:
+            text = (
+                f"No hay clases de {request.activity} entre el {_long_day(first)} y el "
+                f"{_long_day(last)} en ese horario."
+            )
         else:
-            slots = [
-                f"a las {s.start:%H:%M} ({'completa' if s.capacity == 0 else _plazas(s.capacity)})"
-                for s in found
+            # Several days: each day named, so a session is never read as another day's.
+            days = sorted({s.day for s in found})
+            listed = [
+                f"el {_long_day(d)}: {_join(_slots([s for s in found if s.day == d]))}"
+                for d in days
             ]
-            text = f"Clases de {request.activity} el {day}: {_join(slots)}."
+            text = f"Clases de {request.activity} {'; '.join(listed)}."
         return _Reply(TaskState.TASK_STATE_COMPLETED, artifact=[new_text_part(text)])
 
     def _norte_session(self, s: Session) -> dict[str, Any]:
