@@ -8,11 +8,12 @@ answer with a closed rule name, and a rejected answer is that agent not respondi
 
     structure   each start is `YYYY-MM-DDTHH:MM` or `HH:MM`, each end the same or absent; the
                 activity and the reference are within their ceilings.
-    grounding   the clock time is one the reply states (`clock_times_in`); the activity is the one
-                asked (`same_activity`) and is itself in the reply; the date is in the reply as
-                `YYYY-MM-DD`, «D de <mes>» or its weekday -- or the query is a single day, the only
-                case in which a bare `HH:MM` has a date at all; places and reference, when given,
-                are in the reply whole.
+    grounding   the clock time is one the reply states (`stated_times`), and so is an end's -- or
+                the reply states the minutes from start to end as a whole number; the activity is
+                the one asked (`same_activity`) and is itself in the reply; the date is in the
+                reply as `YYYY-MM-DD`, «D de <mes>» or its weekday -- or the query is a single day,
+                the only case in which a bare `HH:MM` has a date at all; places and reference, when
+                given, are in the reply whole.
     window      the start is inside the query's window and in the future.
     coherence   an end after the start and at most `MAX_SLOT_MINUTES` later, places not negative,
                 no two slots with one activity and start, at most `MAX_AGENT_SLOTS`.
@@ -110,24 +111,27 @@ def verify_slots(
 ) -> tuple[ActivitySlot, ...] | AgentRejection:
     text = reply_text(reply)
     single_day = query.start.date() == query.end.date()
+    zone = query.start.tzinfo
 
-    # structure
-    read: list[tuple[SlotDraft, date | None, time, date | None, time | None]] = []
+    # structure -- and every moment built in the query's zone; a bare time is on the query's day,
+    # which only a single-day query lets it keep (grounding, below)
+    read: list[tuple[SlotDraft, date | None, datetime, datetime | None]] = []
     for slot in draft.slots:
         began = _moment(slot.start)
         ended = _moment(slot.end) if slot.end is not None else None
         if began is None or (slot.end is not None and ended is None) or not _fits(slot):
             return AgentRejection("structure")
-        end_day, end_at = ended if ended is not None else (None, None)
-        read.append((slot, began[0], began[1], end_day, end_at))
+        start = datetime.combine(began[0] or query.start.date(), began[1], zone)
+        end = datetime.combine(ended[0] or start.date(), ended[1], zone) if ended else None
+        read.append((slot, began[0], start, end))
 
     # grounding
     words = _words(text)
     stated = stated_times(text)
-    zone = query.start.tzinfo
-    for slot, day, at, _, _ in read:
+    for slot, day, start, end in read:
         grounded = (
-            _time_said(at, datetime.combine(day or query.start.date(), at, zone), stated)
+            _time_said(start.time(), start, stated)
+            and (end is None or _end_said(start, end, stated, text))
             and same_activity(query.activity, slot.activity)
             and _has_words(words, _words(slot.activity))
             and (single_day if day is None else single_day or _date_said(day, text, words))
@@ -137,21 +141,16 @@ def verify_slots(
         if not grounded:
             return AgentRejection("grounding")
 
-    # window -- every moment in the query's zone; a bare time is on the query's one day
-    moments: list[tuple[SlotDraft, datetime, datetime | None]] = []
-    for slot, day, at, end_day, end_at in read:
-        start = datetime.combine(day or query.start.date(), at, zone)
-        end = (
-            datetime.combine(end_day or start.date(), end_at, zone) if end_at is not None else None
-        )
+    # window
+    for _, _, start, _ in read:
         if not (query.start <= start < query.end and start > now):
             return AgentRejection("window")
-        moments.append((slot, start, end))
 
     # coherence
-    if len(moments) > MAX_AGENT_SLOTS:
+    if len(read) > MAX_AGENT_SLOTS:
         return AgentRejection("coherence")
     seen: set[tuple[str, datetime]] = set()
+    moments = [(slot, start, end) for slot, _, start, end in read]
     for slot, start, end in moments:
         key = (" ".join(_words(slot.activity)), start)
         if (
@@ -257,6 +256,15 @@ def _time_said(at: time, moment: datetime, stated: tuple[StatedTime, ...]) -> bo
     """`at` is a time the reply states, and if the reply wrote an offset beside it, that offset is
     the holder zone's at `moment`: «T17:00:00Z» is 19:00 in Madrid in October, never 17:00."""
     return any(s.at == at and (s.offset is None or s.offset == moment.utcoffset()) for s in stated)
+
+
+def _end_said(began: datetime, ended: datetime, stated: tuple[StatedTime, ...], text: str) -> bool:
+    """An end is its own clock time in the reply, or the minutes it lasts as a whole number there:
+    «19:45», or «45» for a session from 19:00 -- a computed end, never an invented one."""
+    minutes = (ended - began).total_seconds() / 60
+    return _time_said(ended.time(), ended, stated) or (
+        minutes.is_integer() and _number_said(int(minutes), text)
+    )
 
 
 def _number_said(number: int, text: str) -> bool:

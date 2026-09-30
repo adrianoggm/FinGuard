@@ -271,7 +271,8 @@ def test_a_slot_that_has_already_started_is_outside_the_request() -> None:
     ],
 )
 def test_an_incoherent_slot_is_coherence(bad: SlotDraft) -> None:
-    reply = text_reply("Spinning a las 19:00, -1 plazas")
+    # Every value grounded -- the ends included (review finding 5) -- so coherence is what fails.
+    reply = text_reply("Spinning a las 19:00, hasta las 18:00 o las 23:30, -1 plazas")
     assert verify_slots(
         AvailabilityDraft((bad,)), query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW
     ) == AgentRejection("coherence")
@@ -383,3 +384,29 @@ def test_a_stated_offset_grounds_only_when_it_is_the_holders_at_that_moment() ->
         len(verify_slots(winter, query=december, reply=winter_offset, agent_id="gym-sur", now=NOW))
         == 1
     )
+
+
+def test_an_end_is_grounded_by_its_own_time_or_by_the_duration_the_reply_states() -> None:
+    """Review finding 5: an end is a value like any other. 19:45 after 19:00 is grounded by a
+    reply saying «19:45» or «45 minutos», and by nothing else."""
+    invented = AvailabilityDraft((SlotDraft("Spinning", "19:00", "22:59", None, None),))
+    assert verify_slots(
+        invented,
+        query=THURSDAY,
+        reply=text_reply("Spinning a las 19:00"),
+        agent_id="gym-sur",
+        now=NOW,
+    ) == AgentRejection("grounding")
+    ends_at = AvailabilityDraft((SlotDraft("Spinning", "19:00", "19:45", None, None),))
+    for said in ("Spinning de 19:00 a 19:45", "Spinning a las 19:00 (45 minutos)"):
+        [slot] = verify_slots(
+            ends_at, query=THURSDAY, reply=text_reply(said), agent_id="gym-sur", now=NOW
+        )
+        assert slot.end == datetime(2026, 10, 1, 19, 45, tzinfo=ZONE)
+    assert verify_slots(
+        ends_at,
+        query=THURSDAY,
+        reply=text_reply("Spinning a las 19:00 (60 minutos)"),
+        agent_id="gym-sur",
+        now=NOW,
+    ) == AgentRejection("grounding")
