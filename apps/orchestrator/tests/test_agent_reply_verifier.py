@@ -668,3 +668,19 @@ def test_a_yearless_numeric_date_of_another_day_does_not_bind_a_booking() -> Non
         assert verify_booking(draft, slot=BOOKED_SLOT, reply=other) == AgentRejection("binding")
     same = text_reply("Reservado el 1/10 a las 18:30. Código SUR-7731.")
     assert isinstance(verify_booking(CONFIRMED, slot=BOOKED_SLOT, reply=same), BookingReceipt)
+
+
+def test_a_booking_reply_naming_another_weekday_does_not_bind() -> None:
+    """Round-2 finding C2: with no literal date, a weekday is what the reply says the day is."""
+    friday = text_reply("Reservado el viernes a las 18:30. Código SUR-1.")
+    for start in ("2026-10-01T18:30", "18:30"):
+        draft = BookingDraft(True, "SUR-1", start, "Spinning")
+        assert verify_booking(draft, slot=BOOKED_SLOT, reply=friday) == AgentRejection("binding")
+    thursday = text_reply("Reservado el jueves a las 18:30. Código SUR-1.")
+    for start in ("2026-10-01T18:30", "18:30"):
+        draft = BookingDraft(True, "SUR-1", start, "Spinning")
+        assert isinstance(verify_booking(draft, slot=BOOKED_SLOT, reply=thursday), BookingReceipt)
+    brief = text_reply(
+        "Reserva confirmada: spinning el jueves 1 de octubre a las 18:30. Código SUR-7731."
+    )
+    assert isinstance(verify_booking(CONFIRMED, slot=BOOKED_SLOT, reply=brief), BookingReceipt)

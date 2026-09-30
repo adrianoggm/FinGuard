@@ -202,8 +202,9 @@ def verify_booking(
     structure   the code and any reference are one `REFERENCE` token; the start parses.
     grounding   the code is in the reply, whole; the start's clock time is one it states.
     binding     the start is the slot's; a reply that states a date names the slot's date, and
-                then the start carries it too (a bare time binds only when no date is stated);
-                the activity is the slot's; a reference, if both have one, is the slot's.
+                then the start carries it too (a bare time binds only when no date is stated); a
+                reply stating no date but naming weekdays names the slot's; the activity is the
+                slot's; a reference, if both have one, is the slot's.
     """
     if reply.state != "COMPLETED" or not draft.booked:
         return AgentRejection("not_booked")
@@ -227,12 +228,15 @@ def verify_booking(
         or (start is not None and not _time_said(start.time(), start, stated_times(text)))
     ):
         return AgentRejection("grounding")
-    dates = _dates_in(folded(text))
+    folded_text = folded(text)
+    dates = _dates_in(folded_text)
+    weekdays = _weekdays_in(folded_text)
     if (
         start is None
         or start != slot.start
         or (dates and (moment is None or moment[0] is None))
         or (dates and not any(said.names(slot.start.date()) for said in dates))
+        or (not dates and weekdays and slot.start.weekday() not in weekdays)
         or draft.activity is None
         or not same_activity(slot.activity, draft.activity)
         or (
@@ -345,6 +349,14 @@ def _dates_in(text: str) -> tuple[_SaidDate, ...]:
         found.append((int(m[3]) if m[3] else None, month, int(m[1]), m.start(), m.end()))
     real = [_SaidDate(*said) for said in found if _real(said[0], said[1], said[2])]
     return tuple(sorted(real, key=lambda said: said.begins))
+
+
+_WEEKDAY_NAME: Final = re.compile(r"\b(" + "|".join(_WEEKDAYS) + r")s?\b")
+
+
+def _weekdays_in(text: str) -> frozenset[int]:
+    """The weekdays (Monday = 0) `text` (already folded) names."""
+    return frozenset(_WEEKDAYS.index(m[1]) for m in _WEEKDAY_NAME.finditer(text))
 
 
 def _real(year: int | None, month: int, day: int) -> bool:
