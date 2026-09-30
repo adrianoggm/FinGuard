@@ -1285,6 +1285,20 @@ def _open_payment_events(answer: QuestionResponse) -> StreamingResponse:
     return StreamingResponse(events(), media_type="text/event-stream")
 
 
+def _agent_events(answer: QuestionResponse) -> StreamingResponse:
+    """The streaming representation of an expert-agent answer: one frame, in JSON mode.
+
+    Not `_open_payment_events`: that dumps in Python mode and lets `_sse`'s `default=str` stringify
+    whatever is left, which turns a slot's aware datetime into «2026-10-01 18:30:00+02:00». JSON
+    mode is the ISO 8601 the question route sends, and the one the web reads a slot's time off.
+    """
+
+    async def events() -> AsyncIterator[str]:
+        yield _sse({"type": "answer", **answer.model_dump(mode="json")})
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
 def _compound_reply(clauses: tuple[str, ...], was: Conversation) -> QuestionResponse:
     """Ask the holder to choose instead of silently executing one half of their turn."""
     return QuestionResponse(
@@ -2185,7 +2199,7 @@ async def ask_streaming(
             request, who, was, searches=searches, bookings=None, codec=metric_tokens
         )
     ) is not None:
-        return _open_payment_events(agent_reply)
+        return _agent_events(agent_reply)
 
     # C-1/C-6/C-3 (Wave 3 hardening): moved below the two payment branches above -- see the same
     # block's comment on the question route. F-3 (fix wave, Important 6) narrows the no-context

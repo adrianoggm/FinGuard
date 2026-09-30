@@ -343,6 +343,12 @@ def test_the_streaming_route_answers_an_agent_request_with_the_helper(client: Te
     [answer] = events_of(response)
     assert answer["type"] == "answer" and answer["outcome"] == "ACTIVITIES_FOUND"
     assert answer["conversation"]["activity_offers"]["token"].startswith("o1.")
+    # The frame is the JSON the other route sends, not `str()` of a datetime: the web reads the
+    # slot's time off the ISO string.
+    assert answer["activities"][0]["start"] == "2026-10-01T18:30:00+02:00"
+    assert answer["activities"][1]["end"] == "2026-10-01T19:45:00+02:00"
+    offered = answer["conversation"]["activity_offers"]["slots"]
+    assert offered[0]["start"] == "2026-10-01T18:30:00+02:00"
 
     # The conversation it left, sealed offers and all, is one the route accepts on the next turn.
     echoed = client.post(
