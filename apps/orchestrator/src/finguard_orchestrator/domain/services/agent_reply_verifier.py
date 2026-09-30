@@ -16,8 +16,9 @@ answer with a closed rule name, and a rejected answer is that agent not respondi
                 shown; the date is in the reply as a literal date (`YYYY-MM-DD`, `D/M/YYYY`,
                 `DD-MM-YYYY`, `D/M`, «D de <mes>»), or as its weekday when the window holds one day
                 with that weekday and the mention announces no other date -- or the query is a
-                single day, the only case in which a bare `HH:MM` has a date at all; places and
-                reference, when given, are in the reply whole.
+                single day and the reply names no other (every literal date it states is that day,
+                every weekday its weekday), the only case in which a bare `HH:MM` has a date at
+                all; places and reference, when given, are in the reply whole.
     window      the start is inside the query's window, inside its daily band when it has one,
                 and in the future.
     coherence   an end after the start and at most `MAX_SLOT_MINUTES` later, places not negative,
@@ -146,6 +147,15 @@ def verify_slots(
     folded_text = folded(text)
     stretch = _stretch(text)
     dates = _dates_in(folded_text)
+    # The single-day shortcut (ruling R12): a one-day query dates a slot the reply does not date
+    # itself -- unless the reply says the day is another, by a literal date or by a weekday.
+    the_day = query.start.date()
+    weekdays = _weekdays_in(folded_text)
+    lends_its_day = (
+        single_day
+        and (not dates or any(said.names(the_day) for said in dates))
+        and (not weekdays or the_day.weekday() in weekdays)
+    )
     for slot, day, start, end in read:
         grounded = (
             _time_said(start.time(), start, stated)
@@ -153,11 +163,7 @@ def verify_slots(
             and same_activity(query.activity, slot.activity)
             and _has_words(words, _words(slot.activity))
             and _stretch(slot.activity) in stretch
-            and (
-                single_day
-                if day is None
-                else single_day or _date_said(day, folded_text, dates, query)
-            )
+            and ((day is not None and _date_said(day, folded_text, dates, query)) or lends_its_day)
             and (slot.free_places is None or _number_said(slot.free_places, text))
             and (slot.slot_ref is None or _token_said(slot.slot_ref, text))
         )

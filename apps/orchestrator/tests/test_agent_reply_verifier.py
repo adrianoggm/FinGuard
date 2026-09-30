@@ -684,3 +684,39 @@ def test_a_booking_reply_naming_another_weekday_does_not_bind() -> None:
         "Reserva confirmada: spinning el jueves 1 de octubre a las 18:30. Código SUR-7731."
     )
     assert isinstance(verify_booking(CONFIRMED, slot=BOOKED_SLOT, reply=brief), BookingReceipt)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Spinning el jueves 8 de octubre a las 19:00",
+        "Spinning el 08/10/2026 a las 19:00",
+        "Spinning el viernes a las 19:00",
+    ],
+)
+def test_a_one_day_search_does_not_lend_its_day_to_a_reply_about_another(said: str) -> None:
+    """Round-2 finding D (ruling R12): a single-day query gives a slot its day only when the reply
+    does not say the day is another -- by a literal date or by a weekday."""
+    for start in ("2026-10-01T19:00", "19:00"):
+        draft = AvailabilityDraft((SlotDraft("Spinning", start, None, None, None),))
+        assert verify_slots(
+            draft, query=THURSDAY, reply=text_reply(said), agent_id="gym-sur", now=NOW
+        ) == AgentRejection("grounding"), start
+
+
+@pytest.mark.parametrize(
+    ("said", "at", "places"),
+    [
+        ("Spinning a las 19:00 (quedan 3 plazas)", "19:00", 3),
+        ("Spinning el jueves 1 de octubre a las 18:30 (quedan 6 plazas)", "18:30", 6),
+    ],
+)
+def test_a_one_day_search_still_dates_a_reply_that_names_no_other_day(
+    said: str, at: str, places: int
+) -> None:
+    for start in (f"2026-10-01T{at}", at):
+        draft = AvailabilityDraft((SlotDraft("Spinning", start, None, places, None),))
+        [slot] = verify_slots(
+            draft, query=THURSDAY, reply=text_reply(said), agent_id="gym-sur", now=NOW
+        )
+        assert slot.start.date() == THURSDAY.start.date() and slot.free_places == places
