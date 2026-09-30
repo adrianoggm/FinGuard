@@ -1,0 +1,41 @@
+[project]
+name = "finguard-a2a-gateway"
+version = "0.1.0"
+description = "The one FinGuard process that speaks A2A 1.0, as a consumer"
+requires-python = ">=3.12"
+dependencies = [
+    "a2a-sdk>=1.2.1,<2",
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    "pydantic-settings>=2.7",
+    "uvicorn[standard]>=0.34",
+    "opentelemetry-sdk>=1.44,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1.44,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.9", "mypy>=1.14", "a2a-sdk[fastapi]>=1.2.1,<2", "types-protobuf"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/finguard_a2a"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "ASYNC"]
+ignore = ["N815"]  # The internal wire uses camelCase names.
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["tests"]
