@@ -588,3 +588,39 @@ def test_an_activity_is_shown_only_as_the_reply_wrote_it() -> None:
     assert verify_slots(
         draft, query=THURSDAY, reply=text_reply("Spinning a las 19:00"), agent_id="gym-sur", now=NOW
     ) == AgentRejection("grounding")
+
+
+# --- review round 2 ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        data_reply({"clase": "Spinning", "inicio": "2026-10-01 17:00:00+00:00"}),
+        text_reply("Spinning a las 17:00Z"),
+        text_reply("Spinning 17:00+00:00"),
+        data_reply({"clase": "Spinning", "inicio": "2026-10-01 17:00Z"}),
+        data_reply({"clase": "Spinning", "inicio": "2026-10-01T17:00:00Z"}),
+    ],
+    ids=["space-seconds-utc", "bare-z", "bare-plus", "space-z", "iso-z"],
+)
+def test_a_utc_time_in_any_form_grounds_no_local_slot(reply: AgentReply) -> None:
+    """Round-2 finding A: 17:00 at UTC is 19:00 in Madrid on 1 October, never a 17:00 slot."""
+    at_17 = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T17:00", None, None, None),))
+    assert verify_slots(
+        at_17, query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW
+    ) == AgentRejection("grounding")
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        data_reply({"clase": "Spinning", "inicio": "2026-10-01 19:00:00+02:00"}),
+        text_reply("Spinning 19:00+02:00"),
+    ],
+    ids=["space-seconds", "bare-plus"],
+)
+def test_a_time_stated_with_the_holders_own_offset_grounds(reply: AgentReply) -> None:
+    at_19 = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T19:00", None, None, None),))
+    [slot] = verify_slots(at_19, query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW)
+    assert slot.start == datetime(2026, 10, 1, 19, 0, tzinfo=ZONE)

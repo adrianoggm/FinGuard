@@ -181,3 +181,34 @@ def test_the_window_carries_the_daily_hours_it_was_asked_for() -> None:
     assert activity_window("¿hay clases de spinning?", now=NOW).band is None  # type: ignore[union-attr]
     # One hour after 23:30 is tomorrow: no daily band can say that, and the window itself does.
     assert activity_window("hoy a las 23:30", now=NOW).band is None  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    ("text", "offset"),
+    [
+        ("2026-10-01 17:00:00+00:00", timedelta(0)),
+        ("a las 17:00Z", timedelta(0)),
+        ("17:00+00:00", timedelta(0)),
+        ("2026-10-01 17:00Z", timedelta(0)),
+        ("2026-10-01T17:00:00Z", timedelta(0)),
+        ("2026-10-01 19:00:00+02:00", timedelta(hours=2)),
+        ("19:00+02:00", timedelta(hours=2)),
+        ("19:00:00+0200", timedelta(hours=2)),
+        ("2026-10-01 19:00-05:00", -timedelta(hours=5)),
+    ],
+)
+def test_an_offset_is_read_after_any_time_and_a_minus_only_after_a_date_time(
+    text: str, offset: timedelta
+) -> None:
+    """Round-2 finding A: `Z` or `+hh(:mm)` right after a clock time is always its offset; `-hh:mm`
+    is one only after a date-time (`YYYY-MM-DD`, then `T` or a space, then the time), because on
+    its own «10:00-11:00» is a range."""
+    [stated] = stated_times(text)
+    assert stated.offset == offset
+
+
+def test_a_range_is_two_local_times_not_a_time_at_utc_minus_eleven() -> None:
+    assert stated_times("Spinning de 10:00-11:00") == (
+        StatedTime(time(10, 0), None),
+        StatedTime(time(11, 0), None),
+    )
