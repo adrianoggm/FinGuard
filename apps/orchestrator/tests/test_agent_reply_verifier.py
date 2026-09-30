@@ -624,3 +624,47 @@ def test_a_time_stated_with_the_holders_own_offset_grounds(reply: AgentReply) ->
     at_19 = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T19:00", None, None, None),))
     [slot] = verify_slots(at_19, query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW)
     assert slot.start == datetime(2026, 10, 1, 19, 0, tzinfo=ZONE)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Spinning el jueves (8 de octubre) a las 19:00",
+        "Spinning el jueves: 8 de octubre, a las 19:00",
+        "Spinning el jueves 8/10 a las 19:00",
+        "Spinning jueves 08-10-2026 19:00",
+    ],
+)
+def test_a_weekday_announcing_another_date_in_any_form_grounds_nothing(said: str) -> None:
+    """Round-2 finding B: «jueves» followed -- through `(`, `)`, `:`, `,`, «el», «día» -- by a
+    date of another day announces that day, in every date form."""
+    first = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T19:00", None, None, None),))
+    assert verify_slots(
+        first, query=WEEK, reply=text_reply(said), agent_id="gym-sur", now=NOW
+    ) == AgentRejection("grounding")
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Spinning el jueves (1 de octubre) a las 19:00",
+        "Spinning el jueves 1/10 a las 19:00",
+        "Spinning jueves 01-10-2026 19:00",
+    ],
+)
+def test_a_weekday_announcing_its_own_date_grounds(said: str) -> None:
+    first = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T19:00", None, None, None),))
+    assert (
+        len(verify_slots(first, query=WEEK, reply=text_reply(said), agent_id="gym-sur", now=NOW))
+        == 1
+    )
+
+
+def test_a_yearless_numeric_date_of_another_day_does_not_bind_a_booking() -> None:
+    """Round-2 finding C1: «el 2/10» is 2 October in the slot's year."""
+    other = text_reply("Reservado el 2/10 a las 18:30. Código SUR-7731.")
+    for start in ("2026-10-01T18:30", "18:30"):
+        draft = BookingDraft(True, "SUR-7731", start, "Spinning")
+        assert verify_booking(draft, slot=BOOKED_SLOT, reply=other) == AgentRejection("binding")
+    same = text_reply("Reservado el 1/10 a las 18:30. Código SUR-7731.")
+    assert isinstance(verify_booking(CONFIRMED, slot=BOOKED_SLOT, reply=same), BookingReceipt)

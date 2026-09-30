@@ -13,11 +13,11 @@ answer with a closed rule name, and a rejected answer is that agent not respondi
     grounding   the clock time is one the reply states (`stated_times`), and so is an end's -- or
                 the reply states the minutes from start to end as a whole number; the activity is
                 the one asked (`same_activity`) and is itself a stretch of the reply, as it will be
-                shown; the date is in the reply as `YYYY-MM-DD`, `DD/MM/YYYY` or «D de <mes>», or
-                as its weekday when the window holds one day with that weekday and the mention
-                announces no other date -- or the query is a single day, the only case in which a
-                bare `HH:MM` has a date at all; places and reference, when given, are in the reply
-                whole.
+                shown; the date is in the reply as a literal date (`YYYY-MM-DD`, `D/M/YYYY`,
+                `DD-MM-YYYY`, `D/M`, «D de <mes>»), or as its weekday when the window holds one day
+                with that weekday and the mention announces no other date -- or the query is a
+                single day, the only case in which a bare `HH:MM` has a date at all; places and
+                reference, when given, are in the reply whole.
     window      the start is inside the query's window, inside its daily band when it has one,
                 and in the future.
     coherence   an end after the start and at most `MAX_SLOT_MINUTES` later, places not negative,
@@ -306,8 +306,9 @@ def _has_words(haystack: tuple[str, ...], needle: tuple[str, ...]) -> bool:
 
 @dataclass(frozen=True)
 class _SaidDate:
-    """A literal date in the (folded) reply: `YYYY-MM-DD`, `DD/MM/YYYY` or «D de <mes>[ de AAAA]».
-    The last may carry no year, and then it names that day and month in any year."""
+    """A literal date in the (folded) reply, in one of the forms `_dates_in` reads. A yearless one
+    («2/10», «8 de octubre») names that day and month in the year it is compared with -- the
+    query's, or for a booking the slot's."""
 
     year: int | None
     month: int
@@ -320,31 +321,44 @@ class _SaidDate:
 
 
 _ISO_DATE: Final = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
-_SLASH_DATE: Final = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})/(\d{4})(?![\d/])")
+# `D/M/YYYY` and `DD-MM-YYYY` (one separator, used twice), and the yearless `D/M`.
+_NUMERIC_DATE: Final = re.compile(r"(?<![\d/-])(\d{1,2})([/-])(\d{1,2})\2(\d{4})(?![\d/-])")
+_DAY_MONTH: Final = re.compile(r"(?<![\d/:.-])(\d{1,2})/(\d{1,2})(?![\d/-]|[:.]\d)")
 _NAMED_DATE: Final = re.compile(
     r"\b(\d{1,2})\s+de\s+(" + "|".join(_MONTHS) + r"|setiembre)(?:\s+(?:de\s+|del\s+)?(\d{4}))?\b"
 )
 
 
 def _dates_in(text: str) -> tuple[_SaidDate, ...]:
-    """Every literal date `text` (already folded) states, in order of appearance."""
-    found = [
-        _SaidDate(int(m[1]), int(m[2]), int(m[3]), m.start(), m.end())
-        for m in _ISO_DATE.finditer(text)
+    """Every literal date `text` (already folded) states, in order of appearance: `YYYY-MM-DD`,
+    `D/M/YYYY`, `DD-MM-YYYY`, the yearless `D/M` and «D de <mes>[ de AAAA]». A form naming no real
+    day («45 de octubre», «31/2») is not a date and is skipped."""
+    found: list[tuple[int | None, int, int, int, int]] = [
+        (int(m[1]), int(m[2]), int(m[3]), m.start(), m.end()) for m in _ISO_DATE.finditer(text)
     ]
     found += [
-        _SaidDate(int(m[3]), int(m[2]), int(m[1]), m.start(), m.end())
-        for m in _SLASH_DATE.finditer(text)
+        (int(m[4]), int(m[3]), int(m[1]), m.start(), m.end()) for m in _NUMERIC_DATE.finditer(text)
     ]
+    found += [(None, int(m[2]), int(m[1]), m.start(), m.end()) for m in _DAY_MONTH.finditer(text)]
     for m in _NAMED_DATE.finditer(text):
         month = _MONTHS.index(m[2]) + 1 if m[2] in _MONTHS else 9
-        found.append(_SaidDate(int(m[3]) if m[3] else None, month, int(m[1]), m.start(), m.end()))
-    return tuple(sorted(found, key=lambda said: said.begins))
+        found.append((int(m[3]) if m[3] else None, month, int(m[1]), m.start(), m.end()))
+    real = [_SaidDate(*said) for said in found if _real(said[0], said[1], said[2])]
+    return tuple(sorted(real, key=lambda said: said.begins))
 
 
-# What may sit between a weekday and the date it announces: «jueves 8 de octubre», «jueves, 8 de
-# octubre», «jueves el 8», «jueves día 08/10/2026».
-_ANNOUNCES: Final = re.compile(r"[\s,]*(?:(?:el|dia)\s+)*")
+def _real(year: int | None, month: int, day: int) -> bool:
+    try:
+        date(year or 2000, month, day)  # 2000 is a leap year: a yearless 29/2 is a real day
+    except ValueError:
+        return False
+    return True
+
+
+# What may sit between a weekday and the date it announces, and nothing else -- so the date is in
+# the same clause, before any `.`, `;`, newline or clock time: «jueves 8 de octubre», «jueves (8 de
+# octubre)», «jueves: 8/10», «jueves, el día 08-10-2026».
+_ANNOUNCES: Final = re.compile(r"(?:[\s(),:]|\bel\b|\bdia\b)*")
 
 
 def _date_said(
