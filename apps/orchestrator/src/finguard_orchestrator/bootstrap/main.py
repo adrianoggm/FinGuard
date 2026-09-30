@@ -44,6 +44,7 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyHandler,
 )
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
+from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
@@ -74,6 +75,13 @@ from finguard_orchestrator.infrastructure import (
     assistant_router,
     payments_router,
     register_error_handlers,
+)
+from finguard_orchestrator.infrastructure.expert_agents.http_expert_agents import HttpExpertAgents
+from finguard_orchestrator.infrastructure.expert_agents.llm_reply_normaliser import (
+    LlmReplyNormaliser,
+)
+from finguard_orchestrator.infrastructure.expert_agents.llm_skill_classifier import (
+    LlmSkillClassifier,
 )
 from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
     LlmTurnInterpreter,
@@ -125,6 +133,13 @@ logger = logging.getLogger(__name__)
 # allowed to sit on. `urlsplit(...).hostname` strips brackets from an IPv6 literal, so `[::1]`
 # and `::1` compare equal here without a second form of the same address to maintain.
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+# The expert agents' two development credentials, used only when a gateway is configured and its
+# setting is blank -- each logged at WARNING, and the pairwise key refused for a non-loopback
+# origin. The gateway token is the gateway's own development default (`apps/a2a-gateway`,
+# config.py), stated twice because the services share no code.
+_DEVELOPMENT_PAIRWISE_KEY = b"development-only-pairwise-key-32bytes!"
+_DEVELOPMENT_GATEWAY_TOKEN = "development-only-a2a-gateway-token"
 
 
 def _is_loopback_origin(origin: str) -> bool:
@@ -470,6 +485,66 @@ def create_app() -> FastAPI:
         configured_metric_keys or {"default": b"test-only-disabled-metrics-key-32bytes"},
         settings.metrics_signing_active if configured_metric_keys else "default",
     )
+
+    # A2A expert agents (spec §3.2): **without the gateway's URL the capability does not exist** --
+    # nothing is built, and a timetable question is answered by saying no agents are configured.
+    expert_searches: SearchActivitiesHandler | None = None
+    if settings.a2a_gateway_url is not None:
+        pairwise = settings.a2a_pairwise_key
+        # The signing-key refusal above, for the other key this service derives what it sends
+        # third parties from: on the development key, anybody who reads this repository can compute
+        # every holder's `memberRef` at every gym -- the join the pairwise reference exists to stop.
+        if pairwise is None and any(
+            not _is_loopback_origin(origin) for origin in settings.web_origins
+        ):
+            raise ValueError(
+                "ORCHESTRATOR_A2A_PAIRWISE_KEY is required to serve a non-loopback origin with an "
+                "A2A gateway: every memberRef would be derived under the development key"
+            )
+        if pairwise is None:
+            logger.warning(
+                "every memberRef sent to an expert agent is derived under the development "
+                "pairwise key: set ORCHESTRATOR_A2A_PAIRWISE_KEY"
+            )
+        gateway_token = settings.a2a_gateway_token
+        if gateway_token is None:
+            logger.warning(
+                "the A2A gateway is called with its development token: set "
+                "ORCHESTRATOR_A2A_GATEWAY_TOKEN"
+            )
+        # The planner's provider and model read the cards and the replies: one knob for the one
+        # model this service trusts with a closed schema, like the payment reader beside it.
+        expert_searches = SearchActivitiesHandler(
+            HttpExpertAgents(
+                base_url=settings.a2a_gateway_url,
+                token=(
+                    gateway_token.get_secret_value()
+                    if gateway_token is not None
+                    else _DEVELOPMENT_GATEWAY_TOKEN
+                ),
+                timeout_seconds=settings.a2a_agent_budget_seconds,
+            ),
+            LlmSkillClassifier(
+                planner_provider,
+                model=settings.planner_model,
+                temperature=settings.planner_temperature,
+                max_output_tokens=settings.planner_max_output_tokens,
+            ),
+            LlmReplyNormaliser(
+                planner_provider,
+                model=settings.planner_model,
+                temperature=settings.planner_temperature,
+                max_output_tokens=settings.planner_max_output_tokens,
+            ),
+            pairwise_key=(
+                pairwise.get_secret_value().encode()
+                if pairwise is not None
+                else _DEVELOPMENT_PAIRWISE_KEY
+            ),
+            budget_seconds=settings.a2a_agent_budget_seconds,
+        )
+    # Read by both question routes through one helper (`expert_agent_turns`, spec §14 A11).
+    app.state.expert_searches = expert_searches
 
     # Before the routers, because a rejected preflight never reaches one. The web client cannot
     # call this service at all without it: a browser refuses a cross-origin request unless the
