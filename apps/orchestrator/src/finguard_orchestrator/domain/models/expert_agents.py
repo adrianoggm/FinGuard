@@ -118,6 +118,10 @@ class ExpertAgent:
 
     def __post_init__(self) -> None:
         _agent_id(self.id)
+        for host in self.link_hosts:
+            if not host or any(character.isspace() for character in host):
+                # An empty host would match a link with no host at all (`http:///x`).
+                raise InvalidValueError(f"not a link host: {host!r}")
 
 
 @dataclass(frozen=True)

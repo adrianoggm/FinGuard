@@ -561,3 +561,30 @@ def test_a_slot_outside_the_asked_band_is_outside_the_request() -> None:
     assert verify_slots(
         at_ten, query=weekend_afternoons, reply=reply, agent_id="gym-sur", now=NOW
     ) == AgentRejection("window")
+
+
+def test_a_link_needs_a_host_and_loses_its_closing_quote() -> None:
+    """Review finding 10a: `http:///evil.example/x` has an empty host, which is no link host."""
+    assert link_in(text_reply("Vincula en http:///evil.example/x"), ("",)) is None
+    quoted = text_reply("Vincula tu cuenta en «http://127.0.0.1:9101/vincular».")
+    assert link_in(quoted, ("127.0.0.1:9101",)) == "http://127.0.0.1:9101/vincular"
+
+
+@pytest.mark.parametrize("hidden", ["‮", "⁦", "​", "\x07"])
+def test_an_activity_with_a_control_or_bidi_character_is_structure(hidden: str) -> None:
+    """Review finding 10b: the activity is shown to the holder as the agent wrote it, so it cannot
+    carry a character that reorders or hides what is displayed."""
+    reply = text_reply(f"Spinning{hidden} a las 19:00")
+    draft = AvailabilityDraft((SlotDraft(f"Spinning{hidden}", "19:00", None, None, None),))
+    assert verify_slots(
+        draft, query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW
+    ) == AgentRejection("structure")
+
+
+def test_an_activity_is_shown_only_as_the_reply_wrote_it() -> None:
+    """Review finding 10b: word-by-word matching would accept «Spinning ☎ ⚠ ->» from a reply that
+    says «Spinning» -- the stored name must be a stretch of the reply itself."""
+    draft = AvailabilityDraft((SlotDraft("Spinning ☎ ⚠ ->", "19:00", None, None, None),))
+    assert verify_slots(
+        draft, query=THURSDAY, reply=text_reply("Spinning a las 19:00"), agent_id="gym-sur", now=NOW
+    ) == AgentRejection("grounding")

@@ -122,3 +122,10 @@ def test_a_band_opens_before_it_closes() -> None:
     assert query.band == (time(15), time(21))
     with pytest.raises(InvalidValueError):
         ActivityQuery("spinning", AT, AT + timedelta(days=2), band=(time(21), time(15)))
+
+
+@pytest.mark.parametrize("host", ["", " ", "gym norte:8000"])
+def test_a_link_host_is_a_host(host: str) -> None:
+    """Review finding 10a: an empty host would accept a link that opens anywhere."""
+    with pytest.raises(InvalidValueError):
+        ExpertAgent("gym-norte", "Gimnasio", True, None, "sha256:0", ("gym-norte:8000", host), ())
