@@ -353,3 +353,33 @@ def test_a_date_a_price_or_a_phone_number_grounds_no_time_and_no_places(
     assert verify_slots(
         AvailabilityDraft((bad,)), query=OCT20, reply=text_reply(said), agent_id="gym-sur", now=NOW
     ) == AgentRejection("grounding")
+
+
+def test_a_stated_offset_grounds_only_when_it_is_the_holders_at_that_moment() -> None:
+    """Review finding 4. Madrid is +02:00 on 1 October and +01:00 on 3 December."""
+    at_17 = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T17:00", None, None, None),))
+    at_19 = AvailabilityDraft((SlotDraft("Spinning", "2026-10-01T19:00", None, None, None),))
+    utc = data_reply({"clase": "Spinning", "inicio": "2026-10-01T17:00:00Z"})
+    for draft in (at_17, at_19):
+        assert verify_slots(
+            draft, query=THURSDAY, reply=utc, agent_id="gym-sur", now=NOW
+        ) == AgentRejection("grounding")
+    madrid = data_reply({"clase": "Spinning", "inicio": "2026-10-01T19:00:00+02:00"})
+    [slot] = verify_slots(at_19, query=THURSDAY, reply=madrid, agent_id="gym-sur", now=NOW)
+    assert slot.start == datetime(2026, 10, 1, 19, 0, tzinfo=ZONE)
+
+    december = ActivityQuery(
+        "spinning",
+        datetime(2026, 12, 3, 15, 0, tzinfo=ZONE),
+        datetime(2026, 12, 3, 21, 0, tzinfo=ZONE),
+    )
+    winter = AvailabilityDraft((SlotDraft("Spinning", "2026-12-03T19:00", None, None, None),))
+    summer_offset = data_reply({"clase": "Spinning", "inicio": "2026-12-03T19:00:00+02:00"})
+    winter_offset = data_reply({"clase": "Spinning", "inicio": "2026-12-03T19:00:00+01:00"})
+    assert verify_slots(
+        winter, query=december, reply=summer_offset, agent_id="gym-sur", now=NOW
+    ) == AgentRejection("grounding")
+    assert (
+        len(verify_slots(winter, query=december, reply=winter_offset, agent_id="gym-sur", now=NOW))
+        == 1
+    )
