@@ -18,7 +18,7 @@ Every invariant refuses at construction with `InvalidValueError`, like every val
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time
 from enum import StrEnum
 from typing import Final, Literal, get_args
 
@@ -118,6 +118,10 @@ class ExpertAgent:
 
     def __post_init__(self) -> None:
         _agent_id(self.id)
+        for host in self.link_hosts:
+            if not host or any(character.isspace() for character in host):
+                # An empty host would match a link with no host at all (`http:///x`).
+                raise InvalidValueError(f"not a link host: {host!r}")
 
 
 @dataclass(frozen=True)
@@ -163,6 +167,9 @@ class ActivityQuery:
     start: datetime  # aware, holder's zone
     end: datetime  # aware, > start
     agent_ids: tuple[str, ...] | None = None  # None = every usable agent
+    # The daily hours asked for, applied to every day of the window (spec §6.3 rule 2): «el fin de
+    # semana por la tarde» is 15:00-21:00 on both days, not Saturday 15:00 to Sunday 21:00.
+    band: tuple[time, time] | None = None  # None = no band stated
 
     def __post_init__(self) -> None:
         _bounded(self.activity, "activity", MAX_ACTIVITY_NAME)
@@ -172,6 +179,8 @@ class ActivityQuery:
             raise InvalidValueError("a query window must end after it starts")
         for agent_id in self.agent_ids or ():
             _agent_id(agent_id)
+        if self.band is not None and not self.band[0] < self.band[1]:
+            raise InvalidValueError("a band must open before it closes")
 
 
 @dataclass(frozen=True)

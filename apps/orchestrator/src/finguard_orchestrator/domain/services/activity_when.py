@@ -21,8 +21,9 @@ A past period («ayer», «el mes pasado», «el jueves pasado», «hace dos dí
 exist or has gone («el 45 de octubre»), and a period this reader does not serve («este mes») are
 `None`: answering any of them with the next seven days would be a real list for a question nobody
 asked. A window is single-day when its start and end share a date. Over several days it is one
-interval, from the first day's opening to the last day's closing: «el fin de semana por la tarde»
-also covers Saturday night, because `ActivityQuery` carries a start and an end, not a band.
+interval, from the first day's opening to the last day's closing, and the daily hours travel beside
+it as `band`: «el fin de semana por la tarde» is Saturday 15:00 to Sunday 21:00 with the band
+15:00-21:00, so Saturday night is inside the interval and outside the request.
 """
 
 import re
@@ -38,13 +39,15 @@ class ActivityWindow:
     start: datetime
     end: datetime
     single_day: bool
+    band: tuple[time, time] | None  # the daily hours asked for; None when none were stated
 
 
 @dataclass(frozen=True)
 class StatedTime:
-    """A clock time as a text states it, with the UTC offset written beside it, if any. An offset
-    is read only where ISO 8601 writes one, on a date-time (`2026-10-01T17:00:00Z`,
-    `…T19:00+02:00`): elsewhere «10:00-11:00» is a range, not 10:00 at UTC-11."""
+    """A clock time as a text states it, with the UTC offset written right after it, if any: `Z` or
+    `+hh(:mm)` after any time («17:00Z», «19:00:00+02:00»), and `-hh:mm` only after a date-time
+    (`YYYY-MM-DD`, then `T` or a space, then the time) -- on its own «10:00-11:00» is a range, not
+    10:00 at UTC-11."""
 
     at: time
     offset: timedelta | None
@@ -88,12 +91,14 @@ _MONTHS: Final = (
 
 # One pattern for every way a clock time is written, so the verifier and the window read the same
 # times. Four shapes, each guarded so it cannot fire inside another number:
-#   …T19:00:00+02   the time of an ISO 8601 date-time, with its offset (`Z`, `±hh`, `±hh:mm`) --
-#                   the one place an offset is read (`StatedTime`)
+#   …T19:00:00+02   the time of a date-time (`YYYY-MM-DD`, then `T` or a space), with its offset:
+#                   `Z`, `+hh`, `+hh:mm`, and here also `-hh:mm` (`StatedTime`)
 #   19:00 / 19.30   not after a digit, a colon, a sign or `\d.` / `\d/` (the «10.20» of a date
 #                   «20.10.2026», the «19.00» of a phone «600.19.00.00», the «02:00» of an offset
 #                   `+02:00`), not before `.d`, `:d` or `/d`, not before a currency (a price
-#                   «12.50 €» is not 12:50); seconds («19:00:00», «19:45:30.000») belong to it
+#                   «12.50 €» is not 12:50); seconds («19:00:00», «19:45:30.000») belong to it, and
+#                   so does a `Z` or `+hh(:mm)` right after it -- but never a `-hh:mm`, because
+#                   «10:00-11:00» on its own is a range, not 10:00 at UTC-11
 #   19h / 19h30     not inside a number, a decimal or a date
 #   las 7 / la 1    a bare hour needs its article, and yields to the two shapes above
 # then an optional «y media / y cuarto / menos cuarto», and «de la mañana/tarde/noche» or
@@ -101,12 +106,13 @@ _MONTHS: Final = (
 _CLOCK: Final = re.compile(
     r"""
     (?:
-        (?<=\d{4}-\d{2}-\d{2}t)
+        (?<=\d{4}-\d{2}-\d{2}[t\ ])
         (?P<h0>\d{2}):(?P<m0>\d{2})(?::\d{2}(?:\.\d+)?)?
         (?P<offset>z(?![a-z])|[+-]\d{2}(?::?\d{2})?)?(?![\d:])
       |
         (?<![\d:+])(?<!\d[./])(?<!\d\d:\d\d:\d\d-)
         (?P<h1>\d{1,2})[:.](?P<m1>\d{2})(?::\d{2}(?:\.\d+)?)?(?!\d|[.:/]\d)(?!\s*(?:€|eur))
+        (?P<offset1>(?:z(?![a-z])|\+\d{2}(?::?\d{2})?)(?![\d:]))?
       |
         (?<![\d:.,/])(?P<h2>\d{1,2})\s?h(?P<m2>\d{2})?\b
       |
@@ -183,7 +189,16 @@ def activity_window(sentence: str, *, now: datetime) -> ActivityWindow | None:
     end = _at(last, closes, now.tzinfo)
     if start >= end:
         return None  # the whole window has already gone
-    return ActivityWindow(start, end, start.date() == end.date())
+    # The daily hours, when the sentence stated any: a band or a clock phrase. Not when they run
+    # past midnight («hoy a las 23:30»), which no pair of times within a day can say.
+    stated = band is not None or bool(clocks)
+    daily = (_clock(opens), _clock(closes)) if stated and closes < timedelta(days=1) else None
+    return ActivityWindow(start, end, start.date() == end.date(), daily)
+
+
+def _clock(since_midnight: timedelta) -> time:
+    minutes = int(since_midnight.total_seconds()) // 60
+    return time(minutes // 60, minutes % 60)
 
 
 def _at(day: date, since_midnight: timedelta, zone: tzinfo | None) -> datetime:
@@ -202,8 +217,9 @@ def _clocks(text: str) -> list[_Clock]:
             continue
         hour = int(match["h0"] or match["h1"] or match["h2"] or match["h3"])
         minute = int(match["m0"] or match["m1"] or match["m2"] or 0)
-        offset = _offset(match["offset"]) if match["offset"] else None
-        if match["offset"] and offset is None:
+        written = match["offset"] or match["offset1"]
+        offset = _offset(written) if written else None
+        if written and offset is None:
             continue  # an offset no zone has: the time it qualifies is unreadable, not local
         if match["past"]:
             minute += 30 if match["past"] == "media" else 15
