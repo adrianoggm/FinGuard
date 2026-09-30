@@ -247,7 +247,7 @@ async def test_every_agent_failed_is_agents_unavailable() -> None:
 
 async def test_a_named_gym_that_does_not_meet_the_standard_is_said_so() -> None:
     antiguo = AgentOutcome(
-        "gym-antiguo", "Gimnasio Antiguo", "unavailable", rule="auth_unsupported"
+        "gym-antiguo", "Gimnasio Antiguo", "unavailable", rule="auth_unsupported", asked=False
     )
     answer = await reply(
         searches=FakeSearches(ActivitySearch(THURSDAY, (), (antiguo,), None, None))
@@ -255,6 +255,31 @@ async def test_a_named_gym_that_does_not_meet_the_standard_is_said_so() -> None:
 
     assert answer is not None and answer.outcome == "AGENTS_UNAVAILABLE"
     assert answer.text == "Gimnasio Antiguo pide una autenticación que FinGuard no admite."
+    # Ruling R16: a gym that was never asked is not listed as one that answered badly -- the text
+    # already says why it was not asked.
+    assert answer.agent_notices == []
+
+
+async def test_a_never_asked_gym_beside_a_found_search_is_in_the_text_only() -> None:
+    antiguo = AgentOutcome(
+        "gym-antiguo", "Gimnasio Antiguo", "unavailable", rule="version_unsupported", asked=False
+    )
+    found = replace(FOUND, outcomes=(ANSWERED_NORTE, ANSWERED_SUR, SILENT_ESTE, antiguo))
+
+    answer = await reply(searches=FakeSearches(found))
+
+    assert answer is not None and answer.outcome == "ACTIVITIES_FOUND"
+    assert "Gimnasio Antiguo no cumple el estándar A2A que FinGuard exige." in answer.text
+    assert [notice.agent_name for notice in answer.agent_notices] == ["Gimnasio Este"]
+
+
+async def test_a_named_gym_with_no_timetable_is_not_said_to_be_unknown() -> None:
+    refused = ActivitySearch(THURSDAY, (), (), None, "no_agents")
+
+    answer = await reply("¿hay spinning el jueves en el Norte?", searches=FakeSearches(refused))
+
+    assert answer is not None and answer.outcome == "AGENTS_UNAVAILABLE"
+    assert answer.text == "Ningún agente configurado ofrece horarios de clases."
 
 
 @pytest.mark.parametrize(

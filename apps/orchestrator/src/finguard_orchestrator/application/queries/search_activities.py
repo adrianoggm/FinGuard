@@ -77,6 +77,10 @@ class AgentOutcome:
     kind: AgentOutcomeKind
     link: str | None = None
     rule: str | None = None
+    # Whether anything was sent to it. A named agent the gateway lists as unusable, or one whose
+    # card the model could not read, never was -- so it never "answered badly", and the web's list
+    # of agents that did must not say so (ruling R16); the text gives the reason instead.
+    asked: bool = True
 
 
 @dataclass(frozen=True)
@@ -146,7 +150,11 @@ class SearchActivitiesHandler:
         lines = [
             _Asked(
                 AgentOutcome(
-                    agent.id, _shown(agent), "unavailable", rule=agent.reason or "unusable"
+                    agent.id,
+                    _shown(agent),
+                    "unavailable",
+                    rule=agent.reason or "unusable",
+                    asked=False,
                 )
             )
             for agent in pool
@@ -162,7 +170,9 @@ class SearchActivitiesHandler:
                 askable.append((agent, skill))
         askable = askable[:MAX_EXPERT_AGENTS]
         if not askable and not lines:
-            return _refused(asked, "none_named" if named else "no_agents")
+            # Named or not, the agents are there and none offers a timetable (ruling R16):
+            # `none_named` is only for a name no agent has, refused above.
+            return _refused(asked, "no_agents")
         if named:
             asked = replace(asked, agent_ids=named)
 
@@ -188,7 +198,9 @@ class SearchActivitiesHandler:
             )
         except (ProviderFailedError, TimeoutError) as exc:
             rule = activity_writer.BUDGET if isinstance(exc, TimeoutError) else exc.code
-            return _Asked(AgentOutcome(agent.id, _shown(agent), "unavailable", rule=rule))
+            return _Asked(
+                AgentOutcome(agent.id, _shown(agent), "unavailable", rule=rule, asked=False)
+            )
         return mapping.get(Capability.AVAILABILITY)
 
     async def _ask(

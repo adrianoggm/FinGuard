@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -27,6 +27,13 @@ _AVAILABILITY = re.compile(
     r"Busco clases de (?P<activity>.+?) el \w+ (?P<d>\d{1,2}) de (?P<month>\w+) de (?P<y>\d{4}) "
     r"entre las (?P<h1>\d{2}:\d{2}) y las (?P<h2>\d{2}:\d{2})"
 )
+# Several days (FinGuard's request since ruling R15), with the daily hours when it asked for any.
+_AVAILABILITY_DAYS = re.compile(
+    r"Busco clases de (?P<activity>.+?) "
+    r"entre el \w+ (?P<d1>\d{1,2}) de (?P<m1>\w+) de (?P<y1>\d{4}) "
+    r"y el \w+ (?P<d2>\d{1,2}) de (?P<m2>\w+) de (?P<y2>\d{4})"
+    r"(?:, de (?P<h1>\d{2}:\d{2}) a (?P<h2>\d{2}:\d{2}))?\."
+)
 _BOOKING = re.compile(
     r"Quiero reservar la clase de (?P<activity>.+?) del \w+ (?P<d>\d{1,2}) de (?P<month>\w+) "
     r"de (?P<y>\d{4}) a las (?P<h>\d{2}:\d{2})(?:\. Referencia: (?P<ref>[\w-]+))?\. "
@@ -40,6 +47,8 @@ class Availability:
     start: datetime
     end: datetime
     member_ref: str | None
+    # The daily hours asked for, on every day between start and end; None when none were asked.
+    band: tuple[time, time] | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +80,23 @@ def _iso(zone: ZoneInfo, value: object) -> datetime | None:
     return parsed.astimezone(zone) if parsed.tzinfo else parsed.replace(tzinfo=zone)
 
 
+def _hhmm(value: object) -> time | None:
+    if not isinstance(value, str) or not re.fullmatch(r"\d{2}:\d{2}", value):
+        return None
+    try:
+        return time(int(value[:2]), int(value[3:]))
+    except ValueError:
+        return None
+
+
+def _band(value: object) -> tuple[time, time] | None:
+    """`{"from": "HH:MM", "to": "HH:MM"}` as two times, or None when absent or unreadable."""
+    if not isinstance(value, dict):
+        return None
+    opens, closes = _hhmm(value.get("from")), _hhmm(value.get("to"))
+    return (opens, closes) if opens is not None and closes is not None else None
+
+
 def _from_data(data: dict[str, Any], zone: ZoneInfo) -> Availability | Booking | None:
     kind = data.get("request")
     member = data.get("memberRef")
@@ -79,7 +105,13 @@ def _from_data(data: dict[str, Any], zone: ZoneInfo) -> Availability | Booking |
         activity = data.get("activity")
         if not isinstance(activity, str) or start is None or end is None:
             return None
-        return Availability(activity, start, end, member if isinstance(member, str) else None)
+        return Availability(
+            activity,
+            start,
+            end,
+            member if isinstance(member, str) else None,
+            _band(data.get("band")),
+        )
     if kind == "booking" and isinstance(member, str):
         ref = data.get("ref")
         activity = data.get("activity")
@@ -92,7 +124,29 @@ def _from_data(data: dict[str, Any], zone: ZoneInfo) -> Availability | Booking |
     return None
 
 
+def _days_from_text(text: str, zone: ZoneInfo) -> Availability | None:
+    """The several-days template: from the first day's opening to the last day's closing, and
+    with no hours stated, every hour of both days."""
+    m = _AVAILABILITY_DAYS.search(text)
+    if m is None:
+        return None
+    opens, closes = _hhmm(m["h1"]), _hhmm(m["h2"])
+    first = _moment(zone, m["y1"], m["m1"], m["d1"], m["h1"] or "00:00")
+    band: tuple[time, time] | None = None
+    if opens is not None and closes is not None:
+        last = _moment(zone, m["y2"], m["m2"], m["d2"], m["h2"])
+        band = (opens, closes)
+    else:
+        midnight = _moment(zone, m["y2"], m["m2"], m["d2"], "00:00")
+        last = midnight + timedelta(days=1) if midnight is not None else None
+    if first is None or last is None:
+        return None
+    return Availability(m["activity"], first, last, None, band)
+
+
 def _from_text(text: str, zone: ZoneInfo, hint: str | None) -> Availability | Booking | None:
+    if hint in (None, "timetable", "classes") and (days := _days_from_text(text, zone)):
+        return days
     if hint in (None, "timetable", "classes") and (m := _AVAILABILITY.search(text)):
         start = _moment(zone, m["y"], m["month"], m["d"], m["h1"])
         end = _moment(zone, m["y"], m["month"], m["d"], m["h2"])
