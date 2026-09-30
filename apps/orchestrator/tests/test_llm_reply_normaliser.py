@@ -217,3 +217,12 @@ async def test_a_provider_failure_propagates() -> None:
     provider = RecordingProvider([ProviderFailedError("m", "down")])
     with pytest.raises(ProviderFailedError):
         await _normaliser(provider).availability(QUERY, REPLY)
+
+
+async def test_a_booking_reply_is_read_only_when_completed() -> None:
+    """Review finding 1: an `INPUT_REQUIRED` answer to a booking is not a confirmation; Task 5 reads
+    its alternatives through `availability()`. `booking()` never shows it to the model."""
+    provider = RecordingProvider([])
+    reply = AgentReply("INPUT_REQUIRED", "t1", "c1", (TextReplyPart("Está completa"),), 5)
+    assert await _normaliser(provider).booking(SLOT, reply) is None
+    assert provider.prompts == []

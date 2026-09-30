@@ -32,6 +32,7 @@ transferencia» has nowhere to land: no field can carry it (§6.4).
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Final
 from urllib.parse import urlsplit
@@ -172,23 +173,44 @@ def verify_slots(
 def verify_booking(
     draft: BookingDraft, *, slot: ActivitySlot, reply: AgentReply
 ) -> BookingReceipt | AgentRejection:
-    """A confirmation, bound to the slot that was asked for, with a code the reply states."""
-    if not draft.booked:
+    """A confirmation, bound to the slot that was asked for, with a code the reply states.
+
+    not_booked  the reply is not `COMPLETED` -- an agent asking for something, or offering
+                another session, has confirmed nothing -- or the draft says it was not booked.
+    structure   the code and any reference are one `REFERENCE` token; the start parses.
+    grounding   the code is in the reply, whole; the start's clock time is one it states.
+    binding     the start is the slot's; a reply that states a date names the slot's date, and
+                then the start carries it too (a bare time binds only when no date is stated);
+                the activity is the slot's; a reference, if both have one, is the slot's.
+    """
+    if reply.state != "COMPLETED" or not draft.booked:
         return AgentRejection("not_booked")
-    if (
-        draft.booking_code is not None and not is_reference(draft.booking_code, MAX_BOOKING_CODE)
-    ) or (draft.slot_ref is not None and not is_reference(draft.slot_ref, MAX_SLOT_REF)):
-        return AgentRejection("structure")
-    if draft.booking_code is None or not _token_said(draft.booking_code, reply_text(reply)):
-        return AgentRejection("grounding")
     moment = _moment(draft.start) if draft.start is not None else None
+    if (
+        (draft.booking_code is not None and not is_reference(draft.booking_code, MAX_BOOKING_CODE))
+        or (draft.slot_ref is not None and not is_reference(draft.slot_ref, MAX_SLOT_REF))
+        or (draft.start is not None and moment is None)
+    ):
+        return AgentRejection("structure")
+    text = reply_text(reply)
+    zone = slot.start.tzinfo
     start = (
-        datetime.combine(moment[0] or slot.start.date(), moment[1], slot.start.tzinfo)
+        datetime.combine(moment[0] or slot.start.date(), moment[1], zone)
         if moment is not None
         else None
     )
     if (
-        start != slot.start
+        draft.booking_code is None
+        or not _token_said(draft.booking_code, text)
+        or (start is not None and not _time_said(start.time(), start, stated_times(text)))
+    ):
+        return AgentRejection("grounding")
+    dates = _dates_in(folded(text))
+    if (
+        start is None
+        or start != slot.start
+        or (dates and (moment is None or moment[0] is None))
+        or (dates and not any(said.names(slot.start.date()) for said in dates))
         or draft.activity is None
         or not same_activity(slot.activity, draft.activity)
         or (
@@ -254,6 +276,44 @@ def _date_said(day: date, text: str, words: tuple[str, ...]) -> bool:
         or _has_words(words, (f"{day.day:02d}", "de", _MONTHS[day.month - 1]))
         or _WEEKDAYS[day.weekday()] in words
     )
+
+
+@dataclass(frozen=True)
+class _SaidDate:
+    """A literal date in the (folded) reply: `YYYY-MM-DD`, `DD/MM/YYYY` or «D de <mes>[ de AAAA]».
+    The last may carry no year, and then it names that day and month in any year."""
+
+    year: int | None
+    month: int
+    day: int
+    begins: int
+    ends: int
+
+    def names(self, day: date) -> bool:
+        return (self.month, self.day) == (day.month, day.day) and self.year in (None, day.year)
+
+
+_ISO_DATE: Final = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
+_SLASH_DATE: Final = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})/(\d{4})(?![\d/])")
+_NAMED_DATE: Final = re.compile(
+    r"\b(\d{1,2})\s+de\s+(" + "|".join(_MONTHS) + r"|setiembre)(?:\s+(?:de\s+|del\s+)?(\d{4}))?\b"
+)
+
+
+def _dates_in(text: str) -> tuple[_SaidDate, ...]:
+    """Every literal date `text` (already folded) states, in order of appearance."""
+    found = [
+        _SaidDate(int(m[1]), int(m[2]), int(m[3]), m.start(), m.end())
+        for m in _ISO_DATE.finditer(text)
+    ]
+    found += [
+        _SaidDate(int(m[3]), int(m[2]), int(m[1]), m.start(), m.end())
+        for m in _SLASH_DATE.finditer(text)
+    ]
+    for m in _NAMED_DATE.finditer(text):
+        month = _MONTHS.index(m[2]) + 1 if m[2] in _MONTHS else 9
+        found.append(_SaidDate(int(m[3]) if m[3] else None, month, int(m[1]), m.start(), m.end()))
+    return tuple(sorted(found, key=lambda said: said.begins))
 
 
 def _time_said(at: time, moment: datetime, stated: tuple[StatedTime, ...]) -> bool:
