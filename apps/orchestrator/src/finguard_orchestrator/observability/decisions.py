@@ -100,6 +100,11 @@ class Step(StrEnum):
     (Task 1, Wave 3 hardening: A-1) -- a replay from another conversation and a tampered payload
     are two different failure populations, and this is the seam that tells them apart."""
 
+    EXPERT_AGENT = "expert_agent"
+    """Whether an external agent's normalised reply was accepted, and if not, which verifier rule
+    rejected it (A2A expert agents, spec §6.3) -- a third party's text read by a model is the new
+    attack surface, and a rejection nobody counts is an agent that quietly stopped answering."""
+
 
 class Verdict(StrEnum):
     """Which way a decision went.

@@ -316,11 +316,15 @@ def test_the_step_and_the_verdict_cannot_carry_anything() -> None:
     Thirteen, not twelve, since Task 1 (Wave 3 hardening, A-1) added `CONTEXT_TRUST` -- the diff
     the design's own docstring asks for: a defect (a replayed, reordered or tampered visual
     context passing the trust gate silently) hid in exactly this seam.
+
+    Fourteen since the A2A expert agents added `EXPERT_AGENT`: a third party's reply is read by a
+    model and accepted or rejected by a verifier rule, and a rejection nobody counts is an agent
+    that quietly stopped answering.
     """
-    assert len(Step) == 13, (
-        "the design argues thirteen seams; a fourteenth should be a diff to justify"
+    assert len(Step) == 14, (
+        "the design argues fourteen seams; a fifteenth should be a diff to justify"
     )
-    assert len({step.value for step in Step}) == 13, "two seams sharing a label share a time series"
+    assert len({step.value for step in Step}) == 14, "two seams sharing a label share a time series"
     assert set(Verdict) == {
         Verdict.AGREED,
         Verdict.OVERRODE,
@@ -700,12 +704,23 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
             field="chart",
             detail="ok",
         )
+        # The fourteenth: an expert agent's normalised reply passed every verifier rule. The agent
+        # id is this service's own vocabulary (the gateway derives it from a URL); the reply's text
+        # never is, and has no slot to arrive in.
+        record(
+            Step.EXPERT_AGENT,
+            Verdict.AGREED,
+            changed=False,
+            field="reply",
+            now="accepted",
+            detail="gym-norte",
+        )
         turn.outcome = PlanningOutcome.PLANNED.value
 
     sealed = turn.sealed()
-    assert {decision.step for decision in sealed.decisions} == set(Step), "all thirteen fit"
+    assert {decision.step for decision in sealed.decisions} == set(Step), "all fourteen fit"
     assert all(REDACTED not in everything_in(TurnRecord((d,))) for d in sealed.decisions)
-    assert len(sealed.changed) == 9, "nine of the thirteen altered the answer in this example"
+    assert len(sealed.changed) == 9, "nine of the fourteen altered the answer in this example"
 
 
 # --- the package move -------------------------------------------------------------------------
