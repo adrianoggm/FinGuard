@@ -169,3 +169,15 @@ def test_an_iso_offset_is_read_beside_its_time_and_a_range_is_not_an_offset() ->
         StatedTime(time(11, 0), None),
     )
     assert clock_times_in("2026-10-01T17:00:00Z") == (time(17, 0),)
+
+
+def test_the_window_carries_the_daily_hours_it_was_asked_for() -> None:
+    """Review finding 9 (ruling R9): over several days a band is not the hull. «El fin de semana
+    por la tarde» is 15:00-21:00 on Saturday *and* on Sunday, not Saturday 15:00 to Sunday 21:00."""
+    weekend = activity_window("el fin de semana por la tarde", now=NOW)
+    assert weekend is not None and weekend.band == (time(15, 0), time(21, 0))
+    evenings = activity_window("esta semana a partir de las 18", now=NOW)
+    assert evenings is not None and evenings.band == (time(18, 0), time(23, 0))
+    assert activity_window("¿hay clases de spinning?", now=NOW).band is None  # type: ignore[union-attr]
+    # One hour after 23:30 is tomorrow: no daily band can say that, and the window itself does.
+    assert activity_window("hoy a las 23:30", now=NOW).band is None  # type: ignore[union-attr]

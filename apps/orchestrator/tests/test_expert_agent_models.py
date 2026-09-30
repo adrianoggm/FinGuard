@@ -113,3 +113,12 @@ def test_a_reference_and_a_code_are_one_ascii_token(bad: str) -> None:
     with pytest.raises(InvalidValueError):
         BookingReceipt("gym-norte", _slot(), bad)
     assert _slot(slot_ref="N-1001.19:00/a").slot_ref == "N-1001.19:00/a"
+
+
+def test_a_band_opens_before_it_closes() -> None:
+    from datetime import time
+
+    query = ActivityQuery("spinning", AT, AT + timedelta(days=2), band=(time(15), time(21)))
+    assert query.band == (time(15), time(21))
+    with pytest.raises(InvalidValueError):
+        ActivityQuery("spinning", AT, AT + timedelta(days=2), band=(time(21), time(15)))

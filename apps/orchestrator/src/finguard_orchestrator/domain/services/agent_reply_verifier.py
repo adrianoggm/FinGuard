@@ -16,7 +16,8 @@ answer with a closed rule name, and a rejected answer is that agent not respondi
                 window holds one day with that weekday and the mention announces no other date --
                 or the query is a single day, the only case in which a bare `HH:MM` has a date at
                 all; places and reference, when given, are in the reply whole.
-    window      the start is inside the query's window and in the future.
+    window      the start is inside the query's window, inside its daily band when it has one,
+                and in the future.
     coherence   an end after the start and at most `MAX_SLOT_MINUTES` later, places not negative,
                 no two slots with one activity and start, at most `MAX_AGENT_SLOTS`.
 
@@ -151,9 +152,11 @@ def verify_slots(
         if not grounded:
             return AgentRejection("grounding")
 
-    # window
+    # window -- and the band, on every day of it
     for _, _, start, _ in read:
-        if not (query.start <= start < query.end and start > now):
+        if not (query.start <= start < query.end and start > now) or (
+            query.band is not None and not query.band[0] <= start.time() < query.band[1]
+        ):
             return AgentRejection("window")
 
     # coherence

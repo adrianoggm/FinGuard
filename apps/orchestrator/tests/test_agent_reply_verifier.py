@@ -537,3 +537,27 @@ def test_a_weekday_grounds_a_date_only_when_it_names_one_day_of_the_window() -> 
             )
             == 1
         )
+
+
+def test_a_slot_outside_the_asked_band_is_outside_the_request() -> None:
+    """Review finding 9: spec §6.3 rule 2, «inside the requested window and band»."""
+    from datetime import time
+
+    weekend_afternoons = ActivityQuery(
+        "spinning",
+        datetime(2026, 10, 3, 15, 0, tzinfo=ZONE),
+        datetime(2026, 10, 4, 21, 0, tzinfo=ZONE),
+        band=(time(15, 0), time(21, 0)),
+    )
+    reply = text_reply("Spinning el sábado 3 de octubre a las 18:00 y a las 22:00")
+    at_six = AvailabilityDraft((SlotDraft("Spinning", "2026-10-03T18:00", None, None, None),))
+    at_ten = AvailabilityDraft((SlotDraft("Spinning", "2026-10-03T22:00", None, None, None),))
+    assert (
+        len(
+            verify_slots(at_six, query=weekend_afternoons, reply=reply, agent_id="gym-sur", now=NOW)
+        )
+        == 1
+    )
+    assert verify_slots(
+        at_ten, query=weekend_afternoons, reply=reply, agent_id="gym-sur", now=NOW
+    ) == AgentRejection("window")

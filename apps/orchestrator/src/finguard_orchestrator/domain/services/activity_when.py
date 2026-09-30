@@ -21,8 +21,9 @@ A past period («ayer», «el mes pasado», «el jueves pasado», «hace dos dí
 exist or has gone («el 45 de octubre»), and a period this reader does not serve («este mes») are
 `None`: answering any of them with the next seven days would be a real list for a question nobody
 asked. A window is single-day when its start and end share a date. Over several days it is one
-interval, from the first day's opening to the last day's closing: «el fin de semana por la tarde»
-also covers Saturday night, because `ActivityQuery` carries a start and an end, not a band.
+interval, from the first day's opening to the last day's closing, and the daily hours travel beside
+it as `band`: «el fin de semana por la tarde» is Saturday 15:00 to Sunday 21:00 with the band
+15:00-21:00, so Saturday night is inside the interval and outside the request.
 """
 
 import re
@@ -38,6 +39,7 @@ class ActivityWindow:
     start: datetime
     end: datetime
     single_day: bool
+    band: tuple[time, time] | None  # the daily hours asked for; None when none were stated
 
 
 @dataclass(frozen=True)
@@ -183,7 +185,16 @@ def activity_window(sentence: str, *, now: datetime) -> ActivityWindow | None:
     end = _at(last, closes, now.tzinfo)
     if start >= end:
         return None  # the whole window has already gone
-    return ActivityWindow(start, end, start.date() == end.date())
+    # The daily hours, when the sentence stated any: a band or a clock phrase. Not when they run
+    # past midnight («hoy a las 23:30»), which no pair of times within a day can say.
+    stated = band is not None or bool(clocks)
+    daily = (_clock(opens), _clock(closes)) if stated and closes < timedelta(days=1) else None
+    return ActivityWindow(start, end, start.date() == end.date(), daily)
+
+
+def _clock(since_midnight: timedelta) -> time:
+    minutes = int(since_midnight.total_seconds()) // 60
+    return time(minutes // 60, minutes % 60)
 
 
 def _at(day: date, since_midnight: timedelta, zone: tzinfo | None) -> datetime:
