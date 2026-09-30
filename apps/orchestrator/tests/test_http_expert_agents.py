@@ -281,3 +281,40 @@ async def test_an_agent_id_that_is_not_one_never_reaches_the_path(
     with pytest.raises(ExpertAgentsError) as raised:
         await _send(_gateway(monkeypatch, handler), agent_id="../admin")
     assert raised.value.code == "agent_unknown" and seen == []
+
+
+# --- the settings that build it ------------------------------------------------------------------
+
+
+def test_the_capability_ships_off_and_a_blank_setting_is_no_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without the URL the capability does not exist (spec §3.2), and a blank
+    `ORCHESTRATOR_A2A_GATEWAY_URL=` -- what `.env.defaults` ships and what compose passes for an
+    unset variable -- is that absence, not a URL with nothing in it. The two secrets get the same
+    treatment as every other key."""
+    from finguard_orchestrator.bootstrap.config import Settings
+
+    fields = Settings.model_fields
+    for name in ("a2a_gateway_url", "a2a_gateway_token", "a2a_pairwise_key"):
+        assert fields[name].default is None
+    for name in ("URL", "TOKEN"):
+        monkeypatch.setenv(f"ORCHESTRATOR_A2A_GATEWAY_{name}", "")
+    monkeypatch.setenv("ORCHESTRATOR_A2A_PAIRWISE_KEY", "  ")
+    settings = Settings()  # type: ignore[call-arg]
+    assert (settings.a2a_gateway_url, settings.a2a_gateway_token, settings.a2a_pairwise_key) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_the_per_agent_budget_is_stated_in_the_defaults_and_nowhere_in_code() -> None:
+    from pathlib import Path
+
+    from finguard_orchestrator.bootstrap.config import Settings
+
+    assert Settings.model_fields["a2a_agent_budget_seconds"].is_required()
+    defaults = (Path(__file__).resolve().parents[1] / ".env.defaults").read_text(encoding="utf-8")
+    assert "\nORCHESTRATOR_A2A_AGENT_BUDGET_SECONDS=15\n" in defaults
+    assert "\nORCHESTRATOR_A2A_GATEWAY_URL=\n" in defaults
