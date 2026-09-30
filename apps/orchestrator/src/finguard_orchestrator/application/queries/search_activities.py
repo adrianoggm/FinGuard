@@ -251,17 +251,22 @@ class SearchActivitiesHandler:
         )
 
     def _outbound(self, query: ActivityQuery, caller: Caller, agent_id: str) -> Outbound:
-        """The template and the data part, filled from the verified query alone (§5.4)."""
-        return Outbound(
-            text=activity_writer.request_text(query),
-            data={
-                "request": "availability",
-                "activity": query.activity,
-                "from": query.start.isoformat(timespec="seconds"),
-                "to": query.end.isoformat(timespec="seconds"),
-                "memberRef": member_reference(self._key, caller.holder_reference, agent_id),
-            },
-        )
+        """The template and the data part, filled from the verified query alone (§5.4).
+
+        The band travels too (ruling R15): over several days `from`-`to` is one interval, and an
+        agent that read only that would answer Saturday night for «el fin de semana por la tarde»
+        -- a session the verifier's band rule then rejects together with the whole reply.
+        """
+        data: dict[str, object] = {
+            "request": "availability",
+            "activity": query.activity,
+            "from": query.start.isoformat(timespec="seconds"),
+            "to": query.end.isoformat(timespec="seconds"),
+        }
+        if query.band is not None:
+            data["band"] = {"from": f"{query.band[0]:%H:%M}", "to": f"{query.band[1]:%H:%M}"}
+        data["memberRef"] = member_reference(self._key, caller.holder_reference, agent_id)
+        return Outbound(text=activity_writer.request_text(query), data=data)
 
 
 def _refused(query: ActivityQuery | None, refusal: SearchRefusal) -> ActivitySearch:

@@ -233,6 +233,8 @@ async def test_both_agents_are_asked_in_parallel_with_the_template_and_the_pairw
             "activity": "spinning",
             "from": "2026-10-01T15:00:00+02:00",
             "to": "2026-10-01T21:00:00+02:00",
+            # Ruling R15: the daily hours travel in the request, not only in the text.
+            "band": {"from": "15:00", "to": "21:00"},
             "memberRef": member_reference(KEY, HOLDER, sent["agent_id"]),
         }
         refs.append(outbound.data["memberRef"])
@@ -240,6 +242,46 @@ async def test_both_agents_are_asked_in_parallel_with_the_template_and_the_pairw
             assert leaked not in outbound.text and leaked not in str(dict(outbound.data))
     assert refs[0] != refs[1]
     assert len({sent["message_id"] for sent in agents.sent}) == 2
+
+
+async def test_a_weekend_afternoon_is_asked_for_with_its_band_on_every_day() -> None:
+    """Ruling R15: over several days the daily hours are part of the request -- in the data part
+    and in the text -- so an agent does not answer Saturday night or Sunday morning and have its
+    whole reply rejected by the band rule."""
+    agents = FakeAgents(listing=(NORTE,), replies={"gym-norte": norte_reply()})
+    await search("¿hay natación este fin de semana por la tarde?", agents=agents)
+
+    [sent] = agents.sent
+    outbound: Outbound = sent["outbound"]
+    assert outbound.text == (
+        "Busco clases de natación entre el sábado 3 de octubre de 2026 y el domingo 4 de octubre "
+        "de 2026, de 15:00 a 21:00."
+    )
+    assert dict(outbound.data) == {
+        "request": "availability",
+        "activity": "natacion",
+        "from": "2026-10-03T15:00:00+02:00",
+        "to": "2026-10-04T21:00:00+02:00",
+        "band": {"from": "15:00", "to": "21:00"},
+        "memberRef": member_reference(KEY, HOLDER, "gym-norte"),
+    }
+
+
+async def test_several_days_with_no_band_are_asked_for_without_one() -> None:
+    agents = FakeAgents(listing=(NORTE,), replies={"gym-norte": norte_reply()})
+    await search("¿hay yoga esta semana?", agents=agents)
+
+    [sent] = agents.sent
+    outbound: Outbound = sent["outbound"]
+    assert outbound.text == (
+        "Busco clases de yoga entre el miércoles 30 de septiembre de 2026 y el domingo 4 de "
+        "octubre de 2026."
+    )
+    assert "band" not in outbound.data
+    assert (outbound.data["from"], outbound.data["to"]) == (
+        "2026-09-30T10:00:00+02:00",
+        "2026-10-04T23:00:00+02:00",
+    )
 
 
 async def test_slots_are_merged_and_ordered_by_start() -> None:
