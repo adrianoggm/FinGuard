@@ -78,8 +78,9 @@ A FastAPI service with the same hexagonal layout as `apps/voice-gateway` (`domai
   - `LlmSkillClassifier` and `LlmReplyNormaliser` behind their own ports, built like
     `LlmVisualPlanner`: closed JSON schema, one repair retry, strict parse.
 - **Application.**
-  - A new intent `EXPERT_AGENT` recognised by rules (vocabulary: clase, horario, gimnasio, apúntame,
-    reserva…, plus a lexicon of activities).
+  - A rule predicate that recognises a request for an expert agent (vocabulary: clase, horario,
+    gimnasio, apúntame, reserva…, plus a lexicon of activities), consulted by the controller before the
+    financial path — not a new `Intent` value (§14 A1).
   - A query `SearchActivities` and a command `BookActivity` with prepare / confirm / cancel, the same
     two-turn shape as payments.
 - **Wire and conversation.** A sealed `activity_offers` context (§5.3) and a workflow
@@ -255,8 +256,8 @@ would need per-provider code (D4).
 
 `AUTH_REQUIRED` and terminal failures never go through the normaliser: the state itself is the
 information. The one thing read from an `AUTH_REQUIRED` reply is the linking address, and it is read
-deterministically — the first `http(s)` URL in its parts whose host equals the registered agent's host
-(§7). No model decides which link a person is shown.
+deterministically — the first `http(s)` URL in its parts whose host is one of the agent's **link
+hosts** (§7, §14 A3). No model decides which link a person is shown.
 
 ### 6.3 Verification — every value grounded
 
@@ -293,7 +294,7 @@ text it came in is never read again.
 | Normaliser or verifier rejects | Treated as that agent not responding validly; rule recorded. |
 | `INPUT_REQUIRED` with alternatives (class full) | Alternatives become the new offers: «La de las 19:00 está completa; Gimnasio Norte ofrece 20:00 y 21:00». |
 | `INPUT_REQUIRED` asking for anything else | «Gimnasio Norte pide un dato que FinGuard no proporciona.» Nothing is forwarded. |
-| `AUTH_REQUIRED` | «Gimnasio Norte necesita que vincules tu cuenta de socio», with the agent's link **only if it is on the registered agent's own host**; otherwise no link. The booking is not retried. |
+| `AUTH_REQUIRED` | «Gimnasio Norte necesita que vincules tu cuenta de socio», with the agent's link **only if its host is one of the agent's link hosts** (§14 A3); otherwise no link. The booking is not retried. |
 | Offers seal broken or offers absent | Booking asks to search again. |
 | Response lost after sending a booking | Reported as unknown outcome, never re-sent (§5.2). |
 
@@ -388,3 +389,38 @@ With `just a2a-demo` running:
 - **The model choosing which agents to ask or what to send.** The route stays in code (D5, D9).
 - **Cancelling a booking through the agent.** Not in the demo; the capability catalogue can grow a
   `CANCEL_BOOKING` later.
+
+## 14. Amendments from the plan's pre-read (2026-09-30)
+
+Reading the code and running `a2a-sdk` 1.2.1 before planning changed eleven details. Each overrides the
+section it names; the decisions in §2 stand.
+
+- **A1 — no new `Intent`.** A predicate in the domain (`expert_agent_words`) is consulted by the
+  controller before the visual and financial paths, the way `_is_an_order_to_pay` is. The model
+  interpreters (`Hybrid`, `Promoted`) can therefore never open this path, no prompt or schema changes,
+  and the intent lexicon's ratchets do not move. «¿Cuánto gasto en el gimnasio?» stays financial.
+- **A2 — a future-day reader of its own.** `window_words` reads only past and current periods; «el
+  jueves», «mañana» and clock times exist nowhere. `domain/services/activity_when.py` reads them, so the
+  financial readers do not move.
+- **A3 — link hosts.** The registered URL is the service's internal name (`gym-norte:8000`), which a
+  browser cannot open. An agent's link hosts are the registered URL's host **and** the host of its
+  card's `provider.url`; the gateway lists them. A reply's link is shown only if its host is one of them.
+- **A4 — scopes.** `agents:ask` to search, `agents:book` to confirm a booking, as `payments:confirm` is
+  not implied by `payments:prepare`. Granted to the web demo token.
+- **A5 — no skill addressing in A2A.** A message goes to an agent, not to a skill. FinGuard sends the
+  classified skill's id as a message-metadata hint (`finguardSkill`), which the protocol allows and a
+  real agent may ignore; the text and data say what is asked either way.
+- **A6 — input modes.** The data part is sent only when the agent declares a JSON input mode; a
+  text-only agent receives the text alone.
+- **A7 — strict cards.** The SDK's resolver accepts an empty JSON object as a card and converts 0.3
+  cards silently. The gate calls `validate_proto_required_fields` and filters interfaces by
+  `protocol_version` 1.x itself.
+- **A8 — numbers.** A2A data parts are protobuf `Value`s: integers come back as floats. The gateway
+  returns integral floats as integers, so `4` is grounded as `4`, not `4.0`.
+- **A9 — deduplication is the agent's.** The SDK does not deduplicate by `messageId`; the simulated
+  gym does, and FinGuard never re-sends (§5.2).
+- **A10 — voice refusal in the orchestrator.** `voice-gateway` blocks only `PAYMENT_CONFIRMATION`. A
+  booking confirmation on the `VOICE` channel is refused by the orchestrator (outcome
+  `BOOKING_ON_SCREEN`), and a booking preview uses its own outcome, not `AWAITING_CONFIRMATION`.
+- **A11 — one branch, two routes.** The web posts to `/v1/questions/stream`; the expert-agent turns are
+  one helper called from both `ask` and `ask_streaming`.
