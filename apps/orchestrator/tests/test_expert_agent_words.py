@@ -205,25 +205,28 @@ def test_no_string_of_any_evaluation_file_is_claimed() -> None:
 
 def test_no_existing_corpus_sentence_is_claimed() -> None:
     """The corpus must not move (Global Constraints): no sentence of any existing episode reaches
-    an agent, as a question or as a booking. No episode has searched, so the booking predicate is
-    swept as it reads them: with no offers in the conversation."""
+    an agent, as a question or as a booking -- not even if a search's offers were in the
+    conversation (fix round 1), which claims a superset of what it claims without them."""
     claimed = [
         (episode.name, turn.say)
         for episode in episodes.load()
         for turn in episode.turns
-        if asks_an_expert_agent(turn.say) or is_a_booking_request(turn.say, has_offers=False)
+        if asks_an_expert_agent(turn.say) or is_a_booking_request(turn.say, has_offers=True)
     ]
     assert claimed == []
 
 
-def test_no_string_of_any_evaluation_file_is_a_booking() -> None:
-    """The evaluation sweep above, for the booking predicate with no offers."""
+@pytest.mark.parametrize("has_offers", [False, True], ids=["no-offers", "offers"])
+def test_no_string_of_any_evaluation_file_is_a_booking(has_offers: bool) -> None:
+    """The evaluation sweep above, for the booking predicate -- with offers in the conversation
+    too (fix round 1): offers outlive unrelated turns, and a booking is checked before anything
+    else, so a period or a search that merely begins «la primera…» must stay what it was."""
     evaluation = Path(__file__).resolve().parents[1] / "evaluation"
     claimed = [
         (path.relative_to(evaluation).as_posix(), text)
         for path in sorted(evaluation.rglob("*.yaml"))
         for text in _strings(yaml.safe_load(path.read_text(encoding="utf-8")))
-        if is_a_booking_request(text, has_offers=False)
+        if is_a_booking_request(text, has_offers=has_offers)
     ]
     assert claimed == []
 
@@ -270,6 +273,37 @@ def test_a_bare_pointer_is_a_booking_request_only_when_there_is_something_to_poi
 ) -> None:
     assert is_a_booking_request(sentence, has_offers=True)
     assert not is_a_booking_request(sentence, has_offers=False)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # An ordinal before a period noun is a period, whatever else was offered (fix round 1).
+        "Ahora en la segunda quincena de julio",
+        "¿y la última semana?",
+        "¿y la primera quincena de febrero?",
+        "la primera semana de agosto",
+        "la última del mes pasado",
+        "la segunda de este año",
+        # A day the future-day reader reads, or a financial period, is a question about when.
+        "la de las 19:00 del jueves",
+        "la primera de mañana por la tarde",
+        "la de las 18:30 de hoy",
+        # A search cue is a search.
+        "quiero la de clases de yoga",
+        "¿qué clases hay en la primera?",
+    ],
+)
+def test_a_pointer_that_names_a_period_or_a_search_is_not_a_booking(sentence: str) -> None:
+    assert not is_a_booking_request(sentence, has_offers=True)
+
+
+def test_a_booking_verb_still_books_whatever_period_it_names() -> None:
+    """The period rule is for pointers alone: with a verb, «del jueves» picks the class."""
+    assert is_a_booking_request("apúntame a la de las 19:00 del jueves", has_offers=True)
+    assert is_a_booking_request("resérvame la primera", has_offers=True)
+    # A clock phrase with its part of the day is a time, not a band.
+    assert is_a_booking_request("la de las 7 de la tarde", has_offers=True)
 
 
 @pytest.mark.parametrize(
