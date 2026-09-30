@@ -55,6 +55,7 @@ from finguard_orchestrator.application.queries.readers.visual_follow_up import (
     classify_claimed_visual,
     record_visual_follow_up,
 )
+from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
 from finguard_orchestrator.bootstrap.dependencies import (
     attempt_key,
     get_ask_handler,
@@ -133,6 +134,7 @@ from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.controllers.expert_agent_turns import expert_agent_reply
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
     BreakdownResponse,
@@ -184,6 +186,17 @@ def _metric_token_codec(request: Request) -> MetricTokenCodec:
 
 MetricTokens = Annotated[MetricTokenCodec, Depends(_metric_token_codec)]
 MetricsOn = Annotated[bool, Depends(metrics_available)]
+
+
+def _expert_searches(request: Request) -> SearchActivitiesHandler | None:
+    """The activity search, or `None` when no A2A gateway is configured -- the capability then
+    does not exist and the turn says so (`expert_agent_turns`). Read with a default so an app
+    assembled without `create_app` (a test's) is one with no gateway, not a 500."""
+    searches: SearchActivitiesHandler | None = getattr(request.app.state, "expert_searches", None)
+    return searches
+
+
+ExpertSearches = Annotated[SearchActivitiesHandler | None, Depends(_expert_searches)]
 
 
 def _saved_visual_source(
@@ -1518,11 +1531,18 @@ def _conversation_of(
     untrusted is logged once, by reason, before this function returns -- `record_context_untrusted`
     reads `trust_reason` off each one, which is exactly why verification happens here rather than
     lazily, the first time some later branch happens to read `trusted`.
+
+    A2A expert agents (spec §5.3): a search's sealed offers are checked here too, under their own
+    `o1.` seal, so a booking only ever resolves against offers this holder was shown in this
+    conversation. Unverified offers come back `trusted=False` and tokenless.
     """
     conversation = conversation_mapper.to_domain(
         request.conversation,
         verify=lambda token, conversation_id, position, semantics: metric_tokens.verify_context(
             token, who.holder_reference, conversation_id, position, semantics
+        ),
+        verify_offers=lambda token, conversation_id, semantics: metric_tokens.verify_offers(
+            token, who.holder_reference, conversation_id, semantics
         ),
     )
     for context in conversation.visual_contexts:
@@ -1827,6 +1847,9 @@ async def ask(
     reads: Reads,
     metric_tokens: MetricTokens,
     metrics_on: MetricsOn,
+    # Defaulted for the callers that invoke this function directly (the tests); FastAPI still
+    # resolves the dependency for every request.
+    searches: ExpertSearches = None,
 ) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
@@ -1920,6 +1943,16 @@ async def ask(
         immediate = _open_payment_reply(request.question, was, was.active)
         if immediate is not None:
             return immediate
+
+    # A2A expert agents (spec §14 A1, A11): below the payment branches, which own their turns, and
+    # above the visual and financial paths, which a timetable question must never reach. `None`
+    # for every sentence the predicate does not claim, and the turn continues as it always did.
+    if (
+        agent_reply := await expert_agent_reply(
+            request, who, was, searches=searches, bookings=None, codec=metric_tokens
+        )
+    ) is not None:
+        return agent_reply
 
     # C-1/C-6/C-3 (Wave 3 hardening): moved below the two payment branches above -- a preview or an
     # open payment owns its own reply, whatever words it contains, and a restyle answering it left
@@ -2067,6 +2100,9 @@ async def ask_streaming(
     reads: Reads,
     metric_tokens: MetricTokens,
     metrics_on: MetricsOn,
+    # Defaulted for the callers that invoke this function directly (the tests); FastAPI still
+    # resolves the dependency for every request.
+    searches: ExpertSearches = None,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -2141,6 +2177,15 @@ async def ask_streaming(
         immediate = _open_payment_reply(request.question, was, was.active)
         if immediate is not None:
             return _open_payment_events(immediate)
+
+    # A2A expert agents: the same helper at the same point as the question route (spec §14 A11) --
+    # the browser types into this endpoint. Its answer exists all at once, so it is one frame.
+    if (
+        agent_reply := await expert_agent_reply(
+            request, who, was, searches=searches, bookings=None, codec=metric_tokens
+        )
+    ) is not None:
+        return _open_payment_events(agent_reply)
 
     # C-1/C-6/C-3 (Wave 3 hardening): moved below the two payment branches above -- see the same
     # block's comment on the question route. F-3 (fix wave, Important 6) narrows the no-context

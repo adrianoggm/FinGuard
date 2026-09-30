@@ -289,6 +289,14 @@ export type ConversationState = {
     // The server's seal; echoed, never read.
     token?: string | null;
   }[];
+  // The last activity search's offers, sealed; echoed, never read. A booking is resolved against
+  // them by the service, which refuses them the moment the seal does not check out.
+  activity_offers?: {
+    slots: ActivitySlot[];
+    agent_names: { agent_id: string; name: string }[];
+    contexts: { agent_id: string; context_id: string }[];
+    token: string | null;
+  } | null;
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
@@ -332,6 +340,29 @@ export type ConversationState = {
   recipient_iban: string | null;
   // `rank` used to be here and left with the refusal it served. The service rejects fields it does
   // not know, so a stale one on this type is a 422 waiting for whoever fills it in.
+};
+
+/**
+ * One class an external gym offered, as the service verified it against the gym's own reply.
+ * Every field is drawn as text: the activity and the name are a third party's words, and a
+ * reference may look like an address without being one to follow.
+ */
+export type ActivitySlot = {
+  agent_id: string;
+  agent_name: string;
+  activity: string;
+  /** ISO 8601 with the slot's own offset, which is the offset it is shown in. */
+  start: string;
+  end: string | null;
+  free_places: number | null;
+  slot_ref: string | null;
+};
+
+/** A gym that could not answer with classes, and why. `link` is set only for linking. */
+export type AgentNotice = {
+  agent_name: string;
+  kind: "unavailable" | "link_required" | "unsupported_request";
+  link: string | null;
 };
 
 export type Answer = {
@@ -382,6 +413,10 @@ export type Answer = {
    * figure rather than a chart, which is still a metric and cannot be the target of a restyle.
    */
   save_candidate?: { chart_id: string | null; definition_token: string } | null;
+  /** An activity search's classes, in the order offered, verified against each gym's reply. */
+  activities?: ActivitySlot[];
+  /** One line per gym that could not answer with classes. */
+  agent_notices?: AgentNotice[];
 };
 
 export type Visualization =
@@ -483,6 +518,32 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
         (Number.isSafeInteger(item.limit) && (item.limit as number) >= 1)) &&
       !containsChartValues(spec);
   };
+  // `QuestionResponse.activities`/`.agent_notices` (`llm_dto.py`) default to `[]` on the wire.
+  // Absence reads as none, the way `explanation` does, so an answer from before they existed is
+  // passed through untouched rather than rebuilt with two empty lists.
+  const validActivities = (field: unknown) => {
+    if (field === undefined) return true;
+    if (!Array.isArray(field)) return false;
+    return field.every((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+      const item = row as Record<string, unknown>;
+      return typeof item.agent_id === "string" && typeof item.agent_name === "string" &&
+        typeof item.activity === "string" && typeof item.start === "string" &&
+        optionalString(item.end) && optionalNumber(item.free_places) &&
+        optionalString(item.slot_ref);
+    });
+  };
+  const validNotices = (field: unknown) => {
+    if (field === undefined) return true;
+    if (!Array.isArray(field)) return false;
+    return field.every((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+      const item = row as Record<string, unknown>;
+      return typeof item.agent_name === "string" && optionalString(item.link) &&
+        (item.kind === "unavailable" || item.kind === "link_required" ||
+          item.kind === "unsupported_request");
+    });
+  };
   const validExplanation = (field: unknown) => {
     if (field === undefined || field === null) return true;
     if (!field || typeof field !== "object" || Array.isArray(field)) return false;
@@ -524,6 +585,7 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     !validVisualization(body.visualization) ||
     !validDerivation(body.visualization_derivation) ||
     !validExplanation(body.explanation) ||
+    !validActivities(body.activities) || !validNotices(body.agent_notices) ||
     groups.some((group) => {
       if (!group || typeof group !== "object") return true;
       const item = group as Record<string, unknown>;

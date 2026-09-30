@@ -29,6 +29,7 @@ import { day, ibanGroups, money, outgoing, signed } from "./format";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 import { Chart, chartTitle } from "./Chart";
+import { ActivityList } from "./ActivityList";
 
 type ChartVisualization = Extract<NonNullable<Answer["visualization"]>, { kind: "chart" }>;
 
@@ -673,6 +674,9 @@ function Bubble({ turn }: { turn: Turn }) {
           <AnswerEvidence answer={answer} />
         </>
       )}
+      {(answer.activities?.length || answer.agent_notices?.length) ? (
+        <ActivityList slots={answer.activities ?? []} notices={answer.agent_notices ?? []} />
+      ) : null}
       <PaymentPanel state={answer.conversation} />
     </div>
   );

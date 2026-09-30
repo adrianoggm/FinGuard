@@ -38,6 +38,7 @@ from finguard_orchestrator.domain.models.conversation import (
     AccountScopeClarification,
     AccountSelection,
     ActiveWorkflow,
+    ActivityOffers,
     Conversation,
     CounterpartyAlias,
     FinancialClarification,
@@ -50,6 +51,7 @@ from finguard_orchestrator.domain.models.conversation import (
     Workflow,
     workflow_of,
 )
+from finguard_orchestrator.domain.models.expert_agents import ActivitySlot
 from finguard_orchestrator.domain.models.result_reference import (
     ResultReference,
 )
@@ -64,6 +66,7 @@ from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraf
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
+    ActivityOffersPayload,
     ConversationPayload,
     PaymentDraftPayload,
     PlanPayload,
@@ -87,6 +90,9 @@ from finguard_orchestrator.observability import name_the_conversation
 # argument, unchanged, so only the caller (`llm_controller._conversation_of`) had to grow the two
 # new arguments it already has both of by the time it builds this closure.
 type ContextVerifier = Callable[[str | None, UUID, int, dict[str, object]], ContextTrust]
+# The offers' own, bound by the controller the same way: token, conversation id, what the seal
+# covers. No position -- a conversation holds one set of offers (`MetricTokenCodec.seal_offers`).
+type OffersVerifier = Callable[[str | None, UUID, dict[str, object]], ContextTrust]
 
 # `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
 # `"NONE"` here would be the second copy that goes stale the moment that default changes -- the
@@ -536,6 +542,106 @@ def reseal_visual_contexts(
     return replace(conversation, conversation_id=conversation_id, visual_contexts=resealed)
 
 
+# --- the offers of the last activity search (A2A expert agents, spec §5.3) ---------------------
+
+
+def offers_semantics(payload: ActivityOffersPayload) -> dict[str, object]:
+    """What an offers seal covers: the whole wire offers, minus the seal itself -- read at sealing
+    and at verification alike, like `context_semantics`, so the two digests cannot drift."""
+    return payload.model_dump(mode="json", exclude={"token"})
+
+
+def _offers_payload(offers: ActivityOffers | None) -> dict[str, object] | None:
+    """The offers' wire shape. Each slot carries its agent's shown name too, so a client listing
+    them needs nothing else; the seal covers both copies, and the payload refuses a disagreement."""
+    if offers is None:
+        return None
+    return {
+        "slots": [
+            {
+                "agent_id": slot.agent_id,
+                "agent_name": offers.name_of(slot.agent_id),
+                "activity": slot.activity,
+                "start": slot.start,
+                "end": slot.end,
+                "free_places": slot.free_places,
+                "slot_ref": slot.slot_ref,
+            }
+            for slot in offers.slots
+        ],
+        "agent_names": [
+            {"agent_id": agent_id, "name": name} for agent_id, name in offers.agent_names
+        ],
+        "contexts": [
+            {"agent_id": agent_id, "context_id": context_id}
+            for agent_id, context_id in offers.contexts
+        ],
+        "token": offers.token,
+    }
+
+
+def _offers(
+    payload: ConversationPayload,
+    *,
+    conversation_id: UUID,
+    verify_offers: OffersVerifier | None = None,
+) -> ActivityOffers | None:
+    """The echoed offers, trusted only through a seal that checks out for this conversation.
+
+    No verifier is today's behaviour for every other echoed memory here, and the one the tests use
+    for a plain round trip: trusted. With one (`llm_controller._conversation_of`), a seal that does
+    not verify leaves the offers readable and unusable -- `trusted=False` and no token, so the next
+    turn cannot carry a seal forward that never held (§5.3: «vuelve a pedirla»).
+    """
+    item = payload.activity_offers
+    if item is None:
+        return None
+    trust: ContextTrust = (
+        verify_offers(item.token, conversation_id, offers_semantics(item))
+        if verify_offers is not None
+        else "ok"
+    )
+    trusted = trust == "ok"
+    return ActivityOffers(
+        slots=tuple(
+            ActivitySlot(
+                slot.agent_id,
+                slot.activity,
+                slot.start,
+                slot.end,
+                slot.free_places,
+                slot.slot_ref,
+            )
+            for slot in item.slots
+        ),
+        agent_names=tuple((name.agent_id, name.name) for name in item.agent_names),
+        contexts=tuple((context.agent_id, context.context_id) for context in item.contexts),
+        trusted=trusted,
+        token=item.token if trusted else None,
+    )
+
+
+def seal_offers_payload(
+    payload: ConversationPayload,
+    conversation_id: UUID,
+    holder_reference: str,
+    codec: MetricTokenCodec,
+) -> ConversationPayload:
+    """`payload`, with its offers sealed for `holder_reference` in `conversation_id`.
+
+    Over the payload rather than the domain object, like `seal_context` seals the shape a caller's
+    echo will be verified through: `offers_semantics` of this exact, validated dict. A payload with
+    no offers is returned as it is.
+    """
+    offers = payload.activity_offers
+    if offers is None:
+        return payload
+    token = codec.seal_offers(holder_reference, conversation_id, offers_semantics(offers))
+    return payload.model_copy(
+        update={"activity_offers": offers.model_copy(update={"token": token})}
+    )
+
+
 def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
     """The last answered question, whichever kind it was.
 
@@ -590,6 +696,7 @@ def to_domain(
     payload: ConversationPayload | None,
     *,
     verify: ContextVerifier | None = None,
+    verify_offers: OffersVerifier | None = None,
 ) -> Conversation:
     """The conversation a caller echoed back.
 
@@ -607,11 +714,12 @@ def to_domain(
     codebase's tests stays that way: an echoed visual context is trusted with no questions asked.
     The caller who actually has a holder to check against (Task 3) binds it into a closure over
     that holder and passes it here; `_visual_contexts` is where each context's seal is actually
-    checked.
+    checked. `verify_offers` is the same for a search's offers, checked in `_offers`.
     """
     conversation_id = _identified(payload)
     if payload is None:
         return Conversation(conversation_id=conversation_id)
+    activity_offers = _offers(payload, conversation_id=conversation_id, verify_offers=verify_offers)
     if payload.workflow is None:
         last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
         last_ratio = _ratio_plan(payload)
@@ -645,6 +753,7 @@ def to_domain(
             visual_contexts=_visual_contexts(
                 payload, conversation_id=conversation_id, verify=verify
             ),
+            activity_offers=activity_offers,
             account_selection=_account_selection(payload) if payload else None,
         )
 
@@ -675,6 +784,7 @@ def to_domain(
         recent_payment_rail=payload.recent_payment_rail,
         turns=_turns(payload),
         visual_contexts=_visual_contexts(payload, conversation_id=conversation_id, verify=verify),
+        activity_offers=activity_offers,
         account_selection=_account_selection(payload),
     )
 
@@ -879,6 +989,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "visual_contexts": [
                 _context_payload(context) for context in conversation.visual_contexts
             ],
+            "activity_offers": _offers_payload(conversation.activity_offers),
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (
                 plan_payload(conversation.prior_plan) if conversation.prior_plan else None
