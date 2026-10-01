@@ -26,7 +26,8 @@ What an agent answers, and what it becomes:
     INPUT_REQUIRED   never a confirmation. Its alternatives are read with the availability reader
                      over the booked class's own day and verified like any search's: `alternatives`,
                      or `unsupported_request` when it asked for something else -- nothing it asked
-                     for is forwarded (§7).
+                     for is forwarded (§7) -- or when reading it failed, the budget included: the
+                     state already says nothing was booked (ruling R18).
     AUTH_REQUIRED    `link_required`, with the linking address `link_in` finds on the agent's own
                      link hosts, or none.
     FAILED, REJECTED, CANCELED
@@ -54,6 +55,7 @@ from finguard_orchestrator.domain.models.expert_agents import (
     ExpertAgent,
     ExpertAgentsError,
     Outbound,
+    ReplyState,
 )
 from finguard_orchestrator.domain.ports.agent_reading import (
     ReplyNormaliserPort,
@@ -116,6 +118,14 @@ class BookingOutcome:
 
 
 _FAILED: Final = BookingOutcome("failed")
+
+
+@dataclass
+class _Answered:
+    """The state a sent booking's reply came back in, once it has: what decides whether a failure
+    after the send can mean the gym booked (ruling R18)."""
+
+    state: ReplyState | None = None
 
 
 def message_id_of(booking_id: UUID) -> str:
@@ -197,17 +207,21 @@ class BookActivityHandler:
             return _FAILED
         outbound = self._outbound(pending.slot, caller)
         zone = ZoneInfo(caller.reporting_timezone)
-        # From here on the booking may have happened, whatever is raised: unknown, never re-sent.
+        # From here on the booking may have happened, whatever is raised: unknown, never re-sent --
+        # unless the reply had already said it was paused for input (ruling R18): then nothing was
+        # booked, and failing to read what it offers is a request FinGuard cannot answer.
+        answered = _Answered()
         try:
             return await asyncio.wait_for(
-                self._exchange(agent, skill, pending, outbound, zone), self._budget
+                self._exchange(agent, skill, pending, outbound, zone, answered), self._budget
             )
-        except Exception as exc:  # every failure after the send is the same fact: unknown
+        except Exception as exc:  # every failure after the send is one fact, read by the state
+            paused = answered.state == "INPUT_REQUIRED"
             logger.warning(
-                "expert_agents.booking_unknown",
+                "expert_agents.booking_unread" if paused else "expert_agents.booking_unknown",
                 extra={"agent": agent_id, "error": type(exc).__name__},
             )
-            return BookingOutcome("unknown")
+            return BookingOutcome("unsupported_request" if paused else "unknown")
 
     async def _exchange(
         self,
@@ -216,6 +230,7 @@ class BookActivityHandler:
         pending: BookingConfirmation,
         outbound: Outbound,
         zone: ZoneInfo,
+        answered: _Answered,
     ) -> BookingOutcome:
         reply = await self._agents.send(
             agent.id,
@@ -224,6 +239,7 @@ class BookActivityHandler:
             outbound=outbound,
             context_id=pending.context_id,
         )
+        answered.state = reply.state
         if reply.state == "AUTH_REQUIRED":
             return BookingOutcome("link_required", link=link_in(reply, agent.link_hosts))
         if reply.state == "INPUT_REQUIRED":

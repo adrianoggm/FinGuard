@@ -185,7 +185,10 @@ class FakeNormaliser:
     def __init__(
         self,
         booking: BookingDraft | None | BaseException = BOOKED_DRAFT,
-        availability: AvailabilityDraft | None = ALTERNATIVES_DRAFT,
+        availability: AvailabilityDraft
+        | None
+        | BaseException
+        | Callable[[], Awaitable[AvailabilityDraft]] = ALTERNATIVES_DRAFT,
     ) -> None:
         self.booked = booking
         self.available = availability
@@ -196,6 +199,10 @@ class FakeNormaliser:
         self, query: ActivityQuery, reply: AgentReply
     ) -> AvailabilityDraft | None:
         self.queries.append(query)
+        if isinstance(self.available, BaseException):
+            raise self.available
+        if callable(self.available):
+            return await self.available()
         return self.available
 
     async def booking(self, slot: ActivitySlot, reply: AgentReply) -> BookingDraft | None:
@@ -525,6 +532,25 @@ async def test_a_reply_that_cannot_be_read_after_the_send_is_unknown() -> None:
         "unknown"
     )
     assert len(agents.sent) == 1
+
+
+async def test_an_alternative_that_cannot_be_read_is_not_an_unknown_booking() -> None:
+    """Ruling R18: an INPUT_REQUIRED reply already says nothing was booked, so failing to read
+    what it offers -- the model failing, or the budget running out while it reads -- is the gym
+    asking for something FinGuard cannot give, not a booking that may have happened."""
+
+    async def slow() -> AvailabilityDraft:
+        await asyncio.sleep(5)
+        return ALTERNATIVES_DRAFT
+
+    for availability, budget in ((ProviderFailedError("echo", "down"), 5.0), (slow, 0.05)):
+        agents = FakeAgents(FULL_REPLY)
+        reading = FakeNormaliser(availability=availability)
+
+        outcome = await handler(agents, normaliser=reading, budget=budget).confirm(PENDING, CALLER)
+
+        assert outcome == BookingOutcome("unsupported_request"), availability
+        assert len(agents.sent) == 1
 
 
 def test_an_outcome_carries_exactly_what_its_kind_says() -> None:
