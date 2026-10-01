@@ -567,6 +567,42 @@ async def test_a_booking_without_the_capability_or_the_scope_says_so() -> None:
     assert bookings.sent_nothing
 
 
+@pytest.mark.parametrize("suspended", [True, False], ids=["paused", "under-way"])
+async def test_a_preview_never_drops_a_payment_under_way(suspended: bool) -> None:
+    """Ruling R18: one workflow is active at a time, and a preview would replace a half-built
+    Bizum without a word. So the preview is not made: the turn names the payment and how to
+    finish or drop it, and leaves it set aside -- as a search would -- with the offers intact."""
+    bookings = FakeBookings()
+    paying = PaymentInProgress(draft=PaymentDraft(recipient_name="Marta"), suspended=suspended)
+    was = offering().with_active(paying)
+
+    answer = await reply("apúntame a la de las 18:30", who=BOOKER, was=was, bookings=bookings)
+
+    assert answer is not None
+    assert (answer.outcome, answer.text) == (
+        "BOOKING_PAYMENT_PAUSED",
+        "Antes de reservar, termina o descarta el pago que tienes a medias. El Bizum a Marta "
+        "está pausado. Para retomarlo, escribe «continuar con el Bizum»; para descartarlo, "
+        "responde «no».",
+    )
+    after = conversation_mapper.to_domain(answer.conversation)
+    assert isinstance(after.active, PaymentInProgress) and after.active.suspended
+    assert after.active.draft == paying.draft
+    assert after.activity_offers is not None and after.activity_offers.slots == OFFERS.slots
+    assert bookings.sent_nothing
+
+
+async def test_a_payment_under_way_does_not_stop_a_question_the_offers_answer() -> None:
+    """Only a preview would replace the payment; a question back leaves everything as it was."""
+    paying = PaymentInProgress(draft=PaymentDraft(recipient_name="Marta"), suspended=True)
+    was = offering(AT_SEVEN).with_active(paying)
+
+    answer = await reply("apúntame a la de las 19:00", was=was, bookings=FakeBookings())
+
+    assert answer is not None and answer.outcome == "BOOKING_AMBIGUOUS"
+    assert answer.conversation == conversation_mapper.to_payload(was)
+
+
 # --- the yes, on screen only ---------------------------------------------------------------------
 
 

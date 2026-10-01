@@ -40,6 +40,7 @@ from finguard_orchestrator.domain.models.conversation import (
     ActivityOffers,
     BookingConfirmation,
     Conversation,
+    PaymentInProgress,
 )
 from finguard_orchestrator.domain.models.expert_agents import ActivityQuery, ActivitySlot
 from finguard_orchestrator.domain.services import activity_writer, confirmation
@@ -141,8 +142,17 @@ def _preparing(
         return _said("BOOKING_NOT_OFFERED", activity_writer.not_offered(), was)
     if not isinstance(prepared, BookingConfirmation):  # "started" (Review Focus 3)
         return _said("BOOKING_STARTED", activity_writer.started(), was)
-    # A preview is a question like a payment's: it replaces whatever else was open, and ends the
-    # one-turn payment referent.
+    if isinstance(was.active, PaymentInProgress):
+        # Ruling R18: one workflow is active at a time, and a preview would replace a half-built
+        # payment without a word -- the search keeps one by suspending it, a preview cannot. So no
+        # preview: the payment is named, set aside as a search would set it aside, and kept.
+        return _said(
+            "BOOKING_PAYMENT_PAUSED",
+            activity_writer.booking_after_payment(was.active.draft),
+            was.suspend(),
+        )
+    # A preview is a question like a payment's: it replaces whatever else was open (a payment under
+    # way excepted, above), and ends the one-turn payment referent.
     after = was.without_recent_payment().with_active(prepared)
     return QuestionResponse(
         outcome="BOOKING_AWAITING_CONFIRMATION",

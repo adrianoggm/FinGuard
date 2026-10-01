@@ -28,7 +28,9 @@ from finguard_orchestrator.domain.services.answer_writer import (
     month_name,
 )
 from finguard_orchestrator.domain.services.expert_agent_words import ACTIVITIES
+from finguard_orchestrator.domain.services.payment_writer import paused
 from finguard_orchestrator.domain.services.spanish import folded
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 
 # The rule an agent's outcome carries when its budget ran out before it answered. Coined by the
 # search (`application/queries/search_activities.py`), named here because this is where it is read.
@@ -271,6 +273,12 @@ def started() -> str:
 def search_again() -> str:
     """The offers are absent, or their seal did not check out (§5.3): never read, never repaired."""
     return "No puedo usar esa búsqueda; vuelve a pedirla."
+
+
+def booking_after_payment(draft: PaymentDraft) -> str:
+    """A preview would replace a payment under way (ruling R18): name it, and say how to finish
+    or drop it, in the payment conversation's own words."""
+    return f"Antes de reservar, termina o descarta el pago que tienes a medias. {paused(draft)}"
 
 
 def on_screen() -> str:
