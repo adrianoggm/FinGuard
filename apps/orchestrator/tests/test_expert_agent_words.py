@@ -188,14 +188,44 @@ def _strings(value: object) -> list[str]:
     return []
 
 
+EVALUATION = Path(__file__).resolve().parents[1] / "evaluation"
+# The files under `evaluation/` written to reach an agent, by name, and nothing else: the corpus
+# episodes that drive a search and a booking through both routes. Exact paths rather than a
+# pattern, so a new file is swept until somebody names it here -- and
+# `test_only_the_agent_episodes_are_exempt` holds the list to the episodes that declare agents.
+MEANT_FOR_AGENTS = frozenset({"conversations/35-expert-agents.yaml"})
+
+
+def _swept() -> list[Path]:
+    """Every evaluation file R14 protects: all of them but the ones meant for agents."""
+    return [
+        path
+        for path in sorted(EVALUATION.rglob("*.yaml"))
+        if path.relative_to(EVALUATION).as_posix() not in MEANT_FOR_AGENTS
+    ]
+
+
+def _corpus_files() -> list[Path]:
+    return sorted((EVALUATION / "conversations").glob("*.yaml"))
+
+
+def test_only_the_agent_episodes_are_exempt() -> None:
+    """An exempt corpus file holds only episodes that declare a gateway, and an episode that
+    declares one lives in an exempt file: the exemption cannot hide a financial episode."""
+    corpus = {path.stem: path.relative_to(EVALUATION).as_posix() for path in _corpus_files()}
+    for episode in episodes.load():
+        exempt = corpus[episode.name.split("/")[0]] in MEANT_FOR_AGENTS
+        assert exempt == bool(episode.agents), episode.name
+    assert all((EVALUATION / name).is_file() for name in MEANT_FOR_AGENTS)
+
+
 def test_no_string_of_any_evaluation_file_is_claimed() -> None:
     """Every question, paraphrase, note and rejected case under `evaluation/`: nothing the planner
     and the visual evaluations measure may reach an agent (Ruling R14)."""
-    evaluation = Path(__file__).resolve().parents[1] / "evaluation"
-    files = sorted(evaluation.rglob("*.yaml"))
+    files = _swept()
     assert len(files) > 30, "the sweep found the evaluation files"
     claimed = [
-        (path.relative_to(evaluation).as_posix(), text)
+        (path.relative_to(EVALUATION).as_posix(), text)
         for path in files
         for text in _strings(yaml.safe_load(path.read_text(encoding="utf-8")))
         if asks_an_expert_agent(text)
@@ -206,10 +236,12 @@ def test_no_string_of_any_evaluation_file_is_claimed() -> None:
 def test_no_existing_corpus_sentence_is_claimed() -> None:
     """The corpus must not move (Global Constraints): no sentence of any existing episode reaches
     an agent, as a question or as a booking -- not even if a search's offers were in the
-    conversation (fix round 1), which claims a superset of what it claims without them."""
+    conversation (fix round 1), which claims a superset of what it claims without them. The
+    episodes declaring a gateway are the ones written to reach one."""
     claimed = [
         (episode.name, turn.say)
         for episode in episodes.load()
+        if not episode.agents
         for turn in episode.turns
         if asks_an_expert_agent(turn.say) or is_a_booking_request(turn.say, has_offers=True)
     ]
@@ -221,10 +253,9 @@ def test_no_string_of_any_evaluation_file_is_a_booking(has_offers: bool) -> None
     """The evaluation sweep above, for the booking predicate -- with offers in the conversation
     too (fix round 1): offers outlive unrelated turns, and a booking is checked before anything
     else, so a period or a search that merely begins «la primera…» must stay what it was."""
-    evaluation = Path(__file__).resolve().parents[1] / "evaluation"
     claimed = [
-        (path.relative_to(evaluation).as_posix(), text)
-        for path in sorted(evaluation.rglob("*.yaml"))
+        (path.relative_to(EVALUATION).as_posix(), text)
+        for path in _swept()
         for text in _strings(yaml.safe_load(path.read_text(encoding="utf-8")))
         if is_a_booking_request(text, has_offers=has_offers)
     ]
