@@ -72,9 +72,10 @@ class Notice(Protocol):
 def request_text(query: ActivityQuery) -> str:
     """«Busco clases de spinning el jueves 1 de octubre de 2026 entre las 15:00 y las 21:00.»
 
-    Over several days (ruling R15): «Busco clases de yoga entre el sábado 3 de octubre de 2026 y
-    el domingo 4 de octubre de 2026, de 15:00 a 21:00.», the daily hours only when a band was
-    asked for -- the same hours the data part's `band` carries.
+    Over several days, the exact interval the data part's `from` and `to` carry (ruling R23): «Busco
+    clases de yoga desde el jueves 1 de octubre de 2026 a las 10:00 hasta el domingo 4 de octubre
+    de 2026 a las 23:00.», then «, de 15:00 a 21:00» before the stop only when a band was asked for
+    -- the same hours the data part's `band` carries (ruling R15).
     """
     first, last = query.start.date(), query.end.date()
     activity = shown(query.activity)
@@ -84,7 +85,10 @@ def request_text(query: ActivityQuery) -> str:
             f"entre las {query.start:%H:%M} y las {query.end:%H:%M}."
         )
     hours = f", de {query.band[0]:%H:%M} a {query.band[1]:%H:%M}" if query.band is not None else ""
-    return f"Busco clases de {activity} entre el {_dated(first)} y el {_dated(last)}{hours}."
+    return (
+        f"Busco clases de {activity} desde el {_dated(first)} a las {query.start:%H:%M} "
+        f"hasta el {_dated(last)} a las {query.end:%H:%M}{hours}."
+    )
 
 
 def booking_request(slot: ActivitySlot, member_ref: str) -> str:

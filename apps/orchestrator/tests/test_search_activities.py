@@ -254,8 +254,8 @@ async def test_a_weekend_afternoon_is_asked_for_with_its_band_on_every_day() -> 
     [sent] = agents.sent
     outbound: Outbound = sent["outbound"]
     assert outbound.text == (
-        "Busco clases de natación entre el sábado 3 de octubre de 2026 y el domingo 4 de octubre "
-        "de 2026, de 15:00 a 21:00."
+        "Busco clases de natación desde el sábado 3 de octubre de 2026 a las 15:00 hasta el "
+        "domingo 4 de octubre de 2026 a las 21:00, de 15:00 a 21:00."
     )
     assert dict(outbound.data) == {
         "request": "availability",
@@ -274,12 +274,41 @@ async def test_several_days_with_no_band_are_asked_for_without_one() -> None:
     [sent] = agents.sent
     outbound: Outbound = sent["outbound"]
     assert outbound.text == (
-        "Busco clases de yoga entre el miércoles 30 de septiembre de 2026 y el domingo 4 de "
-        "octubre de 2026."
+        "Busco clases de yoga desde el miércoles 30 de septiembre de 2026 a las 10:00 hasta el "
+        "domingo 4 de octubre de 2026 a las 23:00."
     )
     assert "band" not in outbound.data
     assert (outbound.data["from"], outbound.data["to"]) == (
         "2026-09-30T10:00:00+02:00",
+        "2026-10-04T23:00:00+02:00",
+    )
+
+
+async def test_this_week_asked_on_a_thursday_morning_is_asked_from_that_hour() -> None:
+    """Ruling R23: the text states the interval the data part carries, to the minute -- an agent
+    reading only the text would otherwise answer Thursday's 07:30, which has already happened,
+    and have the whole reply rejected by the window rule."""
+    thursday = datetime(2026, 10, 1, 10, 0, tzinfo=ZONE)
+    agents = FakeAgents(listing=(NORTE,), replies={"gym-norte": norte_reply()})
+    searching = SearchActivitiesHandler(
+        agents,
+        FakeClassifier(),
+        FakeNormaliser(),
+        pairwise_key=KEY,
+        budget_seconds=5.0,
+        clock=lambda zone: thursday.astimezone(zone),
+    )
+
+    await searching.handle(SearchActivitiesQuery("¿hay yoga esta semana?", CALLER))
+
+    [sent] = agents.sent
+    outbound: Outbound = sent["outbound"]
+    assert outbound.text == (
+        "Busco clases de yoga desde el jueves 1 de octubre de 2026 a las 10:00 hasta el "
+        "domingo 4 de octubre de 2026 a las 23:00."
+    )
+    assert (outbound.data["from"], outbound.data["to"]) == (
+        "2026-10-01T10:00:00+02:00",
         "2026-10-04T23:00:00+02:00",
     )
 
