@@ -824,3 +824,75 @@ def test_a_reference_or_a_code_with_a_colon_or_a_slash_is_structure(reference: s
     confirmed = text_reply(f"Reserva confirmada a las 18:30. Código {reference}")
     booking = BookingDraft(True, reference, "18:30", "Spinning")
     assert verify_booking(booking, slot=BOOKED_SLOT, reply=confirmed) == AgentRejection("structure")
+
+
+ISO_REPLY = data_reply(
+    {
+        "classes": [
+            {
+                "activity": "spinning",
+                "startsAt": "2026-10-01T19:00:00+02:00",
+                "endsAt": "2026-10-01T19:50:00+02:00",
+                "capacityLeft": 4,
+            }
+        ]
+    }
+)
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("2026-10-01T19:00:00+02:00", "2026-10-01T19:50:00+02:00"),
+        ("2026-10-01T19:00:00", "2026-10-01T19:50"),
+        ("2026-10-01T19:00+02:00", None),
+    ],
+)
+def test_a_timestamp_with_zero_seconds_or_the_zones_own_offset_is_read(
+    start: str, end: str | None
+) -> None:
+    """Ruling R30: a model copying «2026-10-01T19:00:00+02:00» as written is not malformed -- the
+    seconds are zero and the offset is Madrid's at that moment, so it is the local 19:00."""
+    draft = AvailabilityDraft((SlotDraft("spinning", start, end, 4, None),))
+    [slot] = verify_slots(draft, query=THURSDAY, reply=ISO_REPLY, agent_id="gym-x", now=NOW)
+    assert slot.start == datetime(2026, 10, 1, 19, 0, tzinfo=ZONE)
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        "2026-10-01T19:00:30",  # seconds that are not zero
+        "2026-10-01T17:00:00+00:00",  # an offset that is not the zone's
+        "2026-10-01T17:00Z",
+        "2026-10-01T19:00:00+0200",  # an offset in another form
+        "19:00:00+02:00",  # an offset with no date to be the zone's on
+        "2026-10-01T19:00:00.000",
+    ],
+)
+def test_any_other_timestamp_is_still_structure(start: str) -> None:
+    draft = AvailabilityDraft((SlotDraft("spinning", start, None, 4, None),))
+    assert verify_slots(
+        draft, query=THURSDAY, reply=ISO_REPLY, agent_id="gym-x", now=NOW
+    ) == AgentRejection("structure")
+
+
+def test_a_booking_start_with_zero_seconds_and_the_zones_offset_binds() -> None:
+    """The evaluation's `booked_english`: the confirmation states the start as a full timestamp."""
+    slot = ActivitySlot(
+        "gym-x", "Spinning", datetime(2026, 10, 1, 19, 0, tzinfo=ZONE), None, 4, None
+    )
+    reply = data_reply(
+        {
+            "booking": {
+                "confirmation": "BK-99812",
+                "class": "Spinning",
+                "starts": "2026-10-01T19:00:00+02:00",
+                "status": "confirmed",
+            }
+        }
+    )
+    draft = BookingDraft(True, "BK-99812", "2026-10-01T19:00:00+02:00", "Spinning")
+    receipt = verify_booking(draft, slot=slot, reply=reply)
+    assert isinstance(receipt, BookingReceipt) and receipt.booking_code == "BK-99812"
+    wrong = BookingDraft(True, "BK-99812", "2026-10-01T19:00:00+01:00", "Spinning")
+    assert verify_booking(wrong, slot=slot, reply=reply) == AgentRejection("structure")

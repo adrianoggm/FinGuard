@@ -302,7 +302,7 @@ def _start_of(written: str, case: Case, zone: ZoneInfo) -> datetime | None:
     try:
         if "T" in written:
             return _moment(written, zone)
-        return datetime.combine(case.query.start.date(), _hhmm(written), zone)
+        return datetime.combine(case.query.start.date(), clock.fromisoformat(written), zone)
     except ValueError:
         return None
 
