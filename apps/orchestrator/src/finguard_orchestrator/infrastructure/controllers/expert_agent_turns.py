@@ -232,6 +232,9 @@ def _sent(
     match outcome.kind:
         case "booked" if outcome.receipt is not None:
             text = activity_writer.booked(outcome.receipt, name)
+            # Booked, it is not on offer any more (ruling R30, as R17 after `unknown`): asking for
+            # it again takes a new search, never a second message for the same class.
+            after = replace(after, activity_offers=_without(after.activity_offers, pending.slot))
         case "alternatives" if outcome.alternatives:
             slots = outcome.alternatives
             text = activity_writer.booking_alternatives(pending.slot, name, slots)
@@ -254,6 +257,8 @@ def _sent(
             # a new search -- where the gym's own timetable says whether it is still free -- and
             # these offers can never mint a second message for it.
             after = replace(after, activity_offers=_without(after.activity_offers, pending.slot))
+        case "failed" if not outcome.sent:
+            text = activity_writer.booking_not_sent(name)
         case _:
             text = activity_writer.booking_failed(name)
     return QuestionResponse(

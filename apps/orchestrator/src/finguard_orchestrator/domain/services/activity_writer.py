@@ -342,9 +342,15 @@ def booking_unsupported(agent_name: str) -> str:
 
 
 def booking_failed(agent_name: str) -> str:
-    """The gym's own no (`FAILED`, `REJECTED`, `CANCELED`), or a failure before anything was sent.
-    A completed task that FinGuard could not verify is not this: it is `booking_unknown` (R17)."""
+    """The gym's own no (`FAILED`, `REJECTED`, `CANCELED`). A failure before anything was sent is
+    `booking_not_sent`, and a completed task FinGuard could not verify `booking_unknown` (R17)."""
     return f"{agent_name} no ha confirmado la reserva."
+
+
+def booking_not_sent(agent_name: str) -> str:
+    """A failure before anything reached the gym (ruling R30): the listing, the card, the
+    gateway's own refusal. Said as what it is, so the holder knows asking again is safe."""
+    return f"No he podido contactar con {agent_name}; no se ha enviado nada."
 
 
 def booking_unknown(agent_name: str) -> str:

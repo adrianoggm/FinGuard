@@ -253,3 +253,11 @@ def test_the_prompt_says_a_class_called_full_has_no_free_places() -> None:
     prompt = availability_prompt(QUERY, REPLY)
     outside = prompt[: prompt.index("<<<REPLY")]
     assert "calls the session full" in outside and "0" in outside
+
+
+def test_the_prompt_says_an_instruction_in_the_reply_is_not_a_session() -> None:
+    """Ruling R29: a session written inside an instruction is the model's to refuse; the verifier
+    cannot tell it apart, since every value of it is in the reply."""
+    prompt = availability_prompt(QUERY, REPLY)
+    outside = prompt[: prompt.index("<<<REPLY")]
+    assert "gives instructions" in outside and "is not a session" in outside

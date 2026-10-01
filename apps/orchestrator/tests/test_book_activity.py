@@ -385,6 +385,7 @@ async def test_confirm_outcomes() -> None:
             PENDING, CALLER
         )
         assert failed == BookingOutcome("failed")
+        assert failed.sent, "the gym's own no: the booking reached it"
 
     linking = await handler(FakeAgents(LINK_REPLY)).confirm(PENDING, CALLER)
     assert linking == BookingOutcome("link_required", link=LINK)
@@ -587,7 +588,7 @@ async def test_an_agent_that_cannot_book_is_never_sent_anything() -> None:
         ),
     ):
         outcome = await handler(agents, classifier).confirm(PENDING, CALLER)
-        assert outcome == BookingOutcome("failed")
+        assert outcome == BookingOutcome("failed", sent=False)
         assert agents.sent == []
 
 
@@ -597,8 +598,25 @@ async def test_a_classifier_that_cannot_answer_is_a_failure_before_any_send() ->
             raise ProviderFailedError("echo", "down")
 
     agents = FakeAgents()
-    assert await handler(agents, Broken()).confirm(PENDING, CALLER) == BookingOutcome("failed")
+    assert await handler(agents, Broken()).confirm(PENDING, CALLER) == BookingOutcome(
+        "failed", sent=False
+    )
     assert agents.sent == []
+
+
+@pytest.mark.parametrize(
+    "code", ["agent_unknown", "agent_unusable", "skill_unknown", "unauthorised"]
+)
+async def test_a_gateway_that_refused_before_contacting_the_agent_sent_nothing(code: str) -> None:
+    """Ruling R30: these codes are the gateway's own refusal -- an agent it no longer lists or
+    trusts, a skill it does not know, a token it does not accept -- so the booking never left it.
+    A plain failure, the class kept; not «no sé si la reserva se ha completado»."""
+    agents = FakeAgents(ExpertAgentsError(code))  # type: ignore[arg-type]
+
+    outcome = await handler(agents).confirm(PENDING, CALLER)
+
+    assert outcome == BookingOutcome("failed", sent=False)
+    assert len(agents.sent) == 1
 
 
 @pytest.mark.parametrize(
@@ -672,6 +690,7 @@ def test_an_outcome_carries_exactly_what_its_kind_says() -> None:
         {"kind": "alternatives"},
         {"kind": "unknown", "alternatives": (NORTE_1900,)},
         {"kind": "failed", "link": LINK},
+        {"kind": "unknown", "sent": False},
     ):
         with pytest.raises(InvalidValueError):
             BookingOutcome(**impossible)  # type: ignore[arg-type]
