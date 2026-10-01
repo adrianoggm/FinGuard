@@ -20,7 +20,8 @@ booking skill) is a plain failure.
 What an agent answers, and what it becomes:
 
     COMPLETED        the model's reading of the confirmation, `verify_booking`ed: `booked` with the
-                     receipt, or `failed` when the reading is refused or absent.
+                     receipt; `unknown` when the model could not read it at all, since the gym
+                     completed something; `failed` when the reading is refused.
     INPUT_REQUIRED   never a confirmation. Its alternatives are read with the availability reader
                      over the booked class's own day and verified like any search's: `alternatives`,
                      or `unsupported_request` when it asked for something else -- nothing it asked
@@ -229,7 +230,9 @@ class BookActivityHandler:
             return _FAILED
         draft = await self._normaliser.booking(pending.slot, reply)
         if draft is None:
-            return _FAILED
+            # The gym completed the task and the model could not read what it completed: a failure
+            # to read after the send, not the gym's refusal (fix round 1).
+            return BookingOutcome("unknown")
         receipt = verify_booking(draft, slot=pending.slot, reply=reply)
         if isinstance(receipt, AgentRejection):
             return _FAILED

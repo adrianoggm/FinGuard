@@ -353,8 +353,15 @@ async def test_confirm_outcomes() -> None:
     assert (await handler(normaliser=forged).confirm(PENDING, CALLER)).kind == "failed"
     declined = FakeNormaliser(booking=BookingDraft(False))
     assert (await handler(normaliser=declined).confirm(PENDING, CALLER)).kind == "failed"
+
+    # Fix round 1, item 2: the model not reading a COMPLETED reply is a failure to read, after the
+    # send, not the gym's refusal -- it may have booked.
+    unread_agents = FakeAgents()
     unread = FakeNormaliser(booking=None)
-    assert (await handler(normaliser=unread).confirm(PENDING, CALLER)).kind == "failed"
+    assert await handler(unread_agents, normaliser=unread).confirm(
+        PENDING, CALLER
+    ) == BookingOutcome("unknown")
+    assert len(unread_agents.sent) == 1
 
     for state in ("FAILED", "REJECTED", "CANCELED"):
         failed = await handler(FakeAgents(reply(state, TextReplyPart("No.")))).confirm(
