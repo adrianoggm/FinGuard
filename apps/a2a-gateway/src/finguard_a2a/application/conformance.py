@@ -23,14 +23,22 @@ def refused(agent: RegisteredAgent, card: AgentCard | None, reason: Reason) -> A
 
 
 def assess(agent: RegisteredAgent, card: AgentCard, credential: str | None) -> AgentStatus:
-    """The gate: the first failure wins, and only a card that passes all of it is usable."""
+    """The gate: the first failure wins, and only a card that passes all of it is usable.
+
+    The version comes before the required fields (ruling R27): a card that declares interfaces,
+    none of them 1.x, is an older protocol before it is an incomplete 1.0 card -- a 0.3 skill
+    with no tags is valid there and a missing field here. A card declaring no interface at all
+    is just invalid.
+    """
+    interfaces = [i for i in card.supported_interfaces if i.protocol_version.startswith("1.")]
+    if card.supported_interfaces and not interfaces:
+        return refused(agent, card, "version_unsupported")
     try:
         validate_proto_required_fields(card)
     except InvalidParamsError as error:
         # An empty skill list is the SDK's complaint too, but it has a reason of its own.
         if not _only_skills_missing(error):
             return refused(agent, card, "card_invalid")
-    interfaces = [i for i in card.supported_interfaces if i.protocol_version.startswith("1.")]
     if not interfaces:
         return refused(agent, card, "version_unsupported")
     if not any(i.protocol_binding in _BINDINGS for i in interfaces):
