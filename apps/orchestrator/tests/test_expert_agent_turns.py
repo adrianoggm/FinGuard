@@ -714,8 +714,10 @@ async def test_alternatives_become_the_new_offers_sealed() -> None:
     offers = answer.conversation.activity_offers
     assert offers is not None and offers.token is not None
     assert [f"{slot.start:%H:%M}" for slot in offers.slots] == ["20:00", "21:00"]
+    # Ruling R28: the names the holder was shown stay with the alternatives.
     assert [(name.agent_id, name.name) for name in offers.agent_names] == [
-        ("gym-sur", "Gimnasio Sur")
+        ("gym-sur", "Gimnasio Sur"),
+        ("gym-norte", "Gimnasio Norte"),
     ]
     assert [(ctx.agent_id, ctx.context_id) for ctx in offers.contexts] == [("gym-sur", "ctx-sur")]
     assert (
@@ -767,7 +769,8 @@ async def test_a_booking_whose_outcome_is_unknown_is_no_longer_offered() -> None
 
     assert after.activity_offers is not None and after.activity_offers.trusted
     assert after.activity_offers.slots == (NORTE_1900,)
-    assert after.activity_offers.agent_names == (("gym-norte", "Gimnasio Norte"),)
+    # Ruling R28: the Sur still has its name -- «en el Sur» is a gym, not a word to ignore.
+    assert after.activity_offers.agent_names == OFFERS.agent_names
     assert after.activity_offers.contexts == (("gym-norte", "ctx-norte"),)
     again = await reply("apúntame a la de las 18:30", who=BOOKER, was=after, bookings=bookings)
     assert again is not None and again.outcome == "BOOKING_NOT_OFFERED"
@@ -1230,3 +1233,36 @@ def test_a_gateway_on_loopback_runs_on_the_development_keys_and_says_so(
     assert isinstance(built.state.expert_searches, SearchActivitiesHandler)
     said = " ".join(record.message for record in caplog.records)
     assert "ORCHESTRATOR_A2A_PAIRWISE_KEY" in said and "ORCHESTRATOR_A2A_GATEWAY_TOKEN" in said
+
+
+NORTE_2000 = ActivitySlot(
+    "gym-norte", "Spinning", datetime(2026, 10, 1, 20, 0, tzinfo=ZONE), None, 0, None
+)
+
+
+async def test_a_class_at_a_gym_that_offered_nothing_is_not_another_gyms() -> None:
+    """Acceptance finding A3 (ruling R28): the Sur was asked and offered nothing; «la de las
+    20:00 en el Sur» is not the Norte's 20:00."""
+    only_norte = ActivityOffers(
+        (NORTE_1900, NORTE_2000), OFFERS.agent_names, (("gym-norte", "ctx-norte"),)
+    )
+    bookings = FakeBookings()
+
+    answer = await reply(
+        "apúntame a la de las 20:00 en el Sur", was=offering(only_norte), bookings=bookings
+    )
+
+    assert answer is not None and answer.outcome == "BOOKING_NOT_OFFERED"
+    assert bookings.sent_nothing
+
+
+async def test_alternatives_after_a_booking_keep_every_name_the_offers_had() -> None:
+    """Ruling R28: after the Sur's alternatives, «en el Norte» still names a gym."""
+    answer = await reply("sí", who=BOOKER, was=pending(), bookings=FakeBookings(alternatives))
+    after = verified_echo(answer)  # type: ignore[arg-type]
+
+    again = await reply(
+        "apúntame a la de las 20:00 en el Norte", who=BOOKER, was=after, bookings=FakeBookings()
+    )
+
+    assert again is not None and again.outcome == "BOOKING_NOT_OFFERED"

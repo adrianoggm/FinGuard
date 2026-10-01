@@ -286,18 +286,24 @@ def _refused(query: ActivityQuery | None, refusal: SearchRefusal) -> ActivitySea
 
 
 def _merged(query: ActivityQuery, parts: list[_Asked]) -> ActivitySearch:
-    """Every verified slot, earliest first, at most `MAX_OFFERS`, and the offers they make."""
+    """Every verified slot, earliest first, at most `MAX_OFFERS`, and the offers they make.
+
+    The offers name every agent that was asked, offering or not (ruling R28): «la de las 20:00
+    en el Sur» names a gym that answered nothing, and a booking must read it as that gym rather
+    than as no gym at all -- which would let it fall through to another's 20:00.
+    """
     ordered = sorted(
         (slot for part in parts for slot in part.slots),
         key=lambda slot: (slot.start, slot.agent_id),
     )
     kept = tuple(ordered[:MAX_OFFERS])
     offering = {slot.agent_id for slot in kept}
-    names = tuple(
-        (part.outcome.agent_id, part.outcome.agent_name)
-        for part in parts
-        if part.outcome.agent_id in offering
+    # The offering ones first, so the cap can never leave a kept slot's agent unnamed.
+    asked = sorted(
+        ((part.outcome.agent_id, part.outcome.agent_name) for part in parts if part.outcome.asked),
+        key=lambda named: named[0] not in offering,
     )
+    names = tuple(asked[:MAX_EXPERT_AGENTS])
     # A context an agent named in a form the sealed offers cannot carry is not kept: a booking then
     # starts a new one, which an agent must accept anyway (a context is a hint, not a key).
     contexts = tuple(

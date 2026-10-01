@@ -335,6 +335,23 @@ async def test_slots_are_merged_and_ordered_by_start() -> None:
     )
 
 
+async def test_the_offers_name_every_agent_that_was_asked() -> None:
+    """Acceptance finding A3 (ruling R28): a gym asked and offering nothing is still a gym the
+    holder can name -- «la de las 20:00 en el Sur» must not fall through to another gym's 20:00
+    because the Sur had dropped out of the names."""
+    nothing = FakeNormaliser({"gym-norte": NORTE_DRAFT, "gym-sur": AvailabilityDraft(())})
+
+    result = await search(normaliser=nothing)
+
+    assert result.offers is not None
+    assert {slot.agent_id for slot in result.offers.slots} == {"gym-norte"}
+    assert dict(result.offers.agent_names) == {
+        "gym-norte": "Gimnasio Norte",
+        "gym-sur": "Gimnasio Sur",
+    }
+    assert result.offers.contexts == (("gym-norte", "ctx-norte"),)
+
+
 async def test_a_named_agent_is_the_only_one_asked() -> None:
     agents = FakeAgents()
     result = await search("¿hay spinning el jueves por la tarde en el Norte?", agents=agents)
