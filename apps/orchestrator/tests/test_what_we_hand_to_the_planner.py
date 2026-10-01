@@ -41,10 +41,30 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from handover_cases import cases  # noqa: E402
+from handover_cases import _measured_sentences, _sentences, cases  # noqa: E402
 from support.ratchets import Ceiling  # noqa: E402
 
 CASES = cases()
+
+
+# D-H-8 (fix wave): `evaluation/planning/dev.yaml` writes its own hand-written expectations —
+# "THE PROMPT IS TUNED AGAINST THIS FILE" per its own header — under a `question:` key rather
+# than `conversations.yaml`'s `say:`, and this script only ever read the second. A sentence with
+# only a `dev.yaml` case still counted as `extension` (unmeasured) — the wrong half of the split
+# for exactly the case the split exists to name correctly.
+def test_the_sentence_reader_knows_both_planning_file_shapes() -> None:
+    assert _sentences({"say": "¿Cuánto gasté?"}) == {"cuanto gaste"}
+    assert _sentences({"question": "¿Cuánto gasté?"}) == {"cuanto gaste"}
+    assert _sentences({"turns": [{"say": "Hola"}], "question": "Adiós"}) == {"hola", "adios"}
+
+
+def test_dev_yaml_s_own_cases_are_measured_not_extension() -> None:
+    """`period_today`'s own sentence (`evaluation/planning/dev.yaml`) is a real, hand-written
+    expectation — reading it as `measured` is the fix; a regression here is silent (the corpus
+    may simply never hand this exact sentence to the planner), so this pins the reader directly
+    against the file rather than trusting the ratchet alone to notice."""
+    assert "cuanto llevo gastado hoy" in _measured_sentences()
+
 
 # How many handed-over *sentences* no planning case exercises. A ratchet, and it only moves one
 # way: down by writing the case, or down by a deterministic reader claiming the turn back.

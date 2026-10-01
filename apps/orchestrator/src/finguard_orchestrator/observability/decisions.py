@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 class Step(StrEnum):
-    """The seams that decide something. Ten, not forty.
+    """The seams that decide something. Twelve, not forty.
 
     An enum rather than a free string because Section 3 turns this into a metric label, and a
     label whose values are typed by hand at ten call sites is an unbounded-cardinality metric
@@ -54,7 +54,7 @@ class Step(StrEnum):
     `decisions_total{step}` a fixed-width thing a dashboard can enumerate.
 
     It also makes the list arguable. A seam earns a place here only because a defect has hidden in
-    it or plainly could; adding an eleventh should be a diff somebody has to justify, not a string
+    it or plainly could; adding a thirteenth should be a diff somebody has to justify, not a string
     that appears one day in a panel nobody built.
     """
 
@@ -88,13 +88,30 @@ class Step(StrEnum):
     OUTCOME = "outcome"
     """The turn's `PlanningOutcome`, and whether a figure was actually shown."""
 
+    VISUAL_PLANNER = "visual_planner"
+    """Which chart was shown and by whom, and -- in shadow -- whether the model's differed."""
+
+    VISUAL_FOLLOW_UP = "visual_follow_up"
+    """What a turn wants from the chart it follows — recorded before anything is changed, so the
+    readers' agreement can be measured before a model is trusted with the disagreement."""
+
+    CONTEXT_TRUST = "context_trust"
+    """Whether an echoed visual context's seal checked out, and if not, which of the five reasons
+    (Task 1, Wave 3 hardening: A-1) -- a replay from another conversation and a tampered payload
+    are two different failure populations, and this is the seam that tells them apart."""
+
+    EXPERT_AGENT = "expert_agent"
+    """Whether an external agent's normalised reply was accepted, and if not, which verifier rule
+    rejected it (A2A expert agents, spec §6.3) -- a third party's text read by a model is the new
+    attack surface, and a rejection nobody counts is an agent that quietly stopped answering."""
+
 
 class Verdict(StrEnum):
     """Which way a decision went.
 
     Bounded for the same reason `Step` is: this is the second label on the headline counter. Five
-    words cover the ten seams because the seams all do one of five things — leave a value alone,
-    replace it, take the turn, refuse the turn, or fail to produce anything at all.
+    words cover the twelve seams because the seams all do one of five things — leave a value
+    alone, replace it, take the turn, refuse the turn, or fail to produce anything at all.
     """
 
     AGREED = "agreed"

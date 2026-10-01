@@ -101,16 +101,41 @@ Server events:
 | `transcript.final` | immutable text used for this turn |
 | `assistant.stage` | existing orchestrator progress stage |
 | `assistant.text.delta` / `assistant.text.final` | visible response text |
-| `audio.started` / binary frames / `audio.completed` | one active synthesis stream |
+| `audio.started` / `audio.frame` / binary frames / `audio.completed` | one active synthesis stream. D-H-2 (fix wave): `audio.frame` is new, sent once immediately before every binary PCM frame, carrying only `turnId` -- the frame's own name on the wire, so a straggler from a barge-in-cancelled turn is dropped for certain rather than inferred from ordering (see below) |
 | `turn.completed` | final conversation state and timings |
+| `chartId` / `visualTurnId` | optional on `assistant.text.final`, `audio.started`, `audio.completed` and `turn.completed` since Wave 4.4: the chart this turn drew and the identity of the decision that drew it (the newest visual context's `turn_id`), so a client never plays one turn's audio beside another turn's chart; absent on an uncharted turn; version 1 unchanged (additive). D-H-1b (fix wave): `chartId` alone (never `visualTurnId`) is also stamped when the answer names a chart without drawing one -- `VISUAL_EXPLAINED` and the refusal-shaped `VISUAL_*` outcomes, read from the orchestrator's `about_chart_id` (D-H-1) -- so an explanation or a refusal identifies its chart too; `VISUAL_NEEDS_TARGET` still carries neither when no target could be resolved at all. |
 | `response.cancelled` | interruption acknowledged and old turn fenced off |
 | `error` | typed recoverable or fatal failure |
 | `pong` | keepalive response and clock sample |
+
+G-10 (fix wave): `error.fatal` is `false` for `ORCHESTRATOR_REJECTED` -- the orchestrator answering
+this turn's own request with a 4xx (its own DTO rejecting, for instance, the `conversation` this
+gateway just echoed back). That is one bad turn, not a broken session: the socket stays open and the
+session returns to `READY`, ready for the next `input.start`, rather than closing with code `1011`
+as every other assistant, speech or protocol failure still does.
 
 Only one input stream and one output stream may be active. Binary client frames are rejected unless
 the session is listening; binary server frames are meaningful only between `audio.started` and
 `audio.completed`. Version 1 uses mono little-endian PCM16: 16 kHz input and 24 kHz output, with
 20 ms target chunks. Local loopback does not justify adding a codec before the behaviour works.
+
+D-H-2 (Wave 3 hardening, CLOSED by the fix wave): a binary PCM frame used to carry no turn
+identity of its own — `turnId` named a JSON event, never a byte in the audio stream that followed
+it. A barge-in's own race (a straggler frame from the just-cancelled turn's TTS task, enqueued
+after the new turn's own `audio.started` clears the fence) was narrowed, not closed, by holding the
+new turn's `audio.started` until this gateway's own `response.cancelled` for the *previous* turn
+was observed (W-3) — a real, defensible narrowing of the race window, but a frame arriving after
+that fence had already cleared (the new turn already playing) still had nothing naming it as
+foreign. The metadata alternative (chosen over a wire-level binary header, which would have meant
+decoding every PCM frame through an extra strip step on a path this gateway does not otherwise
+touch): the gateway now sends one `audio.frame` event, carrying only `turnId`, immediately before
+every binary chunk — WebSocket delivery is ordered, so the pairing with the very next binary
+message is exact. The web client reads it and drops any binary frame whose named turn is not the
+current one, before any of W-3's ordering heuristics run; those heuristics are left in place
+(harmless, now redundant) rather than removed, since they still hold for the rarer case of no
+`audio.frame` at all (an older gateway, or a fixture that has not adopted this event). No protocol
+version bump: both sides of this wire changed together, in the same commit, and `audio.frame` is a
+new, additive JSON event type rather than a change to any existing one's shape.
 
 ### 4. The state machine is explicit
 
@@ -140,6 +165,13 @@ and requires its existing explicit confirmation control.
 
 This is a channel policy, not a new payment rule. Supporting spoken confirmation later requires a
 separate decision with transcript display, explicit read-back and evidence about false acceptance.
+
+G-7 (fix wave): the spoken refusal this policy produces is not a fabricated orchestrator answer.
+The assistant is never asked on this turn, so the gateway holds no real value for the eleven other
+`QuestionResponse` keys a real answer carries, and §1 already forbids it from inventing financial
+domain types to fill them with. The refusal's own `answer` carries exactly three keys -- `outcome`,
+`text` and the unchanged `conversation` -- and a client must not expect the shape of a real
+orchestrator answer from it.
 
 ### 6. Barge-in is cancellation, not another concurrent turn
 

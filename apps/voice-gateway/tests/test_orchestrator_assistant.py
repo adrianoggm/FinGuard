@@ -100,6 +100,58 @@ async def _record(target: list[tuple[str, str | None]], name: str, detail: str |
 
 
 @pytest.mark.asyncio
+async def test_adapter_carries_a_string_spoken_field() -> None:
+    transport = CaptureTransport(
+        chunks=sse(
+            {
+                "type": "answer",
+                "text": "Restaurantes fue lo que más gastaste",
+                "outcome": "ANSWERED",
+                "conversation": None,
+                "spoken": "Restaurantes fue la categoría con mayor gasto.",
+            }
+        )
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://orchestrator") as http:
+        reply = await OrchestratorAssistantClient(http).ask(
+            "muestrame un grafico", None, credential="secret", idempotency_key="key"
+        )
+    assert reply.spoken == "Restaurantes fue la categoría con mayor gasto."
+
+
+@pytest.mark.asyncio
+async def test_adapter_treats_a_missing_spoken_field_as_none() -> None:
+    """An older orchestrator never sends `spoken` at all -- no error, just `None`."""
+    transport = CaptureTransport(
+        chunks=sse({"type": "answer", "text": "saldo: 20 €", "outcome": "ANSWERED"})
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://orchestrator") as http:
+        reply = await OrchestratorAssistantClient(http).ask(
+            "¿cuánto tengo?", None, credential="secret", idempotency_key="key"
+        )
+    assert reply.spoken is None
+
+
+@pytest.mark.asyncio
+async def test_adapter_treats_a_non_string_spoken_field_as_none() -> None:
+    transport = CaptureTransport(
+        chunks=sse(
+            {
+                "type": "answer",
+                "text": "saldo: 20 €",
+                "outcome": "ANSWERED",
+                "spoken": 42,
+            }
+        )
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://orchestrator") as http:
+        reply = await OrchestratorAssistantClient(http).ask(
+            "¿cuánto tengo?", None, credential="secret", idempotency_key="key"
+        )
+    assert reply.spoken is None
+
+
+@pytest.mark.asyncio
 async def test_adapter_maps_payment_confirmation_from_real_conversation() -> None:
     transport = CaptureTransport(
         chunks=sse(

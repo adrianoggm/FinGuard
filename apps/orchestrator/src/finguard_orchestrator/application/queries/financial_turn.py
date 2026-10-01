@@ -50,6 +50,7 @@ from finguard_orchestrator.domain.models.planning_context import (
 from finguard_orchestrator.domain.models.turn_analysis import (
     TurnAnalysis,
 )
+from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.services import (
     spanish,
     window_words,
@@ -288,8 +289,39 @@ class AskFinancialQuestionResult:
     # for the response DTO and again for the conversational state -- and a mapper is not somewhere
     # a model call can live. The application decides; the mapper renders what it is handed.
     visual_decision: VisualDecision | None = None
+    # What this turn wanted from the chart it followed, in service vocabulary (kind + claimant) --
+    # never the sentence. `None` when no chart was in context; set in `stream()`'s own convergence,
+    # the same one that decides `visual_decision`, for the same reason: forty branches build a
+    # result and this is one fact common to all of them, not one any branch is asked to know.
+    visual_follow_up: VisualFollowUp | None = None
     # Internal, typed source for a save candidate. Never serialized as financial data.
     metric_definition: FinancialPlan | ComparisonPlan | RatioPlan | None = None
+    # R14 (Wave 4.5, closes D-4.5-6/M-2): True when `metric_definition` came from
+    # `conversation.last_plan` (`stream()`'s own back-fill, `~:630-633`) rather than from this
+    # turn's own producer. A reader that only needs *a* plan (the save candidate, a drill's origin
+    # check) keeps reading `metric_definition` regardless -- a borrowed plan is still a real plan,
+    # just not necessarily the one that drew THIS chart. A reader that would NAME the plan in
+    # prose -- the presenter's spoken noun -- must not when this is True, because naming a plan
+    # nobody ran this turn is exactly M-2 (`branch-re-review.md`'s `probe_m2`).
+    metric_definition_borrowed: bool = False
+    # F-H3 (Wave 3 hardening, fix round): True when `metric_definition` was built by one of the
+    # continuation readers (`contextual_follow_up_plan`, or one of the five comparison-continuity
+    # readers) -- a reshape, regroup, split or refinement of whatever plan/comparison the
+    # conversation already carried, as opposed to a fresh plan the sentence alone produced. This is
+    # the causal fact `llm_mapper._remember_visual_context` now reads to decide `derived_from`: the
+    # reader that built the plan states the lineage, and the mapper's own structural comparison
+    # (`_same_lineage`) stays only as a sanity check on top of it, never the sole test. Two turns
+    # that coincidentally ask about the same bare window are not lineage; a chart the reader
+    # actually reshaped is, whatever verb the sentence used to ask for it.
+    plan_continues_conversation: bool = False
+    # A fingerprint of `metric_definition` (back-fill included), taken in `stream()` and fixed for
+    # this turn -- the value `_remember_visual_context` seals onto a chart drawn THIS turn. Sealed
+    # as data because 4.3's drill binds to it; not read by the presenter (see
+    # `metric_definition_borrowed` above -- a digest of the same field cannot tell borrowed from
+    # owned, only `stream()` itself can, which is why this stays a fingerprint and that is a flag).
+    # `None` when `metric_definition` is not a `FinancialPlan` at all (a comparison, a ratio, or no
+    # plan ran this turn).
+    visual_plan_digest: str | None = None
 
 
 @dataclass(frozen=True)

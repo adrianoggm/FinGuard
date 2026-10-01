@@ -349,7 +349,13 @@ def whole_year(year: int) -> AbsoluteRange:
 
 def whole_month(year: int, month: int) -> AbsoluteRange:
     """A calendar month as the range it is. `monthrange` rather than a table of lengths: February
-    is the one that moves and a hand-written table is how it stops moving."""
+    is the one that moves and a hand-written table is how it stops moving.
+
+    C-4 (Wave 3 hardening): never raises for a `(year, month)` pair `visual_reference.parsed_month`
+    accepted -- that reader now bounds the year to `2000-2099` (the same range every other named
+    year in this file already enforces) and the month to `01-12`, so `date`/`monthrange` here
+    never see a value outside what they can build. A caller with an unvalidated year is still its
+    own responsibility; this function itself does not re-check one."""
     return AbsoluteRange(
         start=date(year, month, 1), end=date(year, month, monthrange(year, month)[1])
     )
@@ -830,6 +836,13 @@ def window_in(
     if natural is not None:
         return natural
 
+    # F-H2 (Wave 3 hardening, fix round): before `_A_MONTH`, which would otherwise match this
+    # phrase's own trailing "agosto de 2026" as a single bare month and answer with a third of the
+    # range asked for.
+    month_range = _a_month_range(folded)
+    if month_range is not None:
+        return month_range
+
     if asked_for is Slot.YEAR and _THIS_ONE.fullmatch(folded.strip(" ?¿.!¡,")):
         return RelativePeriod(period=Period.THIS_YEAR)
 
@@ -932,3 +945,122 @@ def _a_year_before(day: date) -> date:
         return day.replace(year=day.year - 1)
     except ValueError:
         return day.replace(year=day.year - 1, day=28)
+
+
+# --- B-4 (Wave 3 hardening): a season is a question with its months in it ----------------------
+#
+# `window_in` above keeps refusing to guess "este verano" -- that refusal is right, and this file's
+# own docstring already says why: a miss falls through and costs one turn, a wrong guess costs a
+# figure about the wrong months presented as an answer. What was missing is what the refusal
+# *becomes*. §11's own opening sentence, «¿En qué he gastado más este verano?», reached the planner
+# with no signal that "este verano" was never read, and the window it ran with was whatever was
+# already on screen -- a silent substitution, not a refusal. `season_ask` turns the same refusal
+# into an honest question naming the months a reading would take, with one suggestion chip per
+# reading a holder might have meant.
+_SEASON_MONTHS: Final[dict[str, tuple[int, int, int]]] = {
+    "primavera": (3, 4, 5),
+    "verano": (6, 7, 8),
+    "otono": (9, 10, 11),
+    "invierno": (12, 1, 2),
+}
+
+_SEASON: Final = re.compile(r"\b(primavera|verano|otono|invierno)\b")
+
+# "Este verano"/"este invierno"/"este otoño" (masculine) and "esta primavera" (feminine) both name
+# the reading anchored on the current year; the pattern reads either article so the season word
+# alone decides which season it is.
+_THIS_SEASON: Final = re.compile(r"\best[ae]\s+(primavera|verano|otono|invierno)\b")
+_LAST_SEASON: Final = re.compile(r"\b(primavera|verano|otono|invierno)\s+pasad[ao]\b")
+
+
+def _season_months(season: str, year: int) -> tuple[str, str, tuple[int, int, int]]:
+    months = _SEASON_MONTHS[season]
+    named = ", ".join(_MONTHS[month - 1] for month in months[:-1])
+    reading = f"{named} y {_MONTHS[months[-1] - 1]} de {year}"
+    # F-H2 (Wave 3 hardening, fix round): the reading above is what the *question* reads aloud,
+    # and it is not what the chip offers back -- a comma list is exactly the shape `_A_MONTH`
+    # cannot read (it matches only the last named month), so a holder answering with the chip
+    # verbatim used to get a single, silently wrong month back. The chip is a range phrase instead,
+    # read by `_a_month_range` below.
+    chip = f"de {_MONTHS[months[0] - 1]} a {_MONTHS[months[-1] - 1]} de {year}"
+    return reading, chip, months
+
+
+def season_ask(sentence: str, *, today: date) -> tuple[str, tuple[str, ...]] | None:
+    """The honest question a season deserves, or `None` when the sentence names no season.
+
+    One reading when the sentence itself picks a year ("este verano" is `today.year`, "el verano
+    pasado" is `today.year - 1`); two when it does not ("en primavera" alone), offered current year
+    first because that is what every other bare period in this file resolves to when a holder does
+    not say otherwise (`window_in`'s own "the last time it happened, counting the one under way").
+
+    Never a guess: nothing here reads `window_in`'s vocabulary or touches a plan. The caller answers
+    with this question and these chips and asks the ledger nothing -- but the chips themselves are a
+    window `window_in` can read back on the next turn (`_a_month_range` below), which is what closes
+    the round trip: the caller opens a `FinancialClarification` awaiting `Slot.WINDOW`, and the
+    ordinary reply-to-a-clarification path resolves it exactly like any other window answer would.
+    """
+    folded = spanish.folded(sentence)
+    match = _SEASON.search(folded)
+    if match is None:
+        return None
+    season = match.group(1)
+    years: tuple[int, ...]
+    if _THIS_SEASON.search(folded):
+        years = (today.year,)
+    elif _LAST_SEASON.search(folded):
+        years = (today.year - 1,)
+    else:
+        years = (today.year, today.year - 1)
+    pairs = [_season_months(season, year)[:2] for year in years]
+    readings = [reading for reading, _chip in pairs]
+    chips = tuple(chip[0].upper() + chip[1:] for _reading, chip in pairs)
+    question = "¿Te refieres a " + " o a ".join(readings) + "?"
+    return question, chips
+
+
+# F-4 (fix wave, D-H-7/Important 4): §11's own opening sentence, «¿En qué he gastado más este
+# verano?», is a breakdown by category ("en qué" + a superlative), not a total -- the round trip
+# B-4/F-H2 closed only settles the *window*; the draft `season_ask`'s caller opens still defaulted
+# to `GroupBy.NONE`, so the resolved plan drew a single number for a question that asked which
+# category. Scoped to sentences `season_ask` has already matched (a season word is present), so
+# this needs only the one distinction its own docstring already draws: "en qué ... más" is a
+# ranking, "cuánto" is a total.
+_BREAKDOWN_SHAPE: Final = re.compile(r"\ben\s+qu[ée]\b.{0,60}\bm[áa]s\b")
+
+
+def season_asks_a_breakdown(sentence: str) -> bool:
+    """Whether this season question asks "en qué ... más" -- a ranking by category -- rather than
+    a total. Called only on a sentence `season_ask` has already claimed."""
+    return bool(_BREAKDOWN_SHAPE.search(spanish.folded(sentence)))
+
+
+# "de junio a agosto de 2026" -- the season chip's own shape, and read narrowly on purpose: a
+# trailing year is required, which is exactly what keeps this apart from "de junio a septiembre"
+# (no year), the ambiguous range `_a_month_with_no_year` already refuses because it could be either
+# a span or two months contrasted (`test_ambiguous_month_ranges_are_not_rewritten_as_two_whole_
+# months`). Requiring the year is not a narrower version of that same guess -- it is a different,
+# unambiguous sentence, the one the chip actually offers.
+_A_MONTH_RANGE: Final = re.compile(
+    rf"\bde\s+(?P<start_month>{'|'.join(_MONTHS)})\s+a\s+(?P<end_month>{'|'.join(_MONTHS)})\s+"
+    rf"de\s+(?:el\s+)?(?P<year>20\d{{2}})\b"
+)
+
+
+def _a_month_range(folded: str) -> AbsoluteRange | None:
+    match = _A_MONTH_RANGE.search(folded)
+    if match is None:
+        return None
+    start_month = _MONTH_NUMBER[match.group("start_month")]
+    end_month = _MONTH_NUMBER[match.group("end_month")]
+    # The printed year anchors the *first* named month, the same convention `_season_months`
+    # already uses for winter -- "de diciembre a febrero de 2026" is December 2026 through
+    # February 2027, not February of the year December names.
+    start_year = int(match.group("year"))
+    end_year = start_year + 1 if end_month < start_month else start_year
+    start = whole_month(start_year, start_month).start
+    end = whole_month(end_year, end_month).end
+    try:
+        return AbsoluteRange(start=start, end=end)
+    except InvalidValueError:
+        return None

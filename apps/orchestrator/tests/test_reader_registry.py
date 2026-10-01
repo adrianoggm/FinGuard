@@ -102,7 +102,7 @@ CASCADE = (
     "_comparison_with_previous_period",
     "_direct_period_comparison",
     "_comparison_with_a_named_window",
-    "_contextual_follow_up_plan",
+    "contextual_follow_up_plan",
     "_multiple_movement_ranking",
     "_group_ranking_plan",
     "_natural_period_aggregate_plan",
@@ -311,12 +311,20 @@ def test_every_reader_is_in_the_registry() -> None:
     # reader from another to consult it — `follow_up` asks `_internal_movement_request`, `subjects`
     # asks `_direct_period_comparison` — and an imported name is in `__dict__` too. `wraps` copies
     # `__module__` off the function it wrapped, so this asks where a reader was *defined*.
+    #
+    # No `name.startswith("_")` filter: `@_recogniser` plus "defined in this module" already
+    # identifies a reader precisely, and `contextual_follow_up_plan` — promoted for
+    # `visual_follow_up` to import — is one without a leading underscore.
+    #
+    # `__wrapped__ is not None` is read as "decorated by `@_recogniser`" — the only thing that
+    # sets it on a reader module today. `functools.lru_cache` also sets `__wrapped__`, so a future
+    # cached public helper living in a reader module would be picked up here too and fail this
+    # test with a confusing message; nothing in `READER_MODULES` does that yet.
     decorated = {
         f"{getattr(module, name).__module__.rsplit('.', 1)[1]}.{name}"
         for module in READER_MODULES
         for name in dir(module)
-        if name.startswith("_")
-        and callable(getattr(module, name, None))
+        if callable(getattr(module, name, None))
         and getattr(getattr(module, name), "__wrapped__", None) is not None
         and getattr(module, name).__module__ == module.__name__
     }
@@ -492,7 +500,7 @@ def test_the_tiebreak_is_never_the_thing_that_decides() -> None:
 def test_the_general_reader_wins_and_that_is_deliberate() -> None:
     """**Why the order is not derived from specificity**, which was the obvious answer.
 
-    Three of the five contested pairs are won by `_contextual_follow_up_plan`, whose precondition is
+    Three of the five contested pairs are won by `contextual_follow_up_plan`, whose precondition is
     the weakest in the table — "a query is in view" — against `_average_plan`, `_cumulative_plan`
     and `_deterministic_breakdown_plan`, each of which knows something specific about the sentence.
     Ordering by specificity would put all three ahead of it and flip twelve measured sentences.
@@ -502,8 +510,8 @@ def test_the_general_reader_wins_and_that_is_deliberate() -> None:
     one. `_deterministic_breakdown_plan` says exactly that in its own comment about «desglósalo».
     This test is here so nobody re-derives the wrong order from the right instinct.
     """
-    general = READERS["_contextual_follow_up_plan"]
-    losers = {row.name for row in READERS.readers if "_contextual_follow_up_plan" in row.yields_to}
+    general = READERS["contextual_follow_up_plan"]
+    losers = {row.name for row in READERS.readers if "contextual_follow_up_plan" in row.yields_to}
 
     assert losers == {"_average_plan", "_cumulative_plan", "_deterministic_breakdown_plan"}
     for name in losers:

@@ -33,7 +33,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-#: The sixteen groups of GROUPS.md, in the order that file argues them.
+#: The sixteen groups of GROUPS.md, in the order that file argues them, plus `visual` --
+#: the chart pipeline GROUPS.md has no word for, because GROUPS.md describes what the
+#: planner can be asked, not what the product does (same reasoning as `UNMAPPED` below).
+#: Added anyway so a visual-only run reports what it covers instead of reading
+#: `0/16 families green, 0 tests mapped`.
 FAMILIES: tuple[str, ...] = (
     "period_named",
     "period_confusable",
@@ -51,6 +55,7 @@ FAMILIES: tuple[str, ...] = (
     "injection",
     "out_of_domain",
     "boundary",
+    "visual",
 )
 
 #: Where tests that describe no capability group go. Named, counted, never hidden.
@@ -123,6 +128,19 @@ _BY_PATH: tuple[tuple[str, str], ...] = (
     ("test_the_same_question_said_differently", "noise"),
     # -- the question may not rewrite the rules ---------------------------------------
     ("test_prompt", "injection"),
+    # -- charts and the visual planner --------------------------------------------------
+    # Wave 3 and 4.1 added files here; `evaluate-visual` reports their own accuracy
+    # already, GROUPS.md just has never named the capability. `test_visualization` is
+    # redundant with `test_visual` (every `test_visualization_stage*` stem contains it) --
+    # kept anyway because the redundancy costs nothing and a reviewer should not have to
+    # prove it before trusting the row above it.
+    ("test_visual", "visual"),
+    ("test_visualization", "visual"),
+    ("test_llm_visual_planner", "visual"),
+    ("test_deterministic_visual_planner", "visual"),
+    ("test_evaluate_visual", "visual"),
+    ("test_export_chart_fixtures", "visual"),
+    ("test_the_visual_planner_is_configurable", "visual"),
 )
 
 _DATASETS = Path(__file__).resolve().parents[1] / "evaluation" / "planning"

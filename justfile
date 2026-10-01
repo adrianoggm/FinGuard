@@ -40,6 +40,12 @@ voice-models:
 # Real speech both ways: Whisper in, Piper out. Needs `just voice-models` first.
 voice-real:
     docker compose -f compose.yaml -f compose.voice-real.yaml --profile voice up -d --wait --build --remove-orphans
+# The orchestrator is told where the gateway is only here: without the profile there is no
+# gateway, and a blank URL is how the capability says it does not exist. Exported as a parameter
+# rather than written `NAME=value docker compose`, which is bash syntax and not PowerShell's.
+# Skeleton plus the A2A gateway on 8003 and three simulated gyms on 9101-9103 (spec §12)
+a2a $ORCHESTRATOR_A2A_GATEWAY_URL="http://a2a-gateway:8000":
+    docker compose --profile core --profile a2a up -d --build
 # Frontend development server. Keeps the terminal attached so Ctrl+C stops Vite.
 web:
     npm --prefix apps/web run dev
@@ -114,6 +120,8 @@ install:
     uv sync --project apps/banking-api
     uv sync --project apps/orchestrator
     uv sync --project apps/voice-gateway
+    uv sync --project apps/a2a-gateway
+    uv sync --project apps/simulated-gym-agent
     npm --prefix apps/web ci
 # banking-api with autoreload. Needs port 8001 free: use `just db`, not `just back`
 serve-banking:
@@ -125,6 +133,20 @@ serve-orchestrator:
 # apps/voice-gateway/.env.defaults documents every setting.
 serve-voice:
     uv run --directory apps/voice-gateway uvicorn finguard_voice_gateway.main:app --reload --port 8002
+# It reads A2A_GATEWAY_* from the environment, and with A2A_GATEWAY_AGENTS blank it lists no
+# agents; apps/a2a-gateway/.env.defaults documents every setting. An agent's id is its host, so
+# gyms served on this machine need a loopback address each (see serve-gym):
+#   A2A_GATEWAY_AGENTS=http://127.0.0.1:9101,http://127.0.0.2:9102,http://127.0.0.3:9103
+#   A2A_GATEWAY_CREDENTIAL_127_0_0_1=dev-gym-norte-key
+#   A2A_GATEWAY_CREDENTIAL_127_0_0_2=dev-gym-sur-token
+# a2a-gateway with autoreload on 8003
+serve-a2a:
+    uv run --directory apps/a2a-gateway uvicorn finguard_a2a.main:app --reload --port 8003
+# Its card names this host and port on both URLs, and it carries compose's development
+# credentials for norte and sur. Only `style`, `port` and `host` are meant to be passed.
+# One simulated gym with autoreload: just serve-gym sur 9102 127.0.0.2
+serve-gym style="norte" port="9101" host="127.0.0.1" $GYM_STYLE=style $GYM_A2A_URL=("http://" + host + ":" + port) $GYM_PUBLIC_URL=GYM_A2A_URL $GYM_API_KEY="dev-gym-norte-key" $GYM_BEARER_TOKEN="dev-gym-sur-token":
+    uv run --directory apps/simulated-gym-agent uvicorn finguard_simulated_gym.main:app --reload --host {{ host }} --port {{ port }}
 # The active LLM policy. The default is the compose operator token; pass another
 # explicitly when running against a different local configuration.
 llm-policy token="demo-token-operator":
@@ -142,6 +164,10 @@ lint:
     uv run --directory apps/orchestrator ruff format --check .
     uv run --directory apps/voice-gateway ruff check .
     uv run --directory apps/voice-gateway ruff format --check .
+    uv run --directory apps/a2a-gateway ruff check .
+    uv run --directory apps/a2a-gateway ruff format --check .
+    uv run --directory apps/simulated-gym-agent ruff check .
+    uv run --directory apps/simulated-gym-agent ruff format --check .
 # Applies formatting and automatic fixes
 format:
     uv run --directory apps/banking-api ruff format .
@@ -150,20 +176,30 @@ format:
     uv run --directory apps/orchestrator ruff check --fix .
     uv run --directory apps/voice-gateway ruff format .
     uv run --directory apps/voice-gateway ruff check --fix .
+    uv run --directory apps/a2a-gateway ruff format .
+    uv run --directory apps/a2a-gateway ruff check --fix .
+    uv run --directory apps/simulated-gym-agent ruff format .
+    uv run --directory apps/simulated-gym-agent ruff check --fix .
 typecheck:
     uv run --directory apps/banking-api mypy src
     uv run --directory apps/orchestrator mypy src
     uv run --directory apps/voice-gateway mypy src
+    uv run --directory apps/a2a-gateway mypy src
+    uv run --directory apps/simulated-gym-agent mypy src
 # Tests for every service. The ones marked integration need `just db`
 test:
     uv run --directory apps/banking-api pytest -q
     uv run --directory apps/orchestrator pytest -q
     uv run --directory apps/voice-gateway pytest -q
+    uv run --directory apps/a2a-gateway pytest -q
+    uv run --directory apps/simulated-gym-agent pytest -q
 # Without a database: skips the integration tests
 test-unit:
     uv run --directory apps/banking-api pytest -q -m "not integration"
     uv run --directory apps/orchestrator pytest -q -m "not integration"
     uv run --directory apps/voice-gateway pytest -q -m "not integration"
+    uv run --directory apps/a2a-gateway pytest -q -m "not integration"
+    uv run --directory apps/simulated-gym-agent pytest -q -m "not integration"
 # Accuracy of the query engine given a correct plan (phase 2)
 # Accuracy of turning a Spanish sentence into a plan (phase 3). The model name must belong to
 # the selected provider; hosted providers read their credentials from apps/orchestrator/.env.
@@ -178,6 +214,22 @@ evaluate-metamorphic model="qwen3.5:9b" provider="ollama" tpm="0":
 # choosing them in advance would be inventing a release claim rather than measuring one.
 evaluate-robustness robustness_floor over_refusal_ceiling model="qwen3.5:9b" provider="ollama" tpm="0":
     uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --dataset robustness --tpm {{ tpm }} --robustness-floor {{ robustness_floor }} --over-refusal-ceiling {{ over_refusal_ceiling }}
+# The visual planner in shadow against the annotated cases. Three runs with the GPU alone, then the
+# minimum -- one run is not a number. P95 latency is the budget candidate for docs/next.md.
+# `model` defaults to the shipped, measured planner (evaluation/planning/RESULTS.md), not to
+# ORCHESTRATOR_VISUAL_PLANNER_MODEL's blank default, which would otherwise fall through to the
+# baseline financial-planner model and evict whatever was warmed (M-3). Pass other flags via args;
+# the script itself always runs `shadow` -- there is no `--mode`.
+evaluate-visual model="qwen3.5:9b" *args:
+    uv run --directory apps/orchestrator python scripts/evaluate_visual.py --model {{ model }} {{ args }}
+# The reply normaliser against recorded gym replies, six of them hostile (spec §9): the real
+# `LlmReplyNormaliser` and verifier, no gateway and no gym. Writes evaluation/a2a/RESULTS.md and
+# last-run.json, and exits non-zero on a breach -- a verified value the reply does not state.
+# Pass --provider and the like via args. The Ollama context is the service's own setting,
+# ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS: on an 8 GB GPU, `ollama stop qwen3.5:9b`, then
+# `ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS=2048 just evaluate-a2a`, and `ollama ps` should say 100% GPU.
+evaluate-a2a model="qwen3.5:9b" *args:
+    uv run --directory apps/orchestrator python scripts/evaluate_a2a.py --model {{ model }} {{ args }}
 # The whole path over HTTP: question in, figure and sentence out. Needs the compose stack
 # up, because the point is to exercise the deployed service and not the handler.
 # Properties rather than accuracy, so a non-zero exit is a bug and not a long tail.

@@ -20,8 +20,12 @@ class FakeTextToSpeech:
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings()
+        # A fixture recorder (Task 3, Wave 4.4): tests read this to prove which string was asked
+        # to be spoken -- `reply.spoken` on a charted VOICE turn, `reply.text` otherwise.
+        self.spoken: list[str] = []
 
     def synthesize(self, text: str, *, cancelled: Callable[[], bool]) -> AsyncIterator[bytes]:
+        self.spoken.append(text)
         rate = self.settings.output_sample_rate
         per_chunk = max(1, rate * self.settings.tts_chunk_ms // 1000)
         total = int(rate * max(SECONDS_PER_CHARACTER * len(text.strip()), 0.5))

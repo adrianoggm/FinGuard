@@ -5,19 +5,26 @@ or HTTP. Keeping them apart is what stops a change in the contract from reaching
 core — before this, `LlmPolicy` was both the domain object and the request body.
 """
 
+import re
+from dataclasses import fields as dataclass_fields
 from datetime import date
-from typing import Annotated, Literal, cast, get_args
+from typing import Annotated, Final, Literal, cast, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from finguard_orchestrator.domain.constants import (
+    MAX_ACTIVITY_NAME,
+    MAX_AGENT_NAME,
     MAX_CATEGORY_LENGTH,
+    MAX_CONTEXT_ID,
     MAX_ENTITY_ALIAS_LENGTH,
     MAX_ENTITY_ALIASES,
+    MAX_EXPERT_AGENTS,
     MAX_GROUP_RANK,
     MAX_GROUP_ROWS,
     MAX_MERCHANT_LENGTH,
+    MAX_OFFERS,
     MAX_PAYMENT_MINOR,
     MAX_PROMPT_LENGTH,
     MAX_RANK,
@@ -25,6 +32,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_REMEMBERED_TURNS,
     MAX_SELECTED_ACCOUNTS,
     MAX_SELECTED_TRANSACTIONS,
+    MAX_SLOT_REF,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
     MAX_VISUAL_CONTEXTS,
@@ -44,10 +52,16 @@ from finguard_orchestrator.domain.models.chart import (
     ROWS_THAT_FIT,
     Channel,
     EncodingSort,
+    FieldOrder,
+    FieldRole,
+    FieldType,
     SortMode,
     Stack,
+    VisualField,
 )
 from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
+from finguard_orchestrator.domain.models.expert_agents import AGENT_ID, REFERENCE
+from finguard_orchestrator.domain.services.visual_profile import MAX_DRAWN_LABELS
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
 
@@ -200,6 +214,8 @@ _SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
     # Two questions and no more: which of the holder's accounts, and how much.
     Workflow.TRANSFER_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.ACCOUNT}),
     Workflow.PAYMENT_CONFIRMATION: frozenset({Slot.CONFIRMATION}),
+    # A booking asks one thing, a yes or a no, exactly like a payment preview.
+    Workflow.BOOKING_CONFIRMATION: frozenset({Slot.CONFIRMATION}),
     None: frozenset(),
 }
 
@@ -238,9 +254,58 @@ class TurnPayload(_Payload):
     question: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
 
 
+# `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
+# `"NONE"` here would be the second copy that goes stale the moment that default changes, which
+# this file's own comments already argue against for `stack`/`sort`/`sort_field` above.
+_DEFAULT_ORDER: FieldOrder = cast(
+    FieldOrder, next(f.default for f in dataclass_fields(VisualField) if f.name == "order")
+)
+
+
 class VisualFieldPayload(_Payload):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
-    type: Literal["nominal", "quantitative", "temporal"]
+    type: FieldType
+    # Shape facts a verifier reads on the way back, never values. Optional so a conversation an
+    # older client still holds validates; `to_domain` falls back to the old derivation when they
+    # are absent.
+    role: FieldRole | None = None
+    order: FieldOrder | None = None
+    # Task 2 (Wave 3 hardening, A-6): per field, beside `role`/`order` above -- the same reason
+    # those two are optional applies here: an older client's payload predates this key and still
+    # validates, `to_domain` falling back to `VisualProfilePayload.cardinality` (the one
+    # dataset-level number that used to be all there was) for exactly that window, one turn wide,
+    # the same shape `role`/`order`'s own fallback comment above already describes.
+    cardinality: int | None = Field(default=None, ge=0, le=10000)
+
+    @model_validator(mode="after")
+    def _role_matches_type(self) -> "VisualFieldPayload":
+        """A client-supplied `role` that contradicts `type` used to reach
+        `VisualField.__post_init__` unguarded -- `conversation_mapper.to_domain` builds the domain
+        type straight from this payload -- and a bare `ValueError` there is neither a
+        `DomainError` nor a pydantic `ValidationError`, so it fell through as an unhandled 500
+        instead of a 422 (the same collision `_derived_from_is_not_self` and the per-encoding sort
+        validator below already exist to close for this DTO's other domain-checked fields).
+
+        One source of truth rather than a copy of `__post_init__`'s invariants: build the domain
+        `VisualField` here, with the same fallback `to_domain` uses when `role`/`order` are absent,
+        and let its own `ValueError` become this validator's -- which pydantic turns into a 422.
+        `cardinality=0` is a placeholder; nothing this constructs is kept.
+        """
+        # The same fallback `conversation_mapper.to_domain` uses when `role` is absent: `type` is
+        # the only signal the wire ever carried before this fix, and it is wrong for `series` --
+        # which reads as `dimension` -- the same bound that reconstruction's own comment names.
+        fallback_role: FieldRole = "measure" if self.type == "quantitative" else "dimension"
+        try:
+            VisualField(
+                self.name,
+                self.type,
+                self.role if self.role is not None else fallback_role,
+                0,
+                self.order if self.order is not None else _DEFAULT_ORDER,
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 class VisualProfilePayload(_Payload):
@@ -251,12 +316,111 @@ class VisualProfilePayload(_Payload):
     positive: bool = False
     mutually_exclusive: bool = False
     verified_total: bool = False
+    comparison: bool = False
+    plan_limited: bool = False
+    # Task 2 (Wave 3 hardening, U-4/C-5): both used to be reconstructed as `0`/`None` on every
+    # `to_domain` regardless of the wire -- a `row_count` a browser sends is not authority (nothing
+    # in `domain/` reads it as anything but a shape fact, the same as `VisualProfile.row_count`'s
+    # own docstring already argues), and `plan_metric` is one of the closed markers
+    # `measure_metric()` compares against literals, never executes.
+    row_count: int = Field(default=0, ge=0)
+    plan_metric: str | None = Field(default=None, max_length=32, pattern=r"^[A-Z][A-Z0-9_]*$")
+
+    @model_validator(mode="after")
+    def _no_duplicate_field_names(self) -> "VisualProfilePayload":
+        """F4 (fix wave 2): `VisualProfile.__post_init__` (`chart.py`) already refuses a duplicate
+        field name, but nothing on the wire checked it first -- `conversation_mapper.to_domain`
+        builds the domain `VisualProfile` straight from `self.fields`, and that bare `ValueError`
+        is neither a `DomainError` nor a pydantic `ValidationError`, so it reached the holder as
+        an unhandled 500 instead of a 422. The same collision `VisualFieldPayload._role_matches_
+        type` above already exists to close for a contradictory `role`; this closes it here too.
+        """
+        if len({field.name for field in self.fields}) != len(self.fields):
+            raise ValueError("duplicate visual field name")
+        return self
+
+
+# A wire-shape limit, not an identifier pattern (R3): a real label is "2026-08", "Mié", or "en
+# julio de 2026" -- length and the absence of control characters are all that is refused here.
+_LABEL_PATTERN: Final = re.compile(r"^[^\x00-\x1f\x7f]{1,64}$")
 
 
 class VisualContextPayload(_Payload):
     chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     spec: dict[str, object]
     profile: VisualProfilePayload
+    derived_from: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    )
+    turn_id: UUID | None = None
+    # A-1 (Wave 3 hardening): `c1` and `c2` both validate at the wire -- a `c1.` token is a
+    # pre-hardening client's own seal, and it must reach `verify_context` to be told apart from a
+    # tampered one (`"format"`) rather than being refused here as a 422 before it gets that chance.
+    token: str | None = Field(
+        default=None, max_length=512, pattern=r"^c[12]\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"
+    )
+    # Wave 4.3: the labels the chart drew, sealed with the rest of the context (`_value_free_spec`
+    # below never touches these -- they are not the spec). Defaults are the old-client shape: an
+    # echo that has never heard of them reads back empty and unranked, which is the safe
+    # direction -- a superlative over an empty list asks rather than guesses.
+    labels: list[str] = Field(default_factory=list, max_length=MAX_DRAWN_LABELS)
+    series_labels: list[str] = Field(default_factory=list, max_length=MAX_DRAWN_LABELS)
+    ranked: bool = False
+    # Sealed; echoed, never read (Wave 4.3's fix round). The dates the chart's rows cover, and a
+    # fingerprint of the plan that produced them -- two provenance facts a holder's own client
+    # never has to act on, only carry back so the drill can check them. Dates rather than an
+    # `AbsoluteRange` object because this is a wire payload, not a domain type: both present or
+    # neither, checked below, the same shape `PlanPayload.start`/`.end` already use for the same
+    # reason.
+    window_start: date | None = None
+    window_end: date | None = None
+    plan_digest: str | None = Field(
+        default=None, min_length=16, max_length=16, pattern=r"^[0-9a-f]{16}$"
+    )
+    # Task 1 (Wave 4.5): descriptive provenance, sealed with the rest -- an unknown value here is
+    # a 422 like any other field, the same way an unknown `spec` key already is below. Rides the
+    # sealed digest through `context_semantics` unchanged: that function is `model_dump(exclude
+    # token)`, so a new field here needs no change there to be covered by the seal.
+    source: Literal["llm", "deterministic", "patch"] | None = None
+    fallback_reason: (
+        Literal["abstention", "timeout", "provider_error", "invalid_proposal"] | None
+    ) = None
+    # Task 2 (Wave 3 hardening, U-5): the plan's own grouping, sealed with the rest -- `None` for
+    # the four plan-less producers, the same way `plan_digest` above is `None` for them. An
+    # unrecognised value is a 422, the same convention `source`/`fallback_reason` already use.
+    group_by: GroupBy | None = None
+    # Task 2 (Wave 3 hardening, A-2): sealed with the rest -- `read_drill_down` refuses to narrow a
+    # chart carrying `True` here, since `plan_digest` alone cannot tell a borrowed plan from an
+    # owned one (see `VisualContext`'s own docstring).
+    metric_definition_borrowed: bool = False
+
+    @model_validator(mode="after")
+    def _window_is_both_ends_or_neither(self) -> "VisualContextPayload":
+        if (self.window_start is None) != (self.window_end is None):
+            raise ValueError("visual context window needs both ends or neither")
+        if (
+            self.window_start is not None
+            and self.window_end is not None
+            and self.window_end < self.window_start
+        ):
+            raise ValueError("visual context window ends before it starts")
+        return self
+
+    @field_validator("labels", "series_labels")
+    @classmethod
+    def _labels_are_a_wire_shape_not_an_identifier(cls, value: list[str]) -> list[str]:
+        """What is refused here is length and control characters only -- never an identifier
+        pattern. A real label is an ISO month (`2026-08`), a category key, a weekday abbreviation
+        with an accent (`Mié`, `Sáb`), a comparison window label with spaces (`en julio de 2026`,
+        `_comparison_window_label`), or a counterparty name -- none of those is an identifier, and
+        refusing on that shape would refuse the very labels this field exists to carry. Authority
+        over what a label *means* stays with the seal (`context_semantics`/`seal_context`); this
+        is a wire-shape limit, nothing more.
+        """
+        for item in value:
+            if not _LABEL_PATTERN.fullmatch(item):
+                raise ValueError("visual labels must be short and free of control characters")
+        return value
 
     @model_validator(mode="after")
     def _value_free_spec(self) -> "VisualContextPayload":
@@ -273,18 +437,14 @@ class VisualContextPayload(_Payload):
                     walk(child)
 
         walk(self.spec)
-        allowed = {
-            "$schema",
-            "mark",
-            "encoding",
-            "title",
-            "width",
-            "height",
-            "stack",
-            "sort",
-            "sort_field",
-            "limit",
-        }
+        # I2 (fix wave): exactly the keys `conversation_mapper._context_spec_payload` emits --
+        # never `$schema`/`width`/`height`, which `present_spec` adds only to the *rendered* spec
+        # a client draws and which this payload's own seal can never cover. Those three used to
+        # be allowed here too, so a client that echoed the rendered spec instead of
+        # `conversation.visual_contexts[].spec` got a silent, permanent `VISUAL_UNTRUSTED` -- no
+        # 422, no diagnostic, nothing to tell it why a chart it had never touched stopped
+        # restyling. An unfaithful echo now fails loudly, at the edge, naming the key.
+        allowed = {"mark", "encoding", "title", "stack", "sort", "sort_field", "limit"}
         if set(self.spec) - allowed:
             raise ValueError("unknown visual spec key")
         encoding = self.spec.get("encoding")
@@ -371,6 +531,102 @@ class VisualContextPayload(_Payload):
             not isinstance(sort_field, str) or not FIELD_NAME_PATTERN.fullmatch(sort_field)
         ):
             raise ValueError("sort_field must be an identifier")
+        return self
+
+    @model_validator(mode="after")
+    def _derived_from_is_not_self(self) -> "VisualContextPayload":
+        # `VisualContext.__post_init__` (`chart.py`) already refuses this, but a bare `ValueError`
+        # raised there, reached from `conversation_mapper.to_domain`, is neither a `DomainError`
+        # nor a pydantic `ValidationError` -- the two exception types `error_handlers.py` maps to a
+        # 422 -- so it fell through as an unhandled 500 instead. Checked here, at the wire boundary,
+        # the same collision becomes the `ValidationError` pydantic already turns into a 422, same
+        # as every other refused `VisualContextPayload` field. The domain check stays: this is the
+        # edge's own refusal, not a replacement for the last line of defence.
+        if self.derived_from is not None and self.derived_from == self.chart_id:
+            raise ValueError("derived_from cannot name the chart itself")
+        return self
+
+
+# --- expert agents (A2A, spec §5.3) --------------------------------------------------------------
+#
+# The domain's own patterns, read rather than copied: an agent id goes into a request path and a
+# slot reference back to the agent, so the wire refuses exactly what the domain would.
+_AGENT_ID_PATTERN: Final = rf"^{AGENT_ID.pattern}$"
+_NAME_PATTERN: Final = r"^[^\x00-\x1f\x7f]+$"
+
+
+class ActivitySlotPayload(_Payload):
+    """One verified slot, as the answer lists it and as the sealed offers carry it. Every value is
+    one the verifier found in the agent's reply; `agent_name` is the card name the holder is shown
+    (or the agent's id, when the card's was unfit to show)."""
+
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    agent_id: str = Field(pattern=_AGENT_ID_PATTERN)
+    agent_name: str = Field(min_length=1, max_length=MAX_AGENT_NAME, pattern=_NAME_PATTERN)
+    activity: str = Field(min_length=1, max_length=MAX_ACTIVITY_NAME, pattern=_NAME_PATTERN)
+    # ISO 8601 with the offset, so a client shows the slot's own wall-clock time.
+    start: AwareDatetime
+    end: AwareDatetime | None = None
+    free_places: int | None = Field(default=None, ge=0)
+    # Plain text wherever it is shown, and never a link: the domain's `REFERENCE`, which holds no
+    # `:` or `/` since ruling R26.
+    slot_ref: str | None = Field(
+        default=None, max_length=MAX_SLOT_REF, pattern=rf"^{REFERENCE.pattern}$"
+    )
+
+
+class AgentNoticePayload(_Payload):
+    """One agent that did not answer with slots, and why, in closed words. `link` is a linking
+    address on one of the agent's own link hosts (§14 A3), or none."""
+
+    agent_name: str
+    kind: Literal["unavailable", "link_required", "unsupported_request"]
+    link: str | None = None
+
+
+class AgentNamePayload(_Payload):
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    agent_id: str = Field(pattern=_AGENT_ID_PATTERN)
+    name: str = Field(min_length=1, max_length=MAX_AGENT_NAME, pattern=_NAME_PATTERN)
+
+
+class AgentContextPayload(_Payload):
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    agent_id: str = Field(pattern=_AGENT_ID_PATTERN)
+    context_id: str = Field(min_length=1, max_length=MAX_CONTEXT_ID, pattern=_NAME_PATTERN)
+
+
+class ActivityOffersPayload(_Payload):
+    """The last search's offers. Sealed; echoed, never read by a client.
+
+    The seal covers every field but itself (`conversation_mapper.offers_semantics`): a slot moved
+    by a minute, a name or a context swapped, and the offers read back untrusted.
+    """
+
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    slots: list[ActivitySlotPayload] = Field(max_length=MAX_OFFERS)
+    agent_names: list[AgentNamePayload] = Field(max_length=MAX_EXPERT_AGENTS)
+    contexts: list[AgentContextPayload] = Field(default=[], max_length=MAX_EXPERT_AGENTS)
+    # `VisualContextPayload.token`'s declaration, under the offers' own prefix: a visual seal is a
+    # 422 here, and an offers seal is one on a chart.
+    token: str | None = Field(
+        default=None, max_length=512, pattern=r"^o1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"
+    )
+
+    @model_validator(mode="after")
+    def _every_slot_is_from_a_named_agent(self) -> "ActivityOffersPayload":
+        names = {item.agent_id: item.name for item in self.agent_names}
+        if len(names) != len(self.agent_names):
+            raise ValueError("each offering agent is named once")
+        if any(names.get(slot.agent_id) != slot.agent_name for slot in self.slots):
+            raise ValueError("every offered slot comes from a named agent, under that name")
+        contexts = [item.agent_id for item in self.contexts]
+        if len(set(contexts)) != len(contexts) or not set(contexts) <= set(names):
+            raise ValueError("each context belongs to one offering agent")
         return self
 
 
@@ -461,6 +717,9 @@ class ConversationPayload(_Payload):
     # ellipsis three deep still resolve. Bounded, because it travels on every request.
     turns: list[TurnPayload] = Field(default=[], max_length=MAX_REMEMBERED_TURNS)
     visual_contexts: list[VisualContextPayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
+    # The last activity search's verified slots, sealed (A2A expert agents, spec §5.3). Memory, not
+    # a workflow, so it rides beside any state; absent in a payload from before it existed.
+    activity_offers: ActivityOffersPayload | None = None
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
@@ -517,6 +776,18 @@ class ConversationPayload(_Payload):
     # so a client written before transfers keeps round-tripping a state it does not understand.
     rail: Rail | None = None
     recipient_iban: str | None = Field(default=None, max_length=42)
+    # BOOKING_CONFIRMATION: the class a booking will be sent for after a yes on screen (spec §5.2).
+    # Nothing is held by the gym yet, so none of this is a claim anybody else vouches for: the
+    # slot is only ever sent while the sealed offers above still hold it, under this name and this
+    # context (`expert_agent_turns`), and the id is only what the one message is named by.
+    booking_id: UUID | None = None
+    booking_slot: ActivitySlotPayload | None = None
+    booking_agent_name: str | None = Field(
+        default=None, min_length=1, max_length=MAX_AGENT_NAME, pattern=_NAME_PATTERN
+    )
+    booking_context_id: str | None = Field(
+        default=None, min_length=1, max_length=MAX_CONTEXT_ID, pattern=_NAME_PATTERN
+    )
 
     @model_validator(mode="after")
     def _fields_match_the_workflow(self) -> "ConversationPayload":
@@ -542,6 +813,8 @@ class ConversationPayload(_Payload):
             # Neither field is required: the state exists precisely while one of them is missing.
             Workflow.TRANSFER_IN_PROGRESS: (),
             Workflow.PAYMENT_CONFIRMATION: ("intent_id", "recipient", "amount_minor"),
+            # The context is optional: an agent that named none is booked in a new one.
+            Workflow.BOOKING_CONFIRMATION: ("booking_id", "booking_slot", "booking_agent_name"),
             None: (),
         }
         # Which fields belong to which state. Anything set outside its own state is a caller
@@ -570,6 +843,9 @@ class ConversationPayload(_Payload):
                     "recipient_iban",
                 }
             ),
+            Workflow.BOOKING_CONFIRMATION: frozenset(
+                {"booking_id", "booking_slot", "booking_agent_name", "booking_context_id"}
+            ),
             None: frozenset(),
         }
         every = frozenset().union(*owned.values())
@@ -580,6 +856,12 @@ class ConversationPayload(_Payload):
         for name in every - owned[self.workflow]:
             if getattr(self, name):
                 raise ValueError(f"{name} does not belong to {self.workflow or 'an idle'} state")
+        # One name for the gym, as the offers carry it: the slot's copy and the booking's agree.
+        if (
+            self.booking_slot is not None
+            and self.booking_slot.agent_name != self.booking_agent_name
+        ):
+            raise ValueError("a booking names its gym as its slot does")
 
         if self.pending_requested_count is not None:
             if self.pending_plan is None or self.pending_plan.action is not Action.RANK_MOVEMENTS:
@@ -773,6 +1055,19 @@ VisualizationResponse = Annotated[
 ]
 
 
+class VisualExplanationResponse(_Payload):
+    """Why the chart on screen looks the way it does, said in Spanish -- from the sealed context
+    alone (`domain/services/visual_explanation.py`), never from a model."""
+
+    chart_reason: str
+    ordering_reason: str | None = None
+    scope_summary: str
+    provenance: str | None = None
+    # `as_text()`'s own line, so a client that wants one sentence rather than four fields has it
+    # without recomputing anything.
+    text: str
+
+
 class SaveCandidate(_Payload):
     """Authority to keep this answer as a metric, and the chart it was drawn as if it was one.
 
@@ -817,6 +1112,21 @@ class QuestionResponse(_Payload):
     movements: list[SpokenMovementResponse] = []
     visualization: VisualizationResponse | None = None
     visualization_derivation: VisualizationDerivation | None = None
+    # What a voice client speaks instead of `text` -- present only on a VOICE request that drew a
+    # chart this turn (Task 3); the screen keeps `text` regardless of channel.
+    spoken: str | None = None
+    # Why the chart draws the way it does (R4): a chart explains itself on every channel, not only
+    # TEXT's screen, since «¿por qué este gráfico?» is as fair a question over voice as over the
+    # screen. Derived from the sealed context alone (`explain_chart`), never from a model, and
+    # absent exactly when this turn's answer draws no chart.
+    explanation: VisualExplanationResponse | None = None
+    # D-H-1 (from T5, gateway G-6): the chart an answer speaks about without drawing one -- read,
+    # never authoritative. `VISUAL_EXPLAINED` and the refusal outcomes (`VISUAL_UNTRUSTED`/
+    # `VISUAL_INCOMPATIBLE`/`VISUAL_NEEDS_TARGET`/`VISUAL_AMBIGUOUS`/`VISUAL_UNCHANGED`) carry no
+    # field naming the chart they are about, so the gateway's `chart_identity` has nothing to stamp
+    # those turns with. `None` when no chart was resolved (`VISUAL_NEEDS_TARGET`'s own "which
+    # chart?" case) or the outcome is not one of these.
+    about_chart_id: str | None = None
     # Replies the service can actually understand on the next turn. They are data rather than
     # prose so a client can render buttons without scraping the answer text.
     suggestions: list[str] = []
@@ -827,6 +1137,11 @@ class QuestionResponse(_Payload):
     # only the parent carries the conversation left behind after all parts have run.
     parts: list["QuestionResponse"] = []
     save_candidate: SaveCandidate | None = None
+    # An activity search's answer (A2A expert agents): the verified slots in the order offered, and
+    # one notice per agent that could not answer with any. Composed from verified fields only;
+    # nothing an agent wrote reaches a client raw (spec §6.4).
+    activities: list[ActivitySlotPayload] = []
+    agent_notices: list[AgentNoticePayload] = []
     # The half-built payment, the refused capability and the recipient choice all live on
     # `conversation` now: they are states of one conversation rather than four independent fields
     # a client had to combine.

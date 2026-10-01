@@ -178,24 +178,28 @@ episodes:
       - say: a ver
         route: QUERY
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      # B-2(a) (Wave 3 hardening, R-H1): "quería" used to be read as a shop name -- three ledger
+      # calls, a confident total for a word that named nothing. The closed stop-list means it never
+      # becomes a merchant filter now: the honest ask, at zero cost.
       - say: quería
-        route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['quería'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
       - say: bueno
         route: COURTESY
       - say: es que
-        route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['es que'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ya
         route: COURTESY
       - say: pues eso
-        route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['pues eso'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
+      # The audit's own named example: "nada" used to run with `merchants: ['nada']`.
       - say: nada
-        route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['nada'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}

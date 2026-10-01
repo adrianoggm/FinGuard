@@ -60,6 +60,7 @@ finguard/
 │   ├── banking-api/
 │   ├── voice-gateway/
 │   ├── a2a-gateway/
+│   ├── simulated-gym-agent/
 │   └── audit-worker/
 │
 ├── packages/
@@ -345,55 +346,45 @@ Audio → text → orchestrator → text → audio
 apps/a2a-gateway/
 ├── src/
 │   └── finguard_a2a/
-│       ├── application/
-│       │   ├── handle_task.py
-│       │   ├── discover_agent.py
-│       │   └── invoke_remote_agent.py
-│       ├── mapping/
-│       │   ├── messages.py
-│       │   ├── tasks.py
-│       │   └── artifacts.py
-│       ├── security/
+│       ├── domain/
+│       │   └── agents.py               # registered agent, its status, the closed reasons
+│       ├── ports/
 │       │   ├── agent_registry.py
-│       │   ├── scopes.py
-│       │   └── credential_validation.py
+│       │   └── remote_agents.py
+│       ├── application/
+│       │   ├── conformance.py          # the A2A 1.0 gate over each Agent Card
+│       │   └── directory.py            # each agent's judged card, kept for a TTL
 │       ├── adapters/
-│       │   ├── inbound/a2a_server/
 │       │   └── outbound/
-│       │       ├── a2a_client/
-│       │       └── assistant_client/
-│       └── bootstrap/
-├── agent-cards/
-│   ├── public.json
-│   └── development.json
+│       │       ├── env_registry.py     # A2A_GATEWAY_AGENTS
+│       │       └── sdk_remote_agents.py  # the SDK client: credentials, limits, no retries
+│       ├── app.py                      # GET /v1/agents, POST /v1/agents/{id}/messages
+│       ├── bootstrap.py
+│       ├── config.py
+│       └── main.py
 ├── tests/
-│   ├── unit/
-│   ├── interoperability/
-│   └── security/
+├── .env.defaults
 ├── pyproject.toml
 ├── uv.lock
-├── project.json
 ├── Dockerfile
 └── README.md
 ```
 
-This service is an adapter, not the core of FinGuard.
+This service is an adapter, not the core of FinGuard, and it works in one direction: FinGuard is an A2A **client**.
 
 ```text
-A2A Task
-   ↓
-a2a-gateway
-   ↓
-Internal command
-   ↓
 orchestrator
-   ↓
-Internal result
-   ↓
-A2A Artifact
+   ↓ ExpertAgentsPort, internal HTTP with a bearer token
+a2a-gateway
+   ↓ A2A 1.0, through the official SDK
+external agent
 ```
 
-The A2A protocol uses the Agent Card to declare identity, endpoint, capabilities, skills and authentication requirements. The gateway must publish the card and translate A2A concepts without letting them into the financial domain.
+The A2A protocol uses the Agent Card to declare identity, interfaces, capabilities, skills and authentication requirements. The gateway reads each registered agent's card, validates it against A2A 1.0 before anyone uses it, presents the agent's credential in a header, and parses and bounds every reply. It has no LLM, no banking client and no conversation state; it publishes no card of its own and has no inbound A2A route. Turning a reply into FinGuard's own shape, and checking it, is the orchestrator's. See [ADR-012](adr-012-a2a-consumer-gateway.md) and the [gateway's README](../../apps/a2a-gateway/README.md).
+
+### `apps/simulated-gym-agent`
+
+An A2A 1.0 server built with the same SDK, standing in for third parties the way the synthetic ledger stands in for a bank. It is outside the product: nothing in FinGuard imports it, and the gateway knows it only by URL. The `a2a` compose profile deploys it three times — `norte` answers with data in its own vocabulary, `sur` in Spanish text, `legacy` with an A2A 0.3 card the gate refuses. See [its README](../../apps/simulated-gym-agent/README.md).
 
 ### `apps/audit-worker`
 
@@ -431,7 +422,8 @@ Responsibilities:
 ```text
 web             → orchestrator
 voice-gateway   → orchestrator
-a2a-gateway     → orchestrator
+orchestrator    → a2a-gateway
+a2a-gateway     → external A2A agents in its registry
 orchestrator   → banking-api
 banking-api     → PostgreSQL
 banking-api     → RabbitMQ
@@ -444,7 +436,9 @@ audit-worker    → audit database
 ```text
 web             ✗ banking-api directly
 voice-gateway   ✗ banking-api
-a2a-gateway     ✗ PostgreSQL
+a2a-gateway     ✗ orchestrator
+a2a-gateway     ✗ banking-api and PostgreSQL
+external agents ✗ FinGuard (no inbound A2A route, no webhook)
 orchestrator   ✗ banking-api's tables
 audit-worker    ✗ modifying the ledger
 banking-api     ✗ LLM provider

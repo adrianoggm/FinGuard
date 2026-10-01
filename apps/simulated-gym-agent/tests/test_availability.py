@@ -1,0 +1,203 @@
+from datetime import date
+
+from a2a.types import TaskState
+from gym_client import data_of, open_gym, text_of
+
+_WINDOW = {"from": "2026-10-01T15:00:00+02:00", "to": "2026-10-01T21:00:00+02:00"}
+
+
+async def test_norte_answers_availability_as_data_in_its_own_vocabulary() -> None:
+    async with open_gym("norte") as gym:
+        task = await gym.ask(
+            text="",
+            skill="timetable",
+            data={"request": "availability", "activity": "spinning", **_WINDOW, "memberRef": "m1"},
+        )
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    sessions = data_of(task)["sesiones"]
+    assert [(s["hora_inicio"], s["huecos"]) for s in sessions] == [
+        ("18:30", 6),
+        ("19:00", 4),
+        ("20:00", 0),
+    ]
+    assert [s["ref"] for s in sessions] == ["N-1001-1830", "N-1001-1900", "N-1001-2000"]
+    for s in sessions:
+        assert s["clase"] == "Spinning"
+        assert s["fecha"] == "2026-10-01"
+        assert s["duracion_min"] in (45, 60)
+
+
+async def test_sur_answers_availability_as_spanish_text_parsed_from_the_template() -> None:
+    async with open_gym("sur") as gym:
+        task = await gym.ask(
+            text=(
+                "Busco clases de spinning el jueves 1 de octubre de 2026 "
+                "entre las 15:00 y las 21:00."
+            ),
+            skill="classes",
+        )
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    assert text_of(task) == (
+        "Clases de spinning el jueves 1 de octubre: a las 18:30 (quedan 6 plazas), "
+        "a las 19:00 (quedan 4 plazas) y a las 20:00 (completa)."
+    )
+
+
+# The seeded weekend (seed 0, today 30 September): natación on Saturday 3 at 18:30, and on Sunday 4
+# at 09:30 and 17:30. The Sunday-morning class lies inside the Saturday 15:00 -> Sunday 21:00
+# interval and outside the afternoon band, so only a gym that reads the band leaves it out.
+_WEEKEND = {"from": "2026-10-03T15:00:00+02:00", "to": "2026-10-04T21:00:00+02:00"}
+_AFTERNOON = {"from": "15:00", "to": "21:00"}
+
+
+async def test_norte_keeps_to_the_band_on_every_day_of_a_weekend() -> None:
+    async with open_gym("norte") as gym:
+        task = await gym.ask(
+            text="",
+            skill="timetable",
+            data={
+                "request": "availability",
+                "activity": "natacion",
+                **_WEEKEND,
+                "band": _AFTERNOON,
+                "memberRef": "m1",
+            },
+        )
+    sessions = data_of(task)["sesiones"]
+    assert [(s["fecha"], s["hora_inicio"]) for s in sessions] == [
+        ("2026-10-03", "18:30"),
+        ("2026-10-04", "17:30"),
+    ]
+
+
+async def test_norte_without_a_band_answers_the_whole_interval() -> None:
+    async with open_gym("norte") as gym:
+        task = await gym.ask(
+            text="",
+            skill="timetable",
+            data={"request": "availability", "activity": "natacion", **_WEEKEND, "memberRef": "m1"},
+        )
+    sessions = data_of(task)["sesiones"]
+    assert [(s["fecha"], s["hora_inicio"]) for s in sessions] == [
+        ("2026-10-03", "18:30"),
+        ("2026-10-04", "09:30"),
+        ("2026-10-04", "17:30"),
+    ]
+
+
+async def test_sur_reads_a_weekend_with_its_band_and_names_each_day() -> None:
+    async with open_gym("sur") as gym:
+        task = await gym.ask(
+            text=(
+                "Busco clases de natación entre el sábado 3 de octubre de 2026 y el domingo 4 de "
+                "octubre de 2026, de 15:00 a 21:00."
+            ),
+            skill="classes",
+        )
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    assert text_of(task) == (
+        "Clases de natación el sábado 3 de octubre: a las 18:30 (quedan 2 plazas); "
+        "el domingo 4 de octubre: a las 17:30 (quedan 5 plazas)."
+    )
+
+
+async def test_sur_reads_several_days_with_no_band_as_whole_days() -> None:
+    async with open_gym("sur") as gym:
+        task = await gym.ask(
+            text=(
+                "Busco clases de natación entre el sábado 3 de octubre de 2026 y el domingo 4 de "
+                "octubre de 2026."
+            ),
+            skill="classes",
+        )
+    assert text_of(task) == (
+        "Clases de natación el sábado 3 de octubre: a las 18:30 (quedan 2 plazas); "
+        "el domingo 4 de octubre: a las 09:30 (quedan 8 plazas) y a las 17:30 (quedan 5 plazas)."
+    )
+
+
+async def test_several_days_with_no_class_in_the_band_says_so() -> None:
+    async with open_gym("sur") as gym:
+        task = await gym.ask(
+            text=(
+                "Busco clases de pádel entre el sábado 3 de octubre de 2026 y el domingo 4 de "
+                "octubre de 2026, de 15:00 a 21:00."
+            ),
+            skill="classes",
+        )
+    # Saturday's 21:30 pádel is inside the interval and outside the band.
+    assert text_of(task) == (
+        "No hay clases de pádel entre el sábado 3 de octubre y el domingo 4 de octubre en ese "
+        "horario."
+    )
+
+
+async def test_a_day_with_no_class_says_so() -> None:
+    # Nothing is ever scheduled between 15:00 and 16:00 (the hours start at 17:00 after 12:30),
+    # so this window is empty whatever the draw.
+    window = {"from": "2026-10-01T15:00:00+02:00", "to": "2026-10-01T16:00:00+02:00"}
+    async with open_gym("norte") as gym:
+        task = await gym.ask(
+            text="",
+            skill="timetable",
+            data={"request": "availability", "activity": "crossfit", **window, "memberRef": "m1"},
+        )
+        assert data_of(task) == {"sesiones": []}
+    async with open_gym("sur") as gym:
+        task = await gym.ask(
+            text=(
+                "Busco clases de crossfit el jueves 1 de octubre de 2026 "
+                "entre las 15:00 y las 16:00."
+            ),
+            skill="classes",
+        )
+        assert "No hay clases" in text_of(task)
+
+
+async def test_sur_reads_the_exact_interval_of_several_days() -> None:
+    """Ruling R23: FinGuard states where the interval starts and ends, to the minute, and the
+    gym keeps to it -- here Sunday's 17:30 is after the interval's end."""
+    async with open_gym("sur") as gym:
+        task = await gym.ask(
+            text=(
+                "Busco clases de natación desde el sábado 3 de octubre de 2026 a las 12:00 hasta "
+                "el domingo 4 de octubre de 2026 a las 12:00."
+            ),
+            skill="classes",
+        )
+    assert text_of(task) == (
+        "Clases de natación el sábado 3 de octubre: a las 18:30 (quedan 2 plazas); "
+        "el domingo 4 de octubre: a las 09:30 (quedan 8 plazas)."
+    )
+
+
+async def test_sur_reads_the_exact_interval_with_its_band() -> None:
+    async with open_gym("sur") as gym:
+        task = await gym.ask(
+            text=(
+                "Busco clases de natación desde el sábado 3 de octubre de 2026 a las 15:00 hasta "
+                "el domingo 4 de octubre de 2026 a las 21:00, de 15:00 a 21:00."
+            ),
+            skill="classes",
+        )
+    assert text_of(task) == (
+        "Clases de natación el sábado 3 de octubre: a las 18:30 (quedan 2 plazas); "
+        "el domingo 4 de octubre: a las 17:30 (quedan 5 plazas)."
+    )
+
+
+async def test_this_week_asked_on_a_thursday_morning_starts_at_the_hour_asked() -> None:
+    """«esta semana» said on Thursday 1 October at 10:00: the 07:30 pádel of that morning has
+    already happened and is not in the interval FinGuard asked for."""
+    async with open_gym("sur", today=date(2026, 10, 1)) as gym:
+        task = await gym.ask(
+            text=(
+                "Busco clases de pádel desde el jueves 1 de octubre de 2026 a las 10:00 hasta el "
+                "domingo 4 de octubre de 2026 a las 23:00."
+            ),
+            skill="classes",
+        )
+    assert text_of(task) == (
+        "Clases de pádel el sábado 3 de octubre: a las 07:30 (quedan 10 plazas) y a las 10:30 "
+        "(quedan 9 plazas); el domingo 4 de octubre: a las 21:30 (quedan 5 plazas)."
+    )

@@ -76,6 +76,122 @@ _NOT_A_NAME: Final = frozenset(
 )
 
 
+# B-2(a) (Wave 3 hardening, R-H1): words a bare-word turn says that are never a shop's name — a
+# discard, a correction, a control word, a pleasantry, a bare intensifier. `nada` is the audit's own
+# example: "¿cuánto gasté el mes pasado?" answered `merchants: ['nada']`, three ledger calls, a real
+# total for a word that named nothing. The 10 pinned corpus turns Task 3 found (six episode files —
+# `13-messy.yaml`'s "quería"/"es que"/"pues eso"/"nada"; `02-corrections.yaml`'s "ahora sí";
+# `05-typos.yaml`'s "gracais"; `06-colloquial.yaml`'s "ah vale"; `07-cancellations.yaml`'s "cancelar
+# consulta" ×2/"cambiar consulta"/"déjalo"; `08-confirmations.yaml`'s "confirmo") decompose into
+# these tokens once folded — no phrase beyond the four idioms below needs its own entry.
+#
+# A closed list on purpose, not a heuristic: Task 3's general rule (require a capitalised,
+# merchant-shaped token) fixed the same bug but reopened all ten pinned turns as an open-ended
+# judgement call. This list only ever grows by a name proven, the same way this file's own merchant
+# vocabulary does — never by a pattern that could also match a shop nobody has named yet.
+_NEVER_A_MERCHANT_PHRASES: Final = frozenset(
+    {
+        "otra vez",
+        "en euros",
+        "es que",
+        "pues eso",
+        # F-2 (fix wave, Important 3): C-3's own named words -- folded, so "sin límite" hits.
+        "sin limite",
+    }
+)
+
+_NEVER_A_MERCHANT_WORDS: Final = frozenset(
+    {
+        "deshaz",
+        "vuelve",
+        "nada",
+        "vale",
+        "ok",
+        "si",
+        "no",
+        "gracias",
+        "gracais",  # the typo the corpus itself types (05-typos.yaml)
+        "mas",
+        "menos",
+        "atras",
+        "cancela",
+        "cancelar",
+        "consulta",
+        "cambiar",
+        "repite",
+        "eso",
+        "esto",
+        "ahi",
+        "ya",
+        "ah",
+        "ahora",
+        "bien",
+        "hecho",
+        "listo",
+        "queria",
+        "dejalo",
+        "confirmo",
+        # F-2 (fix wave, Important 3): C-3's own named words -- a bare "todos"/"todas"/"todo" or
+        # "límite" ran the merchant guess (three ledger calls, a confident total) for a word that
+        # named nothing, the exact defect B-2(a)'s stop-list exists to stop.
+        "todos",
+        "todas",
+        "todo",
+        "limite",
+    }
+)
+
+
+def never_a_merchant(sentence: str) -> bool:
+    """Whether `sentence` is nothing but words this service already knows are not a shop's name.
+
+    Folded and stripped first, then matched whole against the four multi-word idioms
+    (`_NEVER_A_MERCHANT_PHRASES`) before falling back to a per-word check against
+    `_NEVER_A_MERCHANT_WORDS` — so "ahora sí" reads as "ahora" + "sí" (both single words) while
+    "es que" and "pues eso" stay the two-word units they are, neither half meaning anything alone.
+
+    A sentence with even one word this does not recognise is not this — the caller falls through to
+    the ordinary bare-name guess, exactly as before this rule existed.
+    """
+    folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
+    if not folded:
+        return False
+    if folded in _NEVER_A_MERCHANT_PHRASES:
+        return True
+    words = folded.split()
+    return bool(words) and all(word in _NEVER_A_MERCHANT_WORDS for word in words)
+
+
+# N-H1 (Wave 3 hardening, round 2): the words F-2 added above, and *only* those. Most of
+# `_NEVER_A_MERCHANT_WORDS` are conversational control -- "sí", "no", "gracias", "vale", "déjalo" --
+# and each already has its own deliberate fallback when nothing is pending (a cancelled workflow's
+# stray "sí" becomes an ordinary LAST_MONTH query; the corpus pins exactly that in
+# `07-cancellations.yaml` and `08-confirmations.yaml`). "Todos"/"todas"/"todo"/"límite" and "sin
+# límite" carry no such second job: nobody types them to close a workflow, so there is nothing lost
+# in asking instead of guessing, in *every* state -- not only while a plan is pending, which is what
+# `never_a_merchant` alone reaches (via `_a_bare_shop_name`, gated on `was.last_plan`).
+_NAMES_NO_SCOPE_AT_ALL_WORDS: Final = frozenset({"todos", "todas", "todo", "limite"})
+_NAMES_NO_SCOPE_AT_ALL_PHRASES: Final = frozenset({"sin limite"})
+
+
+def names_no_scope_at_all(sentence: str) -> bool:
+    """Whether `sentence` folds to exactly one of F-2's own words -- never a shop, never a window,
+    never a direction, and never anything else's answer either.
+
+    Narrower than `never_a_merchant` on purpose: that function's word list also covers "sí", "no"
+    and the rest of conversation control, and those must keep falling through to whatever state was
+    waiting on them (a cancelled payment, a repeated clarification) rather than being asked about
+    here unconditionally. This is the subset safe to gate the planner on from *any* state.
+    """
+    folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
+    if not folded:
+        return False
+    if folded in _NAMES_NO_SCOPE_AT_ALL_PHRASES:
+        return True
+    words = folded.split()
+    return len(words) == 1 and words[0] in _NAMES_NO_SCOPE_AT_ALL_WORDS
+
+
 def close_to(searched: str, merchants: tuple[str, ...], limit: int = 3) -> tuple[str, ...]:
     """The shops that look like what was asked for, best first.
 
@@ -131,9 +247,14 @@ def almost_named_in(sentence: str, merchants: tuple[str, ...], limit: int = 3) -
     about it with a note is honest. A near miss is a guess, and a guess that produces a figure is
     the one thing this service does not do — so this returns candidates for a question and the
     caller has to ask.
+
+    The words the category vocabulary claims are dropped rather than the sentence, for the reason
+    `named_in` gives above and one of its own: a fuzzy reader let loose on «suscripciones» would
+    go looking for a shop whose name is one letter from a word the holder used to mean the
+    category, and that guess is worse than the silence it replaces.
     """
-    said = _tokens(sentence) - _NOT_A_NAME
-    if not said or not merchants or category_words.named_in(sentence):
+    said = _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
+    if not said or not merchants:
         return ()
     found: dict[str, None] = {}
     for word in sorted(said):
@@ -162,13 +283,22 @@ def named_in(sentence: str, merchants: tuple[str, ...]) -> str | None:
     matches. "Gimnasio Altafit" is a merchant and "gimnasio" is how somebody says SUBSCRIPTIONS,
     so a question about the gym is about the category and this must not narrow it to one shop.
 
+    **Those words are dropped, not the sentence.** Until 2026-09-14 a sentence that named any
+    category at all was refused here outright, which is a different and much wider rule: it also
+    gave up on «¿cuánto he gastado en suscripciones de Netflix este mes?», where the shop is named
+    in words the category vocabulary does not claim. The plan that answered SUBSCRIPTIONS entire
+    passed the verifier -- the category the sentence named really is there -- so this was the only
+    reader left that could notice, and it had switched itself off. What came back was a true
+    figure for a wider question than the one asked, which is the failure this whole path exists to
+    stop. Reported by review; the gym above keeps working because «gimnasio» is still dropped.
+
     Returns the merchant as the ledger spells it, because that is what a filter has to be given
     and what the user should read back.
     """
     if not merchants:
         return None
-    said = _tokens(sentence) - _NOT_A_NAME
-    if not said or category_words.named_in(sentence):
+    said = _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
+    if not said:
         return None
     for merchant in merchants:
         if _tokens(merchant) & said:

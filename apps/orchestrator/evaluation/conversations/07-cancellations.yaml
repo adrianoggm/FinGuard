@@ -37,9 +37,13 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      # B-2(a) (Wave 3 hardening, R-H1): "cancelar consulta" decomposes into two closed-stop-list
+      # words ("cancelar", "consulta") -- the honest ask now, not a shop called "cancelar
+      # consulta". The next turn's assertion (no saved retry) is unaffected: it was never about
+      # what this turn ran, only about `retry_plan`, which nothing in this episode ever sets.
       - say: cancelar consulta
-        route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['cancelar consulta'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
       - say: reintentar
         # It used to be QUERY, and that was the word "reintentar" being handed to a language model
         # to turn into a financial question. This episode exists so a retry cannot reach an
@@ -134,9 +138,12 @@ episodes:
       - say: ¿cuánto gasté en gasolina?
         route: QUERY
         ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      # B-2(a) (Wave 3 hardening, R-H1): "cambiar consulta" decomposes into two closed-stop-list
+      # words too ("cambiar", "consulta") -- the honest ask, never a guessed shop, and never the
+      # model either.
       - say: cambiar consulta
-        route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: ['cambiar consulta'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['cambiar consulta'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
       - say: ¿cuánto gasté en restaurantes?
         route: QUERY
         ran: {window: LAST_MONTH, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
@@ -203,9 +210,11 @@ episodes:
       - say: "no"
         not_says: Hecho
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      # B-2(a) (Wave 3 hardening, R-H1): "déjalo" is on the closed stop-list -- the honest ask now,
+      # not a shop called "déjalo".
       - say: déjalo
-        route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['déjalo'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
@@ -230,9 +239,10 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      # B-2(a) (Wave 3 hardening, R-H1): the same closed-stop-list ask as the episode above.
       - say: cancelar consulta
-        route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['cancelar consulta'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿y en la hucha?

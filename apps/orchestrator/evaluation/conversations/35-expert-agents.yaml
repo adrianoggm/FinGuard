@@ -1,0 +1,103 @@
+# Expert agents over A2A (spec §5, §12): a timetable question asked of two gyms at once, and a
+# booking taken from what they offered -- the one class that turns out to be full included.
+#
+# The gyms are doubles at the gateway's port (`tests/support/episodes.py`, `CANNED_GYMS`): what each
+# answers is canned, and so is what the model reads out of each answer, but that reading is a draft
+# the real verifier grounds in the reply before any of it reaches the answer. Everything else a turn
+# here crosses is the deployment's own: the predicate that claims the sentence before the financial
+# path, the search fan-out, the sealed offers, the booking's two turns and the confirmation reader
+# the payments use.
+#
+# No turn reaches the planner. A sentence about a class never becomes a financial question, so the
+# corpus's handover measurements are untouched by this file -- and the last turn of each episode is
+# a question about money asked with the offers still in the conversation, which must stay the bank's.
+
+episodes:
+  - name: a_search_a_full_class_an_alternative_and_a_booking
+    why: >
+      The acceptance scene in the corpus. Turn 1 asks both gyms and lists both, each in its own
+      shape -- norte in data parts, sur in a sentence -- merged into one list ordered by time;
+      gym-legacy is listed by the gateway as unusable and is never asked. Turn 2 books the 20:00
+      class at the Norte, which the list itself shows as full; nothing is sent to the gym until the
+      yes of turn 3, and that yes comes back paused with the next two classes instead -- the 21:00
+      the same day and the 18:30 of the next, whose day the answer names (ruling R22: the
+      alternatives are verified against the booked day and then the week). The class is announced
+      as «no está disponible», not «completa»: a paused booking does not say why. Turn 4 resolves
+      «la de las 21:00» against the alternatives, which are now the only offers, and turn 5 books
+      it with a code the reply states. Turn 6 is a balance: the offers outlive the
+      booking, and must not make an ordinary question about money an agent's.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    agents: [gym-norte, gym-sur, gym-legacy]
+    turns:
+      - say: ¿Qué clases de spinning hay el jueves por la tarde?
+        route: AGENTS
+        says: ["He encontrado 4 clases de spinning", "Gimnasio Norte", "Gimnasio Sur"]
+        not_says: Gimnasio Antiguo
+        no_model: true
+        ends: true
+      - say: apúntame a la de las 20:00 en el Norte
+        route: AGENTS
+        says: ["Vas a reservar Spinning", "20:00–20:45", "en Gimnasio Norte", "¿Confirmas?"]
+        keeps: BOOKING_CONFIRMATION
+        no_model: true
+      - say: sí
+        route: AGENTS
+        says: La de las 20:00 no está disponible; Gimnasio Norte ofrece las 21:00 y el viernes 7 a las 18:30.
+        not_says: Reserva hecha
+        ends: true
+        no_model: true
+      - say: apúntame a la de las 21:00
+        route: AGENTS
+        says: ["Vas a reservar Spinning", "21:00–21:45", "en Gimnasio Norte"]
+        keeps: BOOKING_CONFIRMATION
+        no_model: true
+      - say: sí
+        route: AGENTS
+        says: Reserva hecha en Gimnasio Norte
+        ends: true
+        no_model: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+        no_model: true
+
+  - name: a_yes_by_voice_is_sent_to_the_screen
+    why: >
+      Voice may search and prepare, never confirm (§14 A10): voice-gateway blocks only a payment's
+      confirmation, so the orchestrator refuses a booking's itself. Turn 3's «sí» arrives on the
+      VOICE channel and is answered «Confirma la reserva en la pantalla.» with the preview still
+      open and nothing sent. A preview owns the next turn whatever its words, like a payment's, so
+      turn 4 -- another class asked for while this one waits -- is answered with the waiting preview
+      again rather than a second one. Only the yes typed on screen, turn 5, books it, the sur gym's
+      way: from a sentence with the code in it. Turn 6 is a balance, with the offers still there.
+    metrics: [unsafe_action, context_retention]
+    agents: [gym-norte, gym-sur]
+    turns:
+      - say: ¿Qué clases de spinning hay el jueves por la tarde?
+        route: AGENTS
+        says: ["Gimnasio Norte", "Gimnasio Sur"]
+        no_model: true
+      - say: apúntame a la de las 18:30
+        route: AGENTS
+        says: ["Vas a reservar Spinning", "18:30", "en Gimnasio Sur"]
+        keeps: BOOKING_CONFIRMATION
+        no_model: true
+      - say: sí
+        channel: VOICE
+        route: AGENTS
+        says: Confirma la reserva en la pantalla.
+        not_says: Reserva hecha
+        keeps: BOOKING_CONFIRMATION
+        no_model: true
+      - say: apúntame a la de las 20:00 en el Sur
+        route: AGENTS
+        says: ["Vas a reservar Spinning, jueves 6 de agosto, 18:30", "Responde sí o no."]
+        keeps: BOOKING_CONFIRMATION
+        no_model: true
+      - say: sí
+        route: AGENTS
+        says: ["Reserva hecha en Gimnasio Sur", "18:30", "Código SUR-7731"]
+        ends: true
+        no_model: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+        no_model: true

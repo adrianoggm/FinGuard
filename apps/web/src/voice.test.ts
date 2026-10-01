@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mono, pcm16le, PcmPlayer, resampleMono, StreamingResampler, VoiceClient, VOICE_SUBPROTOCOL } from "./voice";
+import { mono, pcm16le, PcmPlayer, resampleMono, SILENT_TURN_MESSAGE, SILENT_TURN_TIMEOUT_MS, StreamingResampler, VoiceClient, VOICE_SUBPROTOCOL } from "./voice";
 
 const json = (value: unknown) => JSON.stringify(value);
 const event = (type: string, sessionId: string, sequence: number, fields: Record<string, unknown> = {}) => json({ type, sessionId, sequence, at: `2026-08-17T00:00:0${sequence}.000Z`, ...fields });
@@ -113,11 +113,11 @@ describe("VoiceClient transport A-J", () => {
     const socket = socketFake(); const statuses: string[] = []; const client = new VoiceClient({ gatewayUrl: "http://gateway.test", token: "secret", fetch: async () => new Response(json({ sessionId: "s-1", ticket: "opaque", websocketUrl: "ws://evil.test/v1/voice/sessions/s-1" })), websocket: () => { throw new Error("socket must not be created"); }, onEvent: () => undefined, onStatus: (status) => statuses.push(status) }); await client.start(); expect(statuses.at(-1)).toBe("error"); expect(socket.socket.readyState).toBe(1);
   });
   it("accepts binary only between audio events and closes after either completion order", async () => {
-    for (const reverse of [false, true]) { const setup = await ready(); setup.client.stopCapture(); setup.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 })); setup.fakeSocket.message(new Uint8Array([0, 0]).buffer); if (reverse) setup.fakeSocket.message(event("turn.completed", "s-1", 2, { turnId: "turn-1" })); setup.fakeSocket.message(event("audio.completed", "s-1", reverse ? 3 : 2, { turnId: "turn-1" })); if (!reverse) setup.fakeSocket.message(event("turn.completed", "s-1", 3, { turnId: "turn-1" })); expect(setup.finished).toHaveLength(0); setup.playback.sources[0]!.onended?.(); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(setup.finished).toHaveLength(1); expect(setup.fakeSocket.socket.readyState).toBe(3); }
+    for (const reverse of [false, true]) { const setup = await ready(); setup.client.stopCapture(); setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" })); setup.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 })); setup.fakeSocket.message(new Uint8Array([0, 0]).buffer); if (reverse) setup.fakeSocket.message(event("turn.completed", "s-1", 3, { turnId: "turn-1" })); setup.fakeSocket.message(event("audio.completed", "s-1", reverse ? 4 : 3, { turnId: "turn-1" })); if (!reverse) setup.fakeSocket.message(event("turn.completed", "s-1", 4, { turnId: "turn-1" })); expect(setup.finished).toHaveLength(0); setup.playback.sources[0]!.onended?.(); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(setup.finished).toHaveLength(1); expect(setup.fakeSocket.socket.readyState).toBe(3); }
   });
   it("clears active playback on response.cancelled/error so no scheduled frame survives", async () => {
-    const cancelled = await ready(); cancelled.client.stopCapture(); cancelled.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 })); cancelled.fakeSocket.message(new Uint8Array([0, 0]).buffer); cancelled.fakeSocket.message(new Uint8Array([1, 0]).buffer); cancelled.fakeSocket.message(event("response.cancelled", "s-1", 2, { turnId: "turn-1" })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(cancelled.playback.sources).toHaveLength(2); expect(cancelled.playback.sources.every((source) => source.stopped)).toBe(true); expect(cancelled.finished).toHaveLength(1); expect(cancelled.statuses.at(-1)).toBe("idle");
-    const failed = await ready(); failed.client.stopCapture(); failed.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 })); failed.fakeSocket.message(new Uint8Array([0, 0]).buffer); failed.fakeSocket.message(new Uint8Array([1, 0]).buffer); failed.fakeSocket.message(event("error", "s-1", 2, { code: "PROVIDER_ERROR", message: "provider failed", fatal: true })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(failed.playback.sources.every((source) => source.stopped)).toBe(true); expect(failed.statuses.at(-1)).toBe("error:provider failed"); expect(failed.fakeSocket.socket.readyState).toBe(3);
+    const cancelled = await ready(); cancelled.client.stopCapture(); cancelled.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" })); cancelled.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 })); cancelled.fakeSocket.message(new Uint8Array([0, 0]).buffer); cancelled.fakeSocket.message(new Uint8Array([1, 0]).buffer); cancelled.fakeSocket.message(event("response.cancelled", "s-1", 3, { turnId: "turn-1" })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(cancelled.playback.sources).toHaveLength(2); expect(cancelled.playback.sources.every((source) => source.stopped)).toBe(true); expect(cancelled.finished).toHaveLength(1); expect(cancelled.statuses.at(-1)).toBe("idle");
+    const failed = await ready(); failed.client.stopCapture(); failed.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" })); failed.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 })); failed.fakeSocket.message(new Uint8Array([0, 0]).buffer); failed.fakeSocket.message(new Uint8Array([1, 0]).buffer); failed.fakeSocket.message(event("error", "s-1", 3, { code: "PROVIDER_ERROR", message: "provider failed", fatal: true })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(failed.playback.sources.every((source) => source.stopped)).toBe(true); expect(failed.statuses.at(-1)).toBe("error:provider failed"); expect(failed.fakeSocket.socket.readyState).toBe(3);
   });
   it("rejects binary before audio.started and cleans every resource idempotently", async () => {
     const setup = await ready(); setup.fakeSocket.message(new ArrayBuffer(2)); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(setup.statuses.at(-1)).toMatch(/^error/); expect(setup.fakeSocket.socket.readyState).toBe(3); await setup.client.close(); await setup.client.close(); expect(setup.media.stopped()).toBe(1); expect(setup.capture.stats.sourceDisconnects).toBe(1); expect(setup.capture.stats.processorDisconnects).toBe(1);
@@ -131,14 +131,228 @@ describe("VoiceClient transport A-J", () => {
     let next = 0;
     const setup = await (async () => { const value = makeClient(() => `turn-${++next}`); const promise = value.client.start(); for (let i = 0; i < 10; i += 1) await Promise.resolve(); value.fakeSocket.open(); value.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 })); await promise; return value; })();
     setup.client.stopCapture();
-    setup.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 }));
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" }));
+    setup.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 }));
     setup.fakeSocket.message(new Uint8Array([0, 0]).buffer);
     const before = setup.fakeSocket.sent.length;
     await setup.client.start();
     expect(setup.fakeSocket.sent.slice(before, before + 2).map((value) => typeof value === "string" ? JSON.parse(value).type : "binary")).toEqual(["response.cancel", "input.start"]);
     expect(setup.playback.sources).toHaveLength(1);
-    setup.fakeSocket.message(event("response.cancelled", "s-1", 2, { turnId: "turn-1" }));
-    setup.fakeSocket.message(event("assistant.text.final", "s-1", 3, { turnId: "turn-1", text: "stale" }));
+    setup.fakeSocket.message(event("response.cancelled", "s-1", 3, { turnId: "turn-1" }));
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 4, { turnId: "turn-1", text: "stale" }));
     expect(setup.statuses.at(-1)).toBe("listening");
+  });
+  it("fences audio.started to the chart its assistant.text.final announced", async () => {
+    const matched = await ready(); matched.client.stopCapture(); matched.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x", answer: { visualization: { kind: "chart", chart_id: "c1" } } })); matched.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000, chartId: "c1" })); expect(matched.statuses.at(-1)).toBe("speaking");
+    const mismatched = await ready(); mismatched.client.stopCapture(); mismatched.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x", answer: { visualization: { kind: "chart", chart_id: "c1" } } })); mismatched.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000, chartId: "c2" })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(mismatched.statuses.at(-1)).toMatch(/^error/); expect(mismatched.fakeSocket.socket.readyState).toBe(3); expect(mismatched.playback.sources).toHaveLength(0);
+    const uncharted = await ready(); uncharted.client.stopCapture(); uncharted.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" })); uncharted.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 })); expect(uncharted.statuses.at(-1)).toBe("speaking");
+    const unannounced = await ready(); unannounced.client.stopCapture(); unannounced.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" })); unannounced.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000, chartId: "c1" })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(unannounced.statuses.at(-1)).toMatch(/^error/);
+    // I-1: a restyle's `QuestionResponse` carries `visualization: null` and the new chart only in
+    // `visualization_derivation.chart_id` -- the announced chart must still come from there.
+    const restyled = await ready(); restyled.client.stopCapture(); restyled.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x", answer: { visualization: null, visualization_derivation: { chart_id: "c1" } } })); restyled.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000, chartId: "c1" })); expect(restyled.statuses.at(-1)).toBe("speaking");
+    // D-4.4-2: an announced chart plus an `audio.started` carrying none is the same mismatch as
+    // any other chart -- `undefined !== "c1"` throws exactly like `"c2" !== "c1"` does above.
+    const missing = await ready(); missing.client.stopCapture(); missing.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x", answer: { visualization: { kind: "chart", chart_id: "c1" } } })); missing.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(missing.statuses.at(-1)).toMatch(/^error/);
+  });
+  // W-4: all four orderings of assistant.text.final/audio.started, for both a charted and an
+  // uncharted turn, are handled the same deterministic way regardless of which arrives first --
+  // buffered when audio comes first, applied the instant the text that resolves it arrives.
+  it("buffers an audio.started that arrives before its assistant.text.final, deterministically either way", async () => {
+    const chartedAudioFirst = await ready(); chartedAudioFirst.client.stopCapture();
+    chartedAudioFirst.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000, chartId: "c1" }));
+    chartedAudioFirst.fakeSocket.message(new Uint8Array([0, 0]).buffer);
+    // Buffered, not yet a protocol violation and not yet played: the chart it names is not known
+    // until the text arrives.
+    expect(chartedAudioFirst.playback.sources).toHaveLength(0);
+    expect(chartedAudioFirst.statuses.at(-1)).toBe("processing");
+    chartedAudioFirst.fakeSocket.message(event("assistant.text.final", "s-1", 2, { turnId: "turn-1", text: "x", answer: { visualization: { kind: "chart", chart_id: "c1" } } }));
+    // Applied the moment the announcement resolves it, frame included -- nothing sent while
+    // buffered is lost.
+    expect(chartedAudioFirst.statuses.at(-1)).toBe("speaking");
+    expect(chartedAudioFirst.playback.sources).toHaveLength(1);
+
+    const unchartedAudioFirst = await ready(); unchartedAudioFirst.client.stopCapture();
+    unchartedAudioFirst.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 }));
+    expect(unchartedAudioFirst.statuses.at(-1)).toBe("processing");
+    unchartedAudioFirst.fakeSocket.message(event("assistant.text.final", "s-1", 2, { turnId: "turn-1", text: "x" }));
+    // Deterministic, not a coincidence of two nulls: the text actually said this turn drew no
+    // chart before the fence was ever checked.
+    expect(unchartedAudioFirst.statuses.at(-1)).toBe("speaking");
+
+    // And a genuine mismatch, resolved the other way round, is still refused -- audio-first
+    // ordering never turns a real fence violation into a pass.
+    const mismatchAudioFirst = await ready(); mismatchAudioFirst.client.stopCapture();
+    mismatchAudioFirst.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000, chartId: "c2" }));
+    mismatchAudioFirst.fakeSocket.message(event("assistant.text.final", "s-1", 2, { turnId: "turn-1", text: "x", answer: { visualization: { kind: "chart", chart_id: "c1" } } }));
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    expect(mismatchAudioFirst.statuses.at(-1)).toMatch(/^error/);
+    expect(mismatchAudioFirst.fakeSocket.socket.readyState).toBe(3);
+    expect(mismatchAudioFirst.playback.sources).toHaveLength(0);
+  });
+  // W-2: a chart that failed to materialise on screen must not let its audio through -- the
+  // caller signals that by returning `false` from `onEvent` for the assistant.text.final that
+  // announced it, which the client treats as though no chart had been announced at all.
+  it("disarms the fence when the caller reports a materialisation failure", async () => {
+    const fakeSocket = socketFake(); const media = mediaFake(); const playback = playbackContext(); const statuses: string[] = [];
+    const client = new VoiceClient({
+      gatewayUrl: "http://gateway.test", token: "secret",
+      fetch: async () => new Response(json({ sessionId: "s-1", ticket: "t", websocketUrl: "/v1/voice/sessions/s-1" })),
+      websocket: () => fakeSocket.socket,
+      mediaDevices: media.media,
+      captureContext: () => captureContext().context,
+      player: new PcmPlayer(() => playback.context),
+      uuid: () => "turn-1",
+      onEvent: (received) => (received.type === "assistant.text.final" ? false : undefined),
+      onStatus: (status, error) => statuses.push(error ? `${status}:${error}` : status),
+    });
+    const promise = client.start();
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    fakeSocket.open();
+    fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 }));
+    await promise;
+    client.stopCapture();
+    fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x", answer: { visualization_derivation: { chart_id: "c1" } } }));
+    // The gateway still stamps the chart it actually drew -- the client, told rendering failed,
+    // must refuse its audio rather than play a description of a chart nobody can see.
+    fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000, chartId: "c1" }));
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    expect(statuses.at(-1)).toMatch(/^error/);
+    expect(playback.sources).toHaveLength(0);
+  });
+  // W-3: a straggler PCM frame carries no turn identity of its own, so the fence cannot tell it
+  // apart from a legitimate frame by inspecting it -- what it *can* do is hold the barged-in
+  // turn's own audio.started (and anything that arrives behind it) until the gateway's own
+  // confirmation that the cancelled turn drained, closing the window a stray frame from that
+  // turn's task could otherwise land in as if it were the new turn's.
+  it("holds a barged-in turn's audio until the old turn's drain is confirmed, even out of order", async () => {
+    let next = 0;
+    const setup = await (async () => {
+      const value = makeClient(() => `turn-${++next}`);
+      const promise = value.client.start();
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+      value.fakeSocket.open();
+      value.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 }));
+      await promise;
+      return value;
+    })();
+    setup.client.stopCapture();
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" }));
+    setup.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 }));
+    setup.fakeSocket.message(new Uint8Array([0, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(1);
+
+    await setup.client.start(); // barge-in: cancels turn-1, starts turn-2
+
+    // Turn-2's own audio.started, delivered (pathologically) before the gateway confirms turn-1
+    // drained: buffered rather than applied, so no source is created and status does not move.
+    setup.fakeSocket.message(event("audio.started", "s-1", 3, { turnId: "turn-2", sampleRate: 24_000 }));
+    expect(setup.playback.sources).toHaveLength(1);
+    expect(setup.statuses.at(-1)).toBe("listening");
+
+    // A straggler from turn-1's own cancelled TTS loop, arriving in that same gap, is dropped by
+    // the pre-existing discardFencedAudio gate -- which is exactly the point: that gate is only
+    // safe because W-3 keeps it armed until drain is confirmed, instead of clearing it the moment
+    // turn-2's own (out-of-order) audio.started arrived above.
+    setup.fakeSocket.message(new Uint8Array([1, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(1);
+
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 4, { turnId: "turn-2", text: "y" }));
+    // The gateway's own confirmation that turn-1 drained -- sent synchronously on its receipt of
+    // turn-2's input.start, long before turn-1's TTS loop could still be producing a straggler in
+    // a real deployment -- is what finally releases turn-2's audio. No source has been created
+    // for the dropped straggler; the fence opens clean.
+    setup.fakeSocket.message(event("response.cancelled", "s-1", 5, { turnId: "turn-1" }));
+    expect(setup.statuses.at(-1)).toBe("speaking");
+    expect(setup.playback.sources).toHaveLength(1);
+
+    // And once open, turn-2's own real frames play normally.
+    setup.fakeSocket.message(new Uint8Array([2, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(2);
+  });
+  // D-H-2 (fix wave): every binary frame is now named by its own `audio.frame` event, so a
+  // straggler is dropped for certain rather than by the ordering heuristics above -- including
+  // the harder case W-3's own mitigation could not cover: a frame arriving *after* the new
+  // turn's own audio is already playing, once `discardFencedAudio` has already cleared.
+  it("drops a frame named for a turn that is no longer current, even after the new turn is already playing", async () => {
+    let next = 0;
+    const setup = await (async () => {
+      const value = makeClient(() => `turn-${++next}`);
+      const promise = value.client.start();
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+      value.fakeSocket.open();
+      value.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 }));
+      await promise;
+      return value;
+    })();
+    setup.client.stopCapture();
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" }));
+    setup.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 }));
+    setup.fakeSocket.message(event("audio.frame", "s-1", 3, { turnId: "turn-1" }));
+    setup.fakeSocket.message(new Uint8Array([0, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(1);
+
+    await setup.client.start(); // barge-in: cancels turn-1, starts turn-2
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 4, { turnId: "turn-2", text: "y" }));
+    setup.fakeSocket.message(event("response.cancelled", "s-1", 5, { turnId: "turn-1" }));
+    setup.fakeSocket.message(event("audio.started", "s-1", 6, { turnId: "turn-2", sampleRate: 24_000 }));
+    expect(setup.statuses.at(-1)).toBe("speaking");
+    setup.fakeSocket.message(event("audio.frame", "s-1", 7, { turnId: "turn-2" }));
+    setup.fakeSocket.message(new Uint8Array([1, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(2); // turn-2's own frame played normally.
+
+    // A late frame from turn-1's own cancelled TTS loop, arriving well after turn-2's audio
+    // started and is already playing -- `discardFencedAudio` is long since clear, so only the
+    // frame's own name protects turn-2's playback from it now.
+    setup.fakeSocket.message(event("audio.frame", "s-1", 8, { turnId: "turn-1" }));
+    setup.fakeSocket.message(new Uint8Array([9, 9]).buffer);
+    expect(setup.playback.sources).toHaveLength(2); // dropped: no third source created.
+
+    // And turn-2's own next frame still plays, proving the drop above named the right frame
+    // rather than jamming the pipe.
+    setup.fakeSocket.message(event("audio.frame", "s-1", 9, { turnId: "turn-2" }));
+    setup.fakeSocket.message(new Uint8Array([2, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(3);
+  });
+  // W-5: a turn whose answer produces no audio at all (a refusal that forgot to synthesise, a
+  // dead TTS provider) left `maybeFinish` waiting forever on `audioCompleted`/`playerIdle`, which
+  // only audio.started/audio.completed can ever set. The client now gives up visibly instead.
+  it("fails a silent turn after the timeout instead of hanging on processing forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const setup = await ready();
+      setup.client.stopCapture();
+      expect(setup.statuses.at(-1)).toBe("processing");
+
+      // assistant.text.final and turn.completed arrive -- the answer was real, it just drew no
+      // audio -- but nothing ever sets audioCompleted/playerIdle without an audio.started first.
+      setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" }));
+      setup.fakeSocket.message(event("turn.completed", "s-1", 2, { turnId: "turn-1" }));
+      await vi.advanceTimersByTimeAsync(SILENT_TURN_TIMEOUT_MS - 1);
+      expect(setup.statuses.at(-1)).toBe("processing");
+      expect(setup.finished).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(setup.statuses.at(-1)).toBe(`error:${SILENT_TURN_MESSAGE}`);
+      // The session actually closed -- the mic is free for a fresh `start()` rather than stuck
+      // behind a socket the client believes is still live.
+      expect(setup.fakeSocket.socket.readyState).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("clears the silent-turn timer once real audio starts, so it never fires late", async () => {
+    vi.useFakeTimers();
+    try {
+      const setup = await ready();
+      setup.client.stopCapture();
+      setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" }));
+      setup.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 }));
+      expect(setup.statuses.at(-1)).toBe("speaking");
+      await vi.advanceTimersByTimeAsync(SILENT_TURN_TIMEOUT_MS + 1_000);
+      // No timeout error: the turn had audio, so the guard was cleared the moment it started.
+      expect(setup.statuses.at(-1)).toBe("speaking");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -30,6 +30,8 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     VisualDecision,
     _sort_for,
 )
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -153,6 +155,72 @@ def test_a_chosen_model_plan_did_not_fall_back() -> None:
         )
 
 
+def test_accepted_means_the_model_chart_is_shown() -> None:
+    """`accepted` implies `source == "llm"` and nothing else: the third invariant, checked after
+    the two above so an unsupported source or a contradicted fallback_reason still raises its own
+    message first."""
+    with pytest.raises(ValueError, match="accepted means"):
+        VisualDecision(spec=some_bar_spec(), profile=some_profile(), source="llm", accepted=False)
+    with pytest.raises(ValueError, match="accepted means"):
+        VisualDecision(
+            spec=some_bar_spec(), profile=some_profile(), source="deterministic", accepted=True
+        )
+    # The row the invariant must not break: an accepted model chart is legal.
+    decision = VisualDecision(
+        spec=some_bar_spec(), profile=some_profile(), source="llm", accepted=True
+    )
+    assert decision.fallback_reason is None
+
+
+def test_a_patch_is_a_source_and_is_what_is_shown() -> None:
+    """A verified patch is a third way to reach "what is shown" -- neither the model's own plan
+    nor the floor, but a decision that carries the same two facts (`accepted`, no fallback) that
+    `llm` does."""
+    decision = VisualDecision(
+        spec=some_bar_spec(), profile=some_profile(), source="patch", accepted=True, valid=True
+    )
+    assert decision.source == "patch" and decision.accepted and decision.valid
+    with pytest.raises(ValueError, match="accepted means"):
+        VisualDecision(spec=some_bar_spec(), profile=some_profile(), source="patch", accepted=False)
+    with pytest.raises(ValueError, match="did not fall back"):
+        VisualDecision(
+            spec=some_bar_spec(),
+            profile=some_profile(),
+            source="patch",
+            accepted=True,
+            fallback_reason="timeout",
+        )
+
+
+def test_the_source_set_is_the_literal() -> None:
+    """The membership check reads the literal itself (`get_args`), not a hand-typed copy of it --
+    so a new source added to `VisualSource` is admitted here without this file changing."""
+    from typing import get_args
+
+    from finguard_orchestrator.domain.models.visual_plan import VisualSource
+
+    assert set(get_args(VisualSource)) == {"llm", "deterministic", "patch"}
+    with pytest.raises(ValueError, match="unsupported visual decision source"):
+        VisualDecision(
+            spec=some_bar_spec(),
+            profile=some_profile(),
+            source="wizard",  # type: ignore[arg-type]
+        )
+
+
+def test_the_accepted_invariant_reads_the_same_literal_too() -> None:
+    """M6 (D-4.2-1): `accepted`'s guard used to hand-type `{"llm", "patch"}` -- two of the three
+    `VisualSource` members, chosen by writing down the ones that are not `"deterministic"`. A
+    fourth source would have silently inherited "must not be accepted" from that literal without
+    either line here being read. `_ACCEPTED_SOURCES` is derived from `VisualSource` itself, so
+    this asserts the derivation rather than a copy of it."""
+    from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+        _ACCEPTED_SOURCES,
+    )
+
+    assert _ACCEPTED_SOURCES == {"llm", "patch"}
+
+
 def test_two_rows_carrying_the_same_amount_are_still_two_rows() -> None:
     """The measure's cardinality counts distinct amounts, so it is not a row count. Passing it
     to `derive_chart` would decline this chart for having "one row"."""
@@ -260,7 +328,7 @@ def test_a_categorical_comparison_groups_its_series_instead_of_stacking_them() -
     of one total: the bar's length becomes a number nobody asked for, and it renders cleanly."""
     profile = visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
                 VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
@@ -292,7 +360,7 @@ def test_a_categorical_comparisons_groups_are_still_ranked_by_magnitude() -> Non
     regression in either rule shows up beside its sibling rather than only in one test."""
     profile = visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
                 VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
@@ -323,7 +391,7 @@ def test_a_temporal_comparison_keeps_its_plain_colour_and_no_offset() -> None:
     keeps the plain colour append the categorical rule replaced, unconditionally, as before."""
     profile = visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow(dimension="2026-06", value_minor=100, series="2026"),
                 VisualRow(dimension="2026-07", value_minor=120, series="2026"),
@@ -630,7 +698,13 @@ async def test_a_real_turn_carries_the_decision_and_the_mapper_draws_it() -> Non
         cards=_NoCards(),
     )
     floor = _RecordingVisualFloor()
-    handler._visual_floor = floor  # type: ignore[assignment]
+    handler._visual_policy = VisualPlanningPolicy(  # type: ignore[assignment]
+        model=None,
+        fallback=floor,  # type: ignore[arg-type]
+        verifier=verify,
+        mode="deterministic",
+        budget_seconds=1.0,
+    )
     presentation = PresentationContext("VOICE", "MOBILE", 5)
 
     result = await handler.handle(

@@ -528,8 +528,8 @@ def test_the_planning_evaluator_builds_the_selected_hosted_provider(
 ) -> None:
     monkeypatch.setattr(evaluate, "get_settings", provider_settings)
 
-    groq = evaluate._provider("groq", None, False, None)
-    cloudflare = evaluate._provider("cloudflare", None, False, None)
+    groq = evaluate.build_provider("groq", None, False, None)
+    cloudflare = evaluate.build_provider("cloudflare", None, False, None)
 
     assert groq.name == "groq"
     assert groq.timeout_seconds == 22.0
@@ -557,7 +557,7 @@ def test_a_hosted_evaluation_without_complete_credentials_stops_before_the_run(
     monkeypatch.setattr(evaluate, "get_settings", lambda: provider_settings(**settings))
 
     with pytest.raises(ValueError, match=message):
-        evaluate._provider(provider, None, False, None)
+        evaluate.build_provider(provider, None, False, None)
 
 
 class PlannerAnswer:

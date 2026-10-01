@@ -14,7 +14,7 @@ from dataclasses import replace
 from typing import Final
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
-from finguard_orchestrator.domain.services import category_words, spanish
+from finguard_orchestrator.domain.services import category_words, merchant_words, spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -136,13 +136,26 @@ def _category_misread(sentence: str, plan: FinancialPlan | TopMovements) -> bool
     The cost is written down rather than hidden: an *extra* category the question never named is not
     caught here, because from this side a surplus category cannot be told apart from a word this
     vocabulary does not know.
+
+    **A shop the same sentence named is the other true reading, not a misread.** Reported by
+    review on 2026-09-14, from the case this file's own dataset had never held: «¿Cuánto he gastado
+    en suscripciones de Netflix este mes?» names a category *and* a shop inside it. A plan that
+    keeps the shop and drops the category was refused here as though it had answered a different
+    question — and `repaired` has nothing to offer, so the turn was lost. But that plan is the
+    *narrower* of the two readings: every reading of this rule is about a plan widening past what
+    was asked, and a merchant filter cannot widen anything. The category alone is the dangerous
+    direction, and that one still fires.
     """
     named = set(category_words.precisely_named_in(sentence))
     excluded = set(category_words.precisely_excluded_in(sentence))
     included = named - excluded
-    return bool(named) and (
-        not included.issubset(plan.categories) or not excluded.issubset(plan.excluded_categories)
-    )
+    if not named:
+        return False
+    if not excluded.issubset(plan.excluded_categories):
+        return True
+    if included.issubset(plan.categories):
+        return False
+    return not merchant_words.named_in(sentence, plan.merchants)
 
 
 # Same shape as the guard's registry, for the same reasons: named so it can be switched

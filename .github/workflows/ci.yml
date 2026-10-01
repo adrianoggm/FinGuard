@@ -56,7 +56,11 @@ jobs:
         # what runs; the one test that needs a real provider skips itself. Adding it found that the
         # service had never been through its own formatter and that a test's 10 ms deadline lost a
         # thread handoff on Windows every time.
-        service: [banking-api, orchestrator, voice-gateway]
+        #
+        # a2a-gateway and simulated-gym-agent joined with the A2A expert agents. Both suites run
+        # in process against agents served by the real SDK, with no network, no model and no
+        # database, so they are as light as the voice gateway's.
+        service: [banking-api, orchestrator, voice-gateway, a2a-gateway, simulated-gym-agent]
     defaults:
       run:
         working-directory: apps/${{ matrix.service }}

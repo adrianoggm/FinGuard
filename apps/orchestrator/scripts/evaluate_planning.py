@@ -396,7 +396,7 @@ async def _ollama_snapshot(provider: EvaluationProvider, model: str) -> dict[str
     }
 
 
-async def _run_manifest(
+async def run_manifest(
     dataset_path: Path, provider: EvaluationProvider, model: str, case_count: int
 ) -> dict[str, Any]:
     commit = _command_output(["git", "rev-parse", "HEAD"])
@@ -496,7 +496,7 @@ def as_plan(spec: dict[str, Any]) -> FinancialPlan:
     )
 
 
-def _provider(
+def build_provider(
     name: str,
     base_url: str | None,
     think: bool | str,
@@ -1007,7 +1007,7 @@ async def run(
             print(f"invalid dataset: {issue}", file=sys.stderr)
         return 2
     cases = all_cases[:limit] if limit else all_cases
-    manifest = await _run_manifest(dataset_path, provider, model, len(cases))
+    manifest = await run_manifest(dataset_path, provider, model, len(cases))
     print(f"RUN-MANIFEST {json.dumps(manifest, sort_keys=True)}", flush=True)
 
     planner = LlmQueryPlanner(
@@ -1597,7 +1597,7 @@ def _pace(args: argparse.Namespace) -> float:
 
 async def _evaluate(args: argparse.Namespace) -> int:
     try:
-        provider = _provider(args.provider, args.base_url, args.think, args.timeout)
+        provider = build_provider(args.provider, args.base_url, args.think, args.timeout)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from finguard_orchestrator.domain.models.visual_plan import VisualMode
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -111,7 +112,34 @@ class Settings(BaseSettings):
     cloudflare_api_token: SecretStr | None = None
     cloudflare_account_id: str | None = None
 
-    @field_validator("groq_api_key", "cloudflare_api_token", "cloudflare_account_id", mode="before")
+    # --- expert agents (A2A) -------------------------------------------------------------
+    #
+    # Where the A2A gateway listens (apps/a2a-gateway). **Without it the capability does not
+    # exist**: no agent is asked and the turn says no external agents are configured. Fail closed,
+    # like the visual planner staying `deterministic` by default. Blank is absent -- see
+    # `_a_blank_key_is_no_key`.
+    a2a_gateway_url: str | None = None
+    # The gateway's shared bearer token, and the key under which each gym's pairwise `memberRef` is
+    # derived (spec §5.4). Secrets, so `SecretStr` and `.env` only, never `.env.defaults`.
+    a2a_gateway_token: SecretStr | None = None
+    a2a_pairwise_key: SecretStr | None = None
+    # How long one agent has to answer, covering the send and its normalisation. No code default,
+    # like every operational number here; the value and its reason are in .env.defaults.
+    a2a_agent_budget_seconds: float = Field(gt=0)
+
+    @field_validator(
+        "groq_api_key",
+        "cloudflare_api_token",
+        "cloudflare_account_id",
+        "visual_planner_provider",
+        "visual_planner_model",
+        "visual_planner_temperature",
+        "visual_planner_max_output_tokens",
+        "a2a_gateway_url",
+        "a2a_gateway_token",
+        "a2a_pairwise_key",
+        mode="before",
+    )
     @classmethod
     def _a_blank_key_is_no_key(cls, value: object) -> object:
         """`ORCHESTRATOR_XAI_API_KEY=` means the provider does not exist, not that it has a
@@ -124,6 +152,13 @@ class Settings(BaseSettings):
 
         The account id gets the same treatment because it fails the same way from one line lower:
         blank, it is not a rejected credential but a URL with a hole in it.
+
+        The visual planner's own settings share the treatment for the same reason one level up:
+        `ORCHESTRATOR_VISUAL_PLANNER_MODEL=` is what an unset override looks like on disk, and
+        taken literally it would fail float/int coercion instead of falling back to the planner's.
+
+        The expert agents' three share it: `ORCHESTRATOR_A2A_GATEWAY_URL=` is how .env.defaults
+        says the capability does not exist, and a blank token or pairwise key is no key at all.
         """
         return None if isinstance(value, str) and not value.strip() else value
 
@@ -376,6 +411,52 @@ class Settings(BaseSettings):
     # read is the operator's call rather than a value shipped in a settings class; and on today's
     # numbers there is no case for flipping it.
     turn_interpreter: Literal["router", "shadow", "hybrid", "model"] = "router"
+
+    # The visual planner's ladder, the same four rungs the turn interpreter climbs. `shadow` runs
+    # the model beside the floor and shows the floor, which is how the baseline comparison is
+    # collected before anything is risked. Promotion is a measured decision (docs/next.md), not a
+    # default: this stays `deterministic` until three runs of `just evaluate-visual` say otherwise.
+    visual_planner: VisualMode = "deterministic"
+    # Spent before the floor answers, so it is added latency on every turn the model runs.
+    # `6.0` is a guess, not a measurement: Task 9's runbook
+    # (docs/superpowers/plans/2026-09-05-visual-planner-shadow.md) has never been run, so no
+    # `evaluation/visual/last-run.json` exists to set this from (M-4, M-5). And the method the
+    # runbook prescribes is right-censored by construction -- a run made *at* budget B records
+    # every timed-out call's `latency_ms` as B, so its own P95 can never exceed B and "set the
+    # budget from the P95 of a run at this budget" would silently ratify whatever B was already
+    # guessed. Generous here so a future `shadow` run measures the model rather than the budget.
+    # `gt=0`: `VisualPlanningPolicy.__init__` refuses a non-positive budget with a bare
+    # `ValueError` and no field name, so an operator's `0` is caught here, at load, with a named
+    # validation error, rather than during `create_app()`.
+    visual_planner_budget_seconds: float = Field(default=6.0, gt=0)
+
+    # The visual planner's own provider, model and sampling. `None` means "the financial
+    # planner's", which is what shipped and what `deterministic` mode never reads. Naming one
+    # here lets "try a bigger chart model" move nothing else: the financial planner's model was
+    # chosen against its own evaluation (evaluation/planning/RESULTS.md), and one knob for both
+    # would hide which one moved. A blank value in the environment is "unset" -- see
+    # `_a_blank_key_is_no_key`.
+    visual_planner_provider: str | None = None
+    visual_planner_model: str | None = None
+    visual_planner_temperature: float | None = None
+    visual_planner_max_output_tokens: int | None = None
+
+    def visual_planner_sampling(self) -> tuple[float, int]:
+        """Temperature and token limit for the visual planner: its own when set, else the planner's.
+
+        `is None`, not `or`: an explicit temperature of 0.0 is a setting, not an absence.
+        """
+        temperature = (
+            self.planner_temperature
+            if self.visual_planner_temperature is None
+            else self.visual_planner_temperature
+        )
+        tokens = (
+            self.planner_max_output_tokens
+            if self.visual_planner_max_output_tokens is None
+            else self.visual_planner_max_output_tokens
+        )
+        return temperature, tokens
 
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a

@@ -276,6 +276,7 @@ rule, and these are read off the families the mapper already emits:
 | `line`, `area` | a **temporal** dimension on one axis and the measure on the other |
 | `point` (RECURRENCE) | `occurred_at` temporal on `x`, the nominal dimension on `y`, **the amount only in `tooltip`** |
 | `donut` | measure in `theta`, dimension in `color`, and **no axes and no offsets at all** |
+| normalised `bar` (RATIO_SHARE) | `stack: "normalize"`, the measure on **one** axis, the nominal dimension in `color`, **no opposite axis and no offsets** — one composed bar whose parts are the dimension's values. An earlier version of this table omitted the row, and a verifier faithful to it refused the floor's own RATIO_SHARE chart, which would have made that family's baseline unmeasurable |
 | grouped comparison | series in `color` **and** the matching offset, with the measure declaring `stack: null` |
 
 **The RECURRENCE row is why "every chart needs a measure on an axis" would be wrong.** That family
@@ -285,7 +286,7 @@ same trap as "categorical sorts by value" against FREQUENCY.
 
 ### The type the model proposes must be the type the profile holds
 
-`valid_for()` checks that a charted field **exists**; it does not check that it kept its meaning. So
+`valid_for()` checks that a charted field **exists**; it does not check that it kept its meaning. **A sort field is a field**: `sort_field` and every encoding's `sort.field` must exist in the profile too — a sort naming an absent field reaches the presenter as a column the data does not have, and `merge_encoding_patch` already refuses exactly that on the user-patch path. So
 `{"field": "value_minor", "type": "nominal"}` or `{"field": "dimension", "type": "quantitative"}`
 would pass, compile, and draw a chart that is semantically false. The verifier requires equality:
 
@@ -365,10 +366,10 @@ The rule is stated **per field**, because the dimension and the series can need 
 
 | `field.order` | what it means | the verifier requires |
 | --- | --- | --- |
-| `MEASURE_DESC` | a breakdown or a ranking — magnitude is the point | `sort: "descending"` with `sort_field` naming the `measure` field |
+| `MEASURE_DESC` | a breakdown or a ranking — magnitude is the point | ranked by the measure; the floor draws descending; on the axis a holder's patch may flip it, off the axis it stays descending |
 | `INPUT` | a declared semantic order: weekdays, months, deliberate bands | `sort: "input"`. The model **may not** substitute alphabetical or quantitative order |
 | `TEMPORAL` | dates and periods | the temporal field orders it; an explicit `sort` on another field is refused |
-| `NONE` | ordering the axis does not apply — a donut, or the `point` family | no `sort` is required, and one that contradicts the mark is refused |
+| `NONE` | ordering the axis does not apply — a donut, or the `point` family | no `sort` is required, and one that contradicts the mark is refused. **The RECURRENCE dimension is `NONE`**: `visual_profile_of` derives it so (an earlier version gave it `INPUT`, which would have forced a `sort: "input"` the floor never emitted), and the floor's point chart carries no sort |
 
 `INPUT` is the row that earns the whole enum: FREQUENCY is nominal with `sort="input"` so that
 lunes precedes martes, and a blanket "categorical sorts by value" would have destroyed it.
@@ -468,6 +469,17 @@ And the earlier claim *"the response never degrades"* was too strong. The fallba
 planner failure does not remove the visualisation; **the attempt still costs latency**, because the
 budget is spent before the floor answers. That is why shadow comes first.
 
+**Hardened, 2026-09-11 (Task 2, Wave 3 hardening, A-4/A-5).** The code did not yet match this
+section's own table: `shadow` mode recorded a `fallback_reason` even though nothing had fallen back
+(the "In `shadow` it stays empty even though the floor was shown, because nothing fell back" rule
+above was the design's own correct statement, not yet the running code's behaviour), and
+`promoted`'s `changed_from_baseline` was always `None` regardless of whether the model's proposal
+differed from the floor. Both are now fixed to the table above: `VisualPlanningPolicy.decide` sets
+`fallback_reason=None` unconditionally when `self._mode == "shadow"`, and the floor is computed and
+compared in `promoted` mode too, so `changed_from_baseline` states a real fact rather than a
+constant `None`. The floor's own decline is not allowed to retract an already-accepted proposal —
+`promoted` still trusts its own eligibility guard once a proposal has passed it.
+
 ## Section F — what is recorded
 
 **Seven fields per turn**, hung off the decision record the observability work already built:
@@ -493,6 +505,14 @@ by re-running the model, which is a different run. Neither spec carries a value:
 mark, channels, fields, types, per-encoding order, stack and limit, and drops titles and encoding
 order.
 
+**In the code that landed (Task 5), these live on one value and one log line.** The seven fields and
+both canonical specs are carried on the in-process `VisualDecision` value — which is what
+`scripts/evaluate_visual.py` reads — and on one structured log line, `visual_planner.decision`,
+correlated to the turn by request and trace id. The `Decision` record itself carries the fixed
+four-slot summary (`field`, `was`, `now`, `detail`) that every seam records, because its shape is
+deliberately not widened per seam; the OTel span for `visual_planner` therefore carries the summary,
+not the seven fields.
+
 **`changed_from_baseline` compares canonicalised specs.** Reordering encodings or changing a title
 is not a different visual decision, and counting it as one would inflate the number that is supposed
 to prove the planner adds something.
@@ -504,6 +524,24 @@ figure that carries the argument is:
 
 > the share of cases where the model proposes a **valid and suitable** visualisation that differs
 > **semantically** from the baseline.
+
+**Hardened, 2026-09-11 (Task 4, Wave 3 hardening, U-7/U-8).** Two more gaps between this section's
+own contract and the running code, both closed. **The abstention contract:** `{"mark": null}` and
+nothing else is the one shape that means "no proposal" — but the port used to also read
+`{"mark": null, "limit": 3}` (or any other field set alongside a null mark) as the same clean
+abstention, when it is really a contradictory, invalid proposal. `_draft` now builds the
+contradictory shape into a real `VisualPlanDraft` and hands it to `verify()`, which refuses it
+through the existing `structure` rule — reusing `Rejection("structure", ...)` rather than inventing
+a fifth `FallbackReason`, so `fallback_reason` records `invalid_proposal:structure` for it, never a
+silent `None`. **Code errors logged as such:** the broad `except Exception` around the model call
+used to also catch a bug in the verifier itself, filing it under `fallback_reason="provider_error"`
+— the same words a genuine timeout or a down provider would produce, so a defect in this process's
+own code was indistinguishable from an external outage on every dashboard reading that field.
+`verify()` now runs outside that `except` entirely (a verifier bug propagates uncaught rather than
+being misreported), and the model-call exception path gains a new `VisualDecision.error_detail =
+"code_error:<ExcType>"` alongside the unchanged `fallback_reason`, logged at ERROR with the
+exception's type and traceback — the four `FallbackReason` values on the wire are unchanged; the
+new field is a diagnostic addition, not a fifth outcome.
 
 ## Section G — how it is measured
 
