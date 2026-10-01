@@ -52,6 +52,23 @@ describe("the classes a search offered", () => {
     expect(norte).toBeGreaterThan(sur);
   });
 
+  it("starts each row with its day when the classes span several days", () => {
+    const markup = html([
+      slot(),
+      slot({ start: "2026-10-02T18:30:00+02:00", free_places: 3 }),
+      slot({ start: "2026-10-04T09:00:00+02:00", free_places: 1 }),
+    ]);
+    expect(markup).toContain("<li>jue 1 · 18:30 · Spinning · Gimnasio Sur · 6 plazas</li>");
+    expect(markup).toContain("<li>vie 2 · 18:30 · Spinning · Gimnasio Sur · 3 plazas</li>");
+    expect(markup).toContain("<li>dom 4 · 09:00 · Spinning · Gimnasio Sur · 1 plaza</li>");
+  });
+
+  it("names no day when every class is on the same one", () => {
+    const markup = html([slot(), slot({ start: "2026-10-01T19:00:00+02:00" })]);
+    expect(markup).toContain("<li>18:30 · Spinning · Gimnasio Sur · 6 plazas</li>");
+    expect(markup).not.toContain("jue");
+  });
+
   it("shows the time in the slot's own offset, never the browser's", () => {
     expect(html([slot({ start: "2026-10-01T17:05:00+00:00" })])).toContain("17:05 · Spinning");
     expect(html([slot({ start: "2026-10-01T09:15:00Z" })])).toContain("09:15 · Spinning");
