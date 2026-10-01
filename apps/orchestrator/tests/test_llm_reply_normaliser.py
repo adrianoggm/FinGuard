@@ -246,3 +246,10 @@ async def test_a_booking_reply_is_read_only_when_completed() -> None:
     reply = AgentReply("INPUT_REQUIRED", "t1", "c1", (TextReplyPart("Está completa"),), 5)
     assert await _normaliser(provider).booking(SLOT, reply) is None
     assert provider.prompts == []
+
+
+def test_the_prompt_says_a_class_called_full_has_no_free_places() -> None:
+    """Ruling R21: «(completa)» is `freePlaces: 0`, which the verifier grounds by the word."""
+    prompt = availability_prompt(QUERY, REPLY)
+    outside = prompt[: prompt.index("<<<REPLY")]
+    assert "calls the session full" in outside and "0" in outside

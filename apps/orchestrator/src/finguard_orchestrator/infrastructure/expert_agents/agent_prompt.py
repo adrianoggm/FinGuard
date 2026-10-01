@@ -80,7 +80,8 @@ unsupportedRequest true.
 - start: "YYYY-MM-DDTHH:MM" when the reply states the session's date or its weekday (a weekday is \
 the matching day in the list above); "HH:MM" when it states only the time.
 - end: the same form, when the reply states an end, or a start and a duration; otherwise null.
-- freePlaces: the number of free places the reply states; otherwise null.
+- freePlaces: the number of free places the reply states; 0 when it calls the session full \
+(«completa», «agotada») with no number; otherwise null.
 - slotRef: the reply's own identifier for the session, copied exactly; otherwise null.
 
 unsupportedRequest is true only when the reply says this request cannot be served; otherwise \
