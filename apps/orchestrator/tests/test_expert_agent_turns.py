@@ -676,6 +676,11 @@ LINK = "http://127.0.0.1:9102/vincular?ref=abc"
             "Gimnasio Sur no ha confirmado la reserva.",
         ),
         (
+            lambda _: BookingOutcome("failed", sent=False),
+            "BOOKING_FAILED",
+            "No he podido contactar con Gimnasio Sur; no se ha enviado nada.",
+        ),
+        (
             lambda _: BookingOutcome("unknown"),
             "BOOKING_UNKNOWN",
             "No sé si la reserva se ha completado; consulta en Gimnasio Sur.",
@@ -689,6 +694,7 @@ LINK = "http://127.0.0.1:9102/vincular?ref=abc"
         "unsupported",
         "unavailable",
         "failed",
+        "not-sent",
         "unknown",
     ],
 )

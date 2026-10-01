@@ -257,6 +257,8 @@ def _sent(
             # a new search -- where the gym's own timetable says whether it is still free -- and
             # these offers can never mint a second message for it.
             after = replace(after, activity_offers=_without(after.activity_offers, pending.slot))
+        case "failed" if not outcome.sent:
+            text = activity_writer.booking_not_sent(name)
         case _:
             text = activity_writer.booking_failed(name)
     return QuestionResponse(

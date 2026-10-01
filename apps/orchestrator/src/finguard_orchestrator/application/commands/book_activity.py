@@ -15,7 +15,9 @@ attempted, anything that goes wrong -- the gateway's timeout, the agent's error,
 dropped with the request already out, the budget running out, the model failing to read a reply --
 is an unknown outcome: the gym may well have booked, and saying otherwise would invite the second
 booking this rule exists to prevent. Only what fails before the send (the listing, the card, no
-booking skill) and the gym's own refusal (`FAILED`, `REJECTED`, `CANCELED`) are plain failures.
+booking skill), the gateway refusing before it contacted the agent (`agent_unknown`,
+`agent_unusable`, `skill_unknown`, `unauthorised`: nothing left it, ruling R30) and the gym's own
+refusal (`FAILED`, `REJECTED`, `CANCELED`) are plain failures -- the first two `sent=False`.
 
 What an agent answers, and what it becomes:
 
@@ -109,17 +111,24 @@ _DAY_CLOSES: Final = time(23, 59)
 # it, to 23:00 on the last -- the gym's next session of a full class can be tomorrow's.
 _WEEK_DAYS: Final = 6
 _WEEK_CLOSES: Final = time(23, 0)
+# The gateway's codes for a refusal it gave before contacting the agent (ruling R30): an agent it
+# does not list or trust, a skill it does not know, a token it does not accept. Nothing left it.
+_REFUSED_BEFORE_SENDING: Final = frozenset(
+    {"agent_unknown", "agent_unusable", "skill_unknown", "unauthorised"}
+)
 
 
 @dataclass(frozen=True)
 class BookingOutcome:
     """What one sent booking came to. A receipt exactly when it was booked and alternatives
-    exactly when some were offered, so a turn can never say «Reserva hecha» with no code."""
+    exactly when some were offered, so a turn can never say «Reserva hecha» with no code.
+    `sent` is false only for a failure before anything reached the gym (ruling R30)."""
 
     kind: BookingOutcomeKind
     receipt: BookingReceipt | None = None
     alternatives: tuple[ActivitySlot, ...] = ()
     link: str | None = None
+    sent: bool = True
 
     def __post_init__(self) -> None:
         if (self.kind == "booked") != (self.receipt is not None):
@@ -128,9 +137,12 @@ class BookingOutcome:
             raise InvalidValueError("alternatives are offered exactly when there are some")
         if self.link is not None and self.kind != "link_required":
             raise InvalidValueError("only a gym asking for linking gives a link")
+        if not self.sent and self.kind != "failed":
+            raise InvalidValueError("only a failure can have sent nothing")
 
 
 _FAILED: Final = BookingOutcome("failed")
+_UNSENT: Final = BookingOutcome("failed", sent=False)
 
 
 @dataclass
@@ -207,17 +219,17 @@ class BookActivityHandler:
             listed = await self._agents.agents()
         except ExpertAgentsError as exc:
             logger.warning("expert_agents.booking_unlisted", extra={"code": exc.code})
-            return _FAILED
+            return _UNSENT
         agent = next((each for each in listed if each.id == agent_id and each.usable), None)
         if agent is None:
-            return _FAILED
+            return _UNSENT
         try:
             skills = await asyncio.wait_for(self._classifier.classify(agent), self._budget)
         except (ProviderFailedError, TimeoutError):
-            return _FAILED
+            return _UNSENT
         skill = skills.get(Capability.BOOKING)
         if skill is None:
-            return _FAILED
+            return _UNSENT
         outbound = self._outbound(pending.slot, caller)
         zone = ZoneInfo(caller.reporting_timezone)
         # From here on the booking may have happened, whatever is raised: unknown, never re-sent --
@@ -229,6 +241,15 @@ class BookActivityHandler:
                 self._exchange(agent, skill, pending, outbound, zone, answered), self._budget
             )
         except Exception as exc:  # every failure after the send is one fact, read by the state
+            if (
+                answered.state is None
+                and isinstance(exc, ExpertAgentsError)
+                and exc.code in _REFUSED_BEFORE_SENDING
+            ):
+                logger.warning(
+                    "expert_agents.booking_refused", extra={"agent": agent_id, "code": exc.code}
+                )
+                return _UNSENT
             paused = answered.state == "INPUT_REQUIRED"
             logger.warning(
                 "expert_agents.booking_unread" if paused else "expert_agents.booking_unknown",
