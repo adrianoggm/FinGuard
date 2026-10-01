@@ -1266,3 +1266,18 @@ async def test_alternatives_after_a_booking_keep_every_name_the_offers_had() -> 
     )
 
     assert again is not None and again.outcome == "BOOKING_NOT_OFFERED"
+
+
+async def test_a_booked_class_is_no_longer_offered() -> None:
+    """Ruling R30: like a booking whose outcome is unknown (R17), a booked class leaves the sealed
+    offers -- «apúntame a la de las 18:30» again must not mint a second booking for it."""
+    bookings = FakeBookings()
+    done = await reply("sí", who=BOOKER, was=pending(), bookings=bookings)
+    assert done is not None and done.outcome == "BOOKED"
+
+    after = verified_echo(done)
+    assert after.activity_offers is not None and SUR_1830 not in after.activity_offers.slots
+    again = await reply("apúntame a la de las 18:30", who=BOOKER, was=after, bookings=bookings)
+
+    assert again is not None and again.outcome == "BOOKING_NOT_OFFERED"
+    assert bookings.confirmed == [PENDING] and bookings.gateway.sent == []
