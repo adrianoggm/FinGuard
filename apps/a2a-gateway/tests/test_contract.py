@@ -1,4 +1,5 @@
 import httpx
+import pytest
 from a2a.types import AgentInterface
 from fakes import (
     AUTH,
@@ -17,6 +18,11 @@ from fakes import (
 )
 from fastapi import FastAPI
 from google.protobuf.json_format import MessageToDict
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+from finguard_a2a import bootstrap
 
 ENV = {"A2A_GATEWAY_CREDENTIAL_GYM_NORTE": "k1", "A2A_GATEWAY_CREDENTIAL_GYM_SUR": "t1"}
 BODY = {"skillId": "timetable", "messageId": "m-1", "text": "Free on Monday?", "data": {"day": 1}}
@@ -189,3 +195,26 @@ async def test_the_credential_goes_only_to_an_interface_on_the_registered_host()
     assert response.status_code == 200, response.text
     assert norte.headers[-1]["x-api-key"] == "k1"
     assert elsewhere.headers == []
+
+
+async def test_dropped_file_parts_are_counted_in_the_reply_and_its_span(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Spec §4.3, ruling R30: `file` parts are dropped and counted -- the orchestrator and the
+    trace both see that the agent said more than FinGuard reads."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(bootstrap, "_tracer", lambda _settings: provider.get_tracer("test"))
+    script = reply_with(artifact=[{"text": "first"}, {"raw": 1}, {"url": "http://x/y"}])
+    app = gateway_for({"gym-norte": data_agent(Recorder(), script=script)}, ENV)
+
+    response = await _client(app).post("/v1/agents/gym-norte/messages", json=BODY, headers=AUTH)
+
+    assert response.json()["droppedParts"] == 2
+    [span] = [s for s in exporter.get_finished_spans() if s.name == "a2a.send"]
+    assert span.attributes is not None and span.attributes["dropped_parts"] == 2
+    plain = await _client(gateway_for({"gym-norte": data_agent(Recorder())}, ENV)).post(
+        "/v1/agents/gym-norte/messages", json=BODY, headers=AUTH
+    )
+    assert plain.json()["droppedParts"] == 0

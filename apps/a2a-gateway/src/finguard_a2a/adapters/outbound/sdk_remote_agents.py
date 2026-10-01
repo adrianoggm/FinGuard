@@ -140,8 +140,8 @@ class SdkRemoteAgents:
         payload = response.WhichOneof("payload")
         if payload == "message":
             message = response.message
-            parts = self._parts(list(message.parts))
-            return RemoteReply("COMPLETED", None, message.context_id or None, parts)
+            parts, dropped = self._parts(list(message.parts))
+            return RemoteReply("COMPLETED", None, message.context_id or None, parts, dropped)
         if payload != "task":
             raise RemoteError("reply_invalid")
         task = response.task
@@ -150,11 +150,13 @@ class SdkRemoteAgents:
             raise RemoteError("reply_invalid")
         raw: list[Part] = [p for artifact in task.artifacts for p in artifact.parts]
         raw.extend(task.status.message.parts)
-        return RemoteReply(state, task.id or None, task.context_id or None, self._parts(raw))
+        parts, dropped = self._parts(raw)
+        return RemoteReply(state, task.id or None, task.context_id or None, parts, dropped)
 
-    def _parts(self, raw: list[Part]) -> tuple[dict[str, object], ...]:
+    def _parts(self, raw: list[Part]) -> tuple[tuple[dict[str, object], ...], int]:
+        """The text and data parts, and how many others -- `file` parts -- were dropped."""
         parts: list[dict[str, object]] = []
-        text_bytes = data_bytes = 0
+        text_bytes = data_bytes = dropped = 0
         for part in raw:
             kind = part.WhichOneof("content")
             if kind == "text":
@@ -164,9 +166,11 @@ class SdkRemoteAgents:
                 data = _plain(MessageToDict(part.data))
                 data_bytes += len(json.dumps(data).encode())
                 parts.append({"kind": "data", "data": data})
+            else:
+                dropped += 1
         if text_bytes > self._max_text or data_bytes > self._max_data:
             raise RemoteError("reply_too_large")
-        return tuple(parts)
+        return tuple(parts), dropped
 
 
 def _accepts_json(card: AgentCard, skill_id: str) -> bool:

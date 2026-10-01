@@ -57,6 +57,8 @@ class ReplyView(_Wire):
     task_id: str | None
     context_id: str | None
     parts: list[dict[str, object]]
+    # `file` parts the agent sent, which are not passed on (spec §4.3).
+    dropped_parts: int
     latency_ms: int
 
 
@@ -176,6 +178,7 @@ async def _send(services: Services, agent_id: str, body: MessageIn) -> ReplyView
             raise _RefusedError(_ERROR_STATUS[error.code], error.code) from error
         latency = int((time.monotonic() - started) * 1000)
         span.set_attribute("state", reply.state)
+        span.set_attribute("dropped_parts", reply.dropped_parts)
         span.set_attribute("latency_ms", latency)
     return ReplyView.model_validate(
         {
@@ -183,6 +186,7 @@ async def _send(services: Services, agent_id: str, body: MessageIn) -> ReplyView
             "task_id": reply.task_id,
             "context_id": reply.context_id,
             "parts": list(reply.parts),
+            "dropped_parts": reply.dropped_parts,
             "latency_ms": latency,
         }
     )
