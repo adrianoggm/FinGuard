@@ -567,6 +567,42 @@ async def test_a_booking_without_the_capability_or_the_scope_says_so() -> None:
     assert bookings.sent_nothing
 
 
+@pytest.mark.parametrize("suspended", [True, False], ids=["paused", "under-way"])
+async def test_a_preview_never_drops_a_payment_under_way(suspended: bool) -> None:
+    """Ruling R18: one workflow is active at a time, and a preview would replace a half-built
+    Bizum without a word. So the preview is not made: the turn names the payment and how to
+    finish or drop it, and leaves it set aside -- as a search would -- with the offers intact."""
+    bookings = FakeBookings()
+    paying = PaymentInProgress(draft=PaymentDraft(recipient_name="Marta"), suspended=suspended)
+    was = offering().with_active(paying)
+
+    answer = await reply("apúntame a la de las 18:30", who=BOOKER, was=was, bookings=bookings)
+
+    assert answer is not None
+    assert (answer.outcome, answer.text) == (
+        "BOOKING_PAYMENT_PAUSED",
+        "Antes de reservar, termina o descarta el pago que tienes a medias. El Bizum a Marta "
+        "está pausado. Para retomarlo, escribe «continuar con el Bizum»; para descartarlo, "
+        "responde «no».",
+    )
+    after = conversation_mapper.to_domain(answer.conversation)
+    assert isinstance(after.active, PaymentInProgress) and after.active.suspended
+    assert after.active.draft == paying.draft
+    assert after.activity_offers is not None and after.activity_offers.slots == OFFERS.slots
+    assert bookings.sent_nothing
+
+
+async def test_a_payment_under_way_does_not_stop_a_question_the_offers_answer() -> None:
+    """Only a preview would replace the payment; a question back leaves everything as it was."""
+    paying = PaymentInProgress(draft=PaymentDraft(recipient_name="Marta"), suspended=True)
+    was = offering(AT_SEVEN).with_active(paying)
+
+    answer = await reply("apúntame a la de las 19:00", was=was, bookings=FakeBookings())
+
+    assert answer is not None and answer.outcome == "BOOKING_AMBIGUOUS"
+    assert answer.conversation == conversation_mapper.to_payload(was)
+
+
 # --- the yes, on screen only ---------------------------------------------------------------------
 
 
@@ -674,6 +710,66 @@ async def test_a_gym_asking_for_linking_leaves_a_notice_with_its_link() -> None:
     assert [notice.model_dump() for notice in answer.agent_notices] == [
         {"agent_name": "Gimnasio Sur", "kind": "link_required", "link": LINK}
     ]
+
+
+def verified_echo(answer: QuestionResponse) -> Conversation:
+    """The conversation an answer left, as the next turn's `_conversation_of` reads it back."""
+    assert answer.conversation is not None
+    echoed = answer.conversation.model_validate(answer.conversation.model_dump(mode="json"))
+    return conversation_mapper.to_domain(
+        echoed,
+        verify_offers=lambda token, conversation_id, semantics: CODEC.verify_offers(
+            token, HOLDER, conversation_id, semantics
+        ),
+    )
+
+
+async def test_a_booking_whose_outcome_is_unknown_is_no_longer_offered() -> None:
+    """Ruling R17: after «no sé si la reserva se ha completado», that class leaves the sealed
+    offers, so booking it again takes a new search -- where the gym's own timetable says whether
+    it is still free -- and these offers can never mint a second message for it."""
+    bookings = FakeBookings(lambda _: BookingOutcome("unknown"))
+    unknown = await reply("sí", who=BOOKER, was=pending(), bookings=bookings)
+    assert unknown is not None and unknown.outcome == "BOOKING_UNKNOWN"
+
+    after = verified_echo(unknown)
+
+    assert after.activity_offers is not None and after.activity_offers.trusted
+    assert after.activity_offers.slots == (NORTE_1900,)
+    assert after.activity_offers.agent_names == (("gym-norte", "Gimnasio Norte"),)
+    assert after.activity_offers.contexts == (("gym-norte", "ctx-norte"),)
+    again = await reply("apúntame a la de las 18:30", who=BOOKER, was=after, bookings=bookings)
+    assert again is not None and again.outcome == "BOOKING_NOT_OFFERED"
+    assert bookings.confirmed == [PENDING] and bookings.gateway.sent == []
+
+
+async def test_the_last_offer_gone_unknown_leaves_a_search_to_ask_for() -> None:
+    alone = ActivityOffers((SUR_1830,), (("gym-sur", "Gimnasio Sur"),), (("gym-sur", "ctx-sur"),))
+    bookings = FakeBookings(lambda _: BookingOutcome("unknown"))
+    unknown = await reply("sí", who=BOOKER, was=pending(offers=alone), bookings=bookings)
+    assert unknown is not None and unknown.conversation is not None
+    assert unknown.conversation.activity_offers is None
+
+    again = await reply(
+        "apúntame a la de las 18:30", who=BOOKER, was=verified_echo(unknown), bookings=bookings
+    )
+
+    assert again is not None and again.outcome == "BOOKING_SEARCH_AGAIN"
+    assert bookings.confirmed == [PENDING]
+
+
+async def test_a_gym_that_said_no_leaves_its_class_offered() -> None:
+    """`failed` is only the gym's own refusal (or a failure before anything was sent): the class
+    is still there to be asked for, as the search found it."""
+    bookings = FakeBookings(lambda _: BookingOutcome("failed"))
+    failed = await reply("sí", who=BOOKER, was=pending(), bookings=bookings)
+    assert failed is not None and failed.outcome == "BOOKING_FAILED"
+
+    after = verified_echo(failed)
+    again = await reply("apúntame a la de las 18:30", who=BOOKER, was=after, bookings=bookings)
+
+    assert after.activity_offers is not None and after.activity_offers.slots == OFFERS.slots
+    assert again is not None and again.outcome == "BOOKING_AWAITING_CONFIRMATION"
 
 
 async def test_a_yes_by_voice_is_sent_to_the_screen() -> None:  # §14 A10

@@ -18,7 +18,7 @@ this one runs in a second.
 What each turn may say:
 
     route        which of the thirteen handled it. The whole point of the file
-    says         a phrase the answer must contain
+    says         a phrase the answer must contain, or a list of them that all must
     not_says     a phrase it must not
     keeps        a workflow that has to still be open afterwards
     ends         nothing is left open
@@ -30,6 +30,7 @@ And what a whole episode may say:
 
     metrics      the ones this episode is meant to exercise, so a run can report per feature
     scope        which of the holder's accounts this conversation is already about
+    agents       the gyms an A2A gateway lists (`CANNED_GYMS`); without it there is no gateway
 
 **The stack is the deployment's, and `scope` is what made that affordable.** Production wires an
 `AccountDirectory` and therefore asks «¿En qué cuenta quieres consultarlo?» before answering any
@@ -45,11 +46,12 @@ import json
 import re
 import uuid
 from calendar import monthrange
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import yaml
 from fastapi.testclient import TestClient
@@ -63,6 +65,7 @@ from finguard_orchestrator.application import (
     PreparePaymentCommand,
     QueryBus,
 )
+from finguard_orchestrator.application.commands.book_activity import BookActivityHandler
 from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,
@@ -82,6 +85,7 @@ from finguard_orchestrator.application.queries.readers import (
     rankings,
     subjects,
 )
+from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
 from finguard_orchestrator.bootstrap.dependencies import (
     authenticated_caller,
     get_ask_handler,
@@ -106,6 +110,21 @@ from finguard_orchestrator.domain.errors import (
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.expert_agents import (
+    ActivityQuery,
+    ActivitySlot,
+    AgentReply,
+    AgentSkill,
+    AvailabilityDraft,
+    BookingDraft,
+    Capability,
+    DataReplyPart,
+    ExpertAgent,
+    ExpertAgentsError,
+    Outbound,
+    SlotDraft,
+    TextReplyPart,
+)
 from finguard_orchestrator.domain.models.payment_reading import PaymentReading
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
 from finguard_orchestrator.domain.models.planning_context import PlanningContext
@@ -194,6 +213,7 @@ QUERY = "QUERY"
 CLARIFY = "CLARIFY"
 REFUSED = "REFUSED"
 VISUAL = "VISUAL"
+AGENTS = "AGENTS"
 
 _SPOKEN = {
     "BALANCE": BALANCE,
@@ -213,6 +233,34 @@ _PAYMENT_OUTCOMES = {
     PaymentOutcome.CANCELLED.value,
     PaymentOutcome.REFUSED.value,
     PaymentOutcome.BANKING_UNAVAILABLE.value,
+}
+# The expert agents' outcomes (spec §5, `infrastructure/controllers/expert_agent_turns.py`), every
+# one of them: a search, a booking's two turns and each way either can end. One route, because the
+# turn reached the gyms -- or was refused on the way there -- and nothing financial answered it.
+# Named in full for the reason `_VISUAL_OUTCOMES` is: an outcome missing here falls through
+# `tool_of` and is silently counted as a query.
+_AGENT_OUTCOMES = {
+    "ACTIVITIES_FOUND",
+    "ACTIVITIES_NONE",
+    "ACTIVITY_UNCLEAR",
+    "AGENTS_UNAVAILABLE",
+    "EXPERT_AGENTS_OFF",
+    "EXPERT_AGENTS_FORBIDDEN",
+    "BOOKED",
+    "BOOKING_ALTERNATIVES",
+    "BOOKING_AMBIGUOUS",
+    "BOOKING_AWAITING_CONFIRMATION",
+    "BOOKING_CANCELLED",
+    "BOOKING_FAILED",
+    "BOOKING_LINK_REQUIRED",
+    "BOOKING_NOT_OFFERED",
+    "BOOKING_ON_SCREEN",
+    "BOOKING_PAYMENT_PAUSED",
+    "BOOKING_SEARCH_AGAIN",
+    "BOOKING_STARTED",
+    "BOOKING_UNCLEAR",
+    "BOOKING_UNKNOWN",
+    "BOOKING_UNSUPPORTED",
 }
 # The visual outcomes, checked before the `QUERY` fallthrough below -- without this, a
 # `VISUAL_UPDATED` answer fell through unrecognised and was silently counted as a query, exactly
@@ -279,6 +327,8 @@ def tool_of(answer: dict[str, Any]) -> str:
         return _SPOKEN[outcome]
     if outcome in _PAYMENT_OUTCOMES:
         return PAYMENT
+    if outcome in _AGENT_OUTCOMES:
+        return AGENTS
     if outcome == PlanningOutcome.UNSUPPORTED.value:
         return REFUSED
     if outcome == PlanningOutcome.NEEDS_CLARIFICATION.value:
@@ -698,19 +748,270 @@ class Reader:
         )
 
 
+# --- expert agents (A2A) ---------------------------------------------------------------------
+#
+# The gateway and the model that reads what it brings back, as doubles at their ports
+# (`ExpertAgentsPort`, `SkillClassifierPort`, `ReplyNormaliserPort`). Everything between them is the
+# real thing: the predicate that claims a sentence before the financial path, the search fan-out,
+# the verifier, the sealed offers, the booking's two turns and the confirmation reader the payments
+# use. The doubles stop at the ports for the reason `Bank` does -- the code that decides what a
+# reply is worth is the code an episode is about.
+#
+# What each gym answers is canned, and so is what "the model" reads out of each answer. But the
+# reading is a draft, and the real verifier still grounds every value of it in the canned reply:
+# a draft naming a time, a place count or a reference the reply does not state is rejected here
+# exactly as it would be in a deployment. The gyms speak the way `apps/simulated-gym-agent` does --
+# norte in data parts of its own vocabulary, sur in Spanish text -- and both have already linked
+# the holder, so the episodes are about the conversation rather than the linking page.
+
+_MADRID = ZoneInfo("Europe/Madrid")
+# Wednesday 5 August 2026 at 10:00 in Madrid -- `TODAY`, so «el jueves» is Thursday the 6th.
+AGENTS_NOW = datetime(2026, 8, 5, 10, 0, tzinfo=_MADRID)
+_THURSDAY = "2026-08-06"
+
+
+def _norte_session(start: str, places: int) -> dict[str, object]:
+    return {
+        "clase": "Spinning",
+        "fecha": _THURSDAY,
+        "hora_inicio": start,
+        "duracion_min": 45,
+        "huecos": places,
+        "ref": f"N-0806-{start.replace(':', '')}",
+    }
+
+
+def _norte_slot(start: str, end: str, places: int) -> SlotDraft:
+    """What a model reads out of `_norte_session`: the date it states, the end from its length."""
+    reference = f"N-0806-{start.replace(':', '')}"
+    return SlotDraft("Spinning", f"{_THURSDAY}T{start}", f"{_THURSDAY}T{end}", places, reference)
+
+
+def _reply(task: str, state: str, *parts: TextReplyPart | DataReplyPart) -> AgentReply:
+    return AgentReply(state, task, f"ctx-{task.split('-')[0]}", parts, 40)  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True)
+class CannedGym:
+    """One gym as the gateway lists it, what its card's skills are read as, and what it answers.
+
+    `answers` is keyed by what was asked -- `availability`, or `booking HH:MM` for the class at that
+    time -- and holds the reply with the draft a model reads out of it.
+    """
+
+    agent: ExpertAgent
+    skills: Mapping[Capability, str]
+    answers: Mapping[str, tuple[AgentReply, AvailabilityDraft | BookingDraft]]
+
+
+CANNED_GYMS: dict[str, CannedGym] = {
+    "gym-norte": CannedGym(
+        ExpertAgent(
+            "gym-norte",
+            "Gimnasio Norte",
+            True,
+            None,
+            "sha256:corpus-gym-norte",
+            ("gym-norte:8000", "127.0.0.1:9101"),
+            (
+                AgentSkill("timetable", "Horario de clases", "Clases por actividad y fecha."),
+                AgentSkill("reserve", "Reservar plaza", "Reserva una plaza para un socio."),
+            ),
+        ),
+        {Capability.AVAILABILITY: "timetable", Capability.BOOKING: "reserve"},
+        {
+            "availability": (
+                _reply(
+                    "norte-timetable",
+                    "COMPLETED",
+                    DataReplyPart(
+                        {"sesiones": [_norte_session("19:00", 4), _norte_session("20:00", 0)]}
+                    ),
+                ),
+                AvailabilityDraft(
+                    (_norte_slot("19:00", "19:45", 4), _norte_slot("20:00", "20:45", 0))
+                ),
+            ),
+            # The full class: the booking pauses and offers the next one instead.
+            "booking 20:00": (
+                _reply(
+                    "norte-full",
+                    "INPUT_REQUIRED",
+                    DataReplyPart({"alternativas": [_norte_session("21:00", 3)]}),
+                ),
+                AvailabilityDraft((_norte_slot("21:00", "21:45", 3),)),
+            ),
+            "booking 21:00": (
+                _reply(
+                    "norte-booked",
+                    "COMPLETED",
+                    DataReplyPart(
+                        {
+                            "reserva": {
+                                "codigo": "NT-4821",
+                                "ref": "N-0806-2100",
+                                "clase": "Spinning",
+                                "fecha": _THURSDAY,
+                                "hora_inicio": "21:00",
+                            }
+                        }
+                    ),
+                ),
+                BookingDraft(True, "NT-4821", f"{_THURSDAY}T21:00", "Spinning", "N-0806-2100"),
+            ),
+        },
+    ),
+    "gym-sur": CannedGym(
+        ExpertAgent(
+            "gym-sur",
+            "Gimnasio Sur",
+            True,
+            None,
+            "sha256:corpus-gym-sur",
+            ("gym-sur:8000", "127.0.0.1:9102"),
+            (
+                AgentSkill("classes", "Clases del centro", "Qué clases hay y cuántas plazas."),
+                AgentSkill("book", "Apuntarse a una clase", "Apunta a un socio a una clase."),
+            ),
+        ),
+        {Capability.AVAILABILITY: "classes", Capability.BOOKING: "book"},
+        {
+            "availability": (
+                _reply(
+                    "sur-classes",
+                    "COMPLETED",
+                    TextReplyPart(
+                        "Spinning el jueves a las 18:30 (quedan 6 plazas) y a las 20:00 "
+                        "(quedan 2 plazas)."
+                    ),
+                ),
+                AvailabilityDraft(
+                    (
+                        SlotDraft("Spinning", "18:30", None, 6, None),
+                        SlotDraft("Spinning", "20:00", None, 2, None),
+                    )
+                ),
+            ),
+            "booking 18:30": (
+                _reply(
+                    "sur-booked",
+                    "COMPLETED",
+                    TextReplyPart(
+                        "Listo: te he apuntado a la clase de spinning del jueves 6 de agosto "
+                        "a las 18:30. Código SUR-7731."
+                    ),
+                ),
+                BookingDraft(True, "SUR-7731", f"{_THURSDAY}T18:30", "spinning", None),
+            ),
+        },
+    ),
+    # The non-compliant one: listed, refused by the gateway's gate, never asked (§4.1).
+    "gym-legacy": CannedGym(
+        ExpertAgent(
+            "gym-legacy",
+            "Gimnasio Antiguo",
+            False,
+            "version_unsupported",
+            "sha256:corpus-gym-legacy",
+            ("gym-legacy:8000",),
+            (),
+        ),
+        {},
+        {},
+    ),
+}
+_DRAFTS: dict[str, AvailabilityDraft | BookingDraft] = {
+    reply.task_id: draft
+    for gym in CANNED_GYMS.values()
+    for reply, draft in gym.answers.values()
+    if reply.task_id is not None
+}
+
+
+def _asked(outbound: Outbound) -> str:
+    """What a message asks, in `CannedGym.answers`' keys: read off the data part the template
+    fills, so a booking is told apart by the class it names and nothing else."""
+    request = str(outbound.data.get("request"))
+    if request == "booking":
+        return f"booking {datetime.fromisoformat(str(outbound.data['at'])):%H:%M}"
+    return request
+
+
+class Gyms:
+    """`ExpertAgentsPort`: the gateway, listing the declared gyms and answering from their canned
+    replies. Every send is recorded, so an episode's booking can be seen to have been sent once."""
+
+    def __init__(self, ids: tuple[str, ...]) -> None:
+        self._gyms = {agent_id: CANNED_GYMS[agent_id] for agent_id in ids}
+        self.sent: list[tuple[str, str, str]] = []
+
+    async def agents(self) -> tuple[ExpertAgent, ...]:
+        return tuple(gym.agent for gym in self._gyms.values())
+
+    async def send(
+        self,
+        agent_id: str,
+        *,
+        skill_id: str,
+        message_id: str,
+        outbound: Outbound,
+        context_id: str | None,
+    ) -> AgentReply:
+        asked = _asked(outbound)
+        self.sent.append((agent_id, skill_id, asked))
+        answer = self._gyms[agent_id].answers.get(asked)
+        if answer is None:
+            # A request nobody canned is a gym that did not answer, never a guessed reply.
+            raise ExpertAgentsError("agent_error")
+        return answer[0]
+
+
+class CardReader:
+    """`SkillClassifierPort`: what a model reads off each card, canned."""
+
+    async def classify(self, agent: ExpertAgent) -> Mapping[Capability, str]:
+        return CANNED_GYMS[agent.id].skills
+
+
+class ReplyReader:
+    """`ReplyNormaliserPort`: the draft a model reads out of each canned reply. A draft, so the
+    real verifier still decides whether any of it was in the reply."""
+
+    async def availability(
+        self, query: ActivityQuery, reply: AgentReply
+    ) -> AvailabilityDraft | None:
+        draft = _DRAFTS.get(reply.task_id or "")
+        return draft if isinstance(draft, AvailabilityDraft) else None
+
+    async def booking(self, slot: ActivitySlot, reply: AgentReply) -> BookingDraft | None:
+        draft = _DRAFTS.get(reply.task_id or "")
+        return draft if isinstance(draft, BookingDraft) else None
+
+
+def _agents_clock(zone: ZoneInfo) -> datetime:
+    return AGENTS_NOW.astimezone(zone)
+
+
 @dataclass
 class Stack:
     client: TestClient
     planner: AnyPlan
     ledger: Ledger
     bank: Bank
+    # The gateway double, when the episode declared `agents:`; `None` is no gateway at all.
+    gyms: Gyms | None = None
 
 
-def a_stack(*, directory: bool = True) -> Stack:
+def a_stack(*, directory: bool = True, agents: tuple[str, ...] = ()) -> Stack:
     """The service, wired as a deployment wires it.
 
     `directory=False` is the shape every episode used to run in, and it is now only reached by the
     episodes that declare `scope: legacy` — see `opening`.
+
+    `agents` are the gyms of `CANNED_GYMS` the gateway lists, for an episode that declares them;
+    none is a deployment with no gateway configured, where the capability does not exist (§3.2).
+    Set on every stack, because `app.state` outlives it: an episode without agents must not find
+    the last one's gateway still wired.
     """
     planner, ledger, bank = AnyPlan(), Ledger(), Bank()
     handler = AskFinancialQuestionHandler(
@@ -742,14 +1043,38 @@ def a_stack(*, directory: bool = True) -> Stack:
     app.dependency_overrides[get_ask_handler] = lambda: handler
     app.dependency_overrides[get_command_bus] = lambda: commands
     app.dependency_overrides[reporting_today] = lambda: TODAY
+    scopes = {Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE, Scope.PAYMENTS_CONFIRM}
+    gyms = Gyms(agents) if agents else None
+    if gyms is not None:
+        # The web demo token's two agent scopes (§14 A4), only where there is a gateway to use.
+        scopes |= {Scope.AGENTS_ASK, Scope.AGENTS_BOOK}
+        app.state.expert_searches = SearchActivitiesHandler(
+            gyms,
+            CardReader(),
+            ReplyReader(),
+            pairwise_key=b"corpus-pairwise-key",
+            budget_seconds=5.0,
+            clock=_agents_clock,
+        )
+        app.state.expert_bookings = BookActivityHandler(
+            gyms,
+            CardReader(),
+            ReplyReader(),
+            pairwise_key=b"corpus-pairwise-key",
+            budget_seconds=5.0,
+            clock=_agents_clock,
+        )
+    else:
+        app.state.expert_searches = None
+        app.state.expert_bookings = None
     app.dependency_overrides[authenticated_caller] = lambda: Caller(
         holder_reference="ES-0001",
         account_id=ACCOUNT,
-        scopes=frozenset({Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE, Scope.PAYMENTS_CONFIRM}),
+        scopes=frozenset(scopes),
     )
     app.state.questions_enabled = True
     app.state.payments_enabled = True
-    return Stack(TestClient(app), planner, ledger, bank)
+    return Stack(TestClient(app), planner, ledger, bank, gyms)
 
 
 # --- which accounts a conversation is about ------------------------------------------------
@@ -784,7 +1109,8 @@ SCOPES = (SETTLED, UNSET, LEGACY)
 class Turn:
     say: str
     route: str | None = None
-    says: str | None = None
+    # One phrase, or several that must all appear: a search answered by two gyms names both.
+    says: str | list[str] | None = None
     not_says: str | None = None
     keeps: str | None = None
     ends: bool = False
@@ -899,6 +1225,9 @@ class Episode:
     metrics: tuple[str, ...] = ()
     # Which of the holder's accounts this conversation is already about, once, for the episode.
     scope: str = SETTLED
+    # The gyms the A2A gateway lists, from `CANNED_GYMS`. None is a deployment with no gateway,
+    # which is every episode written before the expert agents existed.
+    agents: tuple[str, ...] = ()
 
 
 def opening(episode: Episode) -> dict[str, Any] | None:
@@ -920,8 +1249,9 @@ def opening(episode: Episode) -> dict[str, Any] | None:
 
 
 def a_stack_for(episode: Episode) -> Stack:
-    """The stack this episode replays in. Only `scope: legacy` gets one without a directory."""
-    return a_stack(directory=_scope_of(episode) != LEGACY)
+    """The stack this episode replays in. Only `scope: legacy` gets one without a directory, and
+    only an episode declaring `agents:` gets a gateway."""
+    return a_stack(directory=_scope_of(episode) != LEGACY, agents=episode.agents)
 
 
 def _scope_of(episode: Episode) -> str:
@@ -992,6 +1322,7 @@ def load() -> list[Episode]:
                     why=raw.get("why", ""),
                     metrics=tuple(raw.get("metrics", ())),
                     scope=raw.get("scope", SETTLED),
+                    agents=tuple(raw.get("agents", ())),
                     turns=tuple(Turn(**{**turn, "say": str(turn["say"])}) for turn in raw["turns"]),
                 )
             )
@@ -1361,8 +1692,9 @@ def _complaints(
         yield f"{turn.route} was the right place, {tool} answered"
     if turn.no_model and reached_model:
         yield "it reached the model, and this turn is answered from a vocabulary"
-    if turn.says and turn.says.lower() not in text.lower():
-        yield f"the answer does not say {turn.says!r}: {text[:90]!r}"
+    for phrase in [turn.says] if isinstance(turn.says, str) else turn.says or []:
+        if phrase.lower() not in text.lower():
+            yield f"the answer does not say {phrase!r}: {text[:90]!r}"
     if turn.not_says and turn.not_says.lower() in text.lower():
         yield f"the answer says {turn.not_says!r}, and must not"
     if turn.keeps and workflow != turn.keeps:

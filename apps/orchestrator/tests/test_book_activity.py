@@ -185,7 +185,10 @@ class FakeNormaliser:
     def __init__(
         self,
         booking: BookingDraft | None | BaseException = BOOKED_DRAFT,
-        availability: AvailabilityDraft | None = ALTERNATIVES_DRAFT,
+        availability: AvailabilityDraft
+        | None
+        | BaseException
+        | Callable[[], Awaitable[AvailabilityDraft]] = ALTERNATIVES_DRAFT,
     ) -> None:
         self.booked = booking
         self.available = availability
@@ -196,6 +199,10 @@ class FakeNormaliser:
         self, query: ActivityQuery, reply: AgentReply
     ) -> AvailabilityDraft | None:
         self.queries.append(query)
+        if isinstance(self.available, BaseException):
+            raise self.available
+        if callable(self.available):
+            return await self.available()
         return self.available
 
     async def booking(self, slot: ActivitySlot, reply: AgentReply) -> BookingDraft | None:
@@ -349,12 +356,29 @@ async def test_confirm_outcomes() -> None:
         "booked", receipt=BookingReceipt("gym-norte", NORTE_1900, "NT-4821")
     )
 
-    forged = FakeNormaliser(booking=BookingDraft(True, "NT-9999", "2026-10-01T19:00", "Spinning"))
-    assert (await handler(normaliser=forged).confirm(PENDING, CALLER)).kind == "failed"
-    declined = FakeNormaliser(booking=BookingDraft(False))
-    assert (await handler(normaliser=declined).confirm(PENDING, CALLER)).kind == "failed"
+    # Ruling R17: a COMPLETED task that yields no verified receipt is unknown -- the gym completed
+    # something and FinGuard cannot prove what -- whether the draft is refused or reads «not
+    # booked». Each is still one send.
+    for draft in (
+        BookingDraft(True, "NT-9999", "2026-10-01T19:00", "Spinning"),  # a code the reply lacks
+        BookingDraft(True, "NT-4821", "2026-10-01T20:00", "Spinning"),  # another class
+        BookingDraft(False),
+    ):
+        agents = FakeAgents()
+        outcome = await handler(agents, normaliser=FakeNormaliser(booking=draft)).confirm(
+            PENDING, CALLER
+        )
+        assert outcome == BookingOutcome("unknown"), draft
+        assert len(agents.sent) == 1
+
+    # Fix round 1, item 2: the model not reading a COMPLETED reply is a failure to read, after the
+    # send, not the gym's refusal -- it may have booked.
+    unread_agents = FakeAgents()
     unread = FakeNormaliser(booking=None)
-    assert (await handler(normaliser=unread).confirm(PENDING, CALLER)).kind == "failed"
+    assert await handler(unread_agents, normaliser=unread).confirm(
+        PENDING, CALLER
+    ) == BookingOutcome("unknown")
+    assert len(unread_agents.sent) == 1
 
     for state in ("FAILED", "REJECTED", "CANCELED"):
         failed = await handler(FakeAgents(reply(state, TextReplyPart("No.")))).confirm(
@@ -508,6 +532,25 @@ async def test_a_reply_that_cannot_be_read_after_the_send_is_unknown() -> None:
         "unknown"
     )
     assert len(agents.sent) == 1
+
+
+async def test_an_alternative_that_cannot_be_read_is_not_an_unknown_booking() -> None:
+    """Ruling R18: an INPUT_REQUIRED reply already says nothing was booked, so failing to read
+    what it offers -- the model failing, or the budget running out while it reads -- is the gym
+    asking for something FinGuard cannot give, not a booking that may have happened."""
+
+    async def slow() -> AvailabilityDraft:
+        await asyncio.sleep(5)
+        return ALTERNATIVES_DRAFT
+
+    for availability, budget in ((ProviderFailedError("echo", "down"), 5.0), (slow, 0.05)):
+        agents = FakeAgents(FULL_REPLY)
+        reading = FakeNormaliser(availability=availability)
+
+        outcome = await handler(agents, normaliser=reading, budget=budget).confirm(PENDING, CALLER)
+
+        assert outcome == BookingOutcome("unsupported_request"), availability
+        assert len(agents.sent) == 1
 
 
 def test_an_outcome_carries_exactly_what_its_kind_says() -> None:

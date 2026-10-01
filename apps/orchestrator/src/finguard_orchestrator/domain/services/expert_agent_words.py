@@ -28,7 +28,13 @@ whatever else it mentions.
                 search first, never a figure from the ledger.
     pointer     «la de las 19:00», «quiero (ir a) la de…», «la primera/segunda/tercera/última»:
                 a booking only when a search's offers are in the conversation, because without
-                them the same words point at a chart's bar or a ranking's row.
+                them the same words point at a chart's bar or a ranking's row -- and never when
+                the sentence says when or asks a search (fix round 1): an ordinal before a period
+                noun («la segunda quincena de julio», «¿y la última semana?»), a day the future-day
+                reader reads («del jueves», «mañana por la tarde»), a period the ledger's window
+                reader reads («del mes pasado», «de este año»), or «clases de» / «qué clases».
+                Offers outlive unrelated turns, so without this a period question asked after a
+                search would be read as a booking. A verb still books, whatever period it names.
 """
 
 import re
@@ -42,14 +48,20 @@ from finguard_orchestrator.domain.models.expert_agents import ExpertAgent
 from finguard_orchestrator.domain.services.activity_when import (
     _BAND,
     _DATE,
+    _MONTHS,
     _NEXT_WEEK,
+    _PAST,
     _THIS_WEEK,
     _TODAY,
     _TOMORROW,
+    _UNSERVED,
     _WEEKDAY,
     _WEEKEND,
+    _blank,
+    _clocks,
 )
 from finguard_orchestrator.domain.services.spanish import folded
+from finguard_orchestrator.domain.services.window_words import window_in
 
 # Folded, as `spanish.folded` leaves them. What the search sends is this form, never the sentence.
 ACTIVITIES: Final[tuple[str, ...]] = (
@@ -98,6 +110,14 @@ _POINTER: Final = re.compile(
     r"|\bquiero\s+(?:ir\s+a\s+)?la\s+de\b"
     r"|\bla\s+(?:primera|segunda|tercera|ultima)\b"
 )
+# What a pointer is not. An ordinal counting a period is a period, and a search cue is a search.
+_PERIOD_ORDINAL: Final = re.compile(
+    r"\b(?:primera|segunda|tercera|ultima)\s+"
+    r"(?:quincena|semana|mes|trimestre|semestre|ano|dia|fin\s+de\s+semana)\b"
+)
+_SEARCH_CUE: Final = re.compile(r"\bclases?\s+de\b|\bque\s+clases\b")
+_MONTH_NAME: Final = re.compile(r"\b(?:" + "|".join(_MONTHS) + r"|setiembre)\b")
+_DAYS: Final = (_TODAY, _TOMORROW, _WEEKDAY, _DATE, _WEEKEND, _NEXT_WEEK, _THIS_WEEK)
 
 # What every gym's name is made of, so it names no gym on its own: «en el gimnasio» asks them all.
 _GENERIC: Final = frozenset(
@@ -187,7 +207,26 @@ def is_a_booking_request(sentence: str, *, has_offers: bool) -> bool:
         return False
     if _BOOKING_VERB.search(text):
         return True
-    return has_offers and bool(_POINTER.search(text))
+    return (
+        has_offers
+        and bool(_POINTER.search(text))
+        and not _PERIOD_ORDINAL.search(text)
+        and not _SEARCH_CUE.search(text)
+        and not _says_when(text)
+    )
+
+
+def _says_when(text: str) -> bool:
+    """Whether the (folded) sentence names a day or a period: one the future-day reader reads, on
+    the sentence with its clock phrases blanked -- «las 7 de la tarde» is a time, not the
+    afternoon -- or one the ledger's window reader reads, a month, or a past."""
+    unclocked = _blank(text, [(clock.begins, clock.ends) for clock in _clocks(text)])
+    return (
+        any(pattern.search(unclocked) for pattern in (*_DAYS, _BAND))
+        or bool(_PAST.search(unclocked) or _UNSERVED.search(unclocked))
+        or bool(_MONTH_NAME.search(unclocked))
+        or window_in(text) is not None
+    )
 
 
 def activity_in(sentence: str) -> str | None:
