@@ -424,3 +424,12 @@ section it names; the decisions in §2 stand.
   `BOOKING_ON_SCREEN`), and a booking preview uses its own outcome, not `AWAITING_CONFIRMATION`.
 - **A11 — one branch, two routes.** The web posts to `/v1/questions/stream`; the expert-agent turns are
   one helper called from both `ask` and `ask_streaming`.
+- **A12 — one outcome and one gate reason more** (from the branch's fix wave, 2026-10-01; ruling
+  R35). The outcome `BOOKING_UNAVAILABLE`: when a full class's `INPUT_REQUIRED` reply yields no
+  alternative the verifier accepts (read over the booked day, then over its week), the answer is
+  «Esa clase no está disponible en <gym>; vuelve a buscar.» rather than §7's «pide un dato»; and the
+  alternatives sentence of §7 says «no está disponible» where it said «está completa». The reason
+  `interface_untrusted` joins §4.1's closed list: a card none of whose 1.x JSONRPC/HTTP+JSON
+  interfaces is on the registered host is not usable, and the gateway only sends to interfaces on
+  that host, so a card cannot point FinGuard's credential elsewhere. ADR-012 records both, with
+  `BOOKING_PAYMENT_PAUSED` (a booking preview refused while a payment is half-built; ruling R18).
