@@ -10,6 +10,8 @@ class RemoteReply:
     task_id: str | None
     context_id: str | None
     parts: tuple[dict[str, object], ...]
+    # `file` parts (raw bytes or a URL) are not read, only counted (spec §4.3).
+    dropped_parts: int = 0
 
 
 class RemoteError(Exception):

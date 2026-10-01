@@ -21,7 +21,7 @@ from a2a.utils.errors import A2AError
 from google.protobuf.json_format import MessageToDict, ParseError
 from google.protobuf.struct_pb2 import Struct, Value
 
-from finguard_a2a.domain.agents import AgentStatus
+from finguard_a2a.domain.agents import AgentStatus, callable_interfaces
 from finguard_a2a.ports.remote_agents import RemoteError, RemoteReply
 
 _STATES: Final = frozenset(
@@ -109,6 +109,12 @@ class SdkRemoteAgents:
         http = httpx.AsyncClient(
             transport=_Through(self._shared), headers=headers, timeout=self._timeout
         )
+        # Only the interfaces on the registered host (ruling R30): the client carries the
+        # credential, and the card is not the one to say where it goes.
+        trusted = AgentCard()
+        trusted.CopyFrom(card)
+        del trusted.supported_interfaces[:]
+        trusted.supported_interfaces.extend(callable_interfaces(status.agent, card))
         client = ClientFactory(
             ClientConfig(
                 streaming=False,
@@ -118,7 +124,7 @@ class SdkRemoteAgents:
                     TransportProtocol.HTTP_JSON,
                 ],
             )
-        ).create(card)
+        ).create(trusted)
         self._clients[status.agent.id] = (status.card_digest, http, client)
         if cached is not None:
             asyncio.get_running_loop().create_task(cached[1].aclose())
@@ -134,8 +140,8 @@ class SdkRemoteAgents:
         payload = response.WhichOneof("payload")
         if payload == "message":
             message = response.message
-            parts = self._parts(list(message.parts))
-            return RemoteReply("COMPLETED", None, message.context_id or None, parts)
+            parts, dropped = self._parts(list(message.parts))
+            return RemoteReply("COMPLETED", None, message.context_id or None, parts, dropped)
         if payload != "task":
             raise RemoteError("reply_invalid")
         task = response.task
@@ -144,11 +150,13 @@ class SdkRemoteAgents:
             raise RemoteError("reply_invalid")
         raw: list[Part] = [p for artifact in task.artifacts for p in artifact.parts]
         raw.extend(task.status.message.parts)
-        return RemoteReply(state, task.id or None, task.context_id or None, self._parts(raw))
+        parts, dropped = self._parts(raw)
+        return RemoteReply(state, task.id or None, task.context_id or None, parts, dropped)
 
-    def _parts(self, raw: list[Part]) -> tuple[dict[str, object], ...]:
+    def _parts(self, raw: list[Part]) -> tuple[tuple[dict[str, object], ...], int]:
+        """The text and data parts, and how many others -- `file` parts -- were dropped."""
         parts: list[dict[str, object]] = []
-        text_bytes = data_bytes = 0
+        text_bytes = data_bytes = dropped = 0
         for part in raw:
             kind = part.WhichOneof("content")
             if kind == "text":
@@ -158,9 +166,11 @@ class SdkRemoteAgents:
                 data = _plain(MessageToDict(part.data))
                 data_bytes += len(json.dumps(data).encode())
                 parts.append({"kind": "data", "data": data})
+            else:
+                dropped += 1
         if text_bytes > self._max_text or data_bytes > self._max_data:
             raise RemoteError("reply_too_large")
-        return tuple(parts)
+        return tuple(parts), dropped
 
 
 def _accepts_json(card: AgentCard, skill_id: str) -> bool:

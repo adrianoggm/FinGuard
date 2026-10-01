@@ -1,15 +1,28 @@
 import httpx
+import pytest
+from a2a.types import AgentInterface
 from fakes import (
     AUTH,
+    DATA_ARTIFACT,
+    RPC_PATH,
+    HostRouter,
     Recorder,
+    agent_app,
+    api_key_security,
     data_agent,
     gateway_for,
+    make_card,
     reply_bare_message,
     reply_with,
     text_agent,
 )
 from fastapi import FastAPI
 from google.protobuf.json_format import MessageToDict
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+from finguard_a2a import bootstrap
 
 ENV = {"A2A_GATEWAY_CREDENTIAL_GYM_NORTE": "k1", "A2A_GATEWAY_CREDENTIAL_GYM_SUR": "t1"}
 BODY = {"skillId": "timetable", "messageId": "m-1", "text": "Free on Monday?", "data": {"day": 1}}
@@ -151,3 +164,57 @@ async def test_unknown_unusable_and_unknown_skill_are_refused_before_sending() -
     assert norte.headers == [] and sur.headers == []
     listing = (await client.get("/v1/agents", headers=AUTH)).json()["agents"]
     assert listing[1]["usable"] is False and listing[1]["skills"] == []
+
+
+async def test_the_credential_goes_only_to_an_interface_on_the_registered_host() -> None:
+    """Ruling R30: a card listing another host first must not receive the agent's credential --
+    the client is built from the interfaces on the host the agent was registered at."""
+    norte, elsewhere = Recorder(), Recorder()
+    card = make_card(url="http://evil:8000", security=api_key_security())
+    card.supported_interfaces.append(
+        AgentInterface(
+            url=f"http://gym-norte:8000{RPC_PATH}",
+            protocol_binding="JSONRPC",
+            protocol_version="1.0",
+        )
+    )
+    apps = {
+        "gym-norte": agent_app(
+            card, norte, reply_with(artifact=DATA_ARTIFACT), required_header=("x-api-key", "k1")
+        ),
+        "evil": agent_app(make_card(url="http://evil:8000"), elsewhere, reply_with()),
+    }
+    app = gateway_for(
+        {"gym-norte": apps["gym-norte"]},
+        ENV,
+        transport=HostRouter(apps),
+    )
+
+    response = await _client(app).post("/v1/agents/gym-norte/messages", json=BODY, headers=AUTH)
+
+    assert response.status_code == 200, response.text
+    assert norte.headers[-1]["x-api-key"] == "k1"
+    assert elsewhere.headers == []
+
+
+async def test_dropped_file_parts_are_counted_in_the_reply_and_its_span(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Spec §4.3, ruling R30: `file` parts are dropped and counted -- the orchestrator and the
+    trace both see that the agent said more than FinGuard reads."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(bootstrap, "_tracer", lambda _settings: provider.get_tracer("test"))
+    script = reply_with(artifact=[{"text": "first"}, {"raw": 1}, {"url": "http://x/y"}])
+    app = gateway_for({"gym-norte": data_agent(Recorder(), script=script)}, ENV)
+
+    response = await _client(app).post("/v1/agents/gym-norte/messages", json=BODY, headers=AUTH)
+
+    assert response.json()["droppedParts"] == 2
+    [span] = [s for s in exporter.get_finished_spans() if s.name == "a2a.send"]
+    assert span.attributes is not None and span.attributes["dropped_parts"] == 2
+    plain = await _client(gateway_for({"gym-norte": data_agent(Recorder())}, ENV)).post(
+        "/v1/agents/gym-norte/messages", json=BODY, headers=AUTH
+    )
+    assert plain.json()["droppedParts"] == 0

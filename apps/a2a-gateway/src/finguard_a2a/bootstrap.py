@@ -2,10 +2,12 @@ import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Final
 
 import httpx
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
@@ -16,6 +18,12 @@ from finguard_a2a.config import DEVELOPMENT_TOKEN, Settings
 from finguard_a2a.domain.agents import AgentStatus
 
 logger = logging.getLogger("finguard_a2a")
+
+# What this service calls itself in a trace, like the orchestrator's `SERVICE_NAME`.
+SERVICE_NAME: Final = "a2a-gateway"
+# The OTLP/HTTP exporter posts to exactly the endpoint it is handed, so a base URL -- what an
+# operator knows and compose publishes -- gets the signal's path here, as the orchestrator does.
+_TRACES: Final = "/v1/traces"
 
 
 @dataclass
@@ -74,7 +82,13 @@ class _NoAgents:
 def _tracer(settings: Settings) -> trace.Tracer:
     if not settings.otel_enabled:
         return trace.get_tracer("finguard_a2a")
-    provider = TracerProvider()
-    exporter = OTLPSpanExporter(endpoint=settings.otel_endpoint or None)
+    resource = Resource.create(
+        {"service.name": SERVICE_NAME, "service.version": settings.service_version}
+    )
+    provider = TracerProvider(resource=resource)
+    endpoint = settings.otel_endpoint.rstrip("/")
+    if endpoint and not endpoint.endswith(_TRACES):
+        endpoint += _TRACES
+    exporter = OTLPSpanExporter(endpoint=endpoint or None)
     provider.add_span_processor(BatchSpanProcessor(exporter))
     return provider.get_tracer("finguard_a2a")

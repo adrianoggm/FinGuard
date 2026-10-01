@@ -331,6 +331,11 @@ services:
       # refused before a credential is looked at.
       A2A_GATEWAY_CREDENTIAL_GYM_NORTE: dev-gym-norte-key
       A2A_GATEWAY_CREDENTIAL_GYM_SUR: dev-gym-sur-token
+      # Traces, off unless asked for: `A2A_GATEWAY_OTEL_ENABLED=true` with the `observability`
+      # profile up. The endpoint is the collector's OTLP/HTTP base URL by service name; the gateway
+      # joins `/v1/traces` itself, and names its spans `a2a-gateway`.
+      A2A_GATEWAY_OTEL_ENABLED: ${A2A_GATEWAY_OTEL_ENABLED:-false}
+      A2A_GATEWAY_OTEL_ENDPOINT: ${A2A_GATEWAY_OTEL_ENDPOINT:-http://otel-collector:4318}
     # 8003 on the host, beside voice's 8002.
     ports:
       - "127.0.0.1:8003:8000"
