@@ -178,9 +178,7 @@ Si falta un dato o hay dos contactos llamados Laura, el orquestador conserva lo 
 
 \section{Cuándo decide el modelo: los cuatro modos}
 \label{sec:modes}
-Hasta aquí el modelo aparece como un apoyo que propone. Pero ¿cuánto se fía FinGuard de él? Depende de la decisión y de lo que se haya medido. Hay dos momentos del recorrido en los que puede intervenir: al \emph{leer el turno}, para entender qué pide la persona, y al \emph{elegir el gráfico}, para decidir cómo mostrar el resultado. En ambos, su autoridad sube por la misma escalera de cuatro peldaños (Cuadro~\ref{tab:modes}), y sólo se sube un peldaño cuando las medidas del anterior lo justifican.
-
-Cada peldaño es un modo con nombre, no una combinación de interruptores. Así nadie puede configurar algo contradictorio, como observar al modelo y obedecerle a la vez.
+Hasta aquí el modelo aparece como un apoyo que propone. Pero ¿cuánto se fía FinGuard de él? Depende de la decisión y de lo que se haya medido. Puede intervenir en dos momentos: al \emph{leer el turno}, para entender qué pide la persona, y al \emph{elegir el gráfico}, para decidir cómo mostrar el resultado. En ambos, su autoridad sube por la misma escalera de cuatro peldaños (Cuadro~\ref{tab:modes}), y sólo se sube un peldaño cuando las medidas del anterior lo justifican. Cada peldaño es un modo con nombre, no una combinación de interruptores. Así nadie puede configurar algo contradictorio, como observar al modelo y obedecerle a la vez.
 
 \begin{table}[htbp]
 \centering\small
@@ -199,11 +197,11 @@ Promovido \newline\code{model} / \code{promoted} & Lee el modelo; un pago sólo 
 \end{table}
 
 \subsection{Qué distingue al modo sombra}
-El modo sombra es el más curioso de los cuatro, porque no cambia nada de lo que ve la persona. El modelo trabaja junto a las reglas, sobre peticiones reales, pero su opinión sólo se apunta: la respuesta es exactamente la del modo determinista. ¿Para qué sirve entonces? Para obtener la cifra que tiene que existir antes de discutir cualquier cambio: cuántas veces discrepa el modelo de las reglas, o cuántas de sus propuestas de gráfico serían válidas y distintas de la referencia. Si el modelo falla, el fallo es un dato del experimento y el turno sigue como si nada.
+El modo sombra es el más curioso: no cambia nada de lo que ve la persona. El modelo trabaja junto a las reglas, sobre peticiones reales, pero su opinión sólo se apunta: la respuesta es la del modo determinista. ¿Para qué sirve entonces? Para obtener la cifra que tiene que existir antes de discutir cualquier cambio: cuántas veces discrepa el modelo de las reglas, o cuántas de sus propuestas de gráfico serían válidas y distintas de la referencia. Si el modelo falla, el fallo es un dato del experimento y el turno sigue como si nada.
 
-Eso sí, no es gratis. La llamada al modelo forma parte de la petición, así que su espera se nota aunque no se vea ningún cambio. En los gráficos, la respuesta espera a la propuesta hasta 6\,s antes de mostrar la referencia, y esa cifra es todavía una estimación, no una medida.
+Eso sí, no es gratis. La llamada al modelo forma parte de la petición, así que su espera se nota aunque no cambie nada. En los gráficos, la respuesta espera a la propuesta hasta 6\,s antes de mostrar la referencia, y esa cifra es todavía una estimación, no una medida.
 
-Híbrido y promovido sí cambian lo que se ve, pero conservan las reglas como red: si el tiempo se agota, el proveedor falla o el verificador rechaza la propuesta, se muestra la referencia y se apunta el motivo.
+Híbrido y promovido sí cambian lo que se ve, con las reglas como red: si el tiempo se agota, el proveedor falla o el verificador rechaza, se muestra la referencia.
 
 \subsection{El caso de los gráficos}
 ¿Qué ve el modelo cuando propone un gráfico? No las filas ni los importes, sino un \emph{perfil} de los datos: qué campos hay, de qué tipo, cuántos valores distintos tienen, si las partes suman un total verificado o si se trata de una comparación. Recibe también la pregunta, marcada como dato. Y no devuelve código Vega-Lite libre, sino una estructura cerrada: tipo de gráfico, qué va en cada eje, orden, apilado y límite de filas. Validar código libre abriría una puerta demasiado grande. La Figura~\ref{fig:visual-modes} resume el recorrido.
@@ -367,6 +365,7 @@ Detrás de todo lo anterior hay un puñado de decisiones que se repiten en cada 
 ¿Qué ve el modelo? & La frase, la fecha, las categorías y el plan anterior; para los gráficos, un perfil sin importes. Nunca saldos, movimientos ni contactos.\\
 ¿De qué nos fiamos del navegador? & De nada sin comprobar: la cuenta sale de la credencial, la conversación se valida como cualquier entrada y el contexto del gráfico va firmado. Sin claves de firma, el servicio no arranca abierto fuera de \code{localhost}.\\
 ¿Y si otro agente miente? & Su respuesta es un dato, no una orden: el código comprueba cada valor contra ella y la persona nunca lee su texto.\\
+¿Por qué A2A y no MCP? & MCP da herramientas al modelo propio, y el nuestro no las usa: el gimnasio es otro agente. Ni pintamos su interfaz (MCP UI) ni damos herramientas al navegador (WebMCP).\\
 ¿Cómo se protege el dinero? & Céntimos con su moneda, doble partida, un libro que no se reescribe, clave de idempotencia, límite de 10.000\,€ en ambos servicios y confirmación explícita en la web.\\
 ¿Y si hay dudas? & Se pregunta en lugar de suponer, y una continuación nunca consulta más de lo que el gráfico mostraba.\\
 ¿Por qué se repite código entre servicios? & Banca, orquestador y voz se despliegan por separado y repiten a propósito su vocabulario común: un cambio en uno no obliga a publicar el otro, y una discrepancia aparece como un error en la frontera.\\
@@ -448,7 +447,7 @@ La propuesta de gráficos tiene su propia evaluación, que se ejecuta en modo so
 La decisión es mantener la vía determinista como referencia de uso y utilizar \code{shadow} para investigar mejoras. El registro disponible no basta para acreditar tres repeticiones independientes ni para recomendar el paso a \code{hybrid}. Esta comparación ilustra el criterio del proyecto: incorporar un modelo sólo cuando su aportación observada compensa los errores y el coste de interacción.
 
 \subsection{Del plan al uso real}
-Las evaluaciones de extremo a extremo envían preguntas por HTTP y comprueban propiedades de la respuesta: que las cifras estén respaldadas, que los desgloses correspondan al resultado y que la conversación conserve su contexto. Son distintas del benchmark que termina al construir un plan. Los informes de \href{../apps/orchestrator/evaluation/planning/RESULTS-E2E.md}{consultas completas} y \href{../apps/orchestrator/evaluation/conversations/RESULTS-E2E.md}{episodios conversacionales} documentan fallos, correcciones del evaluador y diferencias de versión; no constituyen una certificación de la revisión actual.
+Las evaluaciones de extremo a extremo envían preguntas por HTTP y comprueban propiedades de la respuesta: que las cifras estén respaldadas, que los desgloses correspondan al resultado y que la conversación conserve su contexto. Son distintas del benchmark que termina al construir un plan. Los informes de \href{../apps/orchestrator/evaluation/planning/RESULTS-E2E.md}{consultas completas} y \href{../apps/orchestrator/evaluation/conversations/RESULTS-E2E.md}{episodios conversacionales} documentan fallos, correcciones del evaluador y diferencias de versión; no constituyen una certificación de la revisión actual. La web también se ha recorrido en un navegador con el MCP de Playwright: el asistente de programación pregunta «¿Cuánto gasté en gasolina el mes pasado?», elige la cuenta y lee pantalla y consola; igual se revisó Grafana. Ayuda a desarrollar, no es una prueba: las de la web son las de Vitest.
 
 Una lección de esos ensayos es que «cero inconsistencias» no sirve si ninguna petición llegó a producir una respuesta. Por eso hay que observar también cuántos casos se contestaron realmente, y hoy el evaluador falla si no se alcanza un mínimo. Rechazar todo puede evitar errores de cifras y, a la vez, hacer inútil el asistente. En la conversación sobre gráficos, 8 de las 14 formulaciones de continuación que recoge su diseño se reconocían en la última medición; las mejoras posteriores están sin medir.
 
