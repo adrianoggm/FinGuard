@@ -12,12 +12,14 @@ import type { ActivitySlot, AgentNotice } from "./api";
 
 export function ActivityList({ slots, notices }: { slots: ActivitySlot[]; notices: AgentNotice[] }) {
   if (slots.length === 0 && notices.length === 0) return null;
+  // Over several days a time alone says nothing about which day: each row then names its own.
+  const days = new Set(slots.map((slot) => dateOf(slot.start))).size > 1;
   return (
     <div className="activities">
       {slots.length > 0 && (
         <ul className="activity-list">
           {slots.map((slot, index) => (
-            <li key={`${slot.agent_id}-${slot.start}-${index}`}>{row(slot)}</li>
+            <li key={`${slot.agent_id}-${slot.start}-${index}`}>{row(slot, days)}</li>
           ))}
         </ul>
       )}
@@ -38,11 +40,29 @@ export function ActivityList({ slots, notices }: { slots: ActivitySlot[]; notice
   );
 }
 
-/** «18:30 · Spinning · Gimnasio Sur · 6 plazas», as one string so it is one text node. */
-function row(slot: ActivitySlot): string {
-  return [clock(slot.start), slot.activity, slot.agent_name, places(slot.free_places)]
-    .filter((part) => part !== "")
-    .join(" · ");
+/**
+ * «18:30 · Spinning · Gimnasio Sur · 6 plazas», as one string so it is one text node -- and
+ * «vie 2 · 18:30 · …» when the list spans several days.
+ */
+function row(slot: ActivitySlot, days: boolean): string {
+  const parts = [clock(slot.start), slot.activity, slot.agent_name, places(slot.free_places)];
+  if (days) parts.unshift(day(slot.start));
+  return parts.filter((part) => part !== "").join(" · ");
+}
+
+const WEEKDAYS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+
+/** The calendar date the ISO string states, in the slot's own offset, like `clock`. */
+function dateOf(iso: string): string {
+  return /^\d{4}-\d{2}-\d{2}/.exec(iso)?.[0] ?? iso;
+}
+
+/** «vie 2»: the weekday of the date the string states, computed on that date alone. */
+function day(iso: string): string {
+  const found = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!found) return "";
+  const [year, month, date] = [Number(found[1]), Number(found[2]), Number(found[3])];
+  return `${WEEKDAYS[new Date(Date.UTC(year, month - 1, date)).getUTCDay()]} ${date}`;
 }
 
 /**

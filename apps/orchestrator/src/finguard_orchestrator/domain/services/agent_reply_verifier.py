@@ -6,11 +6,12 @@ answer with a closed rule name, and a rejected answer is that agent not respondi
 
 `verify_slots`, rule by rule over every slot, first failure wins:
 
-    structure   each start is `YYYY-MM-DDTHH:MM` or `HH:MM`, each end the same or absent; the
-                activity is within its ceiling, a name of letters in at most four words (ruling
-                R25) and carries no control or bidi character, and a
-                reference (or a booking code) is one ASCII token (`REFERENCE`) within its own --
-                never a phrase of the reply.
+    structure   each start is `YYYY-MM-DDTHH:MM` or `HH:MM`, either with `:00` seconds, and a
+                date-time with an offset (`Z`, `±hh:mm`) only when it is the query zone's own at
+                that moment (ruling R30); each end the same or absent; the activity is within its
+                ceiling, a name of letters in at most four words (ruling R25) and carries no
+                control or bidi character, and a reference (or a booking code) is one ASCII token
+                (`REFERENCE`) within its own -- never a phrase of the reply.
     grounding   the clock time is one the reply states (`stated_times`), and so is an end's -- or
                 the reply states the minutes from start to end as a whole number; the activity is
                 the one asked (`same_activity`) and is itself a stretch of the reply, as it will be
@@ -48,7 +49,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Final
 from urllib.parse import urlsplit
 
@@ -77,8 +78,12 @@ from finguard_orchestrator.domain.services.spanish import folded
 
 _CAP: Final = 64 * 1024
 
-_FULL: Final = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})")
-_BARE: Final = re.compile(r"(\d{1,2}):(\d{2})")
+# A model copies a timestamp as the reply wrote it: seconds that are zero, and an offset that is
+# the zone's own, change nothing; any other seconds or offset is not this shape (ruling R30).
+_FULL: Final = re.compile(
+    r"(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})(?::00)?(?P<offset>Z|[+-]\d{2}:\d{2})?"
+)
+_BARE: Final = re.compile(r"(\d{1,2}):(\d{2})(?::00)?")
 _URL: Final = re.compile(r"https?://[^\s\"'<>]+")
 # An activity is a name the holder reads (ruling R25): letters only, at most four words joined by a
 # space or a hyphen -- «Pilates Reformer», «Body Pump» -- never a sentence of the reply.
@@ -142,8 +147,8 @@ def verify_slots(
     # which only a single-day query lets it keep (grounding, below)
     read: list[tuple[SlotDraft, date | None, datetime, datetime | None]] = []
     for slot in draft.slots:
-        began = _moment(slot.start)
-        ended = _moment(slot.end) if slot.end is not None else None
+        began = _moment(slot.start, zone)
+        ended = _moment(slot.end, zone) if slot.end is not None else None
         if began is None or (slot.end is not None and ended is None) or not _fits(slot):
             return AgentRejection("structure")
         start = datetime.combine(began[0] or query.start.date(), began[1], zone)
@@ -223,7 +228,8 @@ def verify_booking(
     """
     if reply.state != "COMPLETED" or not draft.booked:
         return AgentRejection("not_booked")
-    moment = _moment(draft.start) if draft.start is not None else None
+    zone = slot.start.tzinfo
+    moment = _moment(draft.start, zone) if draft.start is not None else None
     if (
         (draft.booking_code is not None and not is_reference(draft.booking_code, MAX_BOOKING_CODE))
         or (draft.slot_ref is not None and not is_reference(draft.slot_ref, MAX_SLOT_REF))
@@ -231,7 +237,6 @@ def verify_booking(
     ):
         return AgentRejection("structure")
     text = reply_text(reply)
-    zone = slot.start.tzinfo
     start = (
         datetime.combine(moment[0] or slot.start.date(), moment[1], zone)
         if moment is not None
@@ -279,17 +284,34 @@ def link_in(reply: AgentReply, link_hosts: tuple[str, ...]) -> str | None:
     return None
 
 
-def _moment(written: str) -> tuple[date | None, time] | None:
-    """`YYYY-MM-DDTHH:MM` as a date and a time, `HH:MM` as a time alone, anything else `None`."""
+def _moment(written: str, zone: tzinfo | None) -> tuple[date | None, time] | None:
+    """`YYYY-MM-DDTHH:MM` as a date and a time, `HH:MM` as a time alone, anything else `None`.
+
+    Either may end in `:00` seconds, and a date-time in an offset that is `zone`'s own at that
+    moment -- then it is the local time it already says, and no shift happens (ruling R30). An
+    offset of any other zone is `None`: never shifted, never read as local.
+    """
     try:
         if full := _FULL.fullmatch(written):
-            year, month, day, hour, minute = (int(group) for group in full.groups())
-            return date(year, month, day), time(hour, minute)
+            year, month, day, hour, minute = (int(group) for group in full.groups()[:5])
+            on, at = date(year, month, day), time(hour, minute)
+            offset = full["offset"]
+            if offset is not None and datetime.combine(on, at, zone).utcoffset() != _offset(offset):
+                return None
+            return on, at
         if bare := _BARE.fullmatch(written):
             return None, time(int(bare[1]), int(bare[2]))
     except ValueError:
         return None
     return None
+
+
+def _offset(written: str) -> timedelta:
+    """`Z` or `±hh:mm` as the offset it names."""
+    if written == "Z":
+        return timedelta(0)
+    sign = -1 if written[0] == "-" else 1
+    return sign * timedelta(hours=int(written[1:3]), minutes=int(written[4:6]))
 
 
 def _fits(slot: SlotDraft) -> bool:

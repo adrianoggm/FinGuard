@@ -514,11 +514,12 @@ async def test_a_chip_names_the_one_class_it_offers() -> None:
             "No puedo usar esa búsqueda; vuelve a pedirla.",
         ),
         (
+            # Ruling R30: with no search at all there is no «esa búsqueda» to use again.
             "apúntame a spinning",
             conversation_mapper.to_domain(None),
             NOW,
             "BOOKING_SEARCH_AGAIN",
-            "No puedo usar esa búsqueda; vuelve a pedirla.",
+            "Primero busca la clase, por ejemplo: ¿qué clases de spinning hay mañana?",
         ),
     ],
     ids=["not-offered", "started", "untrusted", "untrusted-pointer", "no-offers"],

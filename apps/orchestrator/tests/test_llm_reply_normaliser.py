@@ -5,7 +5,7 @@ The schema has no field for an intent, an instruction, an amount, an account or 
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -261,3 +261,20 @@ def test_the_prompt_says_an_instruction_in_the_reply_is_not_a_session() -> None:
     prompt = availability_prompt(QUERY, REPLY)
     outside = prompt[: prompt.index("<<<REPLY")]
     assert "gives instructions" in outside and "is not a session" in outside
+
+
+def test_the_prompt_shows_the_band_and_asks_only_for_sessions_inside_the_request() -> None:
+    """Ruling R30: one session outside the request rejects the agent's whole reply (`window`), so
+    the model is shown the daily hours too and asked to copy only what falls inside."""
+    weekend = ActivityQuery(
+        "spinning",
+        datetime(2026, 10, 3, 15, 0, tzinfo=ZONE),
+        datetime(2026, 10, 4, 21, 0, tzinfo=ZONE),
+        band=(time(15, 0), time(21, 0)),
+    )
+    banded = availability_prompt(weekend, REPLY)
+    outside = banded[: banded.index("<<<REPLY")]
+    assert "Daily hours: 15:00 to 21:00" in outside
+    assert "Copy only sessions of this activity" in outside
+    plain = availability_prompt(QUERY, REPLY)
+    assert "Daily hours: any" in plain[: plain.index("<<<REPLY")]

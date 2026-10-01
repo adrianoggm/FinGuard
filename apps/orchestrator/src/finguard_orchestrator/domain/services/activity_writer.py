@@ -275,8 +275,15 @@ def started() -> str:
 
 
 def search_again() -> str:
-    """The offers are absent, or their seal did not check out (§5.3): never read, never repaired."""
+    """The offers' seal did not check out, or they no longer hold the class (§5.3): never read,
+    never repaired."""
     return "No puedo usar esa búsqueda; vuelve a pedirla."
+
+
+def search_first() -> str:
+    """A booking asked for with no offers in the conversation at all (ruling R30): there is no
+    «esa búsqueda» to use again, so it says what to do first."""
+    return "Primero busca la clase, por ejemplo: ¿qué clases de spinning hay mañana?"
 
 
 def booking_after_payment(draft: PaymentDraft) -> str:
