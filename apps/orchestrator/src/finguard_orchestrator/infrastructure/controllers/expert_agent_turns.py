@@ -36,6 +36,7 @@ from finguard_orchestrator.application.queries.search_activities import (
     SearchActivitiesHandler,
     SearchActivitiesQuery,
 )
+from finguard_orchestrator.domain.constants import MAX_EXPERT_AGENTS
 from finguard_orchestrator.domain.models.conversation import (
     ActivityOffers,
     BookingConfirmation,
@@ -234,9 +235,11 @@ def _sent(
         case "alternatives" if outcome.alternatives:
             slots = outcome.alternatives
             text = activity_writer.booking_alternatives(pending.slot, name, slots)
-            # The alternatives are what this gym offers now: the next «apúntame» reads them.
+            # The alternatives are what this gym offers now: the next «apúntame» reads them -- under
+            # every name the last offers carried (ruling R28), so «en el Norte» still names a gym.
             contexts = ((pending.slot.agent_id, pending.context_id),) if pending.context_id else ()
-            offers = ActivityOffers(slots, ((pending.slot.agent_id, name),), contexts)
+            names = _names(after.activity_offers, pending.slot.agent_id, name)
+            offers = ActivityOffers(slots, names, contexts)
             after = replace(after, activity_offers=offers)
         case "link_required":
             text = activity_writer.booking_link_required(name)
@@ -264,8 +267,8 @@ def _sent(
 
 
 def _without(offers: ActivityOffers | None, slot: ActivitySlot) -> ActivityOffers | None:
-    """`offers` less `slot`, with the name and context of any gym left offering nothing dropped
-    too; `None` once nothing is left to offer."""
+    """`offers` less `slot`, with the context of any gym left offering nothing dropped too -- but
+    not its name (ruling R28): «en el Sur» still names the Sur. `None` once nothing is left."""
     if offers is None:
         return None
     kept = tuple(each for each in offers.slots if each != slot)
@@ -274,10 +277,19 @@ def _without(offers: ActivityOffers | None, slot: ActivitySlot) -> ActivityOffer
     offering = {each.agent_id for each in kept}
     return ActivityOffers(
         kept,
-        tuple(item for item in offers.agent_names if item[0] in offering),
+        offers.agent_names,
         tuple(item for item in offers.contexts if item[0] in offering),
         trusted=offers.trusted,
     )
+
+
+def _names(offers: ActivityOffers | None, agent_id: str, name: str) -> tuple[tuple[str, str], ...]:
+    """The names `offers` carried, `agent_id`'s under `name` -- first when they did not carry it,
+    so the cap can never leave the offering gym unnamed."""
+    carried = offers.agent_names if offers is not None else ()
+    if any(each == agent_id for each, _ in carried):
+        return tuple((each, name if each == agent_id else shown) for each, shown in carried)
+    return ((agent_id, name), *carried)[:MAX_EXPERT_AGENTS]
 
 
 # --- 3. a search -------------------------------------------------------------------------------

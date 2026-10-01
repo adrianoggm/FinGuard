@@ -89,6 +89,29 @@ async def test_version_unsupported_for_a_legacy_03_card() -> None:
     assert (await _status(_raw(legacy))).reason == "version_unsupported"
 
 
+async def test_version_unsupported_for_the_simulated_legacy_card_whose_skill_has_no_tags() -> None:
+    """Acceptance finding A1 (ruling R27): a 0.3 card is old before it is incomplete. The SDK
+    converts it into a 0.3 interface, and an untagged skill -- valid in 0.3 -- is a missing
+    required field in 1.0; the version is what the agent's operator needs to hear."""
+    legacy = {
+        "name": "Gimnasio Antiguo",
+        "description": "Gimnasio con un agente de la versión 0.3 del protocolo.",
+        "url": "http://agent:8000/a2a",
+        "preferredTransport": "JSONRPC",
+        "protocolVersion": "0.3.0",
+        "version": "0.9.0",
+        "capabilities": {},
+        "defaultInputModes": ["text/plain"],
+        "defaultOutputModes": ["text/plain"],
+        "skills": [{"id": "classes", "name": "Clases", "description": "Clases.", "tags": []}],
+    }
+    assert (await _status(_raw(legacy))).reason == "version_unsupported"
+
+
+async def test_an_empty_card_is_still_invalid() -> None:
+    assert (await _status(_raw({}))).reason == "card_invalid"
+
+
 async def test_binding_unsupported_when_only_grpc() -> None:
     status = await _status(_served(make_card(bindings=("GRPC",))))
     assert status.reason == "binding_unsupported"
