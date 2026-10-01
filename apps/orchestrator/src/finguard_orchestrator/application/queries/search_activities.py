@@ -181,10 +181,16 @@ class SearchActivitiesHandler:
         )
         every = [*lines, *answers]
         for part in every:
+            # The rule is a closed word (a verifier rule, a gateway code, a failed state, `budget`
+            # or the gateway's reason), so it belongs in the record: it is why the agent's whole
+            # timetable was dropped.
+            rule = part.outcome.rule
             record(
                 Step.EXPERT_AGENT,
                 _verdict(part),
                 changed=False,
+                field="rule" if rule is not None else None,
+                now=rule,
                 detail=f"availability:{part.outcome.agent_id}:{part.outcome.kind}",
             )
         return _merged(asked, every)
@@ -255,6 +261,10 @@ class SearchActivitiesHandler:
             return _Asked(AgentOutcome(agent.id, name, "unsupported_request"))
         verified = verify_slots(draft, query=query, reply=reply, agent_id=agent.id, now=now)
         if isinstance(verified, AgentRejection):
+            logger.info(
+                "expert_agents.availability_rejected",
+                extra={"agent": agent.id, "rule": verified.rule},
+            )
             return _Asked(
                 AgentOutcome(agent.id, name, "unavailable", rule=verified.rule), rejected=True
             )
