@@ -402,14 +402,647 @@ Left for the next branch, smallest first:
    async and returns a `VisualPlanDraft | None`; the floor's `plan(profile, presentation)` is sync and
    returns a `ChartSpec | None`. `VisualPlanningPolicy` is what holds both. `max_visible_rows` gets
    its first reader there, and every field of a `VisualPlanDraft` crosses the same three boundaries.
-5. **Invalid visual payloads are dropped silently, not refused.** `_encoding_sort_from_payload`
-   returns `None` for an unknown `mode` and swallows `EncodingSort`'s `ValueError`; `to_domain` maps
-   an unknown `stack` to `None`; and `_value_free_spec` validates keys, mark and channels but not the
-   *values* of `stack`, `sort` or `sort_field`. So `{"sort": {"mode": "sideways"}}` is a 200 that
-   quietly forgets the order. FinGuard's own payloads are valid, so nothing round-trips wrong today —
-   but the rule the mapper states for itself is "everything coming in is input", and input that fails
-   a domain type should be a 422. Absent key → `None`; present and valid → the domain object; present
-   and invalid → refused at the DTO. Close this before a probabilistic planner produces drafts.
+5. ~~**Invalid visual payloads are dropped silently, not refused.**~~ CLOSED — `61cdb7a` (the
+   visual-context DTO refuses an invalid stack/sort/sort_field) and `434567f` (the conversation
+   mapper stops silently dropping an invalid stack/sort).
+6. **`llm_mapper`'s field guard checks the intersection where the profile advertises the
+   union.** `llm_mapper.py:233-238` checks a model's proposal against the serialised rows'
+   *intersection* of keys, while `VisualProfile.field_names()` is the *union*
+   (`deterministic_visual_planner.py:106-111` documents why). The floor names only fields it
+   guards, so this has been safe by construction; a model in `hybrid`/`promoted` may place any
+   advertised field on any channel, and a field some row omits then makes the chart vanish
+   silently rather than crash. Close this before promoting either mode.
+7. **A `VisualFloorPort` Protocol, parked rather than added now.** `VisualPlanningPolicy.fallback`
+   is typed as the concrete `DeterministicVisualPlanner`, which is honest today — there is
+   exactly one floor, and it is deliberately not an implementation of `VisualPlannerPort` (sync,
+   takes no question or budget, returns a spec rather than a draft). Wave 4 adds `source="patch"`
+   and a third producer of specs; if that produces a second floor-shaped collaborator, the
+   Protocol becomes mandatory and should land with it, not before.
+
+**2026-09-06 — wave 3 landed with the planner shipped off.** `ORCHESTRATOR_VISUAL_PLANNER=deterministic`
+is the shipped setting, so no model call happens in production; `shadow` is the mode the three
+measured runs (Task 9) use instead, running the model beside the floor and always showing the floor.
+Promotion to `hybrid` is a measured decision, not a calendar one: three runs of `just evaluate-visual`
+with the GPU alone, validity ≥ the floor's own verification rate (100 %), suitability and the
+`valid ∧ suitable ∧ changed` figure reported as the minimum over the three runs, and the budget set
+to the max P95 across them, excluding budget-censored timeouts. Every figure carries its sample size
+beside it — 16 cases, 14 entering the policy, 4 equivalent paraphrase pairs, 2 instructed cases, read
+from the run's own `RESULTS.md` header rather than retyped — so `k / 14` is never mistaken for the
+Section G evaluation. `RESULTS.md` and `last-run.json` are committed after each run, so the
+manifest's `dirty` flag stays honest, and the promotion decision itself is recorded in this file
+alongside the three manifests.
+
+**2026-09-06 — wave 4.1 landed: charts remember their provenance, follow-ups are classified,
+nothing visible changed.** Every chart the conversation remembers now carries `decision`,
+`source_plan`, `evidence_ids`, `derived_from` and `turn_id` (`VisualContext`, `chart.py`); only
+`derived_from` and `turn_id` travel on the wire (`VisualContextPayload`, `llm_dto.py`) — the other
+three are turn-local because the service keeps no conversation store. A fresh chart records its
+decision, plan, evidence and turn in `llm_mapper._remember_visual_context`; a restyle names its
+origin in `llm_controller._derived_context`. Every turn that follows a charted answer is classified
+into one of five kinds (`visual_follow_up.py`'s `classify`) by three deterministic readers —
+`interpret_visual`, `contextual_follow_up_plan`'s undecorated body (a deliberate substitution for
+§5's `continuation_patch.read()`), and a drill-down lexicon — and recorded as
+`Step.VISUAL_FOLLOW_UP`, the twelfth decision seam, at both places a visual turn passes: the query
+handler once its turn analysis is final, and the controller's visual short-circuit (a claimed
+`interpret_visual` answers without ever reaching the handler), through the same
+`record_visual_follow_up`, so the count does not miss the turns the handler never sees. Nothing
+visible changed — no answer, chart or call differs — proven by
+`test_the_classification_changes_nothing_visible` and its controller-side equivalent. The three
+readers claim a minority of the design's own §3 example phrasings — three of fourteen at HEAD:
+«Ordénalo de mayor a menor» and «la barra más alta» read PRESENTATION_ONLY, «Enséñame las compras
+de esa barra» reads AMBIGUOUS. The other eleven — «Ponlo en horizontal», «Prefiero líneas», «Ahora
+agrúpalo por meses» and «Excluye los taxis» among them — land UNRELATED; and the handler's
+deterministic analyser labels a follow-up sentence NEW_REQUEST, so a reshape or drill-down kind
+surfaces only when the edge hands in its own analysis.
+That is stated as measurement, not as a defect: the record's first job is to say how often the
+readers agree and how often nothing claims a charted turn, before 4.2 decides whether the
+whitelist grows or a model is consulted. The corpus still cannot see charts — that is 4.2's
+episodes.
+
+**2026-09-06 — wave 3.5: three semantic contracts closed before the evidence is collected.** An
+external review of wave 3 found three ways a chart could be technically valid and wrong for the
+user, and they are closed on wave 3's own seams. `VisualProfile.comparison` is the dataset's shape
+marker plus a series to group by (`visual_profile.py`) — not the presence of a series, which made
+a RECURRENCE cadence "a comparison", and not the marker alone, which would have grouped the
+handler's two-totals comparison by a series it does not have. The verifier holds a comparison to
+Section D (`visual_plan_verifier.py`, `_grouped`): the series stays on `color` on every mark, a
+bar or an area is never stacked whatever its axis, and a categorical bar also carries the offset
+on the dimension's axis; a proposal that quietly dropped the series used to verify as a reasonable
+bar, and an offset without its colour was never refused.
+Rows on the wire carry every field the profile declared, `None` where a row has no value
+(`llm_mapper.rows_on_the_wire`, shared with the fixture exporter), so `valid_for` checks the set
+the model and the verifier reasoned over instead of the intersection that silently dropped an
+accepted chart. The adapter validates the provider's whole answer against the schema's own closed
+sets (`visual_answer.py`, strict Pydantic on the domain `Literal`s): a missing `mark` is a
+structure failure and not an abstention, a per-encoding sort written as a string is refused rather
+than dropped, an unknown enum value or extra key is the provider's failure rather than the model's
+proposal. The evaluation stops measuring a mark: suitability also requires the structure the case
+names (`requires`: series, order, normalised stack) and sensitivity requires the instruction's own
+effect (`instruction_effect`), so a bar that only turned sideways no longer counts as having heard
+«como un donut». And the visual planner has its own provider, model and sampling
+(`ORCHESTRATOR_VISUAL_PLANNER_PROVIDER/MODEL/TEMPERATURE/MAX_OUTPUT_TOKENS`, blank = the financial
+planner's), so trying a bigger chart model moves nothing the planning evaluation measured; the
+run manifest records them (and the CLI defaults to them, so `just evaluate-visual` measures the
+configured model) and the latency row says what it is — added to every turn the model
+runs in shadow or hybrid mode. Nothing visible changed with the shipped setting. What still waits
+is the evidence: the three GPU runs on one SHA and the promotion decision, against the thresholds
+recorded in the wave 3 paragraph above, are Task 9 and remain the operator's.
+
+**2026-09-07 — wave 4.2 foundation landed: every visual follow-up is verified, asked about or
+refused with a reason; natural-language acceptance pending.** A code-built chart can re-enter the
+verifier as the draft it names (`draft_of(spec)`, `visual_plan.py`), and `VisualSource` gains a
+third member, `patch`, read through `get_args` everywhere `VisualDecision`'s invariants are
+checked. The restyle path now runs `verify(draft_of(updated.spec), profile)` as a gate before
+anything is shown: accepted, the merged
+`updated.spec` — titles included — is what the decision names, the derived context stores, the
+presenter shows and the save candidate keeps, and `record_visual_decision` writes one
+`AGREED`/`changed=(was != now)`/`now="patch"`/`detail="accepted"` row that never reaches the
+`visual_planner.decision` promotion-log line Task 9 reads; refused, `VISUAL_INCOMPATIBLE` speaks one
+Spanish clause per rule (`llm_controller._REFUSAL_TEXT`, keyed by the closed `RejectionRule` —
+«No puedo aplicar ese cambio a este gráfico: {clause}; el anterior se mantiene.», the rule token
+itself staying in the record's `detail`, never in the text), the previous chart stays untouched, and
+`record_visual_decision_refused` writes one `DECLINED`/`invalid_proposal:<rule>` row, never in the
+promotion log — including now the older refusal path, `apply_visual_intent` raising before a merged
+spec ever reaches `verify`, recorded under rule `merge` (fix wave, I3: promise 1's per-rule rejection
+rate used to cover only the verifier's own path).
+
+**Fix wave, I1: this gate is a second, deliberate visible change, not only the asking below.**
+Probed across the interpreter's whitelist × the eight floor families: 29 of the 62 restyles base
+accepted are now refused (`mark`, `order` or `grouped`), a 47% reduction — each is a chart the
+refusing rule exists to refuse, never a false one. One of the 29 was a chip the answer itself used
+to offer on the commonest chart; `_chart_suggestions` now filters every candidate through the same
+gate before offering it (C1), so an offered chip is one the gate has already agreed to.
+
+**Fix wave, I2: `was` is the source when the turn knows it, and unrecorded when it does not.**
+`VisualContext.decision` is turn-local, so a restyle of a context that crossed the wire always has
+`decision is None` — recording `"deterministic"` for that case (the old behaviour) was true only by
+accident, while the setting stayed `deterministic` for everyone; the patch row now records `was=None`
+there instead, honest until a signed context (planned Task 3b, see below) makes the source
+recoverable across the wire. `changed = (was != now)` is unaffected either way.
+
+The wire's nested profile now carries the shape facts the verifier reads — each field's
+`role`/`order` (`VisualFieldPayload`) and the profile's `comparison`/`plan_limited`
+(`VisualProfilePayload`) — because a narrowed round-tripped profile used to refuse legitimate
+restyles after one round trip; `row_count`/`plan_metric` stay off the wire, and a contradictory wire
+`role`/`type` is refused at the DTO with a 422, never an unhandled 500. **Fix wave, I4:** old clients
+fall back to the previous derivation, which validates the payload but does not restore what base
+itself could do — the fallback's `order` defaults to `NONE`, and the verifier's own `order` rule
+reads that as "nothing may sort this field", so a sort restyle asked of an old-shape chart is
+refused with rule `order` exactly as at base, until the conversation's next chart (every new one
+carries the full profile) closes the window; recovering `order` from the spec's own axis sort was
+judged not worth the code for a window one turn wide. **(D-4.2-8.)** Both of the two facts this wave
+put on the wire are value-free and narrow the honest client's profile toward the truth a liar could
+already reach by other means (`verified_total` already moved a refusal to an acceptance at base); the
+wire is now load-bearing for a semantic verdict a save candidate can sign, though, and that blast
+radius — the client's own chart of its own data — is a decision worth making on the record rather
+than a property of what happens to be exploitable today. Task 3b (a signed visual context,
+`MetricTokenCodec`-style) is planned for before the visual planner's promotion AND before any
+client other than the web app echoes conversations, to close it. A reshaped chart now names the
+chart it came from: `_remember_visual_context` sets a fresh chart's `derived_from` to the previous
+chart's id, server-side, exactly when the
+classification reads `ANALYTICAL_RESHAPE` — carried from `_steps`, an async generator, to
+`stream()`'s decision call through `follow_up_seen`, a one-element list threaded as an explicit
+out-parameter and reviewed as the least-bad mechanism available; the retry-control and
+previous-plan-restore early returns draw a chart before any turn analysis exists, so both draw one
+whose `derived_from` is `None`, stated in `_record_visual_follow_up`'s own docstring rather than
+hidden. `Claimant` names which pair of readers claimed an ambiguous follow-up —
+`presentation+reshape`, `presentation+drill`, and a `reshape+drill` the vocabulary carries but the
+reader's own drill-before-reshape precedence makes unreachable, which a reachability test asserts as
+exactly the one member nothing produces. An `AMBIGUOUS` classification asks instead of guessing: the
+controller's short-circuit returns `VISUAL_AMBIGUOUS` with one of `_ASK`'s exactly two texts, the
+conversation unchanged and zero banking calls; the outcome field stayed a plain, unconstrained `str`,
+so nothing in the wire's enumeration had to move. The corpus finally sees a chart: the harness's
+`Turn` gains `chart`, `banking_calls`, `derived_from` and `groups`, `tool_of` gains a `VISUAL` route
+read before the old `QUERY` fallthrough could swallow one silently, and the `chart:` mapping is read
+through the domain's own `canonical()` rather than a second, differently-behaving copy of it (a
+review finding, fixed by deleting the harness's own copy). The corpus's first visual episode,
+`32-visual-continuation.yaml`, concedes against §9's own sketch: turns 1 and 2 are not §9's wording —
+«¿En qué he gastado más este verano?» and «Separa transporte público y gasolina.» reach the planner
+on two sentences no planning case exercises, which would have moved two handover ratchets
+(`UNMEASURED`, `MUTE`) that are not this wave's to spend, so the episode says the same thing in
+sentences the planning dataset already measures. Turn 3, «Ahora compáralo por meses.», is refused
+deterministically with zero banking calls, not the query §9 assumed. And turn 2's chart does not
+derive from turn 1's — the deterministic turn analyser reads a different, complete financial question
+as a new request rather than a follow-up — so `derived_from: true` is exercised only by the restyle
+turn in this episode, never by a reshape; whether a same-thread reshape should read as a follow-up is
+a question for whoever teaches the analyser to read one as such. Suite at landing: 3863 / 3 / 192,
+corpus 202 at 0.0 %; after this fix wave (13 new tests, no regressions): 3876 / 3 / 204, corpus
+unchanged; after fix wave 2 (14 more tests, no regressions): 3890 / 3 / 204, corpus 202 unchanged.
+§7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) was picked up by 4.5, which
+refused it there too, for the same reason: it needs a store this design does not keep — see the
+4.5 paragraph below.
+
+**Fix wave 2 (2026-09-07): a third visible outcome, and the axis is the one live order
+decision.** `VISUAL_UNCHANGED` joins `VISUAL_UPDATED`/`VISUAL_INCOMPATIBLE`: a restyle whose
+merged spec draws identically to what is already on screen answers "El gráfico ya está así; lo
+dejo como está." and mints no version — no new `chart_id`, no derived context, no `patch`
+decision row, zero ledger calls. It exists because the order patch itself was fixed:
+`merge_encoding_patch` now edits the axis that already owns a sort — the axis `present()`
+(`vega_lite.py:89-90`) actually draws from — instead of a chart-wide setting that sits dead
+behind it, so «de menor a mayor» over a chart the floor already ranks descending genuinely flips
+it, and the verifier's `MEASURE_DESC` rule now allows either direction on that same axis (Section
+D of the visual planner design, amended) while a legend or an offset — never a conversation's own
+turn — stays descending. A promoted model may now propose an ascending `MEASURE_DESC` ranking and
+have it verify: direction on the axis is a suitability question, not a validity one
+(`scripts/evaluate_visual.py`'s `requires: ordered: descending` still measures it offline). A
+runtime rule enforcing direction belongs in the policy, not the verifier, and is recorded here as
+a precondition Task 9's promotion review must close before hybrid or promoted ever shows a
+model's own ranking (4.2b).
+
+**What this wave does not yet demonstrate.** The episode's own restyle turn is a presentation
+patch, not a reshape read from natural language, and no episode shows either of the two things §9
+itself asks for: a reshape that derives from the previous chart in natural language (a categorical
+refinement spoken over a charted answer, read as a follow-up rather than as the new request turn
+2 is read as today), or «compáralo por meses» taken against the answered plan's own window rather
+than refused for want of two complete calendar periods. A follow-up wave, 4.2b — natural-language
+acceptance — is planned before 4.3: the reshape reader recognising a categorical refinement over a
+charted answer, and the comparison reader taking «compáralo por meses» against the answered plan.
+**Fix wave, D-4.2-9:** refined rather than left as the second external review left it — `turn_id`
+survives the wire (`to_payload` emits it, `to_domain` reads it back on the next turn), so what is
+still unresolved is its binding to `Conversation.turns` and to the decision record, not its
+persistence; §4's own dataclass comment, stale on this exact point, is corrected alongside.
+
+**2026-09-07 — the visual context is sealed.** `MetricTokenCodec` gains `seal_context`/
+`verify_context`: an HMAC-SHA256 envelope over the SHA-256 digest of a context's wire semantics,
+bound to the holder and prefixed `c1.` — it carries no content of its own and no expiry of its
+own; the only way a seal goes stale is key rotation. `VisualContext.token` travels the wire and
+`.trusted` is turn-local; `_conversation_of` is the one production caller that verifies it, and a
+restyle or a saved-metric source over an unverified context now answers `VISUAL_UNTRUSTED` («No
+reconozco ese gráfico; pide uno nuevo y podré cambiarlo.») before a merge, a verify or a single
+ledger call. A fix round sealed the compound-read path too — `_compound_read_reply` was drawing
+its own charts unsealed, so a seal-side allowlist test (`test_the_seal_is_never_silently_skipped`)
+now sweeps every `question_to_dto(` call site the way a verify-side allowlist test already swept
+every `to_domain(` call site. A deployment running on the fallback signing key logs one warning at
+startup and is refused only when it also serves a non-loopback origin (fix wave, I4) —
+`ORCHESTRATOR_WEB_ORIGINS` already distinguishes `just app` from a real deployment, so no new
+setting is needed. The metric token now names the chart it was issued for too (fix wave, I3), so
+a token minted for one chart — or one minted before this change, with no chart at all — can no
+longer be offered as another chart's save-candidate source. Older conversations (no token) are
+untrusted until their next chart. Suite at HEAD: 3936 / 3 / 204, corpus 204. What this does
+**not** do: no expiry beyond key rotation; no cross-device trust — the seal binds a holder
+reference, not a device; no server-side store — the codec is stateless and the seal is the only
+record of it.
+
+**2026-09-11 — the seal binds the conversation and the position too (Task 1, Wave 3 hardening,
+A-1/A-13).** The above bound a holder to a blob and nothing else: the same holder's own sealed
+context verified for `True` from any conversation, at any position, forever — a client could
+replay a sealed chart from another conversation, reorder its own list, duplicate an entry, or drop
+one and promote the next, and every one of those passed the trust gate. `seal_context`/
+`verify_context` now fold `conversation_id` and the context's own index into the signed body (the
+`c2.` envelope; a pre-hardening `c1.` token still parses at the wire but opens as `"format"`,
+never a 500) and `verify_context` returns which of five reasons failed — `holder`, `conversation`,
+`position`, `content`, `format` — rather than a bare bool, so `VISUAL_UNTRUSTED` can say «este
+gráfico no es de esta conversación» for the first three and keep the older tamper text for the
+last two. Eviction at `MAX_VISUAL_CONTEXTS` and a compound turn's merge both shift a survivor's
+position; `conversation_mapper.reseal_visual_contexts` re-signs every still-trusted context at its
+current index whenever the list's shape changes, so a long-running or multi-clause conversation
+stays trusted rather than refusing its own oldest surviving chart the very next turn. **The
+loopback default is not a trust boundary**: `just app` and every demo run the whole seal — save
+candidates and every visual context alike — on the committed development key (`bootstrap/main.py`
+logs one warning naming this at startup, per A-13, and refuses to start on that key against any
+non-loopback `ORCHESTRATOR_WEB_ORIGINS`); an altered-context demo only means something once a real
+`ORCHESTRATOR_METRICS_SIGNING_KEYS` is configured. Suite at HEAD: 4242 / 3 / 209, corpus 207
+(176 · 1194) at 0.0 %.
+
+**2026-09-07 — wave 4.2b landed: the conversation reads a split, a regroup and a turned bar in its
+own words.** `turn_analyzer.py` gains three follow-up shapes, all gated on
+`conversation.last_plan is not None`: a sentence opening with «ahora», a reshape/compare verb
+carrying a clitic («compáralo», «sepáralo», «desglósalo»), and a split imperative naming two or
+more precise categories (`20c202a`) — a one-name split still declines as a filter question, read
+exactly as before. `readers/follow_up.py` gains two patches on the plan already in view: a split
+names its categories (`categories=named, group_by=CATEGORY`, a bare `replace` rather than
+`enforce`-wrapped, because two coordinated names read as one *combined* total to
+`explicit_facts.read` and `enforce` would silently undo the very grouping this patch states), and a
+regroup names its calendar («por meses/semanas/días» → `group_by=MONTH|WEEK|DAY`, deferring to
+`_average_plan` on an `AVERAGE` metric so the two readers never contest the same turn);
+`explicit_lexicon`'s `por|al|cada` calendar phrasings now accept the plural (`d9a2783`). `chart.py`
+gains `Orientation` and `EncodingPatch.orientation`; `merge_encoding_patch` swaps a bar's `x`/`y`
+and `xOffset`/`yOffset` by whichever axis carries the *measure* — including the axis-less share bar
+`RATIO_SHARE` draws, found untested by the first pass and pinned by a fix round — and refuses
+orientation on any other mark; `visual_interpreter.py`'s whitelist and `llm_mapper.py`'s chips both
+learn «horizontal»/«vertical»/«tumba»/«de pie» (`e66d1f9`, fix round `d91f904`).
+
+`32-visual-continuation.yaml` now speaks turns 2 and 3 in §9's own words. «Separa transporte
+público y gasolina.» re-queries the plan turn 1 already asked about — one call, `derived_from:
+true`, a bar over the two named categories. «Ahora compáralo por meses.» — previously a genuine
+`REFUSED` comparison with zero banking calls — now regroups that same filtered spending into a
+month-by-month line: one call, `derived_from: true`, nothing categorical left on either axis to
+sort. That answer is a LINE chart nothing can rotate, so the two restyle turns name a bar by number
+rather than §9's own «el gráfico anterior»: turn 4, «Pon el primer gráfico en vertical.», reaches
+back to turn 1's own breakdown; turn 5, «Pon el gráfico anterior en horizontal.», resolves to the
+chart turn 4 just appended and flips it back, landing on chart 1's exact shape as its own new entry
+(`c058902`, the episode's `why` rewritten whole at `fb14ad0`). Ratchets `UNMEASURED` 22/22 and
+`MUTE` 43/43 are unchanged — no sentence moved off or onto the handover, so no planning case was
+written; turn 1 keeps its existing planning-dataset anchor, «¿Cuánto gasté el mes pasado?», because
+`window_words.py` excludes «este verano» on purpose (its own docstring: «en verano» is a window "a
+person understands and this does not, and they are left out on purpose") and no vocabulary in this
+service can give it one without guessing.
+
+**Fix wave (2026-09-08), I-3: the «3 of 14» measurement above moves to 6 of 14, not 9 — and the
+method is what changed, not the sentences.** Measured through the whole pipeline over a charted
+conversation — `turn_analyzer.analyze(sentence, conversation=charted, interpreter=Deterministic())`
+for the turn's real relation, then `classify()` on that relation, never `classify()` with
+`analysis` forced to `FOLLOW_UP`/`LAST_ANSWER` by hand — three are this wave's own doing: «Ponlo en
+horizontal» now reads PRESENTATION_ONLY (the orientation patch above); «Separa gasolina y
+transporte público» and «Ahora agrúpalo por meses» now read ANALYTICAL_RESHAPE (the split and
+regroup patches above, in either category order and with the plural). Three more were already
+claimed before this wave and are unchanged by it: «Ordénalo de mayor a menor» and «La barra más
+alta.» read PRESENTATION_ONLY, «Enséñame las compras de esa barra» reads AMBIGUOUS. «¿Por qué
+agosto es tan alto?», «¿Qué movimientos explican ese pico?» and «¿Qué comercio es responsable?»
+stay UNRELATED and reach the planner, one banking call each — the handler's own deterministic
+analyser labels each of them NEW_REQUEST, so a turn never reaches the drill-down lexicon that would
+otherwise claim them; wiring the analyser to hand a drill-down phrasing to that lexicon is 4.3's
+work, not a pattern still to be written. Their earlier "all now DRILL_DOWN" claim measured the
+readers with the relation supplied by hand rather than derived, which is a different, narrower
+question than "what does this wave's pipeline do with these fourteen sentences", and answered it as
+if it were the same one. The «3 of 14» line it replaced was not stale — 4.1 measured 3 through the
+real pipeline and this wave adds exactly the 3 it claims as its own, 3 + 3 = 6, so the earlier
+figure was right throughout and only the yardstick moved. The remaining eight are unchanged:
+«Compáralo con el verano pasado» and «Excluye los taxis» stay UNRELATED (no window for a season and
+no comparison-reference vocabulary reads «compáralo con», neither touched by this wave; the
+exclusion vocabulary is untouched here too); «Prefiero líneas» and «Enséñame solo los cinco
+primeros» stay UNRELATED (no rule reads a bare plural mark word or a row count written out rather
+than as a digit); the three drill-down sentences above; and «Esa categoría.» stays UNRELATED (the
+fixture carries no echoed result row for `_CATEGORY_REFERENCE` to resolve, a fixture limit rather
+than a code question).
+
+**What this wave does not do.** Turns 4-5 of §9's own sketch — a drill-down into one of the split
+categories — are 4.3's, not this wave's; episode 32 says so plainly in its own `why` rather than
+reserving placeholder turns for them. §5's model rung — a language model deciding a follow-up's
+kind where the deterministic readers do not — is deliberately not built here: every shape landed in
+this wave is a lexicon rule with a test naming the sentence it claims and one it must not.
+`VISUAL_UNCHANGED` and `VISUAL_UNTRUSTED` are unchanged from before this wave — neither outcome's
+own mechanism was touched by any of the four tasks above. Suite at HEAD: 3954 / 3 / 204, corpus
+204.
+
+**2026-09-08 — wave 4.3 landed: a bar of the last chart can be asked about, and the answer is the
+movements behind it.** A trusted chart's context now carries the labels it drew, tallest first —
+`drawn_labels(dataset)` orders the dimension values by summed `value_minor` descending, ties in
+first-appearance order, capped at 100, `ranked` true only when both the top two and the bottom two
+totals are strict — sealed with the rest of the wire context: value-free strings the web already
+echoes and never reads (`f49d901`, `1843671`). `domain/services/visual_reference.py`'s
+`resolve_reference` reads a sentence against those labels: a named month by the answer writer's own
+vocabulary, the exact «agosto de 2025» picked before a bare «agosto» when two Augusts are on
+screen; a precisely named category; a superlative («la barra más alta», «el pico», «el más bajo»)
+only on a chart whose `ranked` is strict at both ends (`6e4fbc6`). `turn_analyzer.analyze` reads a
+drill sentence that resolves against the newest trusted chart as a follow-up
+(`_drills_into_the_chart`, `f757291`); the handler runs the plan in view narrowed to that one label
+and regrouped by merchant — design §3.3's own third sentence, «¿Qué comercio es responsable?», is
+answered in the same turn rather than needing a question of its own (R16) — with
+`MAX_SELECTED_TRANSACTIONS` movements behind it, and the drilled chart derives from the chart it
+drilled (`6850a02`, `707c260`). «Enséñame los movimientos responsables.» re-lists that same
+evidence through the existing referenced-result path, once `_MOVEMENT_SET_REFERENCE` learns «los
+movimientos responsables/detrás/que lo explican» and a bare «enséñame/muéstrame/dame los
+movimientos» that ends the sentence (`fcdf655`, R17). Episode 32 speaks §9's own turns 4-5 verbatim,
+right after the month line (`c8b6408`).
+
+What it refuses: two bars fitting one reference — «ese pico» when two months tie, a bare «agosto»
+naming two Augusts — asks `DRILL_AMBIGUOUS`, a Spanish question naming the candidates in the
+chart's own order, with zero banking calls and no slot opened (probed:
+`test_an_ambiguous_bar_asks_without_a_banking_call`, outcome `DRILL_AMBIGUOUS`, the ledger
+untouched, `tool_of` reads `CLARIFY`); an unsigned chart's labels decide nothing — the same
+`trusted` flag a tampered restyle's `VISUAL_UNTRUSTED` refusal already reads is checked before
+`resolve_reference` ever runs, so a drill over it falls straight to today's path (the planner)
+rather than narrowing (`test_an_untrusted_chart_is_not_drilled`, probed: the planner asked, not the
+drill reader); a month the chart never drew is not a reference — today's path too. What it does not
+do, on purpose (R14, R15): weekday labels are not resolved — a frequency chart's «¿por qué los martes
+gasto tanto?» is `NoMatch` and reaches the planner exactly as before, because the only consumer of a
+weekday resolution would have been a refusal text nobody asked for; series labels travel on the wire
+but are not read — a comparison's window or a recurrence's cadence still goes to the planner as
+today. There is no click-to-drill on the client — every drill starts from a sentence, never a tap.
+And the drill never widens, now enforced rather than assumed (fix wave, C-1/I-1, tightened in fix
+round 2 by N-1/N-2): the calendar month a label names is intersected with the window the chart's
+own rows actually cover, and that window is itself what the ledger answered bounded by what the
+plan asked for — never the ledger's answer alone, because a lenient ledger, or the corpus's own
+fake, can report whole calendar months for a plan that asked for a slice of one — so a plan whose
+own range is a slice of a month — «del 10 de junio al 20 de julio» — never widens past that slice
+on a later «¿por qué julio es tan alto?», whatever the ledger's own answer claimed to cover. A
+label whose calendar month does not overlap that window at all is today's path, not an error: the
+two dates are compared before the range is built, never after, so an out-of-window month can no
+longer end the turn as an unhandled 422. And the plan in view is checked against the chart's own
+sealed digest before any of this runs, so a KPI turn, a restyle of an older chart or a
+client-edited `last_plan` all fall to today's path rather than narrowing a plan the chart was
+never drawn from. A month still in progress is then clamped to today (design §3.3's own rule
+against silently widening a chart's window), so «agosto» asked on the 5th drills the 1st-5th of
+it, not the whole calendar month.
+
+Recorded rather than fixed, from the same fix round: «Enséñame los movimientos de agosto» over a
+month chart is now a drill rather than today's path — the sentence names a bar (agosto) and the
+drill lexicon's unanchored «enséñame/muéstrame (los|las) movimientos» alternative claims it, so it
+narrows to August by merchant in one call, a route change beyond §9's own two sentences and
+defensible rather than a defect (M7). Three known limits: a drill over an AVERAGE/PERIOD_AVERAGE/
+CUMULATIVE/FREQUENCY/RECURRENCE chart normalises the metric to SUM and the spoken plan says so, with
+no sentence calling the change out on its own (M8); `MAX_VISUAL_CONTEXTS` is five and the drill
+spends one of them, so «el primer gráfico» is the oldest *surviving* chart rather than literally the
+first one drawn, once a conversation has drawn six (M12); and the `VISUAL_FOLLOW_UP` record's
+claimant names the lexicon that recognised the sentence, not the reader that actually answered the
+turn — three of four probed sentences write `DRILL_DOWN`/`drill_down_reader` while a different
+reader answers (the contextual follow-up, `EXPLAIN_PREVIOUS`), and R8 still stands: the same turn's
+other rows say where the answer really came from (Minor 3 / D-4.3-4, parked).
+
+The §3 fourteen phrasings, re-measured with the real deterministic analyser over a charted
+conversation — `turn_analyzer.analyze(sentence, conversation=charted, interpreter=Deterministic())`
+then `classify()`, the 4.2b fix-wave paragraph's own method, this time over a month-labelled,
+`ranked` chart in view — move from 6 of 14 claimed to **8 of 14**. «¿Por qué agosto es tan alto?»
+and «¿Qué movimientos explican ese pico?» now read `DRILL_DOWN`: the two sentences this wave exists
+for. «¿Qué comercio es responsable?» names no bar the resolver reads — no month, no category, no
+top/bottom superlative — so `_drills_into_the_chart` still answers `NoMatch`, the turn stays a
+`NEW_REQUEST`, and `classify()` still reads it `UNRELATED`; it is answered in the same turn as
+«¿Por qué agosto es tan alto?» only because the bounded plan itself regroups by merchant (R16),
+never because this sentence resolves to anything of its own. «Enséñame las compras de esa barra»
+stays `AMBIGUOUS` (presentation+drill) in real request routing, unchanged by this wave — but not
+through `classify()`'s own drill claimant: `interpret_visual` already claims this sentence as a
+presentation change before any `TurnAnalysis` exists, so `llm_controller.py`'s own short-circuit
+(`classify_claimed_visual`) decides it before `analyze()`/`classify()` are ever reached in
+production; asked of `classify()` alone — the path a turn reaches only when nothing claimed it
+first — it reads `PRESENTATION_ONLY` instead, because `_drill_down_claims` requires a `FOLLOW_UP`
+relation and «esa barra» names nothing `_drills_into_the_chart` resolves. Both readings agree it is
+claimed, never `UNRELATED`, so the 8-of-14 count holds either way, and the claimant is the only
+thing that depends on which of the two paths a turn actually takes. Suite at HEAD: 4058 / 3 / 207,
+corpus 205.
+
+**2026-09-10 — wave 4.4 landed: the conversation keeps its chart across voice and text, and the
+summary is spoken from the chart.** A turn's chart identity now rides its own voice events: the
+gateway lifts `chartId` (the answer's `visualization.chart_id`) and `visualTurnId` (the newest
+`visual_contexts[].turn_id`) onto `assistant.text.final`, `audio.started`, `audio.completed` and
+`turn.completed`, omitted rather than `null` on an uncharted turn or a KPI answer, additive on the
+existing protocol (ADR-010 stays version 1) (`09fcc85`, `e142564`). The web client fences audio to
+it: `audio.started` naming a `chartId` other than the one the same turn's `assistant.text.final`
+just announced fails the same way a wrong sample rate does, and the chart landing on the thread
+before `audio.started` arrives is now an asserted invariant rather than an accident of ordering
+(`335740c`). A spoken «ponlo en horizontal» takes the exact `_visual_only_response` path a typed
+one does — `interpret_visual`'s unconditional VOICE refusal is gone, its `voice` parameter deleted
+from the signature and all three call sites — and the metric-saving offer stays a TEXT-only
+affordance, pinned both ways in the same test (`69b7d61`). The spoken summary of a charted answer
+is a new domain presenter, `spoken_summary`, reading the accepted chart rather than the table: a
+top-group sentence only when the chart's labels are `ranked` strictly at both ends, named through a
+closed noun table over every `GroupBy` member (categoría/comercio/contraparte/cuenta/mes/semana/día),
+a second sentence keyed off the profile's own shape (temporal, comparison, donut, or the plain
+desglose) independent of the plan's grouping, and «ingreso»/«gasto» read off the plan's own
+direction — never an amount (`f745e33`). `QuestionResponse.spoken` is filled only when
+`request.channel == "VOICE"` and a chart exists, computed from the context this same turn just
+sealed; the gateway's `_reply_from` reads it defensively (a string or nothing) and `_process_turn`
+synthesises `reply.spoken or reply.text` while `assistant.text.final.text` keeps the full written
+answer the screen shows (`71a5036`). §8's five objectives are now tests rather than a promise, bar
+one superseded outright by §6's own design — the chart never delays the *written* answer; a
+charted turn's speech necessarily waits for the accepted chart by construction, so there is no
+budget under which it could not wait, and an uncharted turn's speech never waited in the first
+place: zero banking calls and no visual-planner-port call on a presentation-only turn, on both
+channels,
+wired through a real handler and ledger so the count is a fact rather than the absence of a crash;
+the deterministic path's `Step.VISUAL_PLANNER` record reads `detail == "not_run"` with `decide`
+awaited exactly once; the first SSE frame is a `stage` and is observably ahead of the policy being
+consulted, drained one chunk at a time against a shared spy rather than checked as two isolated
+facts; the budget and the floor-on-expiry stay Wave 3's own `test_a_non_positive_budget_is_refused`
+and `test_the_three_failures_are_told_apart` (`15d6ac5`). The gateway's benchmark gained a
+follow-up-turn row: a charted turn then a presentation-only restyle on the same open session, fake
+providers, `followUp:inputStartToTurnCompletedMs` P50 = P95 = 16 ms over 20 samples (win32
+timer-tick quantisation of protocol overhead, not a fabricated flat line —
+`apps/voice-gateway/evaluation/RESULTS.md`), and the §8 gate is stated in one sentence against
+Wave 3's real-provider P95 (5,076 ms, 17 August 2026) (`373efb9`, measured 10 September 2026). The
+corpus speaks by voice: the harness gained `Turn.channel` and posts a VOICE turn to the streaming
+route, reading the last frame as the answer (`ef69fa5`); episode 33 carries §9's cases a, b, d and
+e — a voice-opened chart restyled by text, a text chart continued by voice, a voice follow-up
+narrowing the window, and the chart on screen the same frame `spoken` is set — case c, the
+interruption, stays the gateway's own cancellation test from Task 1 (`303cf36`). Suite at HEAD:
+4141 / 5 / 209, corpus 207 (176 · 1193); ratchets 22/43/0, unmoved.
+
+What it refuses: no voice saving offer (a save still needs a screen control); no amount in the
+spoken line beyond what the written text already says; no voice payment confirmation, as before.
+What it does not do, on purpose: no orchestrator-internal stage timing — the gateway's own marks
+bracket the orchestrator end to end, which is what today's §8 gate reads, and a finer split inside
+the orchestrator is not needed to state it; the real-provider follow-up row is the operator's own
+run (Task 9's runbook), not invented here; a charted answer's `data` still travels over the voice
+channel unmeasured — the explorer's own risk, carried forward as a known cost, not a regression
+this wave introduced; the discreet voice explanation («¿Por qué este gráfico?») is 4.5's — see the
+4.5 paragraph below for what it landed and what it still refuses. Two things are also true and not smoothed over: a VOICE `ACCOUNT_BALANCE` turn's stream
+branch answers directly with no `stage` frame at all, so §8 e's «first frame is a stage» invariant
+is proven for a *planned* answer only, and episode 33 keeps its closing balance/courtesy turns on
+TEXT rather than pretend the harness's own frame rule holds for a route that never emits one; and
+`test_spoken_presenter.py`'s value-free claim carries two `pytest.skip`s over the MONTH-grouped
+families rather than a narrowed assertion — the review's own smallest fix (strip the four-digit
+year, assert no digit remains) is recorded as open, not applied. Deferred to the fix wave:
+D-4.4-1 through D-4.4-8
+(`.superpowers/sdd/2026-09-08-multimodal-continuity/progress.md`).
+
+**2026-09-11 — wave 4.5 landed: a chart explains itself from what it carries, and the record says
+what it refuses to say.** The sealed `VisualContext` gains descriptive provenance —
+`source: "llm"|"deterministic"|"patch"|None` and `fallback_reason` — through the three boundaries
+and into the seal (`57063d6`, `dc9c436`); vocabulary, not authority, nothing reads either field to
+decide anything. `domain/services/visual_explanation.py`'s `explain_chart(context) ->
+VisualExplanation` derives `chart_reason`, `ordering_reason`, `scope_summary` and `provenance` from
+the sealed context alone — mark and profile for shape, `EncodingSort`/`ranked` for order, `window`
+and the drawn `labels` for scope, `source`/`fallback_reason` for who chose it — the noun read off
+the labels themselves (`YYYY-MM` → mes, an ISO date → día, a known category key → categoría, else
+grupo) since no plan survives to a later turn, and the measure word from `profile.measure_metric()`
+(`47a0597`, `4a12083`). `QuestionResponse.explanation` now rides every charted answer, TEXT and
+VOICE alike, restyle included, and the web shows it under an inert `<details>` «¿Por qué este
+gráfico?» beside «Ver la consulta», no chip, no endpoint, no action (`6aab2cb`, `5edccb1`). The
+question itself — «¿Por qué este gráfico?» and its close variants, claimed only when a trusted
+chart exists — is answered outcome `VISUAL_EXPLAINED` from `explain_chart` alone: zero ledger calls,
+zero model calls, the conversation byte-identical to before the question (`6283309`). The presenter
+is meant to speak only the chart's own plan: `question_to_dto` hands `spoken_summary` a plan only
+when `AskFinancialQuestionResult.metric_definition_borrowed` is False, otherwise the generic noun —
+M-2 (4.4's branch review) is now closed this way; see below for what closing it this way still
+does not reach. Episode 32 gains the why-turn right after turn 1 and
+episode 33's turn 1 asserts its voice explanation (`7f673e8`, `92b00e3`). Suite at HEAD: 4227 / 3 /
+209 (three globs) + corpus 207 (176 · 1194) at 0.0 %; ratchets 22/43/0 (`UNMEASURED`/`MUTE`/
+`CONTESTED`), unmoved; gateway untouched (`git diff --stat -- apps/voice-gateway` empty across the
+whole wave).
+
+What it refuses: no amount, no total, no percentage in an explanation — dates and a group count
+only, the evidence (movement) count never stated because it does not survive the wire; no rule
+name, no provider error, no discarded proposal — a fallback says only «visualización segura
+seleccionada automáticamente»; no chip, no endpoint, no automatic action from a chart. Binding the
+explanation's `turn_id` to a recoverable turn is REFUSED for this wave, same reason R8 gave it: it
+needs a store this design does not keep, or a replayable record the orchestrator has nowhere to
+put — replacing the older sentence at this document that said the binding "stays 4.5's": it does
+not land in 4.5 either, and needs no store 4.5 does not already lack. What is not yet true, plainly:
+the fix wave closed D-4.5-8 — a later-turn explanation's `scope_summary` now counts
+`len(context.labels)` rather than the wire-zeroed `profile.row_count`, omitted (not "al menos N")
+when the labels are empty or hit the cap. D-4.5-1 (the design's example strings), D-4.5-4 (a public
+`category_words.keys()` accessor), and D-4.5-7 (a web test driving the disclosure through a
+materialised restyle) are likewise FIXED, as is D-4.5-9 (the corpus fixture keys, `TRANSPORT_PUBLIC`
+replacing a key absent from every ledger category enum). D-4.5-3 was RETIRED by Wave 3 hardening
+(Task 2, U-5, 2026-09-11): the sealed `group_by` now carries the WEEK/DAY distinction a label alone
+cannot, so a week-grouped chart's explanation says «semanas», not «días» — the limit this paragraph
+used to state no longer holds; see the design doc's own §7 for the mechanism. D-4.5-5 (unused params on the `_MARK_REASONS`
+callables) is PARKED, untouched. D-4.5-6/M-2 (Task 7, R14) is **CLOSED**, not by a digest: a digest
+of `metric_definition` can never tell a borrowed plan from an owned one (both a comparison's stale
+`last_plan` and this turn's own plan digest identically, since both are read off the same field in
+the same call — the fix wave's attempt learned this the hard way and stayed tautological). The real
+fact is provenance, and only `stream()`'s own back-fill (`ask_financial_question.py:~630-633`) knows
+it, so it says so directly: `AskFinancialQuestionResult.metric_definition_borrowed` is set True in
+the same `replace` that back-fills `metric_definition` from `conversation.last_plan`, and
+`question_to_dto` hands the presenter the plan only when it is False. `visual_plan_digest` stays —
+4.3's drill still binds to it — but the presenter no longer reads it. Round 3 (R15) found the first
+cut too conservative: the main query producer (`_answered`/`_visual_dataset`, `~:5873`) HAS the
+`FinancialPlan` that drew the chart in its own local scope, so it now stamps `metric_definition`
+there directly, alongside `visual_dataset=`. `stream()`'s back-fill then finds the field already
+set and never runs, so an ordinary, single-turn VOICE query keeps the 4.4 behaviour
+(«Restaurantes fue la categoría con mayor gasto…», «…por categorías»). The other four producers
+(`_how_many_payees`, `_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely
+run no single `FinancialPlan` of that shape, stamp nothing, and are correctly left to the
+back-fill — a chart that follows one of them, over whatever plan was previously in view, speaks
+only the generic «En pantalla tienes el desglose.» line, by design. The video's
+on-camera run of §11 is the user's; what the code offers it is episode 32's turn order and the
+explanation visible after turn 1, spoken right after «¿Por qué este gráfico?».
+
+**2026-09-13 — Wave 3 hardening landed: the audits' findings are closed, claimed, or written down as
+open — none silently dropped.** Three read-only auditors (design/architecture, code correctness,
+behaviour+harness+gateway+web) read `task/wave3` at `d88324c` and reported, by severity: design 2
+Critical / 11 Important / 10 Minor (+3 questions); code 1 Critical / 5 Important / 7 Minor;
+behaviour+gateway+web+measurement 13 Critical / 23 Important / 18 Minor. The measurement audit's own
+four Criticals, one line each: **M-1** the §8 latency gate summed a real-provider Linux number and a
+fake-provider Windows number on a path where the fake provider never restyles a chart, under the
+word "measured"; **M-2** the planning baseline this repo's own numbers were measured against used
+`ministral-3:14b`, not the product's own planner model; **M-3** Task 9's GPU runbook was not
+runnable at all (a wrong default model, a no-op env var, a nonexistent `--mode` flag, a dead compose
+key); **M-4** the visual planner's 6.0 s budget was a guess presented as a measurement, and the
+method proposed to measure it is right-censored by construction (a run made *at* budget B can never
+report a P95 above B).
+
+**What landed, by task, SHAs post-strip (D-H-3; the batch-1 review's five `Co-Authored-By` trailers
+were removed by `git filter-branch` over `f43fbab..HEAD` on 2026-09-11, which rewrote every commit
+after `f43fbab` in the process). F-6 (fix wave, Important 5): the previous version of this list
+named 15 SHAs — Task 1, all of Task 5, all of Task 6, all four of Task 7 — that predated that
+rewrite and are not reachable from HEAD; a fresh clone could not `git show` them. Regenerated from
+`git log d88324c..4feff6e` rather than hand-copied from task reports, every SHA below is the
+post-strip one:** Task 1 — the seal binds conversation + position (A-1/A-13): `6e1c350`, `b9e8231`.
+Task 2 — what crosses the wire (A-2/A-6/U-5/A-11/A-4/A-5): `09ddc3f`, `7801a15`, `fd2c9a9`,
+`77f5f1d`, `a164a90`. Task 3 — the language surface (B-1/B-4/A-8/A-9/A-10/B-6/B-3/C-1/C-3/C-4/C-6):
+`cd40ebe`, `72cb982`, `12880d4`, `cfb0836`, `541ecd3`, `e63d15a`, `2c3c75c`; B-2 left BLOCKED by
+design (R-H1), closed instead by Task 8's stop-list. Task 3 fix round (F-H1 Critical/F-H2/F-H3, from
+the batch review): `45c9d6b`, `bbcaef6`, `2b64f14`. Task 4 — charts mean what they say
+(U-1/U-6/U-2/U-3/A-7/C-2/A-3/U-7/U-8/A-15/D-H-1): `ab1ae38`, `96fcbb9`, `a628f72`, `86befb1`,
+`d5f4e3a`, `96435fd`, `614ed0e`. Task 5 — the gateway (G-1..G-11): `0938625`, `d6593ad`, `f630636`,
+`177d426`, `93004d6` (G-2/G-3/G-6/G-8/G-11's own commit content landed inside `6a6ea71`, a
+shared-index race — see the git-race map below). Task 6 — the web (W-1..W-8): `6a6ea71`, `ca1efac`,
+`450c42b`, `e84919e`. Task 7 — measurement honesty (M-1..M-9/U-9): `0938625` (State-at-HEAD block,
+same race), `19447e3`, `d2a4515`, `0860db7`+`153d497`, `69f095b`. Task 8 — the corpus learns the
+sentences it avoided (B-2a/B-7, harness kinds, episode 34): `9147ac1`, `90c9264`, `ced6672`,
+`60db150`, `8c76c57`, `57b4140`. Task 8b — the ratchets come back under ceiling by claiming, not
+raising (B-9, save request, «vuelve al anterior», the drill asks, `_SPLIT_BY_NAMES` reorder):
+`c530efb`, `94bae8d`, `423f7c9`, `1bfec6e`, `df43db4`, `133e973`.
+
+**Rulings, R-H1/R-H2:** R-H1 — B-2 (an unrecognised bare word read as a merchant filter) splits into
+a CLOSED stop-list (asks with zero calls, shipped by Task 8) and the ten (in fact twelve) pinned
+corpus turns that pinned the old guess-then-retract as expected behaviour, corrected in the same
+task once each was confirmed a confident wrong answer, never an honest retraction — the stop-list is
+an interim measure, superseded by a general capitalised-or-known-merchant rule once no pinned
+episode still breaks under it. R-H2 — a ratchet ceiling (`UNMEASURED`, `MUTE`) is never raised;
+Task 8 measured both over ceiling (30/22, 49/43) by driving episode 34's real sentences through the
+harness, and Task 8b brought both back to their ceilings (22/22, 43/43) by claiming the sentences
+with real readers, not by widening the literal. **What sitting at the ceiling means for the next
+natural sentence added to the corpus: there is no room left.** Any further sentence that reaches the
+model with no planning-dataset case, or recognises nothing at all, must either be claimed by a
+reader (as Task 8b did for eight rows) or matched by a new planning-dataset case before it can be
+added — the ceiling itself may not move to make room.
+
+**The git-race attribution map** (from the batch-1 review, so the history reads honestly rather than
+looking tampered; SHAs corrected by F-6, fix wave, same regeneration as above): `0938625`
+(`fix(voice): a refused voice payment does not silence the session`) carries Task 5's own G-1 files
+**plus** Task 7's `RESULTS.md` State-at-HEAD block — two implementers' concurrent commits in one
+shared worktree, caught and mapped, not rewritten while implementers were live. `6a6ea71`
+(`fix(web): the client accepts the answers the orchestrator really sends`) carries Task 6's
+W-1/W-2/W-3/W-4/W-6 web files **plus** Task 5's G-2/G-3/G-6/G-8/G-11 gateway files. `0860db7`/
+`153d497` share one subject line for two different files (`latency_gate.py` new, `RESULTS.md`
+edited) — a background race split one intended commit into two. No content was lost in any of the
+three incidents, confirmed by direct file inspection at HEAD in both the ledger and the read-only
+batch review; the METHOD RULE this wave converged on — `git commit -m "<msg>" -- <paths>` in one
+call, never a separate `git add` — closed the race for every task from Task 5's fourth commit
+onward.
+
+**What is REFUSED or still OPEN, stated as plainly as what landed:**
+- **The sentence-table rows still open** (Task 8/8b's own accounting): rows 19 («¿por qué tanto?»
+  over a `group_by: NONE` chart) and 33 («sepáralo…», the model path) were harness artefacts, now
+  claimed or explained; after Task 8b, the only rows genuinely left open are out of this wave's
+  declared scope entirely (B-9's «hazlo más grande»/«ponlo en tarta» were themselves claimed by
+  Task 8b — see its own table — so as of `133e973` every row of episode 34 is RIGHT except the ones
+  the wave never promised: none remain unaccounted for without a stated reason).
+- **D-H-2** (gateway + web, CLOSED by the fix wave): PCM audio frames used to carry no turn id on
+  the wire; the gateway now sends an `audio.frame` event (turn id only) immediately before every
+  binary PCM frame, and the web client drops any frame whose named turn is not the current one —
+  before W-3's own ordering heuristics ever run, which stay in place as a harmless fallback for a
+  frame with no metadata at all. ADR-010 amended; no protocol version bump (additive event type,
+  both sides changed together).
+- **D-H-4** (minor, CLOSED by the fix wave): `visual_planning_policy.py`'s promoted-only floor
+  recompute now guards explicitly on `self._mode == "promoted"` rather than being correct only by
+  control-flow tracing.
+- **D-H-5** (minor, CLOSED by the fix wave): `_COMPARISON_LIMIT_REASON` renamed to the public
+  `COMPARISON_LIMIT_REASON`; `llm_controller.py` imports it as such.
+- **D-H-6** (CLOSED by the fix wave): `test_plan_continuation_stamps.py` walks every
+  continuation-kind shape (comparison-on-view, reshape/regroup/split, the standalone drill branch)
+  end to end and asserts each stamps `plan_continues_conversation`.
+- **D-H-7** (IMPORTANT, CLOSED by the fix wave, F-4): the season clarification's draft now carries
+  `group_by=CATEGORY` when the sentence itself asks "en qué ... más" (a breakdown), `NONE`
+  otherwise — §11's own opening sentence resolves to the ranking it asks for, not a total.
+- **D-H-8** (CLOSED by the fix wave): `scripts/handover_cases.py` now reads `dev.yaml` (key
+  `question`) alongside `conversations.yaml` (key `say`) for its "measured" set. Measured: reading
+  `dev.yaml` moves UNMEASURED by **0** — every one of the 22 remaining sentences is a non-query
+  control word with no expectation in either file, so the ceiling stays exactly where it was
+  (164 handed to the planner, 127 anchor, 37 extension, 22 distinct).
+- **D-4.5-5** (PARKED, unchanged): unused parameters on the `_MARK_REASONS` callables, untouched by
+  this wave.
+- **The GPU runs** (Task 9 of the visual-planner plan, OPEN — the user's own action): the runbook is
+  now runnable end to end (M-3, above), but no measurement exists. `evaluation/planning/RESULTS.md`'s
+  State-at-HEAD block and the config comment both say so in the present tense, not as a stale claim.
+- **The §11 on-camera run** (OPEN — the user's own action): the code path is proved by episodes
+  32/33 with the stub planner and the fake ledger (M-6); the on-camera recording itself is not part
+  of this repository's own gates.
+- **The security paragraph** (already landed, verify rather than duplicate): Task 1's own 2026-09-11
+  entry above already states the loopback default is not a trust boundary (A-13) — restated in the
+  design doc's own §13 by this task, not re-added here a second time.
+
+**What still says exactly what it said before, corrected only where hardening changed the underlying
+fact:** the 4.4 paragraph above is unchanged — nothing in this wave touched multimodal continuity's
+own mechanics. The 4.5 paragraph's own week-limit sentence is corrected in place, above (D-4.5-3
+RETIRED) — the paragraph no longer says a week-grouped chart's explanation says «días»; every other
+claim in it (the provenance strings, `metric_definition_borrowed`, the R14/R15 digest ruling) is
+unchanged. Suite at HEAD `133e973`: orchestrator 2193 + 1008 + 1137 / 3 skipped / 208 deselected +
+corpus 208 (177 · 1273) at 0.0 % on every metric; ratchets `UNMEASURED` 22/22, `MUTE` 43/43,
+`CONTESTED` 0 (at their ceilings, not exceeding them); gateway 144 passed / 1 skipped; web 131
+passed / 10 files. `ruff check`/`ruff format --check`/`mypy src` clean throughout.
 
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 

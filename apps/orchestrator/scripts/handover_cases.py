@@ -15,6 +15,8 @@ it.
 Two groups come out, and the split is the whole design:
 
     anchor      the sentence already has a hand-written expectation in planning/conversations.yaml
+                or planning/dev.yaml (D-H-8: both are hand-written expectations, just two file
+                shapes -- a conversation's own turn versus a bare scored case)
     extension   nothing measures this turn against a model at all
 
 The anchor is what validates a judge. A model scoring plans is an opinion until it agrees with
@@ -60,6 +62,16 @@ from finguard_orchestrator.domain.services import (  # noqa: E402
 
 PLANNING = ROOT / "evaluation" / "planning"
 WRITTEN = PLANNING / "conversations.yaml"
+# D-H-8 (fix wave): `evaluation/planning/dev.yaml` -- the harness's own baseline dataset,
+# "THE PROMPT IS TUNED AGAINST THIS FILE" per its own header -- writes a plan expectation the
+# same way `conversations.yaml` does: a hand-written case, `evaluate_planning.py --dataset dev`
+# scores a model against it, and a sentence in it is measured in every sense the "anchor" group
+# below claims. It went unread here from the day this script was written, not by a decision: the
+# two files even use different keys for the sentence itself (`say` in a conversation turn,
+# `question` in a bare planning case), and only the first was ever taught. A sentence with only a
+# `dev.yaml` case still read as `extension` (unmeasured) -- the wrong half of the split for
+# exactly the case the split exists to name correctly.
+DEV = PLANNING / "dev.yaml"
 DESTINATION = PLANNING / "handover.yaml"
 
 
@@ -68,14 +80,29 @@ def _folded(sentence: str) -> str:
 
 
 def _sentences(node: object) -> set[str]:
-    """Every `say` in a planning dataset, however deeply the file nests its turns."""
+    """Every `say`/`question` in a planning dataset, however deeply the file nests its turns.
+
+    Two keys, not one, since D-H-8: `conversations.yaml`'s turns are `say`, `dev.yaml`'s bare
+    cases are `question` -- the same sentence-in-a-dataset fact, spelled two ways by two file
+    shapes this reader was always meant to cover.
+    """
     if isinstance(node, dict):
         found = set().union(*(_sentences(value) for value in node.values())) if node else set()
-        said = node.get("say")
-        return found | ({_folded(said)} if isinstance(said, str) else set())
+        for key in ("say", "question"):
+            value = node.get(key)
+            if isinstance(value, str):
+                found = found | {_folded(value)}
+        return found
     if isinstance(node, list):
         return set().union(*(_sentences(item) for item in node)) if node else set()
     return set()
+
+
+def _measured_sentences() -> set[str]:
+    """Every sentence a hand-written expectation exists for, in either dataset."""
+    measured = _sentences(yaml.safe_load(WRITTEN.read_text(encoding="utf-8")))
+    measured |= _sentences(yaml.safe_load(DEV.read_text(encoding="utf-8")))
+    return measured
 
 
 def _states_a_query(sentence: str, today: Any) -> bool:
@@ -122,7 +149,7 @@ def _another_vocabulary_has_a_word_for_it(sentence: str) -> bool:
 
 def cases() -> list[dict[str, Any]]:
     """One case per turn the corpus handed to the planner, oldest conversation first."""
-    measured = _sentences(yaml.safe_load(WRITTEN.read_text(encoding="utf-8")))
+    measured = _measured_sentences()
     found: list[dict[str, Any]] = []
     for episode in episodes.load():
         # Through the same stack and from the same opening state the corpus replays in. A second
@@ -138,9 +165,18 @@ def cases() -> list[dict[str, Any]]:
             # was last *executed* and what the thread is on are not the same thing after a balance
             # or a refusal, and it is the thread the model is given.
             before = (conversation or {}).get("last_plan")
+            # The same override `episodes.replay()` sets and clears around every turn: a turn whose
+            # own routing reads the chart the ledger just drew -- a drill-down resolving «agosto»
+            # against a month line's own labels, not merely its sentence -- would otherwise see the
+            # fake's one hardcoded group instead of the breakdown the episode actually describes,
+            # and reach the planner for a reason this script's own count should never carry.
+            stack.ledger.groups_for_next_turn = episodes._groups_from(turn)
+            stack.ledger.movements_for_next_turn = episodes._movements_from(turn)
             response = stack.client.post(
                 "/v1/questions", json={"question": turn.say, "conversation": conversation}
             )
+            stack.ledger.groups_for_next_turn = None
+            stack.ledger.movements_for_next_turn = None
             if response.status_code != 200:
                 continue
             conversation = response.json()["conversation"]

@@ -269,7 +269,7 @@ PHRASINGS: Final[dict[str, tuple[Phrasing, ...]]] = {
         ),
     ),
     "temporal_day": (
-        Phrasing(r"\b(?:por|al|cada)\s+dia\b"),
+        Phrasing(r"\b(?:por|al|cada)\s+dia(?:s)?\b"),
         Phrasing(r"\b(?:media|promedio)\s+diari[oa]\b", like=("¿Cuál es mi media diaria?",)),
         Phrasing(
             r"\b(?:gasto|importe|coste)\s+diari[oa]\s+medi[oa]\b",
@@ -278,7 +278,7 @@ PHRASINGS: Final[dict[str, tuple[Phrasing, ...]]] = {
         Phrasing(r"\b(?:y\s+)?(?:el\s+)?diari[oa]\b"),
     ),
     "temporal_week": (
-        Phrasing(r"\b(?:por|a\s+la|cada)\s+semana\b"),
+        Phrasing(r"\b(?:por|a\s+la|cada)\s+semana(?:s)?\b"),
         Phrasing(
             r"\bsemana\s+a\s+semana\b",
             like=("el gasto acumulado semana a semana este año",),
@@ -289,7 +289,7 @@ PHRASINGS: Final[dict[str, tuple[Phrasing, ...]]] = {
         Phrasing(r"\b(?:y\s+)?(?:el\s+)?(?:semanal|semanl|semnal)\b"),
     ),
     "temporal_month": (
-        Phrasing(r"\b(?:por|al|cada)\s+mes\b"),
+        Phrasing(r"\b(?:por|al|cada)\s+mes(?:es)?\b"),
         Phrasing(r"\bmes\s+a\s+mes\b"),
         Phrasing(r"\b(?:media|promedio|gasto\s+medio|importe\s+medio|coste\s+medio)\s+mensual\b"),
         Phrasing(r"\b(?:gasto|importe|coste)\s+mensual\s+medio\b"),

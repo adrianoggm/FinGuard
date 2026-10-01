@@ -29,17 +29,39 @@ import { day, ibanGroups, money, outgoing, signed } from "./format";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 import { Chart, chartTitle } from "./Chart";
+import { ActivityList } from "./ActivityList";
+import { BookingPanel } from "./BookingPanel";
 
 type ChartVisualization = Extract<NonNullable<Answer["visualization"]>, { kind: "chart" }>;
+
+type ChartSource = {
+  visualization: ChartVisualization;
+  currency: string | null;
+  // W-7: the evidence `AnswerEvidence` renders next to a chart -- the query that produced it and
+  // the movements behind it -- read off the same answer the chart itself came from (a compound
+  // part carries its own; the parent otherwise), not inherited from whichever answer the restyle
+  // happened to arrive attached to.
+  plan: Answer["plan"];
+  groups: Answer["groups"];
+  movementCount: Answer["movement_count"];
+  movements: Answer["movements"];
+};
 
 function chartSource(
   answer: Answer,
   chartId: string,
   inheritedCurrency: string | null = null,
-): { visualization: ChartVisualization; currency: string | null } | null {
+): ChartSource | null {
   const currency = answer.currency ?? inheritedCurrency;
   if (answer.visualization?.kind === "chart" && answer.visualization.chart_id === chartId) {
-    return { visualization: answer.visualization, currency };
+    return {
+      visualization: answer.visualization,
+      currency,
+      plan: answer.plan,
+      groups: answer.groups,
+      movementCount: answer.movement_count,
+      movements: answer.movements,
+    };
   }
   for (const part of answer.parts ?? []) {
     const found = chartSource(part, chartId, currency);
@@ -61,6 +83,16 @@ export function materializeVisualizationDerivation(turns: Turn[], answer: Answer
   return {
     ...answer,
     currency: answer.currency ?? source.currency,
+    // W-7: a restyle answer (`VISUAL_UPDATED`) carries `plan: null`, `groups: []`, `movements: []`
+    // -- the orchestrator never re-derives evidence for a presentation-only change -- so without
+    // this the restyled bubble drew a chart with rows and showed only "¿Por qué este gráfico?": no
+    // "Ver la consulta", no "Ver los movimientos", no "Ver los datos". Inherited the same way
+    // `currency` and the chart's own `data` already are: only when this answer's own is empty, so
+    // a genuinely evidenced answer (should one ever carry a derivation) is never overwritten.
+    plan: answer.plan ?? source.plan,
+    groups: answer.groups.length > 0 ? answer.groups : source.groups,
+    movement_count: answer.movement_count ?? source.movementCount,
+    movements: answer.movements.length > 0 ? answer.movements : source.movements,
     visualization: {
       ...source.visualization,
       chart_id: derivation.chart_id,
@@ -107,6 +139,9 @@ const STAGES: Record<string, string> = {
 };
 
 const AWAITING = "AWAITING_CONFIRMATION";
+// A booking's preview has its own outcome (the service never reuses a payment's for a class), and
+// it is drawn as the same kind of bubble: something is about to happen on a yes.
+const PREVIEWS = new Set([AWAITING, "BOOKING_AWAITING_CONFIRMATION"]);
 
 export type Turn =
   | { who: "user"; text: string }
@@ -266,6 +301,11 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
           }
         } catch (error) {
           setVoiceError(error instanceof Error ? error.message : "Respuesta de voz inválida.");
+          // W-2: an assistant.text.final that failed to materialise (a restyle whose source
+          // chart is gone from the thread, say) never rendered a chart, so the fence must not
+          // treat this turn as having one either -- audio for it would play over a bubble with
+          // no chart, which is exactly the defect the fence exists to rule out.
+          return false;
         }
       },
     });
@@ -346,7 +386,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
           {voiceStatus === "idle" || voiceStatus === "error" ? "🎙️ Iniciar voz" : voiceStatus === "processing" || voiceStatus === "speaking" ? "🎙️ Interrumpir y hablar" : voiceStatus === "connecting" ? "Cancelar conexión" : "⏹ Detener voz"}
         </button>
         <span role="status">{voiceStatus === "connecting" ? "Conectando…" : voiceStatus === "listening" ? "Escuchando" : voiceStatus === "processing" ? "Procesando…" : voiceStatus === "speaking" ? "Reproduciendo" : voiceStatus === "error" ? "Voz no disponible" : "Voz apagada"}</span>
-        {voiceError && <small className="voice-error">{voiceError}</small>}
+        <VoiceError message={voiceError} />
       </div>}
 
       <div className="turns">
@@ -361,8 +401,9 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         )}
         {awaitingConfirmation(thread) && !busy && (
           <div className="confirm">
+            {/* Still «sí» on the wire: the service reads the same closed yes for both. */}
             <button className="yes" onClick={() => send("sí")}>
-              Sí, enviar
+              {awaitingBooking(thread) ? "Sí, reservar" : "Sí, enviar"}
             </button>
             <button className="no" onClick={() => send("no")}>
               No
@@ -445,9 +486,18 @@ export function settled(
   return { turns, conversation: answer.conversation ?? before.conversation };
 }
 
-/** Whether a payment is on the table waiting for a yes. The one thing the input box renders on. */
+/**
+ * Whether a payment or a booking is on the table waiting for a yes. The one thing the input box
+ * renders on.
+ */
 export function awaitingConfirmation(thread: Thread): boolean {
-  return thread.conversation?.workflow === "PAYMENT_CONFIRMATION";
+  const workflow = thread.conversation?.workflow;
+  return workflow === "PAYMENT_CONFIRMATION" || workflow === "BOOKING_CONFIRMATION";
+}
+
+/** Whether the yes on the table books a class rather than moving money. */
+export function awaitingBooking(thread: Thread): boolean {
+  return thread.conversation?.workflow === "BOOKING_CONFIRMATION";
 }
 
 /** The intent a confirmation is about, when there is one. */
@@ -484,6 +534,25 @@ export function recipientChoices(thread: Thread) {
     return [];
   }
   return conversation.candidates;
+}
+
+/**
+ * A voice-session failure, announced.
+ *
+ * W-8: this used to be a bare `<small>`, so "Permiso de micrófono denegado…" only ever reached a
+ * screen reader if it happened to be focused on this exact node -- `SaveMetricControl`'s own
+ * failure (`:role="alert"`, below) already gets this right. Extracted so the one attribute that
+ * matters here is exercised by a render test without a DOM, the way this file tests everything
+ * else: `role="alert"` alone is enough (it implies `aria-live="assertive"`; a redundant explicit
+ * one would only risk the two ever saying something different).
+ */
+export function VoiceError({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <small className="voice-error" role="alert">
+      {message}
+    </small>
+  );
 }
 
 /** Actions attached to the latest answer. Older suggestions must never remain live. */
@@ -582,7 +651,7 @@ function Bubble({ turn }: { turn: Turn }) {
   const className = [
     "bubble",
     "theirs",
-    answer.outcome === AWAITING ? "preview" : "",
+    PREVIEWS.has(answer.outcome) ? "preview" : "",
     hasVisualization ? "has-visualization" : "",
   ].filter(Boolean).join(" ");
   return (
@@ -619,7 +688,11 @@ function Bubble({ turn }: { turn: Turn }) {
           <AnswerEvidence answer={answer} />
         </>
       )}
+      {(answer.activities?.length || answer.agent_notices?.length) ? (
+        <ActivityList slots={answer.activities ?? []} notices={answer.agent_notices ?? []} />
+      ) : null}
       <PaymentPanel state={answer.conversation} />
+      <BookingPanel state={answer.conversation} />
     </div>
   );
 }
@@ -659,8 +732,23 @@ function SaveMetricControl({ token, suggestion }: { token: string; suggestion?: 
  * second table there would be a second opinion about the same figures.
  */
 export function AnswerEvidence({ answer }: { answer: Answer }) {
+  // Present exactly when the server sent one AND this answer actually shows a chart -- by the
+  // time this renders, a wire `visualization_derivation` has already been materialised into
+  // `answer.visualization` (`materializeVisualizationDerivation`, called before the turn is ever
+  // pushed), so `answer.visualization` alone is what "shows a chart" means here, same as
+  // `Bubble`'s own `hasVisualization` above. §12/R6: inert -- no button, no link, no handler.
+  const explainsAChart = answer.explanation && answer.visualization?.kind === "chart";
   return (
     <>
+      {explainsAChart && (
+        <details>
+          <summary>¿Por qué este gráfico?</summary>
+          {answer.explanation!.chart_reason && <p>{answer.explanation!.chart_reason}</p>}
+          {answer.explanation!.ordering_reason && <p>{answer.explanation!.ordering_reason}</p>}
+          {answer.explanation!.scope_summary && <p>{answer.explanation!.scope_summary}</p>}
+          {answer.explanation!.provenance && <p>{answer.explanation!.provenance}</p>}
+        </details>
+      )}
       {answer.plan && (
         <details>
           <summary>Ver la consulta</summary>

@@ -1,0 +1,239 @@
+# The corpus's first visual episode.
+#
+# Every episode before this one measured which of thirteen places answered a turn. This is the
+# fourteenth: which chart a turn leaves behind, and whether the next turn's chart remembers where
+# it came from.
+
+episodes:
+  - name: a_breakdown_is_reshaped_and_then_restyled
+    why: >
+      A financial breakdown that gets reshaped twice, drilled into once, and then restyled twice
+      more, each turn remembering the chart the turn before it drew.
+
+      Turn 1 asks a plain question, «¿Cuánto gasté el último trimestre?», rather than §9's own
+      opener, «¿En qué he gastado más este verano?»: probed, the verano sentence reaches the
+      planner (no deterministic reader claims it) because `window_words.py` excludes seasons on
+      purpose — its own docstring says «en verano» is a window "a person understands and this
+      does not, and they are left out on purpose". Nothing in this service can turn «este verano»
+      into a window without guessing one, so handing it to the planner would cede a sentence
+      nobody checks. This turn asks about the last quarter instead, and draws a ranked breakdown
+      bar over three spending categories.
+
+      **The anchor changed from «¿Cuánto gasté el mes pasado?» in the fix wave, and the reason is
+      I-3.** That sentence's own plan was `LAST_MONTH` — one calendar month — and turn 3 below
+      regroups by month over three injected rows (June, July, August). A real ledger grouped by
+      month over `LAST_MONTH` returns exactly one bar; the fixture handed back three anyway, and
+      turn 4's drill into August then ran against a window (`2026-08-01..2026-08-05`) the plan in
+      view could never actually have produced. The whole-branch review named this a fixture that
+      lied about what the ledger returned, and the drill's own containment rule — never speak past
+      the window the chart's rows cover — is exactly the check that would have caught it, had the
+      window been real. It was not: `Ledger.run` answered no window at all before this fix wave,
+      so there was nothing for the rule to check turn 3's own three months against.
+      «El último trimestre» is `_LAST_QUARTER`'s own phrase and resolves to
+      `RelativePeriod(LAST_N_MONTHS, n=3)` deterministically (`no_model: true`, probed) — so the
+      anchor asks a plain question whose own window genuinely spans three months, and turn 3's
+      three injected rows are an answer that plan can actually produce. The natural variations a
+      holder actually types — «los últimos tres meses», «desde junio hasta agosto» and the rest of
+      the audit's own sentence table — are episode 34's job (`34-natural-visual-sentences.yaml`),
+      not this one's: this episode is a chart's lineage exercised cleanly, turn by turn, and the
+      corpus's honest natural-language coverage lives beside it rather than inside it.
+
+      Turn 2, «¿Por qué este gráfico?», sits right here because the ranking is on screen and the
+      holder asks why bars — §11 bullet 1's own case, «discreetly explains why bars». It resolves
+      against turn 1's own chart the same way the drill resolves against a label, deterministically
+      (`no_model: true`, probed) and without a banking call: the answer must not query the ledger,
+      replan anything, or mint a new chart — it only reads what turn 1's visual context already
+      carries and reports back on it. Its `says:` is the exact `chart_reason` the probe shows,
+      verbatim, and the conversation the turn leaves behind is byte-identical to the one turn 1
+      left, because nothing about the thread moved.
+
+      **I-3 (fix wave).** Turn 1's own `groups:` used to name a bare `TRANSPORT` key — no ledger
+      category is spelled that way (the real keys are `TRANSPORT_PUBLIC`/`TRANSPORT_FUEL`), so
+      turn 2's `chart_reason` fell to the generic noun, «Barras: comparas grupos entre sí.», and a
+      genuine category chart read as unspecified. The fixture now names `TRANSPORT_PUBLIC` — one
+      of the same two keys turn 3 already splits into — so all three of turn 1's groups
+      (`RESTAURANTS`, `TRANSPORT_PUBLIC`, `GROCERIES`) are real category keys and `chart_reason`
+      says «Barras: comparas categorías entre sí.», probed. Turn 3's split reads the sentence
+      «transporte público y gasolina», not turn 1's `groups:` key, so renaming turn 1's key changes
+      nothing about what turn 3 queries or the plan it leaves in view — probed: `derived_from:
+      true`, `groups:`, and `ran:` below hold unchanged. The sentence is claimed the same deterministic
+      way the drill's own «¿Por qué agosto es tan alto?» is: `tests/test_what_we_hand_to_the_
+      planner.py`'s ratchets sit unmoved at `UNMEASURED` 22 / `MUTE` 43, and `tests/test_which_
+      recogniser_claims_a_turn.py`'s CONTESTED stays 0 — measured, not assumed. Turn 3, «Separa
+      transporte público y
+      gasolina.», is §9's own split, verbatim. A deterministic
+      reader recognises the verb and the two named categories the moment a plan is already in view,
+      so this turn never reaches the planner: one query, filtered to just those two categories,
+      keeping the window turn 1 already asked about rather than restating it. Its chart derives
+      from turn 1's, because turn 1 already drew a real multi-row breakdown for this to reshape.
+
+      Turn 4, «Ahora compáralo por meses.», is §9's own regroup, verbatim: the regroup reader takes
+      it against the plan turn 3 left in view, keeps that plan's direction and its two categories,
+      and reads «por meses» as the calendar grouping. The answer is a month-by-month series over
+      the same filtered spending — a line chart, with a temporal axis and nothing categorical left
+      on either axis to sort. Its chart derives from turn 3's.
+
+      Turns 5 and 6 are §9's own turns 4-5, verbatim, and this is where the drill-down lands. «¿Por
+      qué agosto es tan alto?» resolves against the month line's own label for August rather than
+      reaching the planner (`no_model: true`, probed), runs the plan turn 4 left in view narrowed
+      to that one bar, and regroups by merchant — design §3.3's own third sentence, «¿Qué comercio
+      es responsable?», is answered here rather than in a turn of its own, because a question
+      naming August's own spike was always going to be asked that. The window it narrows to is not
+      the whole of August, and now for two reasons stacked rather than one: C-1's own intersection
+      first narrows the calendar month against the window turn 4's chart actually carries (now real,
+      since the harness fix answers one) — a no-op here, because that window is the whole three
+      months and fully contains August — and then this harness's fixed "today" falls inside the
+      month besides, so the plan clamps to the days that have actually happened rather than naming
+      days the chart never covered — design's own rule against widening a chart's window silently,
+      and a month still in progress is exactly the case that rule exists for. Its chart derives from
+      the line it drilled and draws in the breakdown floor's own canonical shape, the one turn 1
+      already drew.
+
+      «Enséñame los movimientos responsables.» is the turn after it, and it draws nothing: the
+      movements the drill's answer just named come back by their own identifiers, an id-selected
+      plan being a request for exactly those rows whether or not the call that ran it also asked
+      for a count — probed: the handler never passes one here, and the ledger answers anyway,
+      because the request was already in the plan. An ungrouped total is a KPI rather than a chart,
+      so `derived_from` is not asserted and the conversation's own chart count does not move.
+
+      Turn 7, «Pon el primer gráfico en vertical.», is not §9's own wording, and this episode still
+      needs it to be: right after a turn that drew no chart, «el gráfico anterior» would resolve to
+      the drill's own merchant bar — and that bar already carries its dimension on the y axis, the
+      same shape this episode calls "horizontal" throughout, so §9's own next wording, «en
+      horizontal», would be a no-op against it and prove nothing here. Naming the first chart by
+      number instead reaches back past the drill and the line to the ranked bar turn 1 drew, and
+      flips it: the dimension moves from the y axis to the x axis, the effective change the harness
+      can see through `canonical()`.
+
+      Turn 8, «Pon el gráfico anterior en horizontal.», is §9's own restyle wording, verbatim, and
+      it settles what «el gráfico anterior» means right after a restyle: it resolves to the chart
+      that restyle just drew — turn 7's vertical bar — not to whichever chart stood before it and
+      not to the drill's own merchant bar two turns back. Flipping it moves the dimension back to
+      the y axis, landing on exactly the shape chart 1 drew, but as its own new entry: turn 8's
+      chart derives from turn 7's, not from chart 1's original one. «El primer gráfico» and «el
+      gráfico anterior» stay consistent with each other throughout this episode: the first always
+      names the conversation's own original chart, and a restyle appends a new entry rather than
+      mutating the one it derives from.
+
+      The conversation closes with an unrelated balance check and a courtesy, neither new and
+      neither about the drill, only so it still clears the corpus's six-turn floor by a wide margin.
+    metrics: [context_retention]
+    turns:
+      - say: ¿Cuánto gasté el último trimestre?
+        route: QUERY
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        # The breakdown floor's canonical form, probed against the real harness: chart-wide sort
+        # is None, the ranking is the y axis's own sort.
+        chart:
+          mark: bar
+          channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [y, descending, value_minor]
+        banking_calls: 1
+        no_model: true
+        # I-3 (fix wave): claimed deterministically by `_natural_period_aggregate_plan`'s own
+        # `_LAST_QUARTER` phrase, resolving to `RelativePeriod(LAST_N_MONTHS, n=3)` -- the window
+        # turn 4's own three months (June-August) can actually be an answer to. See `why`.
+        ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Por qué este gráfico?
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        explanation: true
+        # §11 bullet 1's own case, sitting right after the ranking it explains. Resolved
+        # against turn 1's own chart deterministically (`no_model: true`, probed); reads no
+        # ledger and mints no chart. `chart_reason` is the probe's own line for a `bar` over
+        # turn 1's grouping, verbatim -- see `why`.
+        says: "Barras: comparas categorías entre sí."
+      - say: Separa transporte público y gasolina.
+        route: QUERY
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
+        banking_calls: 1
+        no_model: true
+        # §9's own split wording. Claimed deterministically: `_SPLIT_BY_NAMES` reads the
+        # verb and `category_words.precisely_named_in` reads the two names, so this never reaches
+        # the planner (probed). Turn 1 already draws a real breakdown -- its own `groups:` gives it
+        # three rows -- so this chart derives from it: measured `true`, not the old turn's `false`.
+        # See `why`.
+        derived_from: true
+        chart:
+          mark: bar
+          channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [y, descending, value_minor]
+        ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Ahora compáralo por meses.
+        route: QUERY
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
+        banking_calls: 1
+        no_model: true
+        derived_from: true
+        # Temporal, not categorical: no axis carries its own sort, so no `axis_sort` here.
+        chart:
+          mark: line
+          channels: [[x, dimension, temporal], [y, value_minor, quantitative], [tooltip, dimension, temporal], [tooltip, value_minor, quantitative]]
+        ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Por qué agosto es tan alto?
+        route: QUERY
+        groups: [[Repsol, 12000, 2], [Renfe, 6000, 1]]
+        banking_calls: 1
+        movements: 3
+        no_model: true
+        derived_from: true
+        # §9's own drill-down, landing at last. Resolved against turn 4's month line -- the label
+        # "agosto" against its August bar -- rather than reaching the planner (probed). The window
+        # narrows to August and clamps to the 5th: this harness's fixed "today" falls inside that
+        # month, and the plan never widens a chart's own window past what it actually drew (see
+        # `why`) -- probed, and NOT the whole calendar month a first reading of design §3.3 alone
+        # would suggest. The regroup is by merchant without a second question asking for it: design
+        # §3.3's own third sentence, «¿Qué comercio es responsable?», is answered in this same turn.
+        # Its chart derives from the line and draws in the breakdown floor's own canonical shape,
+        # probed and identical to turn 1's.
+        chart:
+          mark: bar
+          channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [y, descending, value_minor]
+        ran: {window: 2026-08-01..2026-08-05, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MERCHANT, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Enséñame los movimientos responsables.
+        route: QUERY
+        banking_calls: 1
+        movements: 3
+        no_model: true
+        # §9's own second sentence, verbatim. The three transaction ids the drill just named come
+        # back as this turn's own plan; `derived_from` is not asserted because no chart is drawn --
+        # an ungrouped total is a KPI, not a chart. R19, probed: the handler asks the ledger for
+        # this plan with no `movements=` of its own; the three rows come back anyway because the
+        # plan itself names them, exactly the real ledger's behaviour for an id-selected read.
+        ran: {transaction_ids: 3}
+      - say: Pon el primer gráfico en vertical.
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        # §9's own restyle wording. Turn 4's last chart is a LINE -- a temporal series --
+        # and probed: «en vertical»/«en horizontal» against it refuses (orientation is a bar's
+        # concern, not a time axis's; see `why`). Named by number instead, which reaches back past
+        # the line to the breakdown bar turn 1 drew and flips it: the dimension moves from the y
+        # axis to the x axis, the effective change the harness can see through `canonical()`.
+        chart:
+          mark: bar
+          channels: [[x, dimension, nominal], [y, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [x, descending, value_minor]
+      - say: Pon el gráfico anterior en horizontal.
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        # "El gráfico anterior" settled: right after a restyle it resolves to the chart
+        # that restyle just appended -- the vertical breakdown above -- not to whichever chart stood
+        # before it. Flipping it back lands on the exact shape chart 1 drew: same mark, same
+        # channels, the dimension back on y. A second effective change, not a no-op. See `why`.
+        chart:
+          mark: bar
+          channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [y, descending, value_minor]
+      - say: ¿Cuánto tengo en la cuenta corriente?
+        route: BALANCE
+        no_model: true
+        says: 2.270,42
+      - say: Gracias.
+        route: COURTESY
+        no_model: true

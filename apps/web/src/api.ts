@@ -18,7 +18,8 @@ export const voiceGatewayUrl = import.meta.env.VITE_VOICE_GATEWAY_URL ?? "";
 export const voiceEnabled = voiceGatewayUrl !== "" && TOKEN !== "";
 
 export type VoiceCallbacks = {
-  onEvent: (event: VoiceEvent) => void;
+  /** `false` disarms the audio fence for this turn -- see `VoiceClientOptions.onEvent`. */
+  onEvent: (event: VoiceEvent) => void | boolean;
   onStatus: (status: VoiceStatus, error?: string) => void;
   onFinished?: () => void;
 };
@@ -184,7 +185,10 @@ export type Workflow =
   | "UNSUPPORTED_CAPABILITY"
   | "PAYMENT_IN_PROGRESS"
   | "TRANSFER_IN_PROGRESS"
-  | "PAYMENT_CONFIRMATION";
+  | "PAYMENT_CONFIRMATION"
+  // A class chosen from a search's offers, waiting for a yes on screen. Nothing has been sent to
+  // the gym yet: the yes is what sends it, once.
+  | "BOOKING_CONFIRMATION";
 
 /** What the last turn asked the user for. */
 export type Slot =
@@ -256,17 +260,46 @@ export type ConversationState = {
   // Opaque, value-free chart memory. The client echoes it; only the orchestrator interprets it.
   visual_contexts?: {
     chart_id: string;
+    // Sealed; echoed, never read (m6, fix wave).
+    derived_from?: string | null;
+    // Sealed; echoed, never read (m6, fix wave).
+    turn_id?: string | null;
+    // Sealed; echoed, never read (Wave 4.3).
+    labels?: string[];
+    series_labels?: string[];
+    ranked?: boolean;
+    // Sealed; echoed, never read (Wave 4.3).
+    window_start?: string | null;
+    window_end?: string | null;
+    plan_digest?: string | null;
     spec: Record<string, unknown>;
     profile: {
-      fields: { name: string; type: "nominal" | "quantitative" | "temporal" }[];
+      fields: {
+        name: string;
+        type: "nominal" | "quantitative" | "temporal";
+        role?: "dimension" | "measure" | "series" | null;
+        order?: "MEASURE_DESC" | "INPUT" | "TEMPORAL" | "NONE" | null;
+      }[];
       cardinality: number;
       metric?: string | null;
       unit?: "money" | "count" | "ratio" | "unknown" | null;
       positive: boolean;
       mutually_exclusive: boolean;
       verified_total: boolean;
+      comparison?: boolean;
+      plan_limited?: boolean;
     };
+    // The server's seal; echoed, never read.
+    token?: string | null;
   }[];
+  // The last activity search's offers, sealed; echoed, never read. A booking is resolved against
+  // them by the service, which refuses them the moment the seal does not check out.
+  activity_offers?: {
+    slots: ActivitySlot[];
+    agent_names: { agent_id: string; name: string }[];
+    contexts: { agent_id: string; context_id: string }[];
+    token: string | null;
+  } | null;
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
@@ -308,8 +341,39 @@ export type ConversationState = {
   // Fondo indexado" over a transfer.
   rail: "BIZUM" | "TRANSFER" | "INTERNAL" | null;
   recipient_iban: string | null;
+  // BOOKING_CONFIRMATION: the class a yes would book, as the service verified it, and the gym's
+  // name as it was shown with the offers. Drawn by the booking panel and otherwise echoed: the
+  // service sends it only while the sealed offers still hold that class, so editing it here books
+  // nothing. The context is the gym's own conversation id, echoed and never read.
+  booking_id?: string | null;
+  booking_slot?: ActivitySlot | null;
+  booking_agent_name?: string | null;
+  booking_context_id?: string | null;
   // `rank` used to be here and left with the refusal it served. The service rejects fields it does
   // not know, so a stale one on this type is a 422 waiting for whoever fills it in.
+};
+
+/**
+ * One class an external gym offered, as the service verified it against the gym's own reply.
+ * Every field is drawn as text: the activity and the name are a third party's words, and a
+ * reference may look like an address without being one to follow.
+ */
+export type ActivitySlot = {
+  agent_id: string;
+  agent_name: string;
+  activity: string;
+  /** ISO 8601 with the slot's own offset, which is the offset it is shown in. */
+  start: string;
+  end: string | null;
+  free_places: number | null;
+  slot_ref: string | null;
+};
+
+/** A gym that could not answer with classes, and why. `link` is set only for linking. */
+export type AgentNotice = {
+  agent_name: string;
+  kind: "unavailable" | "link_required" | "unsupported_request";
+  link: string | null;
 };
 
 export type Answer = {
@@ -341,6 +405,18 @@ export type Answer = {
     limit?: number | null;
   } | null;
   suggestions: string[];
+  /**
+   * Why the chart on screen looks the way it does -- present exactly when this answer draws a
+   * chart, absent for a KPI or a chart-less answer. Derived server-side from the sealed context,
+   * never from a model.
+   */
+  explanation?: {
+    chart_reason: string;
+    ordering_reason: string | null;
+    scope_summary: string;
+    provenance: string | null;
+    text: string;
+  } | null;
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
   parts?: Answer[];
   /**
@@ -348,6 +424,10 @@ export type Answer = {
    * figure rather than a chart, which is still a metric and cannot be the target of a restyle.
    */
   save_candidate?: { chart_id: string | null; definition_token: string } | null;
+  /** An activity search's classes, in the order offered, verified against each gym's reply. */
+  activities?: ActivitySlot[];
+  /** One line per gym that could not answer with classes. */
+  agent_notices?: AgentNotice[];
 };
 
 export type Visualization =
@@ -379,6 +459,12 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
   const nullableString = (field: unknown) => field === null || typeof field === "string";
   const finiteNumber = (field: unknown) => typeof field === "number" && Number.isFinite(field);
   const nullableNumber = (field: unknown) => field === null || finiteNumber(field);
+  // `QuestionResponse`'s optional fields (`llm_dto.py`) default to `None`/`[]` and pydantic omits
+  // nothing today -- but the field is declared optional there, so a caller that later adds
+  // `exclude_none` sends no key at all rather than an explicit null. Absence has to mean the same
+  // thing null already does, for every field the DTO can omit.
+  const optionalString = (field: unknown) => field === undefined || nullableString(field);
+  const optionalNumber = (field: unknown) => field === undefined || nullableNumber(field);
   const containsChartValues = (field: unknown): boolean => {
     if (Array.isArray(field)) return field.some(containsChartValues);
     if (!field || typeof field !== "object") return false;
@@ -403,7 +489,9 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     const spec = item.spec as Record<string, unknown> | undefined;
     if (
       item.kind !== "chart" || !spec || typeof spec !== "object" ||
-      (item.unit !== "money" && item.unit !== "count" && item.unit !== "ratio") ||
+      // `ChartVisualizationResponse.unit` defaults to `"money"` (`llm_dto.py`); a chart drawn
+      // before this field existed, or sent with `exclude_defaults`, carries no key at all.
+      (item.unit !== undefined && item.unit !== "money" && item.unit !== "count" && item.unit !== "ratio") ||
       typeof item.chart_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(item.chart_id) ||
       typeof spec.mark !== "object" || !spec.encoding || typeof spec.encoding !== "object" ||
       !Array.isArray(item.data) ||
@@ -441,36 +529,119 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
         (Number.isSafeInteger(item.limit) && (item.limit as number) >= 1)) &&
       !containsChartValues(spec);
   };
+  // `QuestionResponse.activities`/`.agent_notices` (`llm_dto.py`) default to `[]` on the wire.
+  // Absence reads as none, the way `explanation` does, so an answer from before they existed is
+  // passed through untouched rather than rebuilt with two empty lists.
+  const validActivities = (field: unknown) => {
+    if (field === undefined) return true;
+    if (!Array.isArray(field)) return false;
+    return field.every((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+      const item = row as Record<string, unknown>;
+      return typeof item.agent_id === "string" && typeof item.agent_name === "string" &&
+        typeof item.activity === "string" && typeof item.start === "string" &&
+        optionalString(item.end) && optionalNumber(item.free_places) &&
+        optionalString(item.slot_ref);
+    });
+  };
+  const validNotices = (field: unknown) => {
+    if (field === undefined) return true;
+    if (!Array.isArray(field)) return false;
+    return field.every((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+      const item = row as Record<string, unknown>;
+      return typeof item.agent_name === "string" && optionalString(item.link) &&
+        (item.kind === "unavailable" || item.kind === "link_required" ||
+          item.kind === "unsupported_request");
+    });
+  };
+  const validExplanation = (field: unknown) => {
+    if (field === undefined || field === null) return true;
+    if (!field || typeof field !== "object" || Array.isArray(field)) return false;
+    const item = field as Record<string, unknown>;
+    return typeof item.chart_reason === "string" && optionalString(item.ordering_reason) &&
+      typeof item.scope_summary === "string" && optionalString(item.provenance) &&
+      typeof item.text === "string";
+  };
+  // Recursed and normalised first: a compound part is itself a whole answer, and a part the
+  // orchestrator sent with fields omitted must come back with the same defaults the parent gets.
+  let normalizedParts: Answer[] | undefined;
+  if (body.parts !== undefined) {
+    if (!Array.isArray(body.parts)) throw new Error("Respuesta de voz inválida.");
+    normalizedParts = body.parts.map((part) => validateVoiceAnswerAt(part, depth + 1));
+  }
+  const groups = (body.groups ?? []) as unknown[];
+  const movements = (body.movements ?? []) as unknown[];
+  const suggestions = (body.suggestions ?? []) as unknown[];
+  // Same default `ChartVisualizationResponse.unit` carries on the wire (`llm_dto.py`), applied here
+  // rather than left `undefined`: `Chart.tsx` reads `visualization.unit` directly with no fallback,
+  // and an unrecognised unit renders the chart as though it had none.
+  const chart = body.visualization as Record<string, unknown> | null | undefined;
+  const visualization =
+    chart && typeof chart === "object" && !Array.isArray(chart) &&
+    chart.kind === "chart" && chart.unit === undefined
+      ? { ...chart, unit: "money" }
+      : body.visualization;
   if (
     typeof body.outcome !== "string" || typeof body.text !== "string" ||
-    !nullableString(body.question) || !nullableString(body.intent_id) ||
-    !nullableString(body.plan) ||
-    (body.conversation !== null &&
+    !optionalString(body.question) || !optionalString(body.intent_id) ||
+    !optionalString(body.plan) ||
+    (body.conversation !== undefined && body.conversation !== null &&
       (typeof body.conversation !== "object" || Array.isArray(body.conversation))) ||
-    !nullableString(body.currency) || !nullableNumber(body.total_minor) ||
-    !nullableNumber(body.movement_count) || !Array.isArray(body.groups) ||
-    !Array.isArray(body.movements) || !Array.isArray(body.suggestions) ||
+    !optionalString(body.currency) || !optionalNumber(body.total_minor) ||
+    !optionalNumber(body.movement_count) ||
+    (body.groups !== undefined && !Array.isArray(body.groups)) ||
+    (body.movements !== undefined && !Array.isArray(body.movements)) ||
+    (body.suggestions !== undefined && !Array.isArray(body.suggestions)) ||
     !validVisualization(body.visualization) ||
     !validDerivation(body.visualization_derivation) ||
-    body.groups.some((group) => {
+    !validExplanation(body.explanation) ||
+    !validActivities(body.activities) || !validNotices(body.agent_notices) ||
+    groups.some((group) => {
       if (!group || typeof group !== "object") return true;
       const item = group as Record<string, unknown>;
       return typeof item.key !== "string" || !finiteNumber(item.total_minor) ||
         !finiteNumber(item.movement_count) ||
         (item.value_minor !== undefined && !nullableNumber(item.value_minor));
-    }) || body.suggestions.some((item) => typeof item !== "string") ||
-    body.movements.some((movement) => {
+    }) || suggestions.some((item) => typeof item !== "string") ||
+    movements.some((movement) => {
       if (!movement || typeof movement !== "object") return true;
       const item = movement as Record<string, unknown>;
       return typeof item.occurred_at !== "string" || typeof item.description !== "string" ||
         !finiteNumber(item.amount_minor) || !nullableString(item.merchant_name) ||
         !nullableString(item.category);
-    }) ||
-    (body.parts !== undefined && (!Array.isArray(body.parts) || body.parts.some((part) => {
-      try { validateVoiceAnswerAt(part, depth + 1); return false; } catch { return true; }
-    })))
+    })
   ) throw new Error("Respuesta de voz inválida.");
-  return body as unknown as Answer;
+
+  const partsChanged =
+    normalizedParts !== undefined &&
+    !(body.parts as unknown[]).every((part, index) => part === normalizedParts![index]);
+  const needsDefaults =
+    body.question === undefined || body.intent_id === undefined || body.plan === undefined ||
+    body.conversation === undefined || body.currency === undefined ||
+    body.total_minor === undefined || body.movement_count === undefined ||
+    body.groups === undefined || body.movements === undefined || body.suggestions === undefined ||
+    visualization !== body.visualization || partsChanged;
+  if (!needsDefaults) return body as unknown as Answer;
+
+  // A field the orchestrator's DTO can omit (it has a `None`/`[]` default -- `llm_dto.py`) comes
+  // back with that same default rather than `undefined`, which is not a value any reader downstream
+  // (`Conversation.tsx`'s `.length`, `!== null`) was ever asked to expect.
+  return {
+    ...body,
+    question: body.question ?? null,
+    intent_id: body.intent_id ?? null,
+    plan: body.plan ?? null,
+    conversation: body.conversation ?? null,
+    currency: body.currency ?? null,
+    total_minor: body.total_minor ?? null,
+    movement_count: body.movement_count ?? null,
+    groups,
+    movements,
+    suggestions,
+    visualization,
+    ...(partsChanged ? { parts: normalizedParts } : {}),
+  } as unknown as Answer;
 }
 
 export type Stage = { name: string };

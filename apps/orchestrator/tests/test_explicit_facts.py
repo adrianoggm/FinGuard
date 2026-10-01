@@ -142,6 +142,15 @@ async def ask(sentence: str, planner: FakePlanner, ledger: FakeLedger, **extra: 
         ("Todos mis gastos excepto alquiler", ("HOUSING_RENT",), ()),
         ("Si no contamos el supermercado", ("GROCERIES",), ()),
         ("Lo mismo, pero sin Mercadona", (), ("mercadona",)),
+        # B-1 (Wave 3 hardening): the imperative and prepositional forms a holder actually says,
+        # not only the gerund («quitando») the vocabulary already had.
+        ("Quita restaurantes", ("RESTAURANTS",), ()),
+        ("Elimina restaurantes", ("RESTAURANTS",), ()),
+        ("Borra restaurantes", ("RESTAURANTS",), ()),
+        ("Saca restaurantes", ("RESTAURANTS",), ()),
+        ("Fuera restaurantes", ("RESTAURANTS",), ()),
+        ("Excluye restaurantes", ("RESTAURANTS",), ()),
+        ("Ya no cuentes restaurantes", ("RESTAURANTS",), ()),
     ],
 )
 def test_negative_filters_are_explicit_facts(
@@ -171,6 +180,23 @@ def test_negative_filters_are_explicit_facts(
     ],
 )
 def test_a_vague_exclusion_names_no_merchant(sentence: str) -> None:
+    assert explicit_facts.excluded_merchants_in(sentence) == ()
+    assert explicit_facts.read(sentence, today=TODAY).excluded_merchants == ()
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # N-H1 (Wave 3 hardening, round 2): "límite" is on `merchant_words`'s closed
+        # never-a-merchant list, so a tail of exactly that word names no shop -- before this fix
+        # the exclusion reader claimed it anyway, and a holder was told a total was computed
+        # excluding a shop called "limite" that does not exist.
+        "sin límite",
+        "Cuánto gasté sin límite",
+        "Cuánto gasté sin límite este mes",
+    ],
+)
+def test_the_exclusion_reader_also_consults_never_a_merchant(sentence: str) -> None:
     assert explicit_facts.excluded_merchants_in(sentence) == ()
     assert explicit_facts.read(sentence, today=TODAY).excluded_merchants == ()
 

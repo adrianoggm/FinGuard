@@ -5,7 +5,7 @@ name: finguard
 #   poc   everything that exists: core + skin (web, and later a mobile app)
 #   voice  core + the real-time voice gateway (phase 6)
 #   observability  the trace and metric stack, on its own and additive to any of the above
-#   a2a / events  arrive in their own iterations
+#   a2a  the A2A gateway and three simulated gyms, additive to core: `just a2a`
 #
 # A single component needs no profile: docker compose up postgres
 # Everything is published on 127.0.0.1 only: the credentials are for development
@@ -124,6 +124,11 @@ services:
       ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS: "120"
       ORCHESTRATOR_BANKING_TIMEOUT_SECONDS: "10"
       ORCHESTRATOR_SUPPORTING_MOVEMENTS: "10"
+      # Who draws a chart: `deterministic` until the Task 9 runbook's three `evaluate-visual`
+      # runs (docs/superpowers/plans/2026-09-05-visual-planner-shadow.md) say otherwise. This
+      # key exists so that runbook's flip step has something real to flip -- `bootstrap/main.py`
+      # reads `settings.visual_planner` from this exact variable when wiring the app.
+      ORCHESTRATOR_VISUAL_PLANNER: deterministic
       # The deterministic router remains authoritative wherever it recognises a turn. A model only
       # widens its generic catch-all, and cannot create a payment or an own-account transfer.
       ORCHESTRATOR_TURN_INTERPRETER: hybrid
@@ -156,7 +161,17 @@ services:
       # `payments:confirm` travel together there because the account holder is one person doing
       # two turns — the split exists so a credential *can* be issued with only the first, for an
       # integration that drafts payments somebody else approves.
-      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,metrics:read,metrics:write","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary:questions:read,metrics:read,metrics:write","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin,metrics:read,metrics:write","demo-token-laura-pays:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,movements:categorise,payments:prepare,payments:confirm,metrics:read,metrics:write"]'
+      #
+      # The web demo token also asks and books expert agents (spec §14 A4): `agents:ask` searches,
+      # `agents:book` confirms, split for the same reason as the two payment scopes. They do
+      # nothing until ORCHESTRATOR_A2A_GATEWAY_URL below names a gateway.
+      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,metrics:read,metrics:write","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary:questions:read,metrics:read,metrics:write","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin,metrics:read,metrics:write","demo-token-laura-pays:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,movements:categorise,payments:prepare,payments:confirm,metrics:read,metrics:write,agents:ask,agents:book"]'
+      # A2A expert agents (spec §3.5). Blank by default, and blank means the capability does not
+      # exist: the orchestrator is in `core` and the gateway only in `a2a`, so a stack started
+      # without that profile must not point at a service that is not there. `just a2a` sets it.
+      ORCHESTRATOR_A2A_GATEWAY_URL: ${ORCHESTRATOR_A2A_GATEWAY_URL:-}
+      # The gateway's development token, stated on both sides (a2a-gateway below).
+      ORCHESTRATOR_A2A_GATEWAY_TOKEN: dev-a2a-gateway-token
     extra_hosts:
       # Linux does not resolve host.docker.internal on its own; Docker Desktop does.
       # Stating it keeps the compose file working on both.
@@ -222,6 +237,117 @@ services:
       - "127.0.0.1:${VOICE_GATEWAY_PORT:-8002}:8000"
     depends_on:
       orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # --- a2a ---------------------------------------------------------------------------
+  #
+  # FinGuard consumes expert agents over A2A 1.0 and publishes none
+  # (docs/superpowers/specs/2026-09-30-a2a-expert-agents-design.md). The gateway is the one
+  # FinGuard process that speaks the protocol; it holds the agents' credentials and nothing else
+  # — no banking, no database, no model. The three gyms stand in for third parties the way the
+  # synthetic ledger stands in for a bank: one codebase (apps/simulated-gym-agent), deployed three
+  # times with GYM_STYLE, and FinGuard knows each only by its URL.
+  #
+  # Each gym is reached two ways, which is why it has two URLs. GYM_A2A_URL is written into its
+  # card's interfaces and is the name the gateway calls on this network; GYM_PUBLIC_URL is the
+  # card's provider and the origin of norte's linking page, so a browser on the host can open the
+  # link a reply carries (spec §14 A3). Development credentials only, published on 127.0.0.1
+  # (rule 13), like every other value in this file.
+
+  gym-norte:
+    build:
+      context: apps/simulated-gym-agent
+    profiles: ["a2a"]
+    environment:
+      GYM_STYLE: norte
+      GYM_A2A_URL: http://gym-norte:8000
+      GYM_PUBLIC_URL: http://127.0.0.1:9101
+      GYM_API_KEY: dev-gym-norte-key
+    ports:
+      - "127.0.0.1:9101:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  gym-sur:
+    build:
+      context: apps/simulated-gym-agent
+    profiles: ["a2a"]
+    environment:
+      GYM_STYLE: sur
+      GYM_A2A_URL: http://gym-sur:8000
+      GYM_PUBLIC_URL: http://127.0.0.1:9102
+      GYM_BEARER_TOKEN: dev-gym-sur-token
+    ports:
+      - "127.0.0.1:9102:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # The non-compliant one: it serves an A2A 0.3 card and nothing else. Registered on purpose, so
+  # the conformance gate is seen refusing it — `GET /v1/agents` lists it `usable: false` with
+  # `reason: "version_unsupported"`, and a search still answers from the other two.
+  gym-legacy:
+    build:
+      context: apps/simulated-gym-agent
+    profiles: ["a2a"]
+    environment:
+      GYM_STYLE: legacy
+      GYM_A2A_URL: http://gym-legacy:8000
+      GYM_PUBLIC_URL: http://127.0.0.1:9103
+    ports:
+      - "127.0.0.1:9103:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  a2a-gateway:
+    build:
+      context: apps/a2a-gateway
+    profiles: ["a2a"]
+    environment:
+      # The registry (spec §3.1): one URL per trusted agent, by service name on this network. An
+      # agent's id is its host, so these are gym-norte, gym-sur and gym-legacy.
+      A2A_GATEWAY_AGENTS: http://gym-norte:8000,http://gym-sur:8000,http://gym-legacy:8000
+      # What the orchestrator presents (ORCHESTRATOR_A2A_GATEWAY_TOKEN above).
+      A2A_GATEWAY_TOKEN: dev-a2a-gateway-token
+      # One credential per agent that needs one, named by its id; each gym's card says where it
+      # goes (an X-Gym-Key header for norte, a bearer token for sur). Legacy needs none: it is
+      # refused before a credential is looked at.
+      A2A_GATEWAY_CREDENTIAL_GYM_NORTE: dev-gym-norte-key
+      A2A_GATEWAY_CREDENTIAL_GYM_SUR: dev-gym-sur-token
+      # Traces, off unless asked for: `A2A_GATEWAY_OTEL_ENABLED=true` with the `observability`
+      # profile up. The endpoint is the collector's OTLP/HTTP base URL by service name; the gateway
+      # joins `/v1/traces` itself, and names its spans `a2a-gateway`.
+      A2A_GATEWAY_OTEL_ENABLED: ${A2A_GATEWAY_OTEL_ENABLED:-false}
+      A2A_GATEWAY_OTEL_ENDPOINT: ${A2A_GATEWAY_OTEL_ENDPOINT:-http://otel-collector:4318}
+    # 8003 on the host, beside voice's 8002.
+    ports:
+      - "127.0.0.1:8003:8000"
+    depends_on:
+      # Cards are read on first use and kept for A2A_GATEWAY_CARD_TTL_SECONDS, so an agent still
+      # starting when the first search arrives would be `card_unreachable` for five minutes.
+      # Legacy too: the refusal the demo shows is `version_unsupported`, not a gym that was late.
+      gym-norte:
+        condition: service_healthy
+      gym-sur:
+        condition: service_healthy
+      gym-legacy:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]

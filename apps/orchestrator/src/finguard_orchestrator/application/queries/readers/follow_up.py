@@ -39,7 +39,7 @@ from finguard_orchestrator.application.queries.readers.dimensions import (
 )
 from finguard_orchestrator.application.queries.readers.seam import _recogniser
 from finguard_orchestrator.application.queries.readers.subjects import (
-    _internal_movement_request,
+    read_internal_movement_request,
 )
 from finguard_orchestrator.application.queries.readers.windows import (
     _previous_calendar_window,
@@ -139,10 +139,26 @@ _CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
     r"|^(?:no[\s,]+)?(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
     r"|^volvamos?\s+a\b"
     r"|^(?:quedate|dejame|deja)\s+solo\s+con\b"
+    # Item 4 (Wave 3 hardening, T8b): "ponme solo restaurantes" -- the same category-only filter
+    # as "solo restaurantes" above, said as an imperative to the assistant rather than as a bare
+    # fragment. "pon(me)?" alone would be too wide (it also opens a restyle, "ponlo en barras"),
+    # so this only ever fires beside `solo`/`solamente`, the word every sibling branch above also
+    # requires before it will narrow a filter.
+    r"|^pon(?:me|lo|la)?\s+(?:solo|solamente)\b"
 )
 
 
 _CATEGORY_REFERENCE: Final = re.compile(r"\b(?:esa|esta|aquella|la\s+misma)\s+categoria\b")
+
+
+# "Separa transporte público y gasolina" — a verb that asks the plan in view to be broken apart,
+# an optional clitic naming what ("-lo/-la/-los/-las"), then the names themselves read by
+# `category_words.precisely_named_in`. Anchored at the start: the verb has to be what the sentence
+# opens with, the same shape as the presentation-dimension trigger word list below, not a word that
+# merely appears in it.
+_SPLIT_BY_NAMES: Final = re.compile(
+    r"^(?:separa|desglosa|divide|distingue|reparte)(?:lo|la|los|las)?\b"
+)
 
 
 # The nouns that name a charge, from the vocabulary that owns them. They were written out here as
@@ -198,6 +214,37 @@ _A_NAME_IN_A_FILTER_SLOT: Final = re.compile(
 )
 
 
+def _asks_a_new_presentation_dimension(
+    facts: explicit_facts.ExplicitFacts, previous: FinancialPlan, folded: str
+) -> bool:
+    """Whether this turn only asks the plan in view to be regrouped, not re-planned.
+
+    Three shapes are admitted: (1) a categorical regroup -- by category, merchant, counterparty
+    or account; (2) a calendar regroup -- by day, week or month -- over a plan that is not
+    already an AVERAGE, because "¿Y por semana?" over an AVERAGE plan is `_average_plan`'s own
+    turn (it converts AVERAGE to PERIOD_AVERAGE for exactly this pair, and claiming it here too
+    left the two readers contesting it, `test_which_recogniser_claims_a_turn.py`); and (3) that
+    same calendar regroup only when the sentence itself names no category -- "Dame el total por
+    meses de gasolina" asks for one category, month by month, and this reader has no way to
+    honour the name it was handed (`explicit_facts.enforce` never applies `facts.categories`),
+    so it declines and the planner reads the category and the grouping both (I-1, Wave 4.2b).
+    """
+    return bool(
+        (
+            facts.group_by
+            in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
+            or (
+                facts.group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
+                and previous.metric is not Metric.AVERAGE
+                and not facts.names_a_category
+            )
+        )
+        and previous.metric not in {Metric.CUMULATIVE, Metric.PERIOD_AVERAGE}
+        and len(folded.split()) <= 7
+        and re.search(r"\b(?:separa|separalo|desglosa|desglosalo|agrupa|agrupalo|por)\b", folded)
+    )
+
+
 def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
     """Whether the sentence names something in a filter slot that no vocabulary here claims."""
     for word in _A_NAME_IN_A_FILTER_SLOT.findall(spanish.folded(query.sentence)):
@@ -209,9 +256,15 @@ def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
     return False
 
 
-@_recogniser
-def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
-    """Patch explicit filters and calculations onto the last validated financial query."""
+def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    """Patch explicit filters and calculations onto the last validated financial query.
+
+    Undecorated on purpose: `application/queries/readers/visual_follow_up.py` reads this reader
+    too, to classify a turn without recording a cascade decision or memoising onto the query — a
+    second `@_recogniser` call on the same turn would double the `RECOGNISER`/`CLAIMED` row the
+    cascade already writes. `contextual_follow_up_plan` below is the cascade's own name for this
+    same body, wrapped once in the seam that call site needs.
+    """
     focus = focus_of(query.conversation)
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
@@ -263,7 +316,10 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     # mes pasado?" away from the only reader that keeps an internal scope, and the answer comes
     # back as ordinary spending. `internal_movement` claims the sentence that names a movement, not
     # a bare window over a plan that happens to be internal.
-    if _internal_movement_request(query) is not None or _account_follow_up_plan(query) is not None:
+    if (
+        read_internal_movement_request(query) is not None
+        or _account_follow_up_plan(query) is not None
+    ):
         return None
 
     if (
@@ -307,20 +363,22 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
             facts,
         )
 
-    if (
-        facts.group_by
-        in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
-        and previous.metric not in {Metric.CUMULATIVE, Metric.PERIOD_AVERAGE}
-        and len(folded.split()) <= 7
-        and re.search(r"\b(?:separa|separalo|desglosa|desglosalo|agrupa|agrupalo|por)\b", folded)
-    ):
+    if _asks_a_new_presentation_dimension(facts, previous, folded):
         # "Sepáralo por comercio" changes only the presentation dimension of the query in view.
         # Sending that three-word patch to a model made it re-create the window and filters, which
         # is both slower and an opportunity to silently widen the result.
+        #
+        # "Ahora compáralo por meses" is the same patch onto a calendar grouping instead of a
+        # named dimension (Task 2, Wave 4.2b) -- the calendar-groups half of `group_limit`'s own
+        # ternary below already existed for this, unreachable until this gate admitted them.
         return explicit_facts.enforce(
             replace(
                 previous,
-                group_by=facts.group_by,
+                # `_asks_a_new_presentation_dimension` above already established `facts.group_by`
+                # is one of the six named members, never `None` -- the `or` is for mypy's
+                # narrowing across the function boundary, not a real fallback (same idiom as the
+                # `_CATEGORY_REFERENCE` branch's `facts.group_by or GroupBy.NONE` above).
+                group_by=facts.group_by or previous.group_by,
                 group_limit=(
                     None
                     if facts.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
@@ -407,6 +465,39 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
             facts,
         )
 
+    # Item 5 (Wave 3 hardening, T8b, "the eighth handed-over row"): checked here, ahead of the
+    # ellipsis-length gate below, for the same reason the named-filter branch above already is --
+    # "sepáralo en transporte público y gasolina" is six words (the clitic "-lo" plus "en" add two
+    # to the verbatim "Separa transporte público y gasolina" this same branch already claims at
+    # five), and the length gate below exists to protect *ellipses* -- a short fragment that might
+    # introduce something this path cannot represent -- not an explicit split verb naming two
+    # categories the vocabulary already knows precisely. Moved, not widened: the match itself is
+    # unchanged.
+    if len(named) >= 2 and _SPLIT_BY_NAMES.search(folded):
+        # "Separa transporte público y gasolina" changes only the categories and the grouping
+        # that presents them. Bare `replace`, not `explicit_facts.enforce`: two coordinated names
+        # read as one *combined* total to `explicit_facts.read` (`_combined_total`), so its
+        # `facts.group_by` is `NONE` here -- `enforce` would apply that reading and undo the very
+        # `GroupBy.CATEGORY` this patch states. A precise split needs no calendar or presentation
+        # word to lean on beyond the verb itself, which is why this does not gate on
+        # `facts.group_by` the way the presentation-dimension branch above does.
+        #
+        # `merchants`, `merchant_terms` and `group_limit` are cleared like every sibling branch in
+        # this function (`_CATEGORY_REFERENCE`, `_CATEGORY_FILTER_FOLLOW_UP`, `_COUNT_FOLLOW_UP`)
+        # clears its own filters. Left in view, a merchant filter turns the split into an
+        # intersection nobody asked for -- "transporte público en Mercadona" -- and a row cut
+        # left over from a ranking draws one of the two categories the split just named (I-2, M-1,
+        # Wave 4.2b).
+        return replace(
+            previous,
+            categories=named,
+            excluded_categories=(),
+            merchants=(),
+            merchant_terms=(),
+            group_by=GroupBy.CATEGORY,
+            group_limit=None,
+        )
+
     # These are deliberately short ellipses. A complete question can introduce a merchant or a
     # category the closed vocabulary does not know, and inheriting the old filters there would
     # answer a different question with a plausible figure.
@@ -468,6 +559,12 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     return None
 
 
+@_recogniser
+def contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    """The cascade's recogniser for `read_contextual_follow_up` — see its docstring."""
+    return read_contextual_follow_up(query)
+
+
 def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Focus the previous query on an account named as a short conversational reply."""
     context = _query_for_reader(query)
@@ -509,8 +606,8 @@ def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan |
 # see the note there for why it is not renumbered.
 ROWS: Final = (
     Reader(
-        name="_contextual_follow_up_plan",
-        read=_contextual_follow_up_plan,
+        name="contextual_follow_up_plan",
+        read=contextual_follow_up_plan,
         stood_at=10,
         when=Precondition(
             "a query is in view for this turn to be about",

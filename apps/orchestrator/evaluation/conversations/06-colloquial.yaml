@@ -63,9 +63,13 @@ episodes:
       - say: ¿cuánto gasté este mes?
         route: QUERY
         ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      # B-2(a) (Wave 3 hardening, R-H1): "ah" and "vale" are both on the closed stop-list -- the
+      # honest ask now, not a shop called "ah vale". "Menos mal" right below is untouched on
+      # purpose: "mal" is not on the list, so that turn still exercises the guess-then-retract this
+      # file otherwise pins.
       - say: ah vale
-        route: QUERY
-        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: ['ah vale'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
       - say: ¿y cuánto tengo?
         route: BALANCE
       - say: menos mal

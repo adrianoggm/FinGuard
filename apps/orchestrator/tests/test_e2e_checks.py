@@ -798,7 +798,9 @@ def test_every_previous_block_in_the_read_sets_is_one_the_harness_sends() -> Non
             declared += 1
             assert e2e.preceding(case) is not None, f"{name}/{case['id']}"
 
-    assert declared == 15, f"the audit counted 9 dev and 6 validation, found {declared}"
+    # Wave 3 hardening, Task 8b, item 5: dev.yaml gained a tenth `previous` block
+    # (`follow_split_by_two_named_categories`, "the eighth handed-over row").
+    assert declared == 16, f"the audit counted 10 dev and 6 validation, found {declared}"
 
 
 def test_the_account_scope_and_the_preceding_turn_travel_together() -> None:

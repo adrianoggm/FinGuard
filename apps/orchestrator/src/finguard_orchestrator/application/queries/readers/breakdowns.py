@@ -274,7 +274,7 @@ ROWS: Final = (
             "the sentence asks for a breakdown by category or by account",
             _asks_for_a_breakdown,
         ),
-        yields_to=("_contextual_follow_up_plan",),
+        yields_to=("contextual_follow_up_plan",),
         because=(
             "«hazme el desglose por cuenta» and «sepáralos por cuenta» are both a breakdown "
             "request and an ellipsis, and the ellipsis wins: the follow-up keeps what the "

@@ -1,5 +1,42 @@
 # Planning accuracy — measured, not argued
 
+## State at HEAD (2026-09-14)
+
+**Three things, and the version of this section written on 2026-09-11 ran them together.** It
+called the failing run of 28 August "the last held-out measurement" while this same file records a
+later and better one two hundred lines below, and `next.md` records the passing sitting that came
+between them. Reported by review on 2026-09-14: for a branch that uses this number as its promotion
+criterion, reading the top of the file and reading the middle gave opposite verdicts. In order,
+then:
+
+**1. The last complete measurement passed its gate.** All five sets in one sitting,
+**2026-08-30 at `7156038`**, `qwen3.5:9b`: held-out `unsafe` **6.3 %**, dev 8.3 %, adversarial
+8.3 %, drift 5.3 %, metamorphic 0 % — every one under the ≤ 10 % bar. The same row is in
+[next.md](../../../../docs/next.md). A later change measured on the held-out set alone — the
+`metric_without_a_bucket` rule, [further down this file](#the-held-out-remainder-was-one-defect-and-it-was-not-in-the-prompt)
+— took held-out `unsafe` to **4/79 · 5.1 %**, and nothing entered the unsafe list to pay for it.
+
+**2. The measurement that failed is history, and stays written down.** **2026-08-28 at `a149b20`**:
+held-out `unsafe` **11.4 %** against the same bar, the table below. It is kept because the three
+deterministic-reader fixes that took it to 6.3 % are kept, and a record that only shows the good run
+is not a record.
+
+**3. HEAD is not measured, and that is the sentence that governs.** `e06f732` is **376 commits**
+past `7156038` — Wave 3.5, Wave 4 (4.1-4.5) and the whole Wave 3 hardening have landed since. **No
+run exists at this commit.** So nothing here says the gate holds *today*; what it says is that it
+held on 30 August, on a tree this one no longer resembles. Promoting on this file as it stands is
+promoting on a measurement nobody re-took — which is a decision somebody may make deliberately, but
+not one this file should let them make by accident.
+
+A re-run needs: the GPU alone (`nvidia-smi` shows only Ollama), `qwen3.5:9b` warm
+(`curl -s localhost:11434/api/ps`), and the five sets this file already reports —
+`validation` (held out, the gate), `dev`, `adversarial`, `drift`, `metamorphic` — via
+`scripts/evaluate_planning.py --model qwen3.5:9b --dataset <set>` (see the command block below;
+`just evaluate-planning` alone defaults to the baseline `qwen2.5-coder:7b` and measures the wrong
+model). The visual-planner side of Wave 4 has its own runbook, at
+`docs/superpowers/plans/2026-09-05-visual-planner-shadow.md`'s Task 9, and has never been run
+either (M-3, M-5).
+
 ```bash
 cd apps/orchestrator && uv run python scripts/evaluate_planning.py \
     --model qwen3.5:9b --dataset validation   # the number worth quoting
@@ -23,7 +60,17 @@ sets run three further times, because a difference nobody bounded is not a resul
 | dev | 120 | 95.8 % | 92.2 % | 9.2 % | 4 | 1 | 0 |
 | adversarial | 36 | 77.8 % | 76.5 % | 8.3 % | 2 | 2 | 0 |
 | drift | 75 | 94.7 % | 89.8 % | 5.3 % | 1 | 0 | 0 |
-| metamorphic | 19 | 73.7 % | 73.7 % | **0 %** | 0 | 2 | 0 |
+| metamorphic ¹ | 19 | 73.7 % | 73.7 % | **0 %** | 0 | 2 | 0 |
+
+¹ **The metamorphic `unsafe 0 %` is partly a deterministic path scored against its own
+definition, not purely a model score (M-8).** `scripts/evaluate_planning.py` runs
+`explicit_facts.read()` / `enforce()` on the model's plan *before* scoring it, and negative
+filters — the exclusions this set's hardest cases are built from — live only in that enrichment
+layer: they are not fields the model's constrained schema can emit at all (see "Metamorphic
+locality" below, which discloses the mechanism). So part of what "0 % unsafe" measures is that the
+enforcement layer guarantees an exclusion the model never had the chance to get wrong, and part is
+the model's own plan being right; this headline does not split the two. `outcome`/`exact` at
+73.7 % is the model's own figure — nothing in the pipeline enriches those.
 
 Beside what this file and the gate-1 table carried before, **all of which was written on
 2026-08-03**:

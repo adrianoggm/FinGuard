@@ -53,6 +53,16 @@ def expected_plans() -> list[tuple[str, str, FinancialPlan]]:
                         if window
                         else None,
                         categories=tuple(spec.get("categories", ())),
+                        excluded_categories=tuple(spec.get("excludedCategories", ())),
+                        # Read since 2026-09-14, and the omission was not free: the filters this
+                        # builder dropped are two of the four fields `_category_misread` reads, so
+                        # every merchant case was checked against a plan the dataset had not
+                        # written. It passed because no merchant case named a category as well --
+                        # until one did, and the rule refused a plan whose merchant filter this
+                        # function had thrown away. `evaluate_planning._plan_from` has always read
+                        # both; a second builder is only worth having if it builds the same plan.
+                        merchants=tuple(spec.get("merchants", ())),
+                        excluded_merchants=tuple(spec.get("excludedMerchants", ())),
                         group_by=GroupBy(spec.get("groupBy", "NONE")),
                         metric=Metric(spec.get("metric", "SUM")),
                     ),

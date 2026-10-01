@@ -14,9 +14,16 @@ one of those decisions rather than a wrong number. A corpus that needed a model 
 and would measure the model instead.
 """
 
+import copy
+from datetime import date
+from typing import Any
+
 import pytest
 from support import episodes
 from support.ratchets import Ceiling, Floor
+
+from finguard_orchestrator.domain.enums import GroupBy
+from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
 
 CORPUS = episodes.load()
 
@@ -274,3 +281,382 @@ def test_a_query_that_lost_its_window_is_counted_as_lost_context() -> None:
     report = episodes.run([_one_turn(ran={"window": "THIS_YEAR"})])
 
     assert report.lost_context == 1
+
+
+# --- Task 7: a `VISUAL` route, and four wire-visible per-turn assertions -----------------------
+
+_TWO_GROUPS = [["RESTAURANTS", 46556, 3], ["TRANSPORT", 21000, 2]]
+
+# The breakdown floor's canonical form, probed against the real harness: chart-wide `sort` is
+# `None` and the ranking is the y axis's own sort.
+_CANONICAL_BREAKDOWN_CHART = {
+    "mark": "bar",
+    "channels": [
+        ["y", "dimension", "nominal"],
+        ["x", "value_minor", "quantitative"],
+        ["tooltip", "dimension", "nominal"],
+        ["tooltip", "value_minor", "quantitative"],
+    ],
+    "axis_sort": ["y", "descending", "value_minor"],
+}
+
+
+def _a_chart_then(second: episodes.Turn) -> episodes.Episode:
+    """A two-turn episode: the first draws a chart (two groups, so the fake actually has
+    something to plot), the second is whatever the test is calibrating."""
+    return episodes.Episode(
+        name="calibration/after_a_chart",
+        why="the harness measuring itself",
+        turns=(
+            episodes.Turn(say="¿cuánto gasté el mes pasado?", route="QUERY", groups=_TWO_GROUPS),
+            second,
+        ),
+    )
+
+
+def test_a_visual_outcome_is_recognised_as_its_own_route() -> None:
+    """`tool_of` maps `VISUAL_UPDATED` (and its siblings) to `VISUAL` before its `QUERY`
+    fallthrough. A restyle of the chart drawn above must be assertable as its own route."""
+    episode = _a_chart_then(
+        episodes.Turn(say="Ordena el gráfico anterior de mayor a menor.", route="VISUAL")
+    )
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_visual_outcome_asserted_as_a_query_is_caught() -> None:
+    """Without the `VISUAL` route, a `VISUAL_UPDATED` answer fell through `tool_of`'s `QUERY`
+    fallthrough and was silently accepted as a query -- exactly the blindness a `route: QUERY`
+    expectation on a restyle turn must now catch."""
+    episode = _a_chart_then(
+        episodes.Turn(say="Ordena el gráfico anterior de mayor a menor.", route="QUERY")
+    )
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "QUERY was the right place, VISUAL answered" in failures[0].complaint
+
+
+def test_a_turns_chart_can_be_asserted() -> None:
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, chart=_CANONICAL_BREAKDOWN_CHART)
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_wrong_chart_expectation_is_caught() -> None:
+    """Without this, `chart:` could be silently ignored -- a field the loader reads, nothing
+    compares, and every episode passes."""
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, chart={"mark": "line"})
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "the chart's mark should be 'line' and is 'bar'" in failures[0].complaint
+
+
+def test_a_chart_wide_sort_the_axis_already_owns_is_read_through_the_domains_nulling() -> None:
+    """`chart:` is compared through the domain's own `visual_plan.canonical(spec)`, not a second
+    copy of it -- so it must inherit that function's one non-obvious rule: `present()` always lets
+    an axis's own per-encoding sort win over the chart-wide `sort`/`sort_field` on the wire, so a
+    chart-wide sort equal to (and shadowed by) the axis's own sort is not a live decision. Mirrors
+    `test_visual_plan.py::test_canonical_ignores_a_chart_wide_sort_the_presenter_would_drop`.
+
+    The restyle turn below produces exactly that shape: the y axis sorts itself descending by
+    `value_minor`, and the spec also carries that same sort as a chart-wide `sort`/`sort_field`.
+    The live value is the axis's own -- asserted as `axis_sort`, and it passes. The dead
+    chart-wide `sort`/`sort_field` must read back as `None`, and asserting it as though it were
+    still live -- the naive reading a harness-local `canonical()` used to validate -- must not
+    silently pass: the presenter never shows it, so validating it validates nothing on the wire.
+    """
+    live_axis_sort_only = _a_chart_then(
+        episodes.Turn(
+            say="Ordena el gráfico anterior de mayor a menor.",
+            route="VISUAL",
+            chart={
+                "sort": None,
+                "sort_field": None,
+                "axis_sort": ["y", "descending", "value_minor"],
+            },
+        )
+    )
+    assert list(episodes.walk(live_axis_sort_only)) == []
+
+    dead_sort_asserted_as_live = _a_chart_then(
+        episodes.Turn(
+            say="Ordena el gráfico anterior de mayor a menor.",
+            route="VISUAL",
+            chart={"sort": "descending", "sort_field": "value_minor"},
+        )
+    )
+    failures = list(episodes.walk(dead_sort_asserted_as_live))
+    assert len(failures) == 2
+    complaints = {f.complaint for f in failures}
+    assert "the chart's sort should be 'descending' and is None" in complaints
+    assert "the chart's sort_field should be 'value_minor' and is None" in complaints
+
+
+def test_a_turns_banking_calls_can_be_asserted() -> None:
+    episode = _one_turn(route="QUERY", banking_calls=1)
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_wrong_banking_calls_expectation_is_caught() -> None:
+    episode = _one_turn(route="QUERY", banking_calls=2)
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "the turn should call the ledger 2 time(s) and called it 1" in failures[0].complaint
+
+
+def test_a_turns_derived_from_can_be_asserted() -> None:
+    """The turn's own chart derives from nothing -- it is the first one drawn."""
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, derived_from=False)
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_wrong_derived_from_expectation_is_caught() -> None:
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, derived_from=True)
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "derive from a previous one" in failures[0].complaint
+
+
+def test_a_turns_groups_override_the_ledgers_answer() -> None:
+    """`groups:` overrides the `Ledger` fake's one hardcoded row -- proven through the figure it
+    changes, `total`, which the harness already knows how to check."""
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, total=67_556)
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_wrong_total_against_the_overridden_groups_is_caught() -> None:
+    """The test that makes the one above mean something. Without the override actually reaching
+    the fake, this would still pass by returning the one hardcoded group's figure instead."""
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, total=999)
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "the figure should be 999 and is 67556" in failures[0].complaint
+
+
+# --- Task 4: the corpus carries the seal, and a tampered echo is refused -----------------------
+#
+# Every turn above reaches the real `/v1/questions` route and echoes its own answer's `conversation`
+# straight back on the next turn, exactly as a browser would -- that is what proved Task 3's seal
+# round-trips for free through this harness (`uv run pytest tests/test_conversation_corpus.py -k
+# visual` was already green before this task touched anything). What that round trip cannot
+# exercise is a caller who does not echo faithfully, so this is a second, narrower harness: it
+# replays `32-visual-continuation.yaml`'s own first turn for real, then -- unlike `replay()`, which
+# only ever echoes a turn's answer unmodified -- flips one bit of the profile the seal covers before
+# asking for a restyle.
+#
+# This is written as ad hoc Python against the real episode rather than a `tamper:` key on `Turn`
+# (the brief's other option). A `tamper:` turn *could* express "flip a flag on the echoed profile"
+# cheaply enough, but landing it on `32-visual-continuation.yaml` itself is not cheap: that file
+# already carries two corpus-wide ratchets pinned to its exact turns -- `CONTESTED` (`Ceiling(0,
+# "turns two recognisers both claim")` in `test_which_recogniser_claims_a_turn.py`) walks every
+# turn's sentence against all twenty deterministic recognisers, and the episode's own `why` already
+# records how the two handover ratchets in `test_what_we_hand_to_the_planner.py` moved once from a
+# wording change alone. A new turn appended there is one more sentence those ratchets see for the
+# first time, for a reason that has nothing to do with what either ratchet measures -- and neither
+# is this task's to spend. Loading the real episode and driving only its first turn through a
+# hand-built stack proves the same thing (a real turn, a real seal, a real refusal) without asking
+# either ratchet to hold still for a scenario they were never meant to price in.
+
+
+def _episode_32() -> episodes.Episode:
+    """The corpus's own first visual episode, loaded like any other -- not a copy of its turns."""
+    return next(
+        episode
+        for episode in episodes.load()
+        if episode.name == "32-visual-continuation/a_breakdown_is_reshaped_and_then_restyled"
+    )
+
+
+# The same restyle sentence `32-visual-continuation.yaml` already proves is read deterministically
+# (its own turn asking for this exact order flip asserts `no_model: true`) -- reused rather than
+# invented, so the tamper test is about the seal and not about whether some new sentence parses.
+_RESTYLE = "Ordena el gráfico anterior de menor a mayor."
+
+
+def _tampered_restyle(
+    flag: str = "comparison",
+) -> tuple[episodes.Stack, dict[str, Any], int, dict[str, Any]]:
+    """Episode 32's real first turn, replayed through a real stack, then its echoed chart's
+    profile flipped on `flag` before the restyle is asked.
+
+    Returns the stack (so a test can read `stack.ledger.ran`), the tampered conversation that was
+    actually sent, how many banking calls the ledger had already made before the restyle, and the
+    restyle's own answer.
+    """
+    episode = _episode_32()
+    turn_one = episode.turns[0]
+    stack = episodes.a_stack_for(episode)
+    conversation = episodes.opening(episode)
+
+    stack.ledger.groups_for_next_turn = episodes._groups_from(turn_one)
+    drawn = stack.client.post(
+        "/v1/questions", json={"question": turn_one.say, "conversation": conversation}
+    )
+    stack.ledger.groups_for_next_turn = None
+    assert drawn.status_code == 200
+    sealed = drawn.json()["conversation"]
+    assert sealed["visual_contexts"], "turn 1 should have drawn a chart to tamper"
+
+    tampered = copy.deepcopy(sealed)
+    context = tampered["visual_contexts"][-1]
+    context["profile"][flag] = not context["profile"][flag]
+
+    before = len(stack.ledger.ran)
+    restyled = stack.client.post(
+        "/v1/questions", json={"question": _RESTYLE, "conversation": tampered}
+    )
+    assert restyled.status_code == 200
+    return stack, tampered, before, restyled.json()
+
+
+def test_an_untrusted_visual_outcome_is_recognised_as_its_own_route() -> None:
+    """`tool_of` maps `VISUAL_UNTRUSTED` to `VISUAL` beside its `VISUAL_UNCHANGED` and
+    `VISUAL_UPDATED` siblings -- the same fallthrough gap `test_a_visual_outcome_asserted_as_a_
+    query_is_caught` closed for a successful restyle. Without it, a caller whose echoed chart
+    failed the seal check was silently counted as a query instead of a visual turn."""
+    _, _, _, answer = _tampered_restyle()
+
+    assert episodes.tool_of(answer) == episodes.VISUAL
+
+
+def test_a_tampered_echoed_chart_is_refused_without_a_banking_call() -> None:
+    """Task 4's own proof: an echoed visual context whose seal does not check out is refused --
+    `VISUAL_UNTRUSTED` -- before a single ledger call, and the conversation it leaves behind is
+    exactly the one that was sent: no chart is derived, none is lost, only the seal is gone."""
+    stack, tampered, before, answer = _tampered_restyle()
+
+    assert answer["outcome"] == "VISUAL_UNTRUSTED"
+    assert len(stack.ledger.ran) == before, "an untrusted echo must not reach the ledger"
+
+    after_contexts = answer["conversation"]["visual_contexts"]
+    sent_contexts = tampered["visual_contexts"]
+    assert [c["chart_id"] for c in after_contexts] == [c["chart_id"] for c in sent_contexts]
+
+
+# --- Task 5: R9 -- a drill-down that fits several bars asks instead of guessing ----------------
+#
+# Episode 32's own third turn draws a month line whose bars are never tied -- June 15 000, July
+# 17 000, August 18 000, each its own rank. This is the same episode, replayed the same way through
+# a real stack, with only that one turn's `groups` swapped for a version that ties the top two: July
+# and August both at 18 000. What the drill reader does with a tie is what this test is about, and
+# episode 32's own file cannot ask that question without lying about what the ledger actually
+# returned that turn -- so it is asked here instead, in the same style as the tamper test above.
+
+
+def test_an_ambiguous_bar_asks_without_a_banking_call() -> None:
+    """A drill-down that names no single bar asks which one instead of guessing: `DRILL_AMBIGUOUS`,
+    zero ledger calls, `tool_of` maps it to `CLARIFY` through `_ASKED_ABOUT_THE_FIGURES` (R9 --
+    a question about the figures already on screen, not a chart change and not an open slot), and
+    the conversation is left exactly where it was: nothing ambiguous is drawn."""
+    episode = _episode_32()
+    # Turn 2 is now the "¿Por qué este gráfico?" turn Task 5 inserted; the split and the
+    # regroup-by-month this test drives are turns 3 and 4.
+    turn_one, turn_two, turn_three = episode.turns[0], episode.turns[2], episode.turns[3]
+    tied_months = tuple(
+        episodes.Group(key, minor, count)
+        for key, minor, count in (
+            ("2026-06", 15000, 2),
+            ("2026-07", 18000, 3),
+            ("2026-08", 18000, 2),
+        )
+    )
+    stack = episodes.a_stack_for(episode)
+    conversation = episodes.opening(episode)
+
+    for turn, groups in (
+        (turn_one, episodes._groups_from(turn_one)),
+        (turn_two, episodes._groups_from(turn_two)),
+        (turn_three, tied_months),
+    ):
+        stack.ledger.groups_for_next_turn = groups
+        response = stack.client.post(
+            "/v1/questions", json={"question": turn.say, "conversation": conversation}
+        )
+        stack.ledger.groups_for_next_turn = None
+        assert response.status_code == 200
+        conversation = response.json()["conversation"]
+
+    contexts_before = len(conversation["visual_contexts"])
+    before = len(stack.ledger.ran)
+    asked = stack.client.post(
+        "/v1/questions",
+        json={"question": "¿Qué movimientos explican ese pico?", "conversation": conversation},
+    )
+    assert asked.status_code == 200
+    answer = asked.json()
+
+    assert answer["outcome"] == "DRILL_AMBIGUOUS"
+    assert len(stack.ledger.ran) == before, "an ambiguous drill must not reach the ledger"
+    assert answer["text"] == "¿A qué te refieres: julio de 2026, agosto de 2026 o junio de 2026?"
+    assert episodes.tool_of(answer) == episodes.CLARIFY
+    assert len(answer["conversation"]["visual_contexts"]) == contexts_before
+
+
+# --- Fix round 2: C-1 becomes visible to the corpus, not only to a direct reader test -----------
+#
+# The re-review's own end-to-end C-1 probe, made a harness-level test rather than only a
+# `read_drill_down` unit row: a plan whose `date_range` is a slice of two calendar months, drilled
+# on the second one. Not episode 32 -- a fresh two-turn scenario, because the opening sentence is
+# not one `handover_cases.py` could ever measure among the corpus's own YAML episodes (it is not a
+# turn `episodes.load()` returns), and it is not claimed by any deterministic reader a first turn
+# can reach without the planner: `window_words.date_range_in` (which reads an absolute range) is
+# consulted by the broader `window_in`, never by `_natural_period_aggregate_plan`'s narrower
+# `natural_period_in` -- the one window-only reader in `_ON_THE_SENTENCE_ITSELF`. Probed directly:
+# the sentence reaches the planner (`planner=1`) and the plan it produces reads
+# `date_range=2026-06-10..2026-07-20`, `group_by=MONTH` -- exactly the reviewer's own numbers, so
+# it is used verbatim rather than substituted. Because it reaches the planner rather than any
+# deterministic reader, and because `handover_cases.py`'s own `cases()` walks only
+# `evaluation/conversations/*.yaml`, this test cannot move `UNMEASURED`/`MUTE` either way; the
+# contract's own ratchet re-run after this commit is confirmation, not a risk.
+
+
+def test_c1_a_month_bar_never_speaks_past_the_slice_the_plan_asked_for() -> None:
+    """«¿Cuánto gasté del 10 de junio al 20 de julio por meses?» then «¿Por qué julio es tan
+    alto?»: the drill must run exactly `2026-07-01..2026-07-20` -- the slice of July the plan in
+    view actually asked for -- never the whole calendar month, in one ledger call, regrouped by
+    merchant, with the spoken answer naming those same dates."""
+    stack = episodes.a_stack()
+    conversation: dict[str, object] | None = {"account_selection_mode": "ALL"}
+    opening = episodes.Turn(
+        say="¿Cuánto gasté del 10 de junio al 20 de julio por meses?",
+        groups=[["2026-06", 15_000, 2], ["2026-07", 17_000, 3]],
+    )
+    stack.ledger.groups_for_next_turn = episodes._groups_from(opening)
+    first = stack.client.post(
+        "/v1/questions", json={"question": opening.say, "conversation": conversation}
+    )
+    stack.ledger.groups_for_next_turn = None
+    assert first.status_code == 200
+    opening_plan = stack.ledger.ran[-1]
+    assert opening_plan.date_range == AbsoluteRange(date(2026, 6, 10), date(2026, 7, 20))
+    assert opening_plan.group_by is GroupBy.MONTH
+    conversation = first.json()["conversation"]
+
+    before = len(stack.ledger.ran)
+    second = stack.client.post(
+        "/v1/questions",
+        json={"question": "¿Por qué julio es tan alto?", "conversation": conversation},
+    )
+    assert second.status_code == 200
+    answer = second.json()
+
+    assert len(stack.ledger.ran) == before + 1, "the drill must run exactly one ledger call"
+    drilled = stack.ledger.ran[-1]
+    assert drilled.date_range == AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20))
+    assert drilled.group_by is GroupBy.MERCHANT
+    # Measured text: "465,56 € del 2026-07-01 al 2026-07-20, en 3 movimientos.\n  • Mercadona:
+    # 465,56 € (3)\nConsultado en todas tus cuentas."
+    assert "del 2026-07-01 al 2026-07-20" in answer["text"]

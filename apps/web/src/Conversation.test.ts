@@ -33,6 +33,7 @@ import {
   settled,
   voiceButtonAction,
   voiceEventIdentity,
+  VoiceError,
   withChoice,
   type Thread,
   type Turn,
@@ -232,6 +233,21 @@ describe("voice button controls", () => {
   });
 });
 
+describe("voice error announcement (W-8)", () => {
+  it("gets role=\"alert\" so a screen reader announces it without being focused on it", () => {
+    const markup = renderToStaticMarkup(
+      createElement(VoiceError, { message: "Permiso de micrófono denegado. Actívalo para usar la voz." }),
+    );
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("Permiso de micrófono denegado.");
+  });
+
+  it("renders nothing when there is no error, same as before", () => {
+    const markup = renderToStaticMarkup(createElement(VoiceError, { message: null }));
+    expect(markup).toBe("");
+  });
+});
+
 describe("voice event synchronisation", () => {
   const event = (type: string, sequence: number, fields: Record<string, unknown> = {}) => ({
     type,
@@ -252,6 +268,20 @@ describe("voice event synchronisation", () => {
     const structured = answer({
       text: "Comida fue la categoría principal.",
       groups: [{ key: "Comida", total_minor: 1200, movement_count: 2 }],
+      // Built the way validateVoiceAnswer accepts (chartFamilies.test.ts holds the same shape).
+      visualization: {
+        kind: "chart",
+        chart_id: "chart-1",
+        unit: "money",
+        spec: {
+          mark: { type: "bar" },
+          encoding: {
+            x: { field: "dimension", type: "nominal" },
+            y: { field: "value_minor", type: "quantitative" },
+          },
+        },
+        data: [{ dimension: "Comida", value_minor: 1200 }],
+      },
     });
     current = applyVoiceEvent(
       current,
@@ -262,6 +292,13 @@ describe("voice event synchronisation", () => {
     expect(current.turns.map((turn) => turn.who)).toEqual(["user", "assistant"]);
     expect((current.turns[1] as { who: "assistant"; answer: Answer }).answer.groups).toEqual(
       structured.groups,
+    );
+    // The chart on screen while the summary plays: the assistant turn already carries its
+    // chart_id the instant assistant.text.final applies, before audio.started/audio.completed.
+    const renderedVisualization = (current.turns[1] as { who: "assistant"; answer: Answer }).answer
+      .visualization;
+    expect(renderedVisualization?.kind === "chart" ? renderedVisualization.chart_id : null).toBe(
+      "chart-1",
     );
     // Text and visual data are committed before playback finishes.
     expect(applyVoiceEvent(current, event("audio.completed", 3), noop).thread).toBeUndefined();
@@ -494,6 +531,145 @@ describe("the one field this client writes", () => {
     const idle = thread();
 
     expect(withChoice(idle, "contact-2")).toBe(idle);
+  });
+});
+
+describe("¿Por qué este gráfico?", () => {
+  const explanation = {
+    chart_reason: "Barras: comparas categorías entre sí.",
+    ordering_reason: "Orden: de mayor a menor importe.",
+    scope_summary: "Datos: 2 categorías.",
+    provenance: "Elegido por las reglas de FinGuard.",
+    text: "Barras: comparas categorías entre sí. Orden: de mayor a menor importe. Datos: 2 categorías. Elegido por las reglas de FinGuard.",
+  };
+  const chart = {
+    kind: "chart" as const,
+    chart_id: "chart-1",
+    unit: "money" as const,
+    spec: { mark: { type: "bar" }, encoding: { x: { field: "dimension", type: "nominal" } } },
+    data: [{ dimension: "Comida", value_minor: 100 }],
+  };
+
+  function markupFor(fields: Partial<Answer>): string {
+    return renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: thread({ turns: [{ who: "assistant", answer: answer({ plan: "consulta", ...fields }) }] }),
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+  }
+
+  it("renders the four lines before «Ver la consulta» when the answer explains its chart", () => {
+    const markup = markupFor({ explanation, visualization: chart });
+    expect(markup).toContain("¿Por qué este gráfico?");
+    for (const line of [
+      explanation.chart_reason,
+      explanation.ordering_reason,
+      explanation.scope_summary,
+      explanation.provenance,
+    ]) {
+      expect(markup).toContain(line);
+    }
+    expect(markup.indexOf("¿Por qué este gráfico?")).toBeLessThan(markup.indexOf("Ver la consulta"));
+  });
+
+  it("renders no such details when the answer carries no explanation", () => {
+    const markup = markupFor({ visualization: chart });
+    expect(markup).not.toContain("¿Por qué este gráfico?");
+  });
+
+  it("renders no such details when the explanation has no chart to explain", () => {
+    const markup = markupFor({ explanation });
+    expect(markup).not.toContain("¿Por qué este gráfico?");
+  });
+
+  it("renders on a materialised restyle turn too, not only a freshly drawn chart", () => {
+    // M-10 (fix wave, D-4.5-7): `explainsAChart` reads `answer.visualization`, which
+    // `materializeVisualizationDerivation` fills in from `visualization_derivation` before the
+    // turn is ever pushed (`Conversation.tsx`'s own comment above `explainsAChart`) -- a restyle
+    // answer arrives with `visualization: null` and only the derivation on it, so this is the one
+    // path where the disclosure depends on materialisation having already run.
+    const source = answer({ currency: "EUR", visualization: chart });
+    const turns: Turn[] = [{ who: "assistant", answer: source }];
+    const restyled = materializeVisualizationDerivation(
+      turns,
+      answer({
+        visualization: null,
+        visualization_derivation: { source_chart_id: chart.chart_id, chart_id: "chart-2", spec: chart.spec },
+        explanation,
+      }),
+    );
+    expect(restyled.visualization?.kind).toBe("chart");
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: thread({ turns: [...turns, { who: "assistant", answer: restyled }] }),
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+    expect(markup).toContain("¿Por qué este gráfico?");
+    expect(markup).toContain(explanation.chart_reason);
+  });
+
+  it("keeps «Ver la consulta» and «Ver los movimientos» on a restyled chart (W-7)", () => {
+    // `VISUAL_UPDATED` sends plan: null, groups: [], movements: [] -- a presentation-only change
+    // has no new query to run -- so without inheriting the source turn's evidence, the restyled
+    // bubble drew a chart with rows and offered only "¿Por qué este gráfico?".
+    const source = answer({
+      currency: "EUR",
+      plan: "Gastos de agosto por categoría",
+      visualization: chart,
+      groups: [{ key: "Comida", total_minor: 4500, movement_count: 3 }],
+      movement_count: 3,
+      movements: [
+        { occurred_at: "2026-08-03", description: "Mercadona", amount_minor: 4500, merchant_name: "Mercadona", category: "GROCERIES" },
+      ],
+    });
+    const turns: Turn[] = [{ who: "assistant", answer: source }];
+    const restyled = materializeVisualizationDerivation(
+      turns,
+      answer({
+        visualization: null,
+        visualization_derivation: { source_chart_id: chart.chart_id, chart_id: "chart-2", spec: chart.spec },
+      }),
+    );
+    // The evidence is inherited, not stale: it is the source turn's own, not whatever the parent
+    // answer happened to carry -- there is nothing on the restyle answer itself to leak.
+    expect(restyled.plan).toBe("Gastos de agosto por categoría");
+    expect(restyled.groups).toEqual(source.groups);
+    expect(restyled.movement_count).toBe(3);
+    expect(restyled.movements).toEqual(source.movements);
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: thread({ turns: [...turns, { who: "assistant", answer: restyled }] }),
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+    expect(markup).toContain("Ver la consulta");
+    expect(markup).toContain("Gastos de agosto por categoría");
+    expect(markup).toContain("Ver los movimientos");
+    expect(markup).toContain("Mercadona");
+  });
+
+  it("never overwrites a restyle answer's own evidence, should it ever carry one", () => {
+    const source = answer({ currency: "EUR", plan: "consulta original", visualization: chart });
+    const turns: Turn[] = [{ who: "assistant", answer: source }];
+    const restyled = materializeVisualizationDerivation(
+      turns,
+      answer({
+        plan: "consulta propia",
+        visualization: null,
+        visualization_derivation: { source_chart_id: chart.chart_id, chart_id: "chart-2", spec: chart.spec },
+      }),
+    );
+    expect(restyled.plan).toBe("consulta propia");
   });
 });
 
@@ -787,6 +963,21 @@ describe("financial breakdowns", () => {
       ...derivation, spec: { ...derivation.spec, data: { values: [{ amount: 10 }] } },
     } }))).toThrow();
   });
+  it("accepts explanation as null, absent, and a well-formed object; rejects a malformed one", () => {
+    const explanation = {
+      chart_reason: "Barras: comparas categorías entre sí.",
+      ordering_reason: "Orden: de mayor a menor importe.",
+      scope_summary: "Datos: 2 categorías.",
+      provenance: "Elegido por las reglas de FinGuard.",
+      text: "Barras: comparas categorías entre sí. Orden: de mayor a menor importe. Datos: 2 categorías. Elegido por las reglas de FinGuard.",
+    };
+    expect(validateVoiceAnswer(answer({ explanation: null })).explanation).toBeNull();
+    expect(validateVoiceAnswer(answer({})).explanation).toBeUndefined();
+    expect(validateVoiceAnswer(answer({ explanation })).explanation).toEqual(explanation);
+    expect(() =>
+      validateVoiceAnswer(answer({ explanation: { chart_reason: 1 } as unknown as Answer["explanation"] })),
+    ).toThrow("Respuesta de voz inválida.");
+  });
   it("rejects a chart whose encoding names a field absent from its rows", () => {
     const payload = answer({ visualization: {
       kind: "chart",
@@ -833,6 +1024,82 @@ describe("financial breakdowns", () => {
     expect(() => validateVoiceAnswer({ ...payload, groups: [{ key: "incompleto" }] })).toThrow();
     expect(() => validateVoiceAnswer({ ...payload, conversation: [] })).toThrow();
     expect(() => validateVoiceAnswer({ ...payload, total_minor: Number.NaN })).toThrow();
+  });
+
+  it("accepts every optional QuestionResponse field absent, exactly as an exclude_none caller would send it", () => {
+    // W-6: `question`, `intent_id`, `plan`, `conversation`, `currency`, `total_minor`,
+    // `movement_count`, `groups`, `movements` and `suggestions` all default to `None`/`[]` in
+    // `QuestionResponse` (`llm_dto.py`) -- absence has to mean what the DTO's own default means,
+    // not "malformed". A minimal wire body carries only the two fields that are actually required.
+    const minimal = { outcome: "PLANNED", text: "Has gastado 12,00 €." };
+    const validated = validateVoiceAnswer(minimal);
+    expect(validated).toEqual({
+      outcome: "PLANNED", text: "Has gastado 12,00 €.",
+      question: null, intent_id: null, plan: null, conversation: null,
+      currency: null, total_minor: null, movement_count: null,
+      groups: [], movements: [], suggestions: [],
+    });
+    expect(validated.movements).toHaveLength(0);
+    expect(validated.groups).toHaveLength(0);
+  });
+
+  it("defaults an omitted part's fields the same way it does the parent's", () => {
+    const compound = {
+      outcome: "COMPOUND",
+      text: "Dos resultados",
+      parts: [{ outcome: "PLANNED", text: "Parte uno" }],
+    };
+    const validated = validateVoiceAnswer(compound);
+    expect(validated.parts).toHaveLength(1);
+    expect(validated.parts![0]).toEqual({
+      outcome: "PLANNED", text: "Parte uno",
+      question: null, intent_id: null, plan: null, conversation: null,
+      currency: null, total_minor: null, movement_count: null,
+      groups: [], movements: [], suggestions: [],
+    });
+  });
+
+  it("defaults a chart's unit to money, matching ChartVisualizationResponse's own default", () => {
+    const payload = answer({ visualization: {
+      kind: "chart", chart_id: "chart-1",
+      spec: { mark: { type: "bar" }, encoding: { x: { field: "dimension", type: "nominal" } } },
+      data: [{ dimension: "Comida" }],
+    } as unknown as Answer["visualization"] });
+    const validated = validateVoiceAnswer(payload);
+    expect(validated.visualization).toMatchObject({ unit: "money" });
+    // And a chart that does carry a unit is unaffected -- no rebuild when nothing was missing.
+    const withUnit = answer({ visualization: {
+      kind: "chart", chart_id: "chart-1", unit: "count",
+      spec: { mark: { type: "bar" }, encoding: { x: { field: "dimension", type: "nominal" } } },
+      data: [{ dimension: "Comida" }],
+    } });
+    expect(validateVoiceAnswer(withUnit)).toBe(withUnit);
+  });
+
+  it("accepts a provenance-less explanation and a restyle answer, real DTO shapes both ways", () => {
+    // VisualExplanationResponse.provenance defaults to None; a chart drawn without a recorded
+    // source (a KPI-derived plot, say) sends the key as an explicit null, which already passed --
+    // this is the omitted-key case W-6 also names for `explanation`.
+    const withoutProvenance = answer({
+      explanation: {
+        chart_reason: "Barras: comparas categorías entre sí.",
+        ordering_reason: null,
+        scope_summary: "Datos: 2 categorías.",
+        text: "Barras: comparas categorías entre sí. Datos: 2 categorías.",
+      } as unknown as Answer["explanation"],
+    });
+    expect(validateVoiceAnswer(withoutProvenance).explanation?.provenance).toBeUndefined();
+
+    // VisualizationDerivation always carries source_chart_id, chart_id and spec -- the real
+    // restyle shape a `VISUAL_UPDATED` answer sends, with no limit.
+    const restyle = answer({
+      visualization_derivation: {
+        source_chart_id: "chart-a",
+        chart_id: "chart-b",
+        spec: { mark: { type: "line" }, encoding: { x: { field: "dimension", type: "temporal" } } },
+      },
+    });
+    expect(validateVoiceAnswer(restyle).visualization_derivation?.chart_id).toBe("chart-b");
   });
 
   it("renders a count by merchant as movement counts, not monetary totals", () => {

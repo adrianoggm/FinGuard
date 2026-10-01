@@ -63,9 +63,12 @@ episodes:
       - say: quería decir el año pasado
         route: QUERY
         ran: {window: '2025-01-01..2025-12-31', categories: [RESTAURANTS], excluded_categories: [], excluded_merchants: []}
+      # B-2(a) (Wave 3 hardening, R-H1): "ahora sí" is two words the closed stop-list already knows
+      # (an intensifier and a bare confirmation) -- it used to be read as a shop name across a
+      # five-plan guess-then-retract; it is the honest ask now, at zero ledger calls.
       - say: ahora sí
-        route: QUERY
-        ran: [{window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: ['ahora sí'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: ['ahora sí'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        route: CLARIFY
+        banking_calls: 0
 
   - name: three_corrections_in_a_row
     why: >

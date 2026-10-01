@@ -1548,6 +1548,20 @@ summary {
   font-variant-numeric: tabular-nums;
 }
 
+/* A booking's hours line up like the class list's. */
+.booking-detail dd {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A gym's own identifier for the class, to quote if something goes wrong: monospaced like the
+   IBAN, and allowed to break anywhere, because it may be one long token with `:` and `/` in it. */
+.preview-detail dd.booking-reference {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 /* A payment the user walked away from. The service remembers it; until now the screen did not,
    so resuming was something you had to know was possible. */
 .paused {
@@ -1560,6 +1574,41 @@ summary {
   background: rgba(180, 120, 0, 0.12);
   color: #7a5200;
   font-size: 0.78rem;
+}
+
+/* The classes a search offered: a card of rows like every other card here -- flat --card, the
+   shared hairline, the shared corner -- with the times in tabular figures so they line up. */
+.activity-list {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-list li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.activity-list li:last-child {
+  border-bottom: none;
+}
+
+/* A gym that could not answer: said quietly under the list, never as an error. */
+.activity-notice {
+  margin: 0.4rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.activity-notice a {
+  color: var(--brand-bright);
+  font-weight: 600;
 }
 
 /* Where a category came from, when it is worth saying. Italic and quiet: it qualifies the label

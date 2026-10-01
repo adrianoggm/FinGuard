@@ -53,3 +53,13 @@ class Scope(StrEnum):
     PAYMENTS_CONFIRM = "payments:confirm"
     """Move the money. Deliberately not implied by prepare: the human confirmation step of
     §4.1 is meaningless if the credential that drafted the operation can also complete it."""
+
+    AGENTS_ASK = "agents:ask"
+    """Ask the external expert agents a question -- a timetable -- through the A2A gateway. It
+    sends a third party the activity, the window and a pairwise pseudonym and nothing else, and
+    books nothing. Preparing a booking's preview needs only this: nothing is sent to prepare one."""
+
+    AGENTS_BOOK = "agents:book"
+    """Send a booking the holder confirmed on screen. Deliberately not implied by `agents:ask`,
+    as `payments:confirm` is not by `payments:prepare` (spec §14 A4): a credential that can look
+    at a timetable is not thereby one that can take somebody's place in a class."""

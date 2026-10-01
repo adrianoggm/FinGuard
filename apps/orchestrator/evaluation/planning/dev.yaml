@@ -659,6 +659,27 @@ cases:
     expect: clarification
     why: the gym is one merchant inside SUBSCRIPTIONS, which also holds Netflix
 
+  # The two below name a category AND a shop, which nothing in this file used to do — reported by
+  # review on 2026-09-14. The failure they measure is the quiet one: answering SUBSCRIPTIONS entire
+  # to a question about Netflix passes the verifier (the category really is named), returns a true
+  # figure, and is about five times the amount asked for. The runtime repair that catches it lives
+  # in `_answer`; these make the model's own half of it visible instead of assumed.
+  #
+  # The shop alone is the expected plan. Both filters would answer the same rows — every Netflix
+  # charge is a subscription — and the narrower one is what the holder can be held to have asked.
+
+  - id: merchant_inside_the_category_it_belongs_to
+    group: merchant
+    question: ¿Cuánto he gastado en suscripciones de Netflix este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Netflix]}
+
+  - id: merchant_named_after_its_category
+    group: merchant
+    question: ¿Cuánto he gastado en gasolina en Repsol este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Repsol]}
+
   - id: merchant_top_ranking
     group: merchant
     question: ¿Cuál es el comercio donde más gasto este mes?
@@ -718,6 +739,25 @@ cases:
     # A complete question. Inheriting CATEGORY would add a breakdown nobody asked for,
     # which is the failure mode of context that carries too much.
     plan: {period: {period: TODAY}, direction: EXPENSE, groupBy: NONE}
+
+  - id: follow_split_by_two_named_categories
+    group: follow_up
+    # Wave 3 hardening, Task 8b, item 5 ("the eighth handed-over row" of the audit's own
+    # table): "sepáralo en transporte público y gasolina" over a NONE-grouped total. The
+    # deterministic reader (`_SPLIT_BY_NAMES` in `application/queries/readers/follow_up.py`)
+    # claims this precisely — it is the same split "Separa transporte público y gasolina"
+    # already reads — so this case documents the model's own answer for the same sentence
+    # asked of a plain sentence with no prior turn, which the reader never sees (it requires
+    # a query already in view). Real conversations always have one; see
+    # `evaluation/conversations/34-natural-visual-sentences.yaml` row 33 for that path.
+    question: Sepáralo en transporte público y gasolina.
+    previous: {period: {period: LAST_N_MONTHS, n: 3}, direction: EXPENSE}
+    expect: plan
+    plan:
+      period: {period: LAST_N_MONTHS, n: 3}
+      direction: EXPENSE
+      categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL]
+      groupBy: CATEGORY
 
   - id: follow_without_context_must_ask
     group: follow_up

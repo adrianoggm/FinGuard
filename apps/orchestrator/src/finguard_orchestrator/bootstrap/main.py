@@ -1,5 +1,7 @@
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,16 +43,24 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyCommand,
     ResetLlmPolicyHandler,
 )
+from finguard_orchestrator.application.commands.book_activity import BookActivityHandler
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
+from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
+from finguard_orchestrator.domain.ports.visual_planner import VisualPlannerPort
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
 from finguard_orchestrator.domain.services.turn_interpreters import (
     Deterministic,
     Hybrid,
     Promoted,
     Shadowed,
 )
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.infrastructure import (
     HttpAccounts,
     HttpAccountSummary,
@@ -66,6 +76,13 @@ from finguard_orchestrator.infrastructure import (
     assistant_router,
     payments_router,
     register_error_handlers,
+)
+from finguard_orchestrator.infrastructure.expert_agents.http_expert_agents import HttpExpertAgents
+from finguard_orchestrator.infrastructure.expert_agents.llm_reply_normaliser import (
+    LlmReplyNormaliser,
+)
+from finguard_orchestrator.infrastructure.expert_agents.llm_skill_classifier import (
+    LlmSkillClassifier,
 )
 from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
     LlmTurnInterpreter,
@@ -86,11 +103,13 @@ from finguard_orchestrator.infrastructure.metrics.postgres_repository import (
     PostgresSavedMetricRepository,
 )
 from finguard_orchestrator.infrastructure.metrics.router import router as metrics_router
+from finguard_orchestrator.infrastructure.planning.llm_visual_planner import LlmVisualPlanner
 from finguard_orchestrator.infrastructure.request_log import register_request_logging
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
     StaticTokenIdentity,
 )
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 from finguard_orchestrator.observability import configure_logging
 from finguard_orchestrator.observability.otel import configure_tracing, register_turn_recording
 
@@ -108,6 +127,25 @@ runtime over `/admin/llm-policy` without restarting. Which models exist, which p
 serves each one and what happens when one fails come from the catalogue file, not from
 code.
 """
+
+logger = logging.getLogger(__name__)
+
+# I4 (fix wave): rule 13's own vocabulary -- the loopback addresses a development credential is
+# allowed to sit on. `urlsplit(...).hostname` strips brackets from an IPv6 literal, so `[::1]`
+# and `::1` compare equal here without a second form of the same address to maintain.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+# The expert agents' two development credentials, used only when a gateway is configured and its
+# setting is blank -- each logged at WARNING, and the pairwise key refused for a non-loopback
+# origin. The gateway token is the gateway's own development default (`apps/a2a-gateway`,
+# config.py), stated twice because the services share no code.
+_DEVELOPMENT_PAIRWISE_KEY = b"development-only-pairwise-key-32bytes!"
+_DEVELOPMENT_GATEWAY_TOKEN = "development-only-a2a-gateway-token"
+
+
+def _is_loopback_origin(origin: str) -> bool:
+    hostname = urlsplit(origin).hostname
+    return hostname is not None and hostname.lower() in _LOOPBACK_HOSTS
 
 
 def create_app() -> FastAPI:
@@ -258,6 +296,22 @@ def create_app() -> FastAPI:
         base_url=settings.banking_base_url,
         timeout_seconds=settings.banking_timeout_seconds,
     )
+    visual_model: VisualPlannerPort | None = None
+    if settings.visual_planner != "deterministic":
+        temperature, max_output_tokens = settings.visual_planner_sampling()
+        visual_model = LlmVisualPlanner(
+            providers.get(settings.visual_planner_provider or settings.planner_provider),
+            model=settings.visual_planner_model or settings.planner_model,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
+    visual_policy = VisualPlanningPolicy(
+        model=visual_model,
+        fallback=DeterministicVisualPlanner(),
+        verifier=verify,
+        mode=settings.visual_planner,
+        budget_seconds=settings.visual_planner_budget_seconds,
+    )
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
             planner_provider,
@@ -281,6 +335,7 @@ def create_app() -> FastAPI:
         # live path this is unreachable — it is here so the handler and the edge cannot end up
         # reading a sentence two different ways when somebody adds a third caller.
         interpreter=interpreter,
+        visual_policy=visual_policy,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.
@@ -375,7 +430,7 @@ def create_app() -> FastAPI:
     app.state.command_bus = command_bus
     # Reached directly by the streaming route: a bus answers once, a stream does not.
     app.state.ask_handler = asking
-    app.state.metrics_executor = financial_metric_executor(banking)
+    app.state.metrics_executor = financial_metric_executor(banking, present)
     # Readiness reports on what /v1/questions needs, not on what /v1/messages needs.
     app.state.questions_enabled = settings.questions_enabled
     app.state.payments_enabled = settings.payments_enabled
@@ -405,10 +460,108 @@ def create_app() -> FastAPI:
             configured_metric_keys[key_name] = base64.urlsafe_b64decode(key_value + "=")
     if settings.metrics_enabled and not configured_metric_keys:
         raise ValueError("METRICS_SIGNING_KEYS contains no valid signing keys")
+    # I4 (fix wave): the case the guard above never covered. Task 3 made the same codec seal
+    # every visual context unconditionally, not only save candidates, so a deployment with
+    # metrics *off* and no signing keys is still running the whole trust boundary on the
+    # fallback key committed in this repository -- forgeable by whoever reads the source. No new
+    # setting: `web_origins` is already required (`config.py`) and already distinguishes `just
+    # app` (loopback only) from a real deployment, which is the same thing this refusal needs to
+    # know. Loopback-only or no origins at all still just warns, below.
+    if not configured_metric_keys and any(
+        not _is_loopback_origin(origin) for origin in settings.web_origins
+    ):
+        raise ValueError(
+            "METRICS_SIGNING_KEYS is required to serve a non-loopback origin: the visual seal "
+            "would run on the development key"
+        )
+    # Task 3: the same codec now seals every visual context, not only save candidates -- a
+    # deployment running on the fallback key is one whose signed contexts anybody who reads this
+    # log line already knows how to forge, so it says so once, at the moment the choice was made.
+    if not configured_metric_keys:
+        logger.warning(
+            "visual seals and metric tokens use the development key: set "
+            "ORCHESTRATOR_METRICS_SIGNING_KEYS"
+        )
     app.state.metric_tokens = MetricTokenCodec(
         configured_metric_keys or {"default": b"test-only-disabled-metrics-key-32bytes"},
         settings.metrics_signing_active if configured_metric_keys else "default",
     )
+
+    # A2A expert agents (spec §3.2): **without the gateway's URL the capability does not exist** --
+    # nothing is built, and a timetable question or a booking is answered by saying no agents are
+    # configured.
+    expert_searches: SearchActivitiesHandler | None = None
+    expert_bookings: BookActivityHandler | None = None
+    if settings.a2a_gateway_url is not None:
+        pairwise = settings.a2a_pairwise_key
+        # The signing-key refusal above, for the other key this service derives what it sends
+        # third parties from: on the development key, anybody who reads this repository can compute
+        # every holder's `memberRef` at every gym -- the join the pairwise reference exists to stop.
+        if pairwise is None and any(
+            not _is_loopback_origin(origin) for origin in settings.web_origins
+        ):
+            raise ValueError(
+                "ORCHESTRATOR_A2A_PAIRWISE_KEY is required to serve a non-loopback origin with an "
+                "A2A gateway: every memberRef would be derived under the development key"
+            )
+        if pairwise is None:
+            logger.warning(
+                "every memberRef sent to an expert agent is derived under the development "
+                "pairwise key: set ORCHESTRATOR_A2A_PAIRWISE_KEY"
+            )
+        gateway_token = settings.a2a_gateway_token
+        if gateway_token is None:
+            logger.warning(
+                "the A2A gateway is called with its development token: set "
+                "ORCHESTRATOR_A2A_GATEWAY_TOKEN"
+            )
+        # The planner's provider and model read the cards and the replies: one knob for the one
+        # model this service trusts with a closed schema, like the payment reader beside it.
+        gateway = HttpExpertAgents(
+            base_url=settings.a2a_gateway_url,
+            token=(
+                gateway_token.get_secret_value()
+                if gateway_token is not None
+                else _DEVELOPMENT_GATEWAY_TOKEN
+            ),
+            timeout_seconds=settings.a2a_agent_budget_seconds,
+        )
+        # One classifier for both: it caches each card's reading by digest, so the card a search
+        # classified is not read again for the booking that follows it.
+        classifier = LlmSkillClassifier(
+            planner_provider,
+            model=settings.planner_model,
+            temperature=settings.planner_temperature,
+            max_output_tokens=settings.planner_max_output_tokens,
+        )
+        normaliser = LlmReplyNormaliser(
+            planner_provider,
+            model=settings.planner_model,
+            temperature=settings.planner_temperature,
+            max_output_tokens=settings.planner_max_output_tokens,
+        )
+        pairwise_key = (
+            pairwise.get_secret_value().encode()
+            if pairwise is not None
+            else _DEVELOPMENT_PAIRWISE_KEY
+        )
+        expert_searches = SearchActivitiesHandler(
+            gateway,
+            classifier,
+            normaliser,
+            pairwise_key=pairwise_key,
+            budget_seconds=settings.a2a_agent_budget_seconds,
+        )
+        expert_bookings = BookActivityHandler(
+            gateway,
+            classifier,
+            normaliser,
+            pairwise_key=pairwise_key,
+            budget_seconds=settings.a2a_agent_budget_seconds,
+        )
+    # Read by both question routes through one helper (`expert_agent_turns`, spec §14 A11).
+    app.state.expert_searches = expert_searches
+    app.state.expert_bookings = expert_bookings
 
     # Before the routers, because a rejected preflight never reaches one. The web client cannot
     # call this service at all without it: a browser refuses a cross-origin request unless the

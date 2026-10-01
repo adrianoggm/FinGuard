@@ -1,0 +1,161 @@
+# The corpus's first episode where the channel a turn arrives on is part of what it proves.
+#
+# Every episode before this one posted every turn to `/v1/questions` and never asked what a
+# streaming, voice-shaped client would have seen. This one drives the same conversation the corpus
+# already knows how to read — episode 32's own vocabulary, turn for turn — through both routes, so
+# the fact under test is never "does this sentence work" (32 already answers that) but "does the
+# chart survive the turn that changed which endpoint answered it".
+
+episodes:
+  - name: a_conversation_keeps_its_chart_across_voice_and_text
+    why: >
+      Design §9 names five multimodal cases. Four of them are turns this corpus can drive; the
+      fifth, case (c) — a voice interruption mid-response — is transport-level, not a fact about
+      which tool answered a turn or what it left behind, and it already has its own test: the
+      gateway's cancellation test from Task 1 (Wave 4.4). Nothing about a cut-off stream shows up
+      in a `Turn`'s fields, so it is not here, and neither is the audio itself — `spoken` measures
+      whether the chart-derived summary exists, never how it sounds, which is a presenter and a
+      gateway concern this file cannot see and does not try to.
+
+      Every sentence below is one episode 32 already speaks, verbatim, or — turn 5 — a follow-up
+      phrasing a deterministic reader already claims, probed against this conversation's own state
+      before it was written down. None of them is new vocabulary; only the channel some of them
+      travel on is new, which is the whole point: the corpus should not need a second sentence to
+      prove a second channel keeps the same chart the first one drew.
+
+      Turn 1, «¿Cuánto gasté el último trimestre?», is episode 32's own anchor, on VOICE. It reaches
+      the planner never (`no_model: true`, the same `_LAST_QUARTER` phrase 32's own turn 1 resolves
+      deterministically) and draws the same ranked breakdown bar. Posted to the streaming route with
+      `channel: VOICE`, `spoken_for_voice` turns on and the answer carries a spoken summary of the
+      chart it just drew — case (a)'s opening half: a voice question, a chart, `spoken: true`. It also
+      carries `explanation: true` (R4): the chart-derived explanation rides the same answer frame
+      the spoken summary does, on whichever channel drew the chart, so this turn is the VOICE proof
+      that R4's "one derivation, two surfaces" is not a TEXT-only fact. No new VOICE «¿Por qué…?»
+      turn is added here — episode 32's typed one and Task 4's own VOICE route tests already prove
+      both channels carry the explanation; this turn only shows a VOICE-drawn chart carries one too.
+
+      Turn 2, «Pon el primer gráfico en vertical.», is 32's own turn 6, on TEXT. «El primer gráfico»
+      reaches back to turn 1's bar and flips its dimension onto the x axis — probed, the same
+      effective change 32's turn 6 makes against its own first chart. A restyle answers through
+      `_visual_only_response`, which never computes a spoken summary regardless of channel (Task 3's
+      own `test_a_voice_restyle_carries_no_spoken` proves that in-process); on TEXT it is `spoken:
+      false` for the ordinary reason too. This is case (a)'s second half: a typed follow-up on a
+      chart a voice turn drew, and the chart is still there to restyle.
+
+      Turn 3, «Separa transporte público y gasolina.», is 32's own turn 2, on TEXT — case (b)'s
+      opening half. The split reader recognises the verb and the two named categories with a plan
+      already in view and never reaches the planner (`no_model: true`, probed); the chart it draws
+      derives from turn 2's restyled bar, one query, `banking_calls: 1`. A TEXT charted answer
+      carries no spoken summary — `spoken_for_voice` is only ever true on VOICE — so `spoken: false`.
+
+      Turn 4, «Ahora compáralo por meses.», is 32's own turn 3, on VOICE — case (b)'s second half
+      and, together with turn 1, case (e). The regroup reader reads «por meses» against the plan
+      turn 3 left in view and never reaches the planner (`no_model: true`, probed); the answer is a
+      month-by-month line, derived from turn 3's chart, one query. Posted on VOICE, the same final
+      frame that carries the line's `visualization` also carries `spoken: true` — the event order a
+      voice client actually sees (`assistant.text.final` before `audio.started`, sharing the chart's
+      id) is the gateway's own protocol test from Task 1; what this turn proves is only the
+      orchestrator's half of it, that the two never travel on separate frames. `spoken_says: fue el
+      mes con mayor gasto` pins this line's own noun, not merely its presence — turn 4, and not
+      turn 1, because turn 1's plan is `group_by: NONE` and speaks the same generic line in both
+      worlds, telling a silenced summary from a genuine one nothing that `spoken: true` alone did
+      not already tell it.
+
+      Turn 5 is where this episode departs from 32's own wording, and only because 32 never asked
+      this question. «¿Y en julio?» is case (d): a channel switch — TEXT, TEXT, VOICE, now this turn
+      — that keeps the account, the two categories and the month grouping while only the window
+      narrows. Probed against the state turn 4 leaves: `contextual_follow_up` is the one reader that
+      claims it, uncontested, resolving the bare month name against `window_words` the same way
+      turn 4's own month labels would be read back, and it never reaches the planner (`no_model:
+      true`). The plan it runs keeps `categories: [TRANSPORT_FUEL, TRANSPORT_PUBLIC]` and
+      `group_by: MONTH` exactly as turn 4 left them, narrowing only `window` to July — probed, and
+      that single month is one row, which this service's own floor treats as a KPI rather than a
+      chart (the same rule episode 32's drill-down turn relies on for its id-selected read): no
+      `visualization`, so nothing for a voice summary to be derived from and `spoken: false`, the
+      same shape Task 3's own `test_a_voice_kpi_answer_has_no_spoken` proves in-process. `chart:` is
+      not asserted on this turn for the same reason `derived_from` is not asserted on 32's own
+      evidence turn — no chart is drawn, so there is nothing here for either field to be about.
+
+      The close is unrelated to the drill, only so the episode clears the corpus's own six-turn
+      floor by a margin: an account balance, now on VOICE, and a courtesy on TEXT. `ACCOUNT_BALANCE`
+      answers over the *streaming* route with `AskFinancialQuestion.stream` never yielding a `Stage`
+      on that path at all (`ask_financial_question.py`'s own handling: "not a plan and not a
+      model... yield await self._balance(...); return"), so its SSE body opens directly on
+      `{"type": "answer", ...}` — the fix wave's own harness change (I-4/D-4.4-9) narrowed the
+      leading-stage rule to `route: QUERY` turns only, exactly so a route that genuinely has
+      nothing to stage is not asserted against a universal that was never true for it. The last
+      frame is still an answer, always, and is checked unconditionally; `spoken: false` because the
+      balance answer carries no `visualization` for a voice summary to be derived from, the same
+      shape Task 3's own `test_a_voice_kpi_answer_has_no_spoken` proves in-process.
+
+      Every sentence above is one 32 already speaks or a follow-up `contextual_follow_up` already
+      claims (turn 5, probed) — this episode is the channel proof, not the vocabulary one, so it
+      deliberately repeats 32's own anchors rather than reaching for a new phrasing. The natural
+      forms a holder actually types live in `34-natural-visual-sentences.yaml` instead.
+    metrics: [context_retention]
+    turns:
+      - say: ¿Cuánto gasté el último trimestre?
+        channel: VOICE
+        route: QUERY
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT_PUBLIC, 21000, 2], [GROCERIES, 18000, 5]]
+        chart:
+          mark: bar
+          channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [y, descending, value_minor]
+        banking_calls: 1
+        no_model: true
+        spoken: true
+        explanation: true
+        ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Pon el primer gráfico en vertical.
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        spoken: false
+        chart:
+          mark: bar
+          channels: [[x, dimension, nominal], [y, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [x, descending, value_minor]
+      - say: Separa transporte público y gasolina.
+        route: QUERY
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
+        banking_calls: 1
+        no_model: true
+        derived_from: true
+        spoken: false
+        chart:
+          mark: bar
+          channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [y, descending, value_minor]
+        ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Ahora compáralo por meses.
+        channel: VOICE
+        route: QUERY
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
+        banking_calls: 1
+        no_model: true
+        derived_from: true
+        spoken: true
+        spoken_says: fue el mes con mayor gasto
+        chart:
+          mark: line
+          channels: [[x, dimension, temporal], [y, value_minor, quantitative], [tooltip, dimension, temporal], [tooltip, value_minor, quantitative]]
+        ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y en julio?
+        channel: VOICE
+        route: QUERY
+        groups: [["2026-07", 17000, 3]]
+        banking_calls: 1
+        no_model: true
+        spoken: false
+        ran: {window: 2026-07-01..2026-07-31, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Cuánto tengo en la cuenta corriente?
+        channel: VOICE
+        route: BALANCE
+        no_model: true
+        spoken: false
+        says: 2.270,42
+      - say: Gracias.
+        route: COURTESY
+        no_model: true

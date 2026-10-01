@@ -33,6 +33,7 @@ from finguard_orchestrator.infrastructure.metrics.postgres_repository import (
     PostgresSavedMetricRepository,
     _columns,
 )
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
 def definition(*, metric: Metric = Metric.SUM) -> SavedMetricDefinition:
@@ -175,7 +176,7 @@ class ChangingBanking:
 @pytest.mark.asyncio
 async def test_opening_a_metric_executes_banking_fresh() -> None:
     banking = ChangingBanking()
-    execute = financial_metric_executor(banking)  # type: ignore[arg-type]
+    execute = financial_metric_executor(banking, present)  # type: ignore[arg-type]
     caller = Caller("holder", UUID("08aba04f-2b30-4639-88a6-eac741153ce0"))
 
     first = await execute(definition(), caller)
@@ -205,7 +206,7 @@ async def test_a_metric_saved_as_a_figure_reopens_as_a_figure() -> None:
     moves between the two calls because banking answered twice.
     """
     banking = ChangingBanking()
-    execute = financial_metric_executor(banking)  # type: ignore[arg-type]
+    execute = financial_metric_executor(banking, present)  # type: ignore[arg-type]
     caller = Caller("holder", UUID("08aba04f-2b30-4639-88a6-eac741153ce0"))
     figure = SavedMetricDefinition(
         FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
@@ -272,7 +273,7 @@ async def test_a_saved_plan_naming_an_account_the_opener_cannot_read_is_refused(
     """The singular field. A metric saved against one account, reopened by a credential
     that account does not belong to, must not answer -- and must not ask banking either."""
     banking = RefusingBanking()
-    execute = financial_metric_executor(banking)  # type: ignore[arg-type]
+    execute = financial_metric_executor(banking, present)  # type: ignore[arg-type]
     caller = Caller("ES-0001", OWN_ACCOUNT)
     stored = SavedMetricDefinition(
         FinancialPlan(

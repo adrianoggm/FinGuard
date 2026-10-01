@@ -46,11 +46,23 @@ from finguard_orchestrator.application.queries.financial_turn import (
 )
 from finguard_orchestrator.application.queries.reader_registry import Claim
 from finguard_orchestrator.application.queries.readers import seam
+from finguard_orchestrator.application.queries.readers.drill_down import (
+    DrillAsk,
+    DrillDown,
+    DrillUnbound,
+    read_drill_down,
+)
 from finguard_orchestrator.application.queries.readers.follow_up import (
     _CATEGORY_REFERENCE,
     _account_follow_up_plan,
 )
 from finguard_orchestrator.application.queries.readers.subjects import _INVESTMENT_HISTORY
+from finguard_orchestrator.application.queries.readers.visual_follow_up import (
+    classify as classify_visual_follow_up,
+)
+from finguard_orchestrator.application.queries.readers.visual_follow_up import (
+    record_visual_follow_up,
+)
 from finguard_orchestrator.application.queries.readers.windows import (
     _is_whole_month,
     _is_whole_year,
@@ -75,7 +87,12 @@ from finguard_orchestrator.domain.errors import (
     InvalidValueError,
     QueryRejectedError,
 )
-from finguard_orchestrator.domain.models.chart import PresentationContext, VisualDataset, VisualRow
+from finguard_orchestrator.domain.models.chart import (
+    PresentationContext,
+    VisualContext,
+    VisualDataset,
+    VisualRow,
+)
 from finguard_orchestrator.domain.models.conversation import (
     AccountAlias,
     AccountCandidate,
@@ -114,6 +131,8 @@ from finguard_orchestrator.domain.models.turn_analysis import (
     TurnFocus,
     TurnRelation,
 )
+from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
+from finguard_orchestrator.domain.models.visual_plan import Rejection, canonical
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
@@ -152,7 +171,10 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     VisualDecision,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -440,7 +462,7 @@ _ON_A_COMPARISON: Final = (
     "_direct_period_comparison",
     "_comparison_with_a_named_window",
 )
-_ON_THE_QUERY_IN_VIEW: Final = ("_contextual_follow_up_plan",)
+_ON_THE_QUERY_IN_VIEW: Final = ("contextual_follow_up_plan",)
 _ON_THE_SENTENCE_ITSELF: Final = (
     "_multiple_movement_ranking",
     "_group_ranking_plan",
@@ -460,6 +482,11 @@ RUNS: Final = (
     _ON_THE_QUERY_IN_VIEW,
     _ON_THE_SENTENCE_ITSELF,
 )
+# F-H3 (Wave 3 hardening, fix round): the two runs whose readers resolve their plan from
+# `focus_of(conversation)` -- a patch, a regroup or a split of whatever the conversation already
+# carried, never a fresh read of the sentence alone. `_answering` stamps
+# `plan_continues_conversation` from membership in this set.
+_CONTINUATION_READERS: Final = _ON_A_COMPARISON + _ON_THE_QUERY_IN_VIEW
 
 
 class AskFinancialQuestionHandler:
@@ -490,6 +517,7 @@ class AskFinancialQuestionHandler:
         card_days: int = DEFAULT_CARD_DAYS,
         read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
         interpreter: TurnInterpreterPort | None = None,
+        visual_policy: VisualPlanningPolicy | None = None,
     ) -> None:
         self._planner = planner
         # Wrapped here rather than at the composition root, so a handler built directly — by a
@@ -510,10 +538,18 @@ class AskFinancialQuestionHandler:
         self._accounts = accounts
         self._account_directory = account_directory
         self._contacts = contacts
-        # The chart a rule chooses. Built here rather than taken as a parameter because there is
-        # exactly one of it and it has no dependencies; wave 3 adds the model planner beside it as
-        # a port, and the floor stays separate from it so a shadow run can hold both at once.
-        self._visual_floor = DeterministicVisualPlanner()
+        # The chart a rule chooses, wrapped in the policy that also knows how to hold a model
+        # planner beside it. A handler built without one — every test that does not care, and any
+        # composition root that has not wired a model yet — gets the deterministic floor and
+        # nothing else, which is today's behaviour unchanged.
+        self._visual_policy = visual_policy or VisualPlanningPolicy(
+            model=None,
+            fallback=DeterministicVisualPlanner(),
+            verifier=verify,
+            mode="deterministic",
+            # Unused in deterministic mode; the policy refuses a non-positive budget outright.
+            budget_seconds=1.0,
+        )
 
     # `accounts` is keyword-only and has no default on purpose. A balance question that reached a
     # handler without it would fall back to the planner, which is the bug this exists to fix — and
@@ -553,8 +589,17 @@ class AskFinancialQuestionHandler:
         """
         started = time.perf_counter()
         outcome = "INCOMPLETE"
+        # A one-element box, not a return value: `_steps` is an async generator and PEP 525 forbids
+        # `return <value>` in one. `_classify_and_record_visual_follow_up`, deep inside it,
+        # classifies what this turn wants from the chart it follows long before any result exists;
+        # this is where that value is written, and read back below at the same convergence that
+        # decides `visual_decision` — for the same reason `metric_definition`'s own fallback is
+        # here rather than in each of `_steps`'s branches, except that fallback reads
+        # `step.conversation` (already on the result) while this one depends on `analysis`, which
+        # never is.
+        follow_up_seen: list[VisualFollowUp | None] = [None]
         try:
-            async for step in self._steps_answering_scope(query):
+            async for step in self._steps_answering_scope(query, follow_up_seen):
                 if isinstance(step, AskFinancialQuestionResult):
                     outcome = step.outcome
                     # The turn, as one decision. Here rather than in the `finally` below on
@@ -591,11 +636,40 @@ class AskFinancialQuestionHandler:
                     if step.metric_definition is None and isinstance(
                         step.conversation.last_plan, FinancialPlan
                     ):
-                        step = replace(step, metric_definition=step.conversation.last_plan)
+                        # R14 (Wave 4.5, closes D-4.5-6/M-2): this is the one place
+                        # `metric_definition` is ever assigned a value it did not already have --
+                        # every producer of a chart in this handler (`_visual_dataset`,
+                        # `_how_many_payees`, `_compare_periods`, the ratio branches, the salary
+                        # history) leaves it `None` and lets THIS line supply `conversation.
+                        # last_plan` instead. So the flag is set here, in the same `replace`, and
+                        # nowhere else -- it says the fact this line alone knows: the plan on the
+                        # result did not come from this turn's own producer.
+                        step = replace(
+                            step,
+                            metric_definition=step.conversation.last_plan,
+                            metric_definition_borrowed=True,
+                        )
+                    # A fingerprint of `step.metric_definition` as held at this line, borrowed or
+                    # not. `None` when `metric_definition` is not a `FinancialPlan` at all (a
+                    # comparison, a ratio, or no plan ran). Sealed as data for 4.3's drill to bind
+                    # to; the presenter reads `metric_definition_borrowed` above instead (a digest
+                    # of this same field cannot tell borrowed from owned -- only the back-fill
+                    # above can, so it says so directly).
+                    step = replace(
+                        step,
+                        visual_plan_digest=(
+                            plan_digest(step.metric_definition)
+                            if isinstance(step.metric_definition, FinancialPlan)
+                            else None
+                        ),
+                    )
                     # The chart is decided once for the turn using the presentation circumstances
                     # supplied at the edge. The deterministic floor may currently ignore some of
                     # them, but the application seam is complete for planners that do not.
-                    step = _decided_visual(step, self._visual_floor, query.presentation)
+                    decided = await _decided_visual(
+                        step, self._visual_policy, query.presentation, query.sentence
+                    )
+                    step = replace(decided, visual_follow_up=follow_up_seen[0])
                 yield step
         finally:
             logger.info(
@@ -610,7 +684,9 @@ class AskFinancialQuestionHandler:
             )
 
     async def _steps_answering_scope(
-        self, query: AskFinancialQuestionQuery
+        self,
+        query: AskFinancialQuestionQuery,
+        follow_up_seen: list[VisualFollowUp | None],
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         """`_steps`, with an account-scope requirement answered instead of raised.
 
@@ -625,15 +701,20 @@ class AskFinancialQuestionHandler:
         yielded *and still be recorded*, so the clarification travels through the same turn record
         and reports the same `outcome` to the log as every other answer, instead of needing a
         second copy of both.
+
+        `follow_up_seen` is `stream`'s own box, passed through untouched: this layer decides
+        nothing about the chart, it only forwards what `_steps` writes into it.
         """
         try:
-            async for step in self._steps(query):
+            async for step in self._steps(query, follow_up_seen):
                 yield step
         except AccountScopeRequiredError as required:
             yield self._scope_question(required, query.conversation)
 
     async def _steps(
-        self, query: AskFinancialQuestionQuery
+        self,
+        query: AskFinancialQuestionQuery,
+        follow_up_seen: list[VisualFollowUp | None],
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         was = query.conversation
         asked_again = query_recovery.retry_action(query.sentence)
@@ -720,6 +801,55 @@ class AskFinancialQuestionHandler:
             yield replace(restored, text=f"He vuelto a la consulta anterior. {restored.text}")
             return
 
+        season = window_words.season_ask(query.sentence, today=query.today)
+        if season is not None:
+            # B-4 (Wave 3 hardening): «este verano»/«el verano pasado»/«en primavera» are windows
+            # `window_words.window_in` keeps refusing to guess -- see its own module docstring.
+            # Before this, the refusal was silent: the sentence reached the planner (or a
+            # follow-up reader) with no signal that the season was never read, and whatever window
+            # was already in view answered a different question (§11's own opening sentence, «¿En
+            # qué he gastado más este verano?», ran with the inherited `LAST_N_MONTHS:3`
+            # unchanged). Ahead of intent classification and the planner both, on purpose: no
+            # vocabulary here is more certain about what the sentence is missing, and answering
+            # with the wrong months is worse than asking which ones were meant.
+            question, chips = season
+            # F-H2 (Wave 3 hardening, fix round): the ask used to leave `conversation=was`
+            # unchanged -- an honest question with no state behind it, so the next turn (a bare
+            # "sí", "esos tres", or the chip itself) was read exactly like any fresh sentence, and
+            # the wrong-but-confident failure this whole finding exists to close just moved one
+            # turn later. Reusing the same clarification workflow the planner's own window
+            # question opens (`FinancialClarification`, `awaiting=Slot.WINDOW`) closes it: the
+            # direction is the one fact this sentence states or inherits, nothing else is settled,
+            # and `_finish_pending`'s ordinary reply-to-a-clarification path resolves the window on
+            # the next turn exactly like any other answer to "¿de qué periodo?" would -- the chip
+            # itself now being a range phrase `window_words.window_in` can read back (see its own
+            # module docstring).
+            facts = explicit_facts.read(query.sentence, today=query.today)
+            direction = facts.direction or (
+                previous.direction if isinstance(previous, FinancialPlan) else Direction.EXPENSE
+            )
+            # F-4 (fix wave, D-H-7/Important 4): "en qué he gastado más este verano" asks for a
+            # breakdown by category, not a total -- the shape the round trip must carry too, or
+            # the resolved plan draws a single number for a question that asked which category.
+            group_by = (
+                GroupBy.CATEGORY
+                if window_words.season_asks_a_breakdown(query.sentence)
+                else GroupBy.NONE
+            )
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=question,
+                question=question,
+                conversation=was.with_active(
+                    FinancialClarification(
+                        draft=FinancialPlanDraft(direction=direction, group_by=group_by),
+                        awaiting=Slot.WINDOW,
+                    )
+                ),
+                suggestions=list(chips),
+            )
+            return
+
         if query.analysis is not None:
             analysis = query.analysis
         elif query.intent is not None:
@@ -731,6 +861,7 @@ class AskFinancialQuestionHandler:
                 interpreter=self._interpreter,
                 today=query.today,
             )
+        follow_up_seen[0] = _classify_and_record_visual_follow_up(query, analysis, was)
         intent = analysis.intent
         if intent is Intent.CORRECTION:
             continuation = (
@@ -938,7 +1069,7 @@ class AskFinancialQuestionHandler:
             query = replace(query, conversation=was)
             # And the continuation base goes with it. `last_plan` behind a half-built ratio is a
             # *mirror* of the focus being abandoned, not a question this turn continues —
-            # `_contextual_follow_up_plan` declines on exactly that state. Dropping the pending
+            # `contextual_follow_up_plan` declines on exactly that state. Dropping the pending
             # ratio is what makes the mirror indistinguishable from a base, because
             # `planning_context.can_continue` tells the two apart by whether the focus is a
             # `QueryFocus`, and this line has just made it one. Left standing, "ahora en todas mis
@@ -1042,7 +1173,81 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, account_follow_up)
             return
 
+        # N-H1 (Wave 3 hardening, round 2): `_a_bare_shop_name`'s own stop-list check only ever
+        # runs with `was.last_plan` set, because narrowing a *plan* is what that function does.
+        # From the state every settled conversation actually opens in -- nothing pending, no chart
+        # -- the same bare "todos"/"límite" fell through here to the planner instead, and came
+        # back a confident total with an invented LAST_MONTH window (a euro figure for a word that
+        # named nothing, Important 6's shape one route over). Checked here, before the planner and
+        # before `_a_bare_shop_name`'s narrowing, so the honest ask is reached with a plan pending
+        # or without one.
+        #
+        # `merchant_words.names_no_scope_at_all` rather than the broader `never_a_merchant`: most
+        # of that list is conversation control ("sí", "no", "gracias", "déjalo") and each already
+        # has its own deliberate fallback when nothing is pending -- a cancelled payment's stray
+        # "sí" becomes an ordinary LAST_MONTH query, and the corpus pins exactly that
+        # (`07-cancellations.yaml`, `08-confirmations.yaml`). Only F-2's own words carry no such
+        # second job. `was.active is None` keeps this from a workflow already open on this very
+        # sentence, for the same reason -- a clarification slot or a half-built payment reads its
+        # own answer here, and the repeated-question recovery further down this pipeline
+        # (`_asks_the_same_thing_again`) is what must still run for those, unchanged.
+        stopword_only_sentence = (
+            intent is Intent.FINANCIAL_QUERY
+            and was.active is None
+            and merchant_words.names_no_scope_at_all(query.sentence)
+        )
+        if stopword_only_sentence:
+            stopword_said = query.sentence.strip(" ¿?¡!.,;:")
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=(
+                    f"No sé a qué te refieres con «{stopword_said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                question=(
+                    f"No sé a qué te refieres con «{stopword_said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                plan=(
+                    answer_writer.describe(was.last_plan)
+                    if isinstance(was.last_plan, FinancialPlan)
+                    else None
+                ),
+                conversation=was,
+            )
+            return
+
         narrowing = _a_bare_shop_name(query, was) if intent is Intent.FINANCIAL_QUERY else None
+        if isinstance(narrowing, _NeverAMerchant):
+            # Reached, and this comment used to claim otherwise -- reported by review on
+            # 2026-09-14. The gate above is `merchant_words.names_no_scope_at_all`, which is five
+            # words and one phrase («todos», «todas», «todo», «límite», «sin límite») and is
+            # deliberately narrower than `never_a_merchant`: that list also holds «sí», «no»,
+            # «gracias», «nada» and the rest of conversation control, and those have to keep
+            # falling through to whatever state was waiting on them -- a cancelled payment, a
+            # repeated clarification -- rather than being asked about from anywhere.
+            #
+            # So «nada», with a plan already answered, still arrives here, and is asked about
+            # instead of guessed at as a shop. A comment that calls a live branch dead is an
+            # invitation to delete it, and deleting this one reopens the bug it closes.
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=(
+                    f"No sé a qué te refieres con «{narrowing.said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                question=(
+                    f"No sé a qué te refieres con «{narrowing.said}»; ¿quieres cambiar el "
+                    "gráfico, el periodo o la categoría?"
+                ),
+                plan=(
+                    answer_writer.describe(was.last_plan)
+                    if isinstance(was.last_plan, FinancialPlan)
+                    else None
+                ),
+                conversation=was,
+            )
+            return
         if narrowing is not None:
             shop, previous = narrowing
             # A whole turn that is one name, with a question behind it. "Spotify", typed after
@@ -1163,11 +1368,71 @@ class AskFinancialQuestionHandler:
             yield await self._group_reference(query, previous, difference=False)
             return
 
+        # §3.3's act, gated on the classification this turn already took: a drill-down that named
+        # one bar of the chart in view runs the bounded plan behind it; one that fits several bars
+        # asks instead of guessing, with no ledger call and the conversation unchanged; `None` is
+        # today's path, falling through to everything below exactly as before this task.
+        if follow_up_seen[0] is not None and follow_up_seen[0].kind == "DRILL_DOWN":
+            drill = read_drill_down(query.sentence, was, today=query.today)
+            if isinstance(drill, DrillAsk):
+                yield AskFinancialQuestionResult(
+                    outcome="DRILL_AMBIGUOUS",
+                    text=drill.text,
+                    question=drill.text,
+                    plan=answer_writer.describe(previous) if previous is not None else None,
+                    conversation=was,
+                    # Item 5 (Wave 3 hardening, T8b): empty for the ordinary several-bars ask
+                    # (the question already names its own alternatives); the NONE-grouped ask's
+                    # own two chips, otherwise.
+                    suggestions=list(drill.suggestions),
+                )
+                return
+            if isinstance(drill, DrillUnbound):
+                # A-2 (Wave 3 hardening): the chart's plan was borrowed, not drawn this turn -- the
+                # honest ask, the same shape `DRILL_AMBIGUOUS` above already uses, never a silent
+                # narrow of whatever `conversation.last_plan` happens to hold.
+                yield AskFinancialQuestionResult(
+                    outcome="DRILL_UNBOUND",
+                    text=drill.text,
+                    question=drill.text,
+                    plan=answer_writer.describe(previous) if previous is not None else None,
+                    conversation=was,
+                )
+                return
+            if isinstance(drill, DrillDown):
+                yield Stage("planned", answer_writer.describe(drill.plan))
+                yield Stage("querying")
+                answered = await self._answer(
+                    query, drill.plan, movements=MAX_SELECTED_TRANSACTIONS
+                )
+                # F-H3 (Wave 3 hardening, fix round): `read_drill_down` clamps the previous plan's
+                # own window to the bar the sentence named -- a continuation exactly like a
+                # reshape or a regroup, and outside `_answering`'s reader-registry dispatch (this
+                # branch answers directly, before `contextual_follow_up_plan` is ever asked), so
+                # the causal flag `derived_from` reads is stamped here rather than there.
+                yield replace(answered, plan_continues_conversation=True)
+                return
+
         referenced_result = await self._referenced_result_plan(query)
         if referenced_result is not None:
             yield Stage("planned", answer_writer.describe(referenced_result))
             yield Stage("querying")
-            yield await self._answer(query, referenced_result)
+            # I-2 (fix wave): ask the ledger for exactly the movements this turn re-lists, rather
+            # than none -- the real adapter substitutes the deployment's own `supporting_movements`
+            # default (10 in `compose.yaml`) against up to `MAX_SELECTED_TRANSACTIONS` (50)
+            # selected ids, so a caller asking with no `movements=` gets ten of the up-to-fifty rows
+            # the drill just showed. `None` when the referenced plan names no ids at all -- an
+            # ordinary contextual reference, not the evidence path -- so this line changes nothing
+            # for it.
+            yield await self._answer(
+                query,
+                referenced_result,
+                movements=(
+                    len(referenced_result.transaction_ids)
+                    if referenced_result.transaction_ids
+                    else None
+                ),
+            )
             return
 
         in_view = seam.READERS.select(query, among=_ON_THE_QUERY_IN_VIEW)
@@ -1485,8 +1750,20 @@ class AskFinancialQuestionHandler:
         `query = replace(query, conversation=was)`. Passing it is how that stays true by
         construction instead of by inspection: this method uses exactly the variable the inline
         block it replaced used.
+
+        F-H3 (Wave 3 hardening, fix round): every reader this method ever dispatches to is one of
+        the five runs `_steps` asks in order, and `claimed.reader` names exactly which one claimed
+        the turn. `_CONTINUATION_READERS` is `_ON_A_COMPARISON` and `_ON_THE_QUERY_IN_VIEW` --
+        the two runs that resolve their own plan from `focus_of(conversation)`, i.e. patch,
+        regroup or split whatever the conversation already carried, as opposed to
+        `_ON_THE_SENTENCE_ITSELF` (a fresh plan the sentence alone produced) or
+        `_ON_A_NAMED_SUBJECT`. Stamped onto the result here, once, rather than in each of the
+        eleven producer methods those two runs dispatch to.
         """
+        continuation = claimed.reader in _CONTINUATION_READERS
         async for step in _ANSWERING[claimed.reader](self, query, was, claimed.plan):
+            if continuation and isinstance(step, AskFinancialQuestionResult):
+                step = replace(step, plan_continues_conversation=True)
             yield step
 
     async def _a_ratio(
@@ -2998,6 +3275,12 @@ class AskFinancialQuestionHandler:
                 )
                 for group in counted.groups
             ],
+            # `window` stays `None` here (the dataclass default) and at every other
+            # `VisualDataset(` this handler builds outside `_visual_dataset` -- a payee count, a
+            # period comparison, a ratio share, a salary history. None of those is one plan's own
+            # answered window over its own rows the way `_visual_dataset`'s three call sites are,
+            # so a month drill over them is not a case Wave 4.3 covers; `read_drill_down` reads
+            # `window is None` as "refuse, never guess" for exactly this reason.
             visual_dataset=VisualDataset(
                 rows=tuple(
                     VisualRow(dimension=group.key, value_minor=group.movement_count)
@@ -4136,6 +4419,7 @@ class AskFinancialQuestionHandler:
         *,
         widened: bool = False,
         narrowed: bool = False,
+        movements: int | None = None,
     ) -> AskFinancialQuestionResult:
         # Scoped for the run and not on the plan itself. Which accounts the figures came from is a
         # property of how the question was answered; the plan is what was *asked*, and that is what
@@ -4203,6 +4487,7 @@ class AskFinancialQuestionHandler:
                         account_id=query.account_id,
                         today=query.today,
                         reporting_timezone=query.reporting_timezone,
+                        movements=movements,
                     )
                 break
             except QueryRejectedError:
@@ -4390,7 +4675,7 @@ _ANSWERING: Final[
     "_comparison_with_previous_period": AskFinancialQuestionHandler._a_period_comparison,
     "_direct_period_comparison": AskFinancialQuestionHandler._a_period_comparison,
     "_comparison_with_a_named_window": AskFinancialQuestionHandler._a_period_comparison,
-    "_contextual_follow_up_plan": AskFinancialQuestionHandler._planned_answer,
+    "contextual_follow_up_plan": AskFinancialQuestionHandler._planned_answer,
     "_multiple_movement_ranking": AskFinancialQuestionHandler._a_movement_ranking,
     "_group_ranking_plan": AskFinancialQuestionHandler._planned_answer,
     "_natural_period_aggregate_plan": AskFinancialQuestionHandler._planned_answer,
@@ -4475,6 +4760,8 @@ _MOVEMENT_SET_REFERENCE: Final = re.compile(
     r"|\b(?:esos|estos|aquellos|los\s+mismos)\s+"
     r"(?:movimientos|cargos|pagos|ingresos)\b"
     r"|\b(?:esas|estas|aquellas|las\s+mismas)\s+(?:operaciones|compras)\b"
+    r"|\blos\s+movimientos\s+(?:responsables|detras|que\s+lo\s+explican)\b"
+    r"|\b(?:ensename|muestrame|dame)\s+(?:esos|estos|los)\s+movimientos[\s.!?]*$"
 )
 
 
@@ -4845,9 +5132,17 @@ _THE_WHOLE_LOT: Final = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class _NeverAMerchant:
+    """The bare word this turn typed, when B-2(a)'s closed stop-list already knows it is not a
+    shop's name -- `_a_bare_shop_name`'s own sentinel for "ask, do not guess"."""
+
+    said: str
+
+
 def _a_bare_shop_name(
     query: AskFinancialQuestionQuery, was: Conversation
-) -> tuple[str, FinancialPlan] | None:
+) -> tuple[str, FinancialPlan] | _NeverAMerchant | None:
     """A turn that is nothing but a name, answered by narrowing the last question to it.
 
     Only reached once the router *and* the balance ellipsis have had their say, which is the guard
@@ -4888,7 +5183,13 @@ def _a_bare_shop_name(
         # A word another vocabulary already owns. "Gasolina" is a category, "la hucha" an account
         # and "enero" a window, and each of them has a path that answers it properly.
         return None
-    return query.sentence.strip(" ¿?¡!.,;:"), plan
+    stripped = query.sentence.strip(" ¿?¡!.,;:")
+    if merchant_words.never_a_merchant(query.sentence):
+        # B-2(a) (Wave 3 hardening, R-H1): the closed stop-list -- words this service already
+        # knows are a discard, a correction or a pleasantry, never a shop. "Nada" stops being a
+        # merchant filter here rather than one query later, at zero cost instead of three.
+        return _NeverAMerchant(stripped)
+    return stripped, plan
 
 
 def _narrows_the_balance(
@@ -5165,10 +5466,11 @@ def _field_of(plan: PlannedQuery, name: str) -> str | None:
     return None if value is None else str(value.value)
 
 
-def _decided_visual(
+async def _decided_visual(
     result: AskFinancialQuestionResult,
-    floor: DeterministicVisualPlanner,
+    policy: VisualPlanningPolicy,
     presentation: PresentationContext,
+    question: str,
 ) -> AskFinancialQuestionResult:
     """Decide the chart once, in the application, where a model call is able to live.
 
@@ -5182,8 +5484,12 @@ def _decided_visual(
     "every request that gets this far ends in a ChartSpec" a claim worth holding.
 
     A function rather than a method so a test can drive the decision without standing up five
-    ports, and `floor` a parameter rather than a construction so wave 3 can hand it a model
+    ports, and `policy` a parameter rather than a construction so wave 3 can hand it a model
     planner's fallback without this function learning what a model is.
+
+    `question` is passed through to the policy and nowhere else: it reaches the model the way the
+    financial planner already sends it, and never the record below, whose every slot is service
+    vocabulary.
     """
     dataset = result.visual_dataset
     if dataset is None or len(dataset.rows) < 2:
@@ -5200,12 +5506,206 @@ def _decided_visual(
         plan_limited=context is not None and context.group_limit is not None,
         plan_metric=context.metric if context is not None else None,
     )
-    spec = floor.plan(profile, presentation)
-    if spec is None:
+    decision = await policy.decide(question, profile, presentation)
+    if decision is None:
         return result
-    return replace(
-        result,
-        visual_decision=VisualDecision(spec=spec, profile=profile, source="deterministic"),
+    record_visual_decision(decision)
+    return replace(result, visual_decision=decision)
+
+
+def _classify_and_record_visual_follow_up(
+    query: AskFinancialQuestionQuery, analysis: TurnAnalysis, conversation: Conversation
+) -> VisualFollowUp | None:
+    """Twelfth seam. Classifies what the turn wants from the chart it follows, records it, and
+    returns the classification -- changes nothing else: the kind and the claimant are service
+    vocabulary, the sentence stays in the query. `conversation` is the handler's working
+    conversation (`was`), not `query.conversation`.
+
+    Returns what it classified -- `None` when no chart is in context -- so `_steps` can carry it
+    onto the result `_remember_visual_context` (Task 4) reads `derived_from` off, through
+    `stream`'s own box (`follow_up_seen`).
+
+    Three early returns above this call in `_steps` -- retry control, alias learning, and the
+    previous-plan restore -- end the turn before `analysis` exists, so none of them reach here:
+    those turns record nothing at all rather than `UNRELATED`. Whoever reads this counter is
+    reading it against that denominator, not against every turn that had a chart in context.
+
+    Two of those three still draw a chart of their own: retry control and the previous-plan
+    restore both reach `self._answer` -> the module-level `_answered`, which always sets
+    `visual_dataset`. Neither ever reaches this line, so that chart's `visual_follow_up` stays
+    `None` and `_remember_visual_context` (Task 4) writes `derived_from=None` on it even though a
+    chart is already in context -- correct per the brief and 4.1 (no `analysis`, so no
+    classification), but as of Task 4 no longer only this counter's denominator: the same gap now
+    governs chart lineage on the wire.
+    """
+    if not conversation.visual_contexts:
+        return None
+    follow_up = classify_visual_follow_up(query, analysis, conversation)
+    record_visual_follow_up(follow_up)
+    return follow_up
+
+
+def record_visual_decision(decision: VisualDecision, *, was: str | None = "deterministic") -> None:
+    """One `record()` per turn that entered the policy, in the design's own vocabulary.
+
+    `changed` is whether the model's chart is what got shown -- only an accepted proposal in
+    hybrid/promoted does that. Shadow always shows the floor, so it is `AGREED`/`changed=False`
+    even on the run where the model's own proposal differed; `detail` is where that comparison
+    lives, because `was`/`now` say what was shown, not what was tried.
+
+    `was` is read only by the `patch` branch: a restyle's decision carries no floor to compare
+    itself against (`proposed`/`fallback_reason` are never set on one), so the caller -- the only
+    one that knows what the chart showed before the patch -- hands it in, rather than this
+    function inventing "deterministic" for a chart that a model, or an earlier patch, produced.
+    `changed` follows the same invariant every other row does: a `patch` *is* what got shown, so
+    `was != "patch"` is `True` whenever the previous chart had a different source, which is
+    always (a restyle only exists because something was already on screen, and `now` is always
+    "patch") -- `None` included, since `None != "patch"`.
+
+    **`was` is `None` whenever the caller does not know it, and that is most of the time (I2,
+    fix wave).** `VisualContext.decision` is turn-local by design (§4): the service keeps no
+    conversation store, so a context that crossed the wire and came back has `decision is None`
+    even though a decision *did* produce the chart on screen. Before this fix the caller
+    substituted `"deterministic"` for that case, which was true only by accident -- while
+    `ORCHESTRATOR_VISUAL_PLANNER` stayed `deterministic` for everyone. The day it is promoted
+    (Task 9), or a chart is restyled a second time, the substitution becomes a false provenance
+    claim: a row saying a model's chart was the floor's. Recording `None` (this module's own
+    `Decision.was: str | None`, so nothing downstream has to invent a sentinel) says the honest
+    thing -- the source is unrecorded -- until a signed visual context (planned Task 3b) makes it
+    recoverable across the wire.
+
+    A `patch` returns before the `logger.info` below: that call is `visual_planner.decision`, the
+    promotion-evidence sink Task 9 reads acceptance/abstention/latency rates off, and this
+    function's own opening line says what it is for -- one record per turn *that entered the
+    policy*. A restyle never does; `record()` above is its whole audit trail.
+    """
+    if decision.source == "patch":
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.AGREED,
+            changed=(was != "patch"),
+            field="chart",
+            was=was,
+            now="patch",
+            detail="accepted",
+        )
+        return
+    if not decision.proposed and decision.fallback_reason is None:
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.AGREED,
+            changed=False,
+            field="chart",
+            now="deterministic",
+            detail="not_run",
+        )
+    elif decision.accepted:
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.OVERRODE,
+            changed=True,
+            field="chart",
+            was="deterministic",
+            now="llm",
+            detail="accepted",
+        )
+    elif decision.fallback_reason is not None:
+        detail: str = decision.fallback_reason
+        if decision.rejected_rule is not None:
+            detail = f"invalid_proposal:{decision.rejected_rule}"
+        elif decision.error_detail is not None:
+            # U-8 (Wave 3 hardening): a non-provider exception inside the planner still records
+            # `provider_error` (`FallbackReason` stays the four the wire seals), but names itself
+            # here so the row is not indistinguishable from the provider actually being down.
+            detail = decision.error_detail
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.FAILED,
+            changed=False,
+            field="chart",
+            now="deterministic",
+            detail=detail,
+        )
+    else:
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.AGREED,
+            changed=False,
+            field="chart",
+            was="deterministic",
+            now="deterministic",
+            detail="shadow:changed" if decision.changed_from_baseline else "shadow:same",
+        )
+    logger.info(
+        "visual_planner.decision",
+        extra={
+            "proposed": decision.proposed,
+            "valid": decision.valid,
+            "accepted": decision.accepted,
+            "changed_from_baseline": decision.changed_from_baseline,
+            "selected_source": decision.source,
+            "fallback_reason": decision.fallback_reason,
+            "latency_ms": decision.latency_ms,
+            "proposed_spec": (
+                canonical(decision.proposed_spec) if decision.proposed_spec is not None else None
+            ),
+            "shown_spec": canonical(decision.spec),
+        },
+    )
+
+
+def record_visual_decision_refused(context: VisualContext, rejection: Rejection) -> None:
+    """A merged patch the verifier refused. One `DECLINED` row, next to `record_visual_decision`
+    for the same reason every other seam's rows live together: a rejection rate is read per rule
+    across every turn that produced one, `patch` decisions included.
+
+    `changed=False` and `now` names what stayed on screen -- the previous chart, untouched -- not
+    what was tried and refused. `context` is the chart already showing, so its own decision is
+    what `now` reports when there is one.
+
+    **`now` is `None` whenever the caller does not know it, and that is most of the time (I2,
+    fix wave; F3, fix wave 2, applying the same argument here).** `VisualContext.decision` is
+    turn-local by design (§4): the service keeps no conversation store, so a context that crossed
+    the wire and came back has `decision is None` even though a decision did produce the chart on
+    screen. This used to substitute `"deterministic"` for that case, true only by accident -- the
+    same false provenance claim `record_visual_decision`'s own docstring already refused for
+    `was`. The row never carries the rejected spec at all, only the rule that refused it.
+    """
+    now = context.decision.source if context.decision is not None else None
+    record(
+        Step.VISUAL_PLANNER,
+        Verdict.DECLINED,
+        changed=False,
+        field="chart",
+        now=now,
+        detail=f"invalid_proposal:{rejection.rule}",
+    )
+
+
+def record_context_untrusted(context: VisualContext) -> None:
+    """One `DECLINED` row for an echoed visual context whose seal did not check out.
+
+    Task 1 (Wave 3 hardening, A-1). `context.trusted` is the bool everything downstream branches
+    on; `context.trust_reason` is the one of five closed reasons `MetricTokenCodec.verify_context`
+    found (`"holder"`, `"conversation"`, `"position"`, `"content"`, `"format"`) -- kept off the
+    text a holder reads (`llm_controller`'s `VISUAL_UNTRUSTED` sentence collapses the first three
+    into one and the last two into the other) but not off the promotion log, the same way a merge
+    refusal's rule name (`record_visual_decision_refused`, just above) never reaches the sentence
+    either. A rejection rate per reason is read across every turn that produced one, next to every
+    other seam's rows, for the same reason `record_visual_decision_refused` sits here rather than
+    logging ad hoc from the controller.
+
+    Called once per untrusted context, at verification time (`llm_controller._conversation_of`) --
+    not deferred to whichever response branch happens to read `trusted` later, so a context that is
+    never actually used for anything this turn (echoed back but not targeted by a restyle or an
+    explanation) is still counted.
+    """
+    record(
+        Step.CONTEXT_TRUST,
+        Verdict.DECLINED,
+        changed=False,
+        field="chart",
+        detail=f"untrusted:{context.trust_reason}",
     )
 
 
@@ -5328,6 +5828,38 @@ def _local_visual_date(movement: Movement, reporting_timezone: str) -> str:
     return occurred_at.astimezone(ZoneInfo(reporting_timezone)).date().isoformat()
 
 
+def _answered_window(plan: FinancialPlan, answer: QueryAnswer) -> AbsoluteRange | None:
+    """The dates the rows a chart is about to draw actually cover -- never an amount.
+
+    N-2 (fix round 2): the ledger's own resolved window is bounded by the plan's own explicit
+    range, never trusted alone. `answer.period_start`/`period_end` are what
+    `http_financial_query.py` maps from `periodStart`/`periodEnd` (`:310-311`) -- what banking
+    says it ran -- but a lenient ledger, or a fake built to answer whole calendar buckets (the
+    corpus harness's own `_resolved_window`), can report a window wider than the plan it was
+    handed: a plan asking for 10 June - 20 July grouped by month draws a July bar, and an answer
+    of "the whole of June and July" is not what that plan queried. `plan.date_range` is the bound
+    the drill must never exceed, so when both are known the window is their intersection
+    (`max` of the two starts, `min` of the two ends); an empty intersection -- the ledger answered
+    a window disjoint from the plan's own -- is `None`, fail closed, never a guess. The ledger's
+    window alone when the plan names a `RelativePeriod` (nothing of the plan's own to bound it
+    with); `plan.date_range` alone when the ledger answered no period at all (the corpus harness,
+    before Wave 4.3's own fix to it); `None` when neither is set -- the drill's own feasibility
+    check (`readers/drill_down.py`) reads that `None` as "refuse, never guess" either way.
+    """
+    answered = (
+        AbsoluteRange(answer.period_start, answer.period_end)
+        if answer.period_start is not None and answer.period_end is not None
+        else None
+    )
+    if answered is not None and plan.date_range is not None:
+        start = max(answered.start, plan.date_range.start)
+        end = min(answered.end, plan.date_range.end)
+        return None if end < start else AbsoluteRange(start, end)
+    if answered is not None:
+        return answered
+    return plan.date_range
+
+
 def _visual_dataset(
     plan: FinancialPlan,
     answer: QueryAnswer,
@@ -5336,6 +5868,7 @@ def _visual_dataset(
     reporting_timezone: str,
 ) -> VisualDataset | None:
     """Build rows while the typed financial result still owns their semantics."""
+    window = _answered_window(plan, answer)
     if plan.metric is Metric.FREQUENCY:
         frequency = frequency_analyzer.analyse(
             answer,
@@ -5359,6 +5892,7 @@ def _visual_dataset(
             ),
             metric=Metric.FREQUENCY.value,
             title=answer_writer.describe(plan),
+            window=window,
         )
 
     if plan.metric is Metric.RECURRENCE:
@@ -5392,6 +5926,7 @@ def _visual_dataset(
                 rows=tuple(rows),
                 metric=Metric.RECURRENCE.value,
                 title=answer_writer.describe(plan),
+                window=window,
             )
             if len(rows) >= 2
             else None
@@ -5409,6 +5944,7 @@ def _visual_dataset(
         ),
         metric=plan.metric.value,
         title=answer_writer.describe(plan),
+        window=window,
     )
 
 
@@ -5550,6 +6086,15 @@ def _answered(
         movements=[_spoken_movement(movement) for movement in visible_movements],
         suggestions=query_recovery.empty_suggestions(plan) if answer.is_empty else [],
         explicit_visualization=_asks_for_visualization(sentence),
+        # R15 (Wave 4.5, round 3 of D-4.5-6/M-2): this is the one producer that actually HAS the
+        # `FinancialPlan` that drew `visual_dataset` -- it is the same `plan` two lines below, in
+        # its own local scope, never inherited from `conversation.last_plan`. Stamping it here
+        # means `stream()`'s back-fill (`~:630-641`) finds `metric_definition` already set and
+        # never runs, so `metric_definition_borrowed` stays False and the presenter may name this
+        # plan's own noun. The other four producers in this handler (`_how_many_payees`,
+        # `_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely run no
+        # single `FinancialPlan` of this shape and are correctly left to the back-fill.
+        metric_definition=plan,
         visual_dataset=_visual_dataset(
             plan,
             answer,

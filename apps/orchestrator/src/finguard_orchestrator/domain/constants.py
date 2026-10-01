@@ -140,3 +140,34 @@ MAX_RECIPIENT_NAME = 120
 # A note the user wrote. Long enough for "cena del viernes con Marta y Aitor", short enough
 # that the field cannot carry a paragraph into the ledger's description.
 MAX_CONCEPT = 140
+
+# --- expert agents ---------------------------------------------------------------------
+#
+# Protocol limits on what a third party's reply may put in front of the holder (spec §6). An agent
+# is somebody else's code, so each field its answer can fill is bounded here, where a paragraph
+# would otherwise travel into a slot list, a sealed context or a booking preview.
+
+# Slots accepted from one reply, and slots remembered across agents for a booking. Twenty is more
+# than a screen lists, and a reply offering more is not a timetable but a dump.
+MAX_AGENT_SLOTS = 20
+MAX_OFFERS = 20
+
+# Agents one search fans out to. Each is a parallel call inside one turn's budget.
+MAX_EXPERT_AGENTS = 10
+
+# What a slot may carry: an activity name as the agent wrote it («Pilates Reformer»), the agent's
+# own reference for the session and the code it answers a booking with.
+MAX_ACTIVITY_NAME = 64
+MAX_SLOT_REF = 64
+MAX_BOOKING_CODE = 32
+
+# An agent's card name as the holder reads it («Gimnasio Norte»). A card is a third party's text:
+# a longer name, or one with a control or bidi character in it, is shown as the agent's id instead.
+MAX_AGENT_NAME = 64
+
+# The A2A `contextId` an agent answered in, kept in the sealed offers so a booking continues it. An
+# agent's own identifier, usually a UUID; a longer one is not kept and the booking starts afresh.
+MAX_CONTEXT_ID = 128
+
+# The longest session a slot may claim. Four hours covers any class; a longer "slot" is a day.
+MAX_SLOT_MINUTES = 240

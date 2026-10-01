@@ -118,3 +118,60 @@ own resampler does the work, but that is hygiene, not the fix — the model was.
 
 Speech synthesised by Piper and transcribed back by Whisper returns the same sentence bar one word,
 which is the check that the audio is intelligible speech rather than well-formed noise.
+
+## Follow-up turn (Wave 4.4, fake providers)
+
+Design §8 states the latency gate against Wave 3's own single-turn measurement rather than a
+number invented for it. `scripts/benchmark_e2e.py` now accepts `--follow-up-text`: every recorded
+turn is followed by a second turn on the same session, and its durations are reported under a
+`followUp:` prefix. Run locally against the gateway with fake providers (the default:
+`VOICE_GATEWAY_ASSISTANT_MODE`/`VOICE_GATEWAY_STT_MODE`/`VOICE_GATEWAY_TTS_MODE` all `fake` per
+`.env.defaults` — nothing extra to set), two warmup turns and twenty recorded turns:
+
+```bash
+uv run --directory apps/voice-gateway uvicorn finguard_voice_gateway.main:app \
+  --host 127.0.0.1 --port 8123
+VOICE_GATEWAY_TOKEN=dev-benchmark-token \
+uv run --directory apps/voice-gateway python scripts/benchmark_e2e.py \
+  --url http://127.0.0.1:8123 --text "¿Cuánto gasté el mes pasado? gráfico" \
+  --follow-up-text "Ponlo en horizontal" --warmup 2 --runs 20 --timeout 30 --format json
+```
+
+The `--text` turn is the charted turn the fake assistant draws a chart for («gráfico»); the
+`--follow-up-text` turn is the presentation-only restyle («Ponlo en horizontal»). This run used the
+gateway's own fake assistant, which does not restyle a chart — the fake STT/TTS/assistant loop
+still measures the gateway's own protocol overhead for a second turn on an open session, but not
+the orchestrator's real restyle cost, which is measured in the orchestrator (Task 4's own
+`test_a_presentation_only_restyle_makes_zero_banking_calls_and_no_policy_call`, `apps/orchestrator`)
+rather than here.
+
+| milestone | P50 | P95 | samples |
+| --- | ---: | ---: | ---: |
+| followUp:input start → turn completed | 16.000 ms | 16.000 ms | 20 |
+
+P50 and P95 land on the same value because Windows' default ~15.6 ms scheduler timer tick is the
+dominant source of jitter at this scale, not because the samples are a fabricated flat line; every
+one of the 20 fake-provider runs quantises to that tick.
+
+**§8 gate: two separately measured quantities, not one summed number.** The gate compares two P95s
+of the *same provider class, same machine* — a follow-up turn must not cost meaningfully more than
+a single turn already does. What exists today is not that pair:
+
+| quantity | value | provenance |
+| --- | ---: | --- |
+| single-turn P95, **real providers** | 5,076.250 ms | Linux (Ryzen 7700X + RTX 3060), 17 August 2026, `ministral-3:14b` (see M-2: not the shipped planner — `RESULTS.md` above) |
+| follow-up P95, **fake providers** | 16.000 ms | Windows, 11 September 2026, gateway protocol overhead only — the fake assistant does not restyle a chart (`:142-146` above), so this is not the cost of a real presentation-only turn |
+
+These two numbers are **not addable and not comparable**: different machines, different OSes,
+and — the disqualifying difference — different provider classes. Summing them (as an earlier
+version of this section did: "5,076.250 ms + 16.000 ms = 5,092.250 ms") produces a number with no
+referent; it was removed rather than corrected, because no correction makes a real-provider number
+and a fake-provider number commensurable.
+
+**What a real gate needs:** a single-turn P95 and a follow-up P95, both real providers, both one
+machine, one run. The follow-up row was previously impossible to produce — `benchmark_e2e.py`
+encoded `--follow-up-text` as UTF-8 bytes standing in for PCM16, which only transcribes under the
+fake STT (M-7) — and now takes `--follow-up-pcm-file` for a real recording, the same way
+`--pcm-file` supplies the first turn. Producing the pair is Task 9's runbook and the GPU run is the
+operator's; `apps/orchestrator/scripts/latency_gate.py` computes the gate itself once both P95s
+exist, from the two RESULTS rows given on its command line.

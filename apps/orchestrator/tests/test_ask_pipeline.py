@@ -43,6 +43,7 @@ from finguard_orchestrator.domain.models.result_reference import (
     answered_with_result,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
     FinancialPlan,
     FinancialPlanDraft,
     RelativePeriod,
@@ -701,6 +702,11 @@ async def test_a_bare_word_that_is_no_shop_leaves_the_question_alone() -> None:
     asserted: "gracais", "déjalo", "nada" and twelve more became shop filters, and two outlived
     their turn, so "¿cuánto gasté el mes pasado?" ran a turn later filtered by "nada".
 
+    "Menos mal" rather than the corpus's own "ah vale" or "nada": B-2(a)'s closed stop-list (below)
+    now catches those before the guess, so this test needs a bare word neither half of which is on
+    that list — "menos" is, "mal" is not — to still exercise the guess-then-retract mechanism this
+    test is actually about.
+
     Nothing here reads the word. The ledger says whether it is a shop, on a query the empty answer
     was already spending."""
     ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
@@ -708,7 +714,7 @@ async def test_a_bare_word_that_is_no_shop_leaves_the_question_alone() -> None:
 
     result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
         AskFinancialQuestionQuery(
-            sentence="ah vale",
+            sentence="menos mal",
             account_id=ACCOUNT,
             today=TODAY,
             conversation=Conversation(last_plan=previous),
@@ -716,9 +722,128 @@ async def test_a_bare_word_that_is_no_shop_leaves_the_question_alone() -> None:
     )
 
     assert result.outcome == PlanningOutcome.PLANNED.value
-    assert ledger.plans[0].merchants == ("ah vale",), "it still guesses first"
+    assert ledger.plans[0].merchants == ("menos mal",), "it still guesses first"
     assert ledger.plans[-1].merchants == (), "and retracts to the question the user was asking"
     assert ledger.plans[-1].categories == ("GROCERIES",), "which keeps everything else it had"
+
+
+async def test_a_closed_stop_list_word_is_asked_about_never_guessed_as_a_merchant() -> None:
+    """B-2(a) (Wave 3 hardening, R-H1): a bare word this service already knows is a discard, a
+    correction or a pleasantry never becomes a merchant filter — it is the honest ask, and it costs
+    no ledger call at all, unlike the guess-then-retract above.
+
+    The audit's own named example: "¿cuánto gasté el mes pasado?" used to run a second time with
+    `merchants: ['nada']`. It must not run at all."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
+    previous = plan(categories=("GROCERIES",))
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="nada",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "nada" in (result.text or "")
+    assert ledger.plans == []
+
+
+@pytest.mark.parametrize("word", ["todos", "todas", "todo", "sin límite", "sin limite", "límite"])
+async def test_f2_the_stop_list_also_catches_todos_and_sin_limite(word: str) -> None:
+    """F-2 (fix wave, Important 3): C-3's own words -- `_NEVER_A_MERCHANT_WORDS`/`_PHRASES` did not
+    carry `todos`/`todas`/`todo`/`sin límite`/`límite`, so a bare "todos" with no chart and nothing
+    but a plan pending ran the merchant guess (three ledger calls, a confident total for a word
+    that named nothing) -- B-2's defect verbatim, on words the audit's own text already names."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
+    previous = plan(categories=("GROCERIES",))
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence=word,
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert ledger.plans == []
+
+
+async def test_f2_todos_mis_movimientos_still_plans() -> None:
+    """A real query naming "todos" as part of a longer sentence must still plan -- the stop-list
+    only ever matches a sentence that is *nothing but* stop-list words/phrases."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=12_345, movement_count=3))
+    previous = plan(categories=("GROCERIES",))
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="todos mis movimientos",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans != []
+
+
+@pytest.mark.parametrize("word", ["todos", "todas", "todo", "límite", "sin límite"])
+async def test_n_h1_the_stop_list_asks_from_the_opening_state_too(word: str) -> None:
+    """N-H1 (Wave 3 hardening, round 2): `_a_bare_shop_name`'s own stop-list gate only ever ran
+    with `was.last_plan` set. From the state every settled conversation actually opens in --
+    `Conversation()`, nothing pending, no chart -- the same bare word fell through to the planner
+    and came back a confident total with an invented LAST_MONTH window; "sin límite" came back
+    worse, an invented `excluded_merchants=('limite',)` and "sin limite" spliced into the text.
+    The honest ask must be reached at zero ledger calls here too, on both routes."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=46_556, movement_count=3))
+    a_last_month_plan_the_gate_must_never_reach = plan()
+    handler = chat(
+        FakePlanner(PlanningResult.planned(a_last_month_plan_the_gate_must_never_reach)), ledger
+    )
+    query = AskFinancialQuestionQuery(
+        sentence=word,
+        account_id=ACCOUNT,
+        today=TODAY,
+        conversation=Conversation(),
+    )
+
+    handled = await handler.handle(query)
+    streamed = [step async for step in handler.stream(query)]
+    streamed_result = next(step for step in streamed if not isinstance(step, Stage))
+
+    for result in (handled, streamed_result):
+        assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+        assert "sin limite" not in (result.text or "").lower()
+    assert ledger.plans == []
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["todos mis movimientos", "sin restaurantes", "cuánto gasté sin contar el alquiler"],
+)
+async def test_n_h1_positive_controls_still_plan_from_the_opening_state(sentence: str) -> None:
+    """The stop-list only ever matches a sentence that folds to *nothing but* stop-list words --
+    a real question that merely contains one of them must still reach the planner, from the
+    opening state exactly as it always has."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=12_345, movement_count=3))
+    result = await chat(
+        FakePlanner(PlanningResult.planned(plan(categories=("GROCERIES",)))), ledger
+    ).handle(
+        AskFinancialQuestionQuery(
+            sentence=sentence,
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans != []
 
 
 async def test_a_financial_aside_suspends_a_half_built_payment_instead_of_erasing_it() -> None:
@@ -1395,3 +1520,136 @@ async def test_a_refusal_the_planner_found_keeps_the_balance_thread() -> None:
     result = await ask(PlanningResult.unsupported("AVERAGE"), conversation=was)
 
     assert result.conversation.answered_the_balance
+
+
+async def test_a_season_asks_for_its_months_instead_of_answering_the_inherited_window() -> None:
+    """B-4 (Wave 3 hardening), §11's own opening sentence.
+
+    «¿En qué he gastado más este verano?» used to reach the planner with no signal that "este
+    verano" was never read, and the window it ran with was whatever the conversation already had
+    in view -- a silent substitution. It now asks which months, naming them, before the planner
+    or the model or the ledger ever sees the sentence.
+    """
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = RecordingLedger(ANSWER)
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_N_MONTHS, n=3)
+    )
+
+    result = await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿En qué he gastado más este verano?",
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == Spoken.GUIDANCE.value
+    assert result.text == "¿Te refieres a junio, julio y agosto de 2026?"
+    # F-H2 (Wave 3 hardening, fix round): the chip is a range phrase now ("de junio a agosto de
+    # 2026"), not the comma list the spoken question reads aloud -- see the round trip below.
+    assert result.suggestions == ["De junio a agosto de 2026"]
+    assert planner.asked is None
+    assert ledger.plans == []
+
+
+async def test_a_season_asks_answer_with_its_own_chip_runs_the_plan_over_the_named_months() -> None:
+    """F-H2 (Wave 3 hardening, fix round): the round trip B-4 left open. The season ask now opens
+    a `FinancialClarification` awaiting `Slot.WINDOW`, so the next turn -- the chip, answered
+    verbatim -- resolves through the ordinary reply-to-a-clarification path, exactly like any
+    other answer to "¿de qué periodo?" would, and runs the plan over June-August with one ledger
+    call rather than being read as an unrelated fresh sentence.
+    """
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = RecordingLedger(ANSWER)
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_N_MONTHS, n=3)
+    )
+    handler = chat(planner, ledger)
+    first = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿En qué he gastado más este verano?",
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+    (chip,) = first.suggestions
+
+    second = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence=chip,
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=first.conversation,
+        )
+    )
+
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].date_range == AbsoluteRange(
+        start=date(2026, 6, 1), end=date(2026, 8, 31)
+    )
+    assert second.outcome != Spoken.GUIDANCE.value
+
+
+async def test_f4_a_season_breakdown_question_resolves_to_a_ranked_category_plan() -> None:
+    """F-4 (fix wave, D-H-7/Important 4): §11's own acceptance scenario. «¿En qué he gastado más
+    este verano?» -- «en qué» + a superlative -- asks for a breakdown, not a total; the season
+    clarification draft must carry that shape (`group_by=CATEGORY`) so the resolved plan, once
+    the months are settled by the chip, draws the ranking the question asked for rather than a
+    single number for an invented window."""
+    planner = FakePlanner(PlanningResult.planned(plan(group_by=GroupBy.CATEGORY)))
+    ledger = RecordingLedger(ANSWER)
+    handler = chat(planner, ledger)
+    first = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿En qué he gastado más este verano?",
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=Conversation(),
+        )
+    )
+    (chip,) = first.suggestions
+
+    await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence=chip,
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=first.conversation,
+        )
+    )
+
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].group_by is GroupBy.CATEGORY
+    assert ledger.plans[0].direction is Direction.EXPENSE
+
+
+async def test_f4_a_season_total_question_still_resolves_to_a_total() -> None:
+    """F-4's companion case: «¿cuánto gasté este verano?» names no breakdown shape -- the draft
+    must keep `group_by=NONE` so the resolved plan stays a total, not a ranking nobody asked for."""
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = RecordingLedger(ANSWER)
+    handler = chat(planner, ledger)
+    first = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿Cuánto gasté este verano?",
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=Conversation(),
+        )
+    )
+    (chip,) = first.suggestions
+
+    await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence=chip,
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=first.conversation,
+        )
+    )
+
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].group_by is GroupBy.NONE

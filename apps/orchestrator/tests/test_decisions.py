@@ -35,6 +35,10 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionQuery,
     QueryBus,
 )
+from finguard_orchestrator.application.queries.ask_financial_question import (
+    record_visual_decision,
+    record_visual_decision_refused,
+)
 from finguard_orchestrator.bootstrap.dependencies import (
     authenticated_caller,
     get_ask_handler,
@@ -43,9 +47,18 @@ from finguard_orchestrator.bootstrap.dependencies import (
 )
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome
+from finguard_orchestrator.domain.models.chart import (
+    ChartEncoding,
+    ChartSpec,
+    VisualContext,
+    VisualField,
+    VisualProfile,
+)
 from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
+from finguard_orchestrator.domain.models.visual_plan import Rejection
+from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -68,6 +81,25 @@ from finguard_orchestrator.observability import (
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
 THREE_MONTHS = RelativePeriod(period=Period.LAST_N_MONTHS, n=3)
+
+# A minimal breakdown bar, just enough to construct a `VisualDecision`/`VisualContext` for the two
+# `Step.VISUAL_PLANNER` rows `record_visual_decision`/`record_visual_decision_refused` produce --
+# the invariant sweep below is the only reader, and it never inspects the chart itself.
+_VISUAL_SPEC = ChartSpec(
+    "bar",
+    (
+        ChartEncoding("x", "value_minor", "quantitative"),
+        ChartEncoding("y", "dimension", "nominal"),
+    ),
+)
+_VISUAL_PROFILE = VisualProfile(
+    fields=(
+        VisualField("dimension", "nominal", "dimension", 2),
+        VisualField("value_minor", "quantitative", "measure", 2),
+    ),
+    metric="SUM",
+    unit="money",
+)
 
 # The same sentence `test_logging.py` uses, and for the same reason: what somebody typed, who they
 # pay, and the note they wrote about it, in one line. Kept identical on purpose — the two records
@@ -279,9 +311,20 @@ def test_a_bare_word_still_gets_through_and_that_is_the_honest_limit() -> None:
 
 def test_the_step_and_the_verdict_cannot_carry_anything() -> None:
     """Two of the six slots are structurally incapable of leaking, which is half the reason they
-    are enums. The other half is that Section 3 makes them metric labels."""
-    assert len(Step) == 10, "the design argues ten seams; an eleventh should be a diff to justify"
-    assert len({step.value for step in Step}) == 10, "two seams sharing a label share a time series"
+    are enums. The other half is that Section 3 makes them metric labels.
+
+    Thirteen, not twelve, since Task 1 (Wave 3 hardening, A-1) added `CONTEXT_TRUST` -- the diff
+    the design's own docstring asks for: a defect (a replayed, reordered or tampered visual
+    context passing the trust gate silently) hid in exactly this seam.
+
+    Fourteen since the A2A expert agents added `EXPERT_AGENT`: a third party's reply is read by a
+    model and accepted or rejected by a verifier rule, and a rejection nobody counts is an agent
+    that quietly stopped answering.
+    """
+    assert len(Step) == 14, (
+        "the design argues fourteen seams; a fifteenth should be a diff to justify"
+    )
+    assert len({step.value for step in Step}) == 14, "two seams sharing a label share a time series"
     assert set(Verdict) == {
         Verdict.AGREED,
         Verdict.OVERRODE,
@@ -310,7 +353,12 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
     Raising there fires on the data rather than the branch, so a miswired call site would pass
     every test whose fixtures happened to agree and take down a turn on the first one that did not.
     Swept here instead, where the same mistake is caught and nothing is at risk.
+
+    I3 (fix round 2) is why the sweep runs over `record_visual_decision`'s own real branches too,
+    not only hand-built rows: a `patch` row used to hard-code `changed=False` regardless of `was`
+    and `now`, which fabricated rows built to already agree could never catch.
     """
+    context = VisualContext("chart-1", _VISUAL_SPEC, _VISUAL_PROFILE)
     with recording_turn() as turn:
         record(
             Step.ENFORCE,
@@ -322,6 +370,17 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
         )
         record(Step.ENFORCE, Verdict.AGREED, changed=False, field="metric", was="SUM", now="SUM")
         record(Step.CAPABILITY_GUARD, Verdict.DECLINED, changed=True, field="family", now="AVERAGE")
+        record_visual_decision(
+            VisualDecision(
+                spec=_VISUAL_SPEC,
+                profile=_VISUAL_PROFILE,
+                source="patch",
+                accepted=True,
+                valid=True,
+            ),
+            was="deterministic",
+        )
+        record_visual_decision_refused(context, Rejection("order", "ordering does not apply"))
 
     for decision in turn.sealed().decisions:
         if decision.was is not None and decision.now is not None:
@@ -329,6 +388,36 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
                 f"{decision.step} reports changed={decision.changed} "
                 f"while moving {decision.was!r} to {decision.now!r}"
             )
+
+
+def test_a_refused_patch_records_the_origin_it_can_know() -> None:
+    """F3 (fix wave 2): `record_visual_decision_refused`'s `now` used to fabricate
+    `"deterministic"` for a context whose `decision` is `None` -- true only by accident, exactly
+    the shortcut I2 (fix wave) already refused for the accepted path's `was`. `VisualContext.
+    decision` is turn-local (Wave 4's provenance, §4): a context that crossed the wire and came
+    back always has `decision is None`, even though a decision did produce the chart on screen.
+    A refusal over that context must record `now=None`, the same honesty `record_visual_decision`
+    already gives `was`, never an invented "deterministic". A same-turn refusal, whose context
+    still carries the `VisualDecision` that produced the chart on screen, reports that source.
+    """
+    round_tripped = VisualContext("chart-1", _VISUAL_SPEC, _VISUAL_PROFILE)
+    with recording_turn() as turn:
+        record_visual_decision_refused(round_tripped, Rejection("order", "no ranking rule"))
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert decision.now is None
+
+    same_turn = VisualContext(
+        "chart-1",
+        _VISUAL_SPEC,
+        _VISUAL_PROFILE,
+        decision=VisualDecision(
+            spec=_VISUAL_SPEC, profile=_VISUAL_PROFILE, source="llm", accepted=True, valid=True
+        ),
+    )
+    with recording_turn() as turn2:
+        record_visual_decision_refused(same_turn, Rejection("order", "no ranking rule"))
+    (decision2,) = turn2.sealed().where(Step.VISUAL_PLANNER)
+    assert decision2.now == "llm"
 
 
 def test_the_changed_decisions_are_readable_as_a_group() -> None:
@@ -520,13 +609,13 @@ def test_the_record_is_reached_by_reference_not_by_reading_the_variable() -> Non
     assert len(held.sealed().decisions) == 1
 
 
-# --- the ten seams fit ------------------------------------------------------------------------
+# --- the twelve seams fit --------------------------------------------------------------------
 
 
 def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
     """Section 2's condition for touching the 7000-line file is one call per seam with no
     branching of its own. This is that condition, checked against the shape before the file is
-    opened: each of the ten, with the facts the design's table says it carries.
+    opened: each of the twelve, with the facts the design's table says it carries.
 
     `planner` is the seam that added `detail`. It records an outcome *and* the model that produced
     it, and those are not a before and an after — without a slot for the actor either `now` becomes
@@ -589,12 +678,49 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
             now=PlanningOutcome.PLANNED.value,
             detail="figure",
         )
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.OVERRODE,
+            changed=True,
+            field="chart",
+            was="deterministic",
+            now="llm",
+            detail="accepted",
+        )
+        record(
+            Step.VISUAL_FOLLOW_UP,
+            Verdict.AGREED,
+            changed=False,
+            field="visual_follow_up",
+            now="UNRELATED",
+            detail="none",
+        )
+        # Task 1 (Wave 3 hardening, A-1): the thirteenth seam -- an echoed visual context's seal
+        # checked out, so nothing changed and nothing is declined.
+        record(
+            Step.CONTEXT_TRUST,
+            Verdict.AGREED,
+            changed=False,
+            field="chart",
+            detail="ok",
+        )
+        # The fourteenth: an expert agent's normalised reply passed every verifier rule. The agent
+        # id is this service's own vocabulary (the gateway derives it from a URL); the reply's text
+        # never is, and has no slot to arrive in.
+        record(
+            Step.EXPERT_AGENT,
+            Verdict.AGREED,
+            changed=False,
+            field="reply",
+            now="accepted",
+            detail="gym-norte",
+        )
         turn.outcome = PlanningOutcome.PLANNED.value
 
     sealed = turn.sealed()
-    assert {decision.step for decision in sealed.decisions} == set(Step), "all ten fit"
+    assert {decision.step for decision in sealed.decisions} == set(Step), "all fourteen fit"
     assert all(REDACTED not in everything_in(TurnRecord((d,))) for d in sealed.decisions)
-    assert len(sealed.changed) == 8, "eight of the ten altered the answer in this example"
+    assert len(sealed.changed) == 9, "nine of the fourteen altered the answer in this example"
 
 
 # --- the package move -------------------------------------------------------------------------

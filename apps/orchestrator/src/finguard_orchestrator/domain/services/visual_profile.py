@@ -10,12 +10,22 @@ comparison against zero, and `verified_total` is an equality. No amount and no d
 survives into the returned object, and a test asserts that with sentinels.
 """
 
+from typing import Final
+
 from finguard_orchestrator.domain.models.chart import (
+    DrawnLabels,
     FieldOrder,
     VisualDataset,
     VisualField,
     VisualProfile,
 )
+
+# The wire's own per-list cap (`VisualContextPayload.labels`/`.series_labels`, `infrastructure/dto/
+# llm_dto.py`, M10 fix wave: imported there rather than a second `100` written by hand) -- named
+# once here because `drawn_labels` is where the cut actually happens, and a dataset with a hundred
+# distinct dimensions is not a shape the deterministic floor draws today, but a later plan
+# (`group_limit`) could ask for exactly that many rows.
+MAX_DRAWN_LABELS: Final = 100
 
 # Group keys that name a calendar bucket. Same set `derive_chart` has always used; stated once
 # here so the profile and the floor cannot disagree about what "temporal" means.
@@ -47,12 +57,17 @@ def _dimension_order(metric: str, temporal: bool) -> FieldOrder:
 
     FREQUENCY is the row that earns this function: its dimension is nominal weekday names in the
     order the producer built them, and sorting those by magnitude destroys the only thing the
-    chart is for. RECURRENCE likewise names streams rather than ranking them.
+    chart is for. RECURRENCE is `NONE`, not `INPUT`: its dimension is the `y` axis of a `point`
+    chart, and Section D puts the whole `point` family under `NONE` -- ordering the axis does not
+    apply. An earlier version of this function gave it `INPUT`, which would have forced a
+    `sort: "input"` the floor never emits.
     """
     if temporal:
         return "TEMPORAL"
-    if metric in {"FREQUENCY", "RECURRENCE"}:
+    if metric == "FREQUENCY":
         return "INPUT"
+    if metric == "RECURRENCE":
+        return "NONE"
     return "MEASURE_DESC"
 
 
@@ -133,7 +148,13 @@ def visual_profile_of(
             dataset.metric == "RATIO_SHARE"
             or (total_minor is not None and sum(row.value_minor for row in rows) == total_minor)
         ),
-        comparison=has_series,
+        # The dataset's shape marker AND a series to group by -- not the presence of a series
+        # alone: RECURRENCE carries a series for its cadence and is not a comparison. Not the
+        # marker alone either: an ungrouped comparison of two totals (`ask_financial_question.py`,
+        # the `else` branch beside `comparison_visual_rows`) is two bars over two periods, with
+        # no series field to put on color -- a plain bar, not a grouped one. Only the handler's
+        # comparison path sets the marker, and the exporter's `categorical_comparison` mirrors it.
+        comparison=dataset.metric == "COMPARISON" and has_series,
         # The number of rows drawn, which is what `derive_chart` means by `rows`. The measure's
         # cardinality above is a count of *distinct amounts* and is not this number: two rows
         # carrying the same amount are two rows. Still value-free -- a count of rows says nothing
@@ -142,3 +163,71 @@ def visual_profile_of(
         plan_limited=plan_limited,
         plan_metric=plan_metric,
     )
+
+
+def drawn_labels(dataset: VisualDataset) -> DrawnLabels:
+    """The labels `dataset` draws, ranked the way the chart itself ranks its bars.
+
+    `totals` sums `value_minor` per distinct `dimension`, in first-appearance order -- a `dict`
+    preserves that order on its own, so nothing here sorts to get it. Ranking then sorts those
+    totals descending with a stable sort, so any tie keeps the first-appearance order rather than
+    an arbitrary one. `series_labels` never enters the ranking -- a legend is not a set of bars --
+    it is simply the distinct `series` values (skipping rows with none) in first-appearance order.
+
+    Both lists are capped at `MAX_DRAWN_LABELS`; `ranked` answers a narrower question than "is
+    this sorted" -- whether the *top* and the *bottom* are each unique, so «la barra más alta» and
+    «la más baja» each have one answer. It is `False` whenever the dimension list had to be cut at
+    the cap (the true bottom is off the list) or the dataset carried no rows at all.
+
+    A-11 (Wave 3 hardening): when the dataset has MORE THAN ONE distinct `series` value (a
+    comparison, or any grouped bar with a colour split), the *chart* draws one bar per (dimension,
+    series) pair -- `len(dimensions) * len(series)` bars -- never one bar per dimension. A single
+    repeated series value (RECURRENCE's cadence, e.g. every row tagged `"MONTHLY"`) draws no extra
+    bar and is not this case -- summing across it is summing across nothing, the same total the
+    no-series branch below would compute. `deterministic_visual_planner.py`'s own dimension-axis
+    sort (`_sort_for`) asks Vega-Lite to order the axis by `{"field": measure, "order":
+    "descending"}` with no `"op"` of its own, and Vega-Lite's documented default for a sort field
+    that repeats per axis position is `"mean"`, not `"sum"` -- so summing `value_minor` across two
+    or more series, the way the single-series/no-series branch below does, is not even guaranteed
+    to be the *axis's own* order once series sizes differ, let alone a claim about any single bar.
+    Ranking here would be inventing a number nobody's screen shows for a value nobody asked for
+    (the total across periods), which is exactly the "guess with a confident shape fact attached"
+    the finding names. So a multi-series dataset never ranks: the dimension order is
+    first-appearance (the one order this module can state as fact, needing no aggregate at all) and
+    `ranked` is always `False`, refusing every superlative rather than answering one about a bar
+    nobody drew.
+    """
+    totals: dict[str, int] = {}
+    series_seen: set[str] = set()
+    series_order: list[str] = []
+    for row in dataset.rows:
+        totals[row.dimension] = totals.get(row.dimension, 0) + row.value_minor
+        if row.series is not None and row.series not in series_seen:
+            series_seen.add(row.series)
+            series_order.append(row.series)
+
+    if not totals:
+        return DrawnLabels()
+
+    series_labels = tuple(series_order[:MAX_DRAWN_LABELS])
+
+    if len(series_seen) > 1:
+        # First-appearance order, the one fact this module can state -- `ranked` is always `False`
+        # regardless of the cap below, so there is no "true bottom off the list" case to track here
+        # the way the no-series branch's `cut` tracks it.
+        dimensions = tuple(totals)
+        labels = dimensions[:MAX_DRAWN_LABELS]
+        return DrawnLabels(labels=labels, series_labels=series_labels, ranked=False)
+
+    ranked_dimensions = sorted(totals, key=lambda label: totals[label], reverse=True)
+    cut = len(ranked_dimensions) > MAX_DRAWN_LABELS
+    labels = tuple(ranked_dimensions[:MAX_DRAWN_LABELS])
+
+    if cut:
+        ranked = False
+    elif len(labels) == 1:
+        ranked = True
+    else:
+        ranked = totals[labels[0]] > totals[labels[1]] and totals[labels[-1]] < totals[labels[-2]]
+
+    return DrawnLabels(labels=labels, series_labels=series_labels, ranked=ranked)

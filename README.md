@@ -32,7 +32,8 @@ A monorepo of independent projects: each service has its own dependencies, lockf
 | `orchestrator` | Conversational context, intent, tool coordination, LLM | Working, local models only |
 | `banking-api` | Accounts, ledger, balances, contacts, Bizum, the append-only audit trail. The only writer of financial data | Working |
 | `voice-gateway` | Streaming audio, transcription, synthesis, barge-in | Working, local providers only. Measured end to end in [its own evaluation](apps/voice-gateway/evaluation/RESULTS.md) |
-| `a2a-gateway` | Agent Card, A2A client and server | Pending — no code exists yet, only the phase 7 design |
+| `a2a-gateway` | The one process that speaks A2A 1.0, as a client only: the registry of trusted agents, a conformance gate over each Agent Card, credentials and reply limits. FinGuard publishes no card | Working, in the `a2a` compose profile (`just a2a`). The orchestrator's reading of the replies is measured in [its own evaluation](apps/orchestrator/evaluation/a2a/RESULTS.md); the full compose run is still to do. See [ADR-012](docs/architecture/adr-012-a2a-consumer-gateway.md) |
+| `simulated-gym-agent` | Stand-in third parties: one A2A 1.0 gym server, deployed as two gyms that answer in different formats and one whose 0.3 card the gateway refuses. Outside the product: nothing imports it | Working, for tests and the demo only |
 | `audit-worker` | Append-only audit of accesses and operations | Never built as a worker. The trail lives inside `banking-api`, hooked to its command bus; the orchestrator writes no event at all |
 
 ## Getting started
@@ -51,7 +52,7 @@ just evaluate  # execution accuracy of the query engine
 
 `just` on its own lists every task. Requires Docker, [uv](https://docs.astral.sh/uv/), [just](https://just.systems/) and Node 22 for the client.
 
-Everything is published on `127.0.0.1` only — PostgreSQL on **5442**, `banking-api` on **8001**, `orchestrator` on **8000**, `voice-gateway` on **8002** and the client on **3000** — because the development credentials are trivial. One database and one role per service, and no role can connect to another service's database.
+Everything is published on `127.0.0.1` only — PostgreSQL on **5442**, `banking-api` on **8001**, `orchestrator` on **8000**, `voice-gateway` on **8002**, `a2a-gateway` on **8003**, the simulated gyms on **9101–9103** and the client on **3000** — because the development credentials are trivial. One database and one role per service, and no role can connect to another service's database.
 
 ## Stack
 

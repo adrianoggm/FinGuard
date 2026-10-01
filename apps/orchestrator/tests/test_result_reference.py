@@ -10,7 +10,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionQuery,
 )
 from finguard_orchestrator.application.queries.readers.follow_up import (
-    _contextual_follow_up_plan,
+    contextual_follow_up_plan,
 )
 from finguard_orchestrator.domain.constants import MAX_SELECTED_TRANSACTIONS
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
@@ -531,8 +531,8 @@ def test_contextual_category_branch_uses_only_a_category_tied_to_query_focus() -
         ),
     )
 
-    planned = _contextual_follow_up_plan(query("Y esa categoría el mes pasado", coherent))
-    planned_from_dual = _contextual_follow_up_plan(query("Y esa categoría el mes pasado", dual))
+    planned = contextual_follow_up_plan(query("Y esa categoría el mes pasado", coherent))
+    planned_from_dual = contextual_follow_up_plan(query("Y esa categoría el mes pasado", dual))
 
     assert planned is not None
     assert planned.categories == ("GROCERIES",)
