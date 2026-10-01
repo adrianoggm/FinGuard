@@ -22,14 +22,14 @@ PUBLIC_URL = "http://127.0.0.1:9101"
 TODAY = date(2026, 9, 30)  # tomorrow, Thursday 1 October, carries the demo anchor
 
 
-def settings_for(style: str) -> Settings:
+def settings_for(style: str, today: date = TODAY) -> Settings:
     return Settings(
         style=style,  # type: ignore[arg-type]
         a2a_url=f"http://gym-{style}:8000",
         public_url=PUBLIC_URL,
         api_key="k",
         bearer_token="b",
-        today=TODAY,
+        today=today,
     )
 
 
@@ -79,8 +79,8 @@ class Gym:
 
 
 @asynccontextmanager
-async def open_gym(style: str) -> AsyncIterator[Gym]:
-    app = build_app(settings_for(style))
+async def open_gym(style: str, today: date = TODAY) -> AsyncIterator[Gym]:
+    app = build_app(settings_for(style, today))
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url=f"http://gym-{style}:8000",

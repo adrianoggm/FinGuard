@@ -27,7 +27,15 @@ _AVAILABILITY = re.compile(
     r"Busco clases de (?P<activity>.+?) el \w+ (?P<d>\d{1,2}) de (?P<month>\w+) de (?P<y>\d{4}) "
     r"entre las (?P<h1>\d{2}:\d{2}) y las (?P<h2>\d{2}:\d{2})"
 )
-# Several days (FinGuard's request since ruling R15), with the daily hours when it asked for any.
+# Several days as an exact interval (FinGuard's request since ruling R23): from a day at a time to
+# a day at a time, with the daily hours when it asked for any.
+_AVAILABILITY_INTERVAL = re.compile(
+    r"Busco clases de (?P<activity>.+?) "
+    r"desde el \w+ (?P<d1>\d{1,2}) de (?P<m1>\w+) de (?P<y1>\d{4}) a las (?P<t1>\d{2}:\d{2}) "
+    r"hasta el \w+ (?P<d2>\d{1,2}) de (?P<m2>\w+) de (?P<y2>\d{4}) a las (?P<t2>\d{2}:\d{2})"
+    r"(?:, de (?P<h1>\d{2}:\d{2}) a (?P<h2>\d{2}:\d{2}))?\."
+)
+# Several days, whole (FinGuard's request under ruling R15, still read), with the daily hours.
 _AVAILABILITY_DAYS = re.compile(
     r"Busco clases de (?P<activity>.+?) "
     r"entre el \w+ (?P<d1>\d{1,2}) de (?P<m1>\w+) de (?P<y1>\d{4}) "
@@ -124,6 +132,20 @@ def _from_data(data: dict[str, Any], zone: ZoneInfo) -> Availability | Booking |
     return None
 
 
+def _interval_from_text(text: str, zone: ZoneInfo) -> Availability | None:
+    """The exact-interval template: from its first moment to its last, as stated."""
+    m = _AVAILABILITY_INTERVAL.search(text)
+    if m is None:
+        return None
+    first = _moment(zone, m["y1"], m["m1"], m["d1"], m["t1"])
+    last = _moment(zone, m["y2"], m["m2"], m["d2"], m["t2"])
+    opens, closes = _hhmm(m["h1"]), _hhmm(m["h2"])
+    band = (opens, closes) if opens is not None and closes is not None else None
+    if first is None or last is None:
+        return None
+    return Availability(m["activity"], first, last, None, band)
+
+
 def _days_from_text(text: str, zone: ZoneInfo) -> Availability | None:
     """The several-days template: from the first day's opening to the last day's closing, and
     with no hours stated, every hour of both days."""
@@ -145,6 +167,8 @@ def _days_from_text(text: str, zone: ZoneInfo) -> Availability | None:
 
 
 def _from_text(text: str, zone: ZoneInfo, hint: str | None) -> Availability | Booking | None:
+    if hint in (None, "timetable", "classes") and (interval := _interval_from_text(text, zone)):
+        return interval
     if hint in (None, "timetable", "classes") and (days := _days_from_text(text, zone)):
         return days
     if hint in (None, "timetable", "classes") and (m := _AVAILABILITY.search(text)):
