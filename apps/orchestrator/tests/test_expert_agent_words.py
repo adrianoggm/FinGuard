@@ -13,6 +13,7 @@ import yaml
 from support import episodes
 
 from finguard_orchestrator.domain.models.expert_agents import ExpertAgent
+from finguard_orchestrator.domain.services import payment_router
 from finguard_orchestrator.domain.services.expert_agent_words import (
     ACTIVITIES,
     activity_in,
@@ -383,3 +384,20 @@ def test_an_agent_is_named_by_its_shown_name_as_well_as_by_its_card() -> None:
     assert named_in("la de las 19:00 en el gimnasio", names) == ()
     agents = (agent("gym-norte", "Gimnasio Norte"), agent("gym-sur", "Gimnasio Sur"))
     assert named_agents("la del Sur", agents) == named_in("la del Sur", names) == ("gym-sur",)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "ingrésale 20 a Marta por el yoga de mañana",
+        "devuélvele 12 a Diego por el pádel del sábado",
+        "ingresa 30 a Laura por las clases de natación de esta semana",
+    ],
+)
+def test_an_order_to_pay_is_the_payments_whatever_class_it_names(sentence: str) -> None:
+    """Ruling R24: the expert branch runs before the order to pay, so the payment path's own
+    reading of «a payment» vetoes both predicates -- one definition, not a second cue list."""
+    assert payment_router.is_payment(sentence)
+    assert not asks_an_expert_agent(sentence)
+    assert not is_a_booking_request(sentence, has_offers=False)
+    assert not is_a_booking_request(sentence, has_offers=True)
