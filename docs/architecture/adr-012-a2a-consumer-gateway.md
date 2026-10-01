@@ -109,7 +109,7 @@ every agent) — never a name, account, IBAN, balance or the person's sentence.
 **What the gateway guarantees.**
 
 - Only agents whose card passes the gate are asked. The gate's closed reasons, first failure wins:
-  `card_unreachable`, `card_invalid`, `version_unsupported`, `binding_unsupported`,
+  `card_unreachable`, `version_unsupported`, `card_invalid`, `binding_unsupported`,
   `interface_untrusted`, `no_skills`, `auth_unsupported`, `credential_missing`. A refused agent
   stays in the listing with its reason, and the search still answers with the others.
 - Credentials are presented where the scheme says (`apiKey` header or `http` bearer), only in
