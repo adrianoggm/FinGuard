@@ -18,7 +18,8 @@ answer with a closed rule name, and a rejected answer is that agent not respondi
                 with that weekday and the mention announces no other date -- or the query is a
                 single day and the reply names no other (every literal date it states is that day,
                 every weekday its weekday), the only case in which a bare `HH:MM` has a date at
-                all; places and reference, when given, are in the reply whole.
+                all; places and reference, when given, are in the reply whole -- and no places
+                at all also by a word that calls a class full («completa», «agotada», ruling R21).
     window      the start is inside the query's window, inside its daily band when it has one,
                 and in the future.
     coherence   an end after the start and at most `MAX_SLOT_MINUTES` later, places not negative,
@@ -78,6 +79,10 @@ _CAP: Final = 64 * 1024
 _FULL: Final = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})")
 _BARE: Final = re.compile(r"(\d{1,2}):(\d{2})")
 _URL: Final = re.compile(r"https?://[^\s\"'<>]+")
+# What a reply (folded) says of a class with no places left, instead of writing «0» (ruling R21).
+_CALLED_FULL: Final = re.compile(
+    r"\b(complet[ao]s?|llen[ao]s?|agotad[ao]s?|sin plazas|no quedan plazas|full)\b"
+)
 
 _WEEKDAYS: Final = ("lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo")
 _MONTHS: Final = (
@@ -164,7 +169,7 @@ def verify_slots(
             and _has_words(words, _words(slot.activity))
             and _stretch(slot.activity) in stretch
             and ((day is not None and _date_said(day, folded_text, dates, query)) or lends_its_day)
-            and (slot.free_places is None or _number_said(slot.free_places, text))
+            and (slot.free_places is None or _places_said(slot.free_places, text, folded_text))
             and (slot.slot_ref is None or _token_said(slot.slot_ref, text))
         )
         if not grounded:
@@ -424,6 +429,11 @@ def _number_said(number: int, text: str) -> bool:
     date «01/10/2026»."""
     pattern = rf"(?<![\w.,:/-]){re.escape(str(number))}(?!\w|[.,:/]\d)"
     return re.search(pattern, text) is not None
+
+
+def _places_said(places: int, text: str, folded_text: str) -> bool:
+    """The number, whole -- or, for no places at all, a word calling the class full."""
+    return _number_said(places, text) or (places == 0 and bool(_CALLED_FULL.search(folded_text)))
 
 
 def _token_said(token: str, text: str) -> bool:

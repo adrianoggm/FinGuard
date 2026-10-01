@@ -259,6 +259,7 @@ _AGENT_OUTCOMES = {
     "BOOKING_SEARCH_AGAIN",
     "BOOKING_STARTED",
     "BOOKING_UNCLEAR",
+    "BOOKING_UNAVAILABLE",
     "BOOKING_UNKNOWN",
     "BOOKING_UNSUPPORTED",
 }
@@ -768,23 +769,24 @@ _MADRID = ZoneInfo("Europe/Madrid")
 # Wednesday 5 August 2026 at 10:00 in Madrid -- `TODAY`, so «el jueves» is Thursday the 6th.
 AGENTS_NOW = datetime(2026, 8, 5, 10, 0, tzinfo=_MADRID)
 _THURSDAY = "2026-08-06"
+_FRIDAY = "2026-08-07"
 
 
-def _norte_session(start: str, places: int) -> dict[str, object]:
+def _norte_session(start: str, places: int, day: str = _THURSDAY) -> dict[str, object]:
     return {
         "clase": "Spinning",
-        "fecha": _THURSDAY,
+        "fecha": day,
         "hora_inicio": start,
         "duracion_min": 45,
         "huecos": places,
-        "ref": f"N-0806-{start.replace(':', '')}",
+        "ref": f"N-{day[5:7]}{day[8:]}-{start.replace(':', '')}",
     }
 
 
-def _norte_slot(start: str, end: str, places: int) -> SlotDraft:
+def _norte_slot(start: str, end: str, places: int, day: str = _THURSDAY) -> SlotDraft:
     """What a model reads out of `_norte_session`: the date it states, the end from its length."""
-    reference = f"N-0806-{start.replace(':', '')}"
-    return SlotDraft("Spinning", f"{_THURSDAY}T{start}", f"{_THURSDAY}T{end}", places, reference)
+    reference = f"N-{day[5:7]}{day[8:]}-{start.replace(':', '')}"
+    return SlotDraft("Spinning", f"{day}T{start}", f"{day}T{end}", places, reference)
 
 
 def _reply(task: str, state: str, *parts: TextReplyPart | DataReplyPart) -> AgentReply:
@@ -832,14 +834,24 @@ CANNED_GYMS: dict[str, CannedGym] = {
                     (_norte_slot("19:00", "19:45", 4), _norte_slot("20:00", "20:45", 0))
                 ),
             ),
-            # The full class: the booking pauses and offers the next one instead.
+            # The full class: the booking pauses and offers the next two instead, the second
+            # on the next day -- as the simulated gym's `next_of` does (ruling R22).
             "booking 20:00": (
                 _reply(
                     "norte-full",
                     "INPUT_REQUIRED",
-                    DataReplyPart({"alternativas": [_norte_session("21:00", 3)]}),
+                    DataReplyPart(
+                        {
+                            "alternativas": [
+                                _norte_session("21:00", 3),
+                                _norte_session("18:30", 5, _FRIDAY),
+                            ]
+                        }
+                    ),
                 ),
-                AvailabilityDraft((_norte_slot("21:00", "21:45", 3),)),
+                AvailabilityDraft(
+                    (_norte_slot("21:00", "21:45", 3), _norte_slot("18:30", "19:15", 5, _FRIDAY))
+                ),
             ),
             "booking 21:00": (
                 _reply(

@@ -70,6 +70,7 @@ _BOOKED: Final[Mapping[BookingOutcomeKind, str]] = {
     "alternatives": "BOOKING_ALTERNATIVES",
     "link_required": "BOOKING_LINK_REQUIRED",
     "unsupported_request": "BOOKING_UNSUPPORTED",
+    "unavailable": "BOOKING_UNAVAILABLE",
     "failed": "BOOKING_FAILED",
     "unknown": "BOOKING_UNKNOWN",
 }
@@ -242,6 +243,8 @@ def _sent(
             notices = [AgentNoticePayload(agent_name=name, kind="link_required", link=outcome.link)]
         case "unsupported_request":
             text = activity_writer.booking_unsupported(name)
+        case "unavailable":
+            text = activity_writer.booking_unavailable(name)
         case "unknown":
             text = activity_writer.booking_unknown(name)
             # Ruling R17: the class may be booked. It leaves the offers, so booking it again takes

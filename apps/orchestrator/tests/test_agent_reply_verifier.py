@@ -720,3 +720,49 @@ def test_a_one_day_search_still_dates_a_reply_that_names_no_other_day(
             draft, query=THURSDAY, reply=text_reply(said), agent_id="gym-sur", now=NOW
         )
         assert slot.start.date() == THURSDAY.start.date() and slot.free_places == places
+
+
+SUR_ANCHOR = text_reply(
+    "Clases de spinning el jueves 1 de octubre: a las 18:30 (quedan 6 plazas), "
+    "a las 19:00 (quedan 4 plazas) y a las 20:00 (completa)."
+)
+
+
+def test_a_class_the_reply_calls_full_has_no_free_places() -> None:
+    """Acceptance finding A4 (ruling R21): «(completa)» states 0 places without writing the
+    digit, and rejecting it rejected the whole of the agent's reply."""
+    draft = AvailabilityDraft(
+        (
+            SlotDraft("spinning", "18:30", None, 6, None),
+            SlotDraft("spinning", "19:00", None, 4, None),
+            SlotDraft("spinning", "20:00", None, 0, None),
+        )
+    )
+    slots = verify_slots(draft, query=THURSDAY, reply=SUR_ANCHOR, agent_id="gym-sur", now=NOW)
+    assert isinstance(slots, tuple) and [slot.free_places for slot in slots] == [6, 4, 0]
+
+
+@pytest.mark.parametrize(
+    "full",
+    ["(completa)", "COMPLETO", "llena", "agotada", "sin plazas", "no quedan plazas", "full"],
+)
+def test_each_word_that_calls_a_class_full_grounds_no_free_places(full: str) -> None:
+    reply = text_reply(f"Spinning a las 20:00 ({full}).")
+    draft = AvailabilityDraft((SlotDraft("Spinning", "20:00", None, 0, None),))
+    [slot] = verify_slots(draft, query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW)
+    assert slot.free_places == 0
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Spinning a las 20:00.",
+        "Spinning a las 20:00 (quedan 4 plazas).",
+        "Spinning a las 20:00; completamos el grupo pronto.",
+    ],
+)
+def test_no_free_places_without_a_word_calling_the_class_full_is_grounding(said: str) -> None:
+    draft = AvailabilityDraft((SlotDraft("Spinning", "20:00", None, 0, None),))
+    assert verify_slots(
+        draft, query=THURSDAY, reply=text_reply(said), agent_id="gym-sur", now=NOW
+    ) == AgentRejection("grounding")

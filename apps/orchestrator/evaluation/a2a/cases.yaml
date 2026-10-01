@@ -15,8 +15,9 @@
 #   group      norte_data | sur_text | other_vocabulary | full_class | booking | empty_day |
 #              injection
 #   reading    availability (a search's reply), alternatives (a booking paused with other
-#              sessions: read over the booked class's day, as `BookActivityHandler` does) or
-#              booking (a confirmation)
+#              sessions: read over the week from the booked class's day and verified against that
+#              day first, then the week, as `BookActivityHandler` does -- ruling R22) or booking (a
+#              confirmation)
 #   request    availability: the query as FinGuard sent it -- activity, from, to and the daily band
 #   booked     alternatives and booking: the class FinGuard asked to book
 #   state      the reply's A2A state
@@ -216,6 +217,7 @@ cases:
     expect:
       slots:
         - {start: "2026-10-08T21:00", places: 3, ref: N-1008-2100}
+        - {start: "2026-10-09T09:00", places: 7, ref: N-1009-0900}
 
   - id: full_sur_text
     group: full_class

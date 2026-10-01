@@ -24,10 +24,12 @@ What an agent answers, and what it becomes:
                      the verifier refuses and one that says «not booked» alike, because the gym
                      completed something and nothing proves what.
     INPUT_REQUIRED   never a confirmation. Its alternatives are read with the availability reader
-                     over the booked class's own day and verified like any search's: `alternatives`,
-                     or `unsupported_request` when it asked for something else -- nothing it asked
-                     for is forwarded (§7) -- or when reading it failed, the budget included: the
-                     state already says nothing was booked (ruling R18).
+                     over the week from the booked class's day, and verified like any search's --
+                     against that day first and, only when a session falls outside it, against the
+                     week (ruling R22): `alternatives`; `unavailable` when none verifies;
+                     `unsupported_request` when it asked for something else -- nothing it asked for
+                     is forwarded (§7) -- or when reading it failed, the budget included: the state
+                     already says nothing was booked (ruling R18).
     AUTH_REQUIRED    `link_required`, with the linking address `link_in` finds on the agent's own
                      link hosts, or none.
     FAILED, REJECTED, CANCELED
@@ -38,7 +40,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Final, Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
@@ -81,7 +83,13 @@ from finguard_orchestrator.observability.decisions import Step, Verdict, record
 logger = logging.getLogger(__name__)
 
 BookingOutcomeKind = Literal[
-    "booked", "alternatives", "link_required", "unsupported_request", "failed", "unknown"
+    "booked",
+    "alternatives",
+    "link_required",
+    "unsupported_request",
+    "unavailable",
+    "failed",
+    "unknown",
 ]
 
 _VERDICTS: Final[Mapping[BookingOutcomeKind, Verdict]] = {
@@ -90,12 +98,17 @@ _VERDICTS: Final[Mapping[BookingOutcomeKind, Verdict]] = {
     "alternatives": Verdict.DECLINED,
     "link_required": Verdict.DECLINED,
     "unsupported_request": Verdict.DECLINED,
+    "unavailable": Verdict.DECLINED,
     "failed": Verdict.FAILED,
     "unknown": Verdict.FAILED,
 }
 # The last minute of the booked class's day: a window that ends on the day it starts keeps the
 # verifier's single-day reading, in which «a las 20:00» with no date is that day.
 _DAY_CLOSES: Final = time(23, 59)
+# How far a paused booking's alternatives may reach (ruling R22): the booked day and the six after
+# it, to 23:00 on the last -- the gym's next session of a full class can be tomorrow's.
+_WEEK_DAYS: Final = 6
+_WEEK_CLOSES: Final = time(23, 0)
 
 
 @dataclass(frozen=True)
@@ -264,28 +277,40 @@ class BookActivityHandler:
     async def _alternatives(
         self, slot: ActivitySlot, reply: AgentReply, zone: ZoneInfo
     ) -> BookingOutcome:
-        """What a paused agent offers instead, as a timetable of the booked class's day."""
+        """What a paused agent offers instead, as a timetable of the week from the booked day.
+
+        One reading, verified twice at most and repaired never (ruling R22): against the booked
+        day first -- the only window in which «te ofrezco la de las 21:00», naming no day, has
+        one -- and, only when that fails on `window` because a session is on a later day,
+        against the week.
+        """
         day = slot.start.astimezone(zone).date()
-        query = ActivityQuery(
-            slot.activity,
-            datetime.combine(day, time(0, 0), zone),
-            datetime.combine(day, _DAY_CLOSES, zone),
-        )
-        draft = await self._normaliser.availability(query, reply)
-        if draft is None or draft.unsupported_request or not draft.slots:
+        opens = datetime.combine(day, time(0, 0), zone)
+        on_the_day = ActivityQuery(slot.activity, opens, datetime.combine(day, _DAY_CLOSES, zone))
+        last = day + timedelta(days=_WEEK_DAYS)
+        week = ActivityQuery(slot.activity, opens, datetime.combine(last, _WEEK_CLOSES, zone))
+        draft = await self._normaliser.availability(week, reply)
+        if draft is None or draft.unsupported_request:
             return BookingOutcome("unsupported_request")
+        now = self._clock(zone)
         verified = verify_slots(
-            draft, query=query, reply=reply, agent_id=slot.agent_id, now=self._clock(zone)
+            draft, query=on_the_day, reply=reply, agent_id=slot.agent_id, now=now
         )
+        if verified == AgentRejection("window"):
+            verified = verify_slots(draft, query=week, reply=reply, agent_id=slot.agent_id, now=now)
         if isinstance(verified, AgentRejection):
-            return BookingOutcome("unsupported_request")
+            logger.info(
+                "expert_agents.alternatives_rejected",
+                extra={"agent": slot.agent_id, "rule": verified.rule},
+            )
+            return BookingOutcome("unavailable")
         # The class that was just refused is not its own alternative.
         offered = sorted(
             (each for each in verified if each.start != slot.start),
             key=lambda each: each.start,
         )
         if not offered:
-            return BookingOutcome("unsupported_request")
+            return BookingOutcome("unavailable")
         return BookingOutcome("alternatives", alternatives=tuple(offered))
 
     def _outbound(self, slot: ActivitySlot, caller: Caller) -> Outbound:
