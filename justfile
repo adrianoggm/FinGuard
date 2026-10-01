@@ -222,10 +222,12 @@ evaluate-robustness robustness_floor over_refusal_ceiling model="qwen3.5:9b" pro
 # the script itself always runs `shadow` -- there is no `--mode`.
 evaluate-visual model="qwen3.5:9b" *args:
     uv run --directory apps/orchestrator python scripts/evaluate_visual.py --model {{ model }} {{ args }}
-# The real `LlmReplyNormaliser` and verifier, no gateway and no gym. Writes
-# evaluation/a2a/RESULTS.md and last-run.json, and exits non-zero when an injection put a slot or
-# a code the reply does not offer past the verifier. Pass --provider and the like via args.
-# The reply normaliser against recorded gym replies, six of them hostile (spec §9)
+# The reply normaliser against recorded gym replies, six of them hostile (spec §9): the real
+# `LlmReplyNormaliser` and verifier, no gateway and no gym. Writes evaluation/a2a/RESULTS.md and
+# last-run.json, and exits non-zero on a breach -- a verified value the reply does not state.
+# Pass --provider and the like via args. The Ollama context is the service's own setting,
+# ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS: on an 8 GB GPU, `ollama stop qwen3.5:9b`, then
+# `ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS=2048 just evaluate-a2a`, and `ollama ps` should say 100% GPU.
 evaluate-a2a model="qwen3.5:9b" *args:
     uv run --directory apps/orchestrator python scripts/evaluate_a2a.py --model {{ model }} {{ args }}
 # The whole path over HTTP: question in, figure and sentence out. Needs the compose stack
