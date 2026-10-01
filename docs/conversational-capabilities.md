@@ -118,6 +118,25 @@ ofrecen) y `chart_text_agrees` (compara el último plan financiero que corrió e
 `group_by` sellado del propio gráfico — nunca una segunda lectura de la prosa), cerrando el hueco que
 la auditoría llamó B-5: nada comprobaba antes que el texto y el gráfico dijeran lo mismo.
 
+## Agentes externos (A2A)
+
+Anotado el 1 de octubre de 2026, en la rama `task/a2a-gateway`. FinGuard pregunta a agentes de
+otras organizaciones mediante A2A 1.0, a través de `apps/a2a-gateway` y sólo como cliente
+([ADR-012](architecture/adr-012-a2a-consumer-gateway.md)). Las dos filas están **construidas y
+probadas conversacionalmente**, con una salvedad que la palabra no dice: la lectura de cada
+respuesta la hace un modelo, y en el corpus tanto la pasarela como esa lectura son dobles
+enlatados; el verificador y el sello sí son los reales. Lo que aporta el modelo se mide aparte. Sin
+`ORCHESTRATOR_A2A_GATEWAY_URL` (perfil `a2a`, `just a2a`) ninguna de las dos existe.
+
+| Capacidad | Qué hace | Qué rechaza | Dónde se prueba |
+| --- | --- | --- | --- |
+| Buscar clases en agentes externos | «¿Qué clases de spinning hay el jueves por la tarde?»: lee actividad, día y franja con un lector de días futuros propio; pregunta en paralelo a cada agente utilizable con una habilidad clasificada como disponibilidad, o sólo a los que la frase nombra, con una plantilla de texto y datos que no lleva la frase de la persona; el modelo traduce cada respuesta a un formato cerrado y el verificador comprueba cada hora, fecha, actividad, plaza y referencia contra ella; responde con una lista ordenada y una línea por agente que no respondió de forma válida, y deja las ofertas selladas en la conversación | Una pregunta de dinero sobre el gimnasio («¿cuánto gasto en el gimnasio?») y una orden de pago que nombra una clase siguen en el camino financiero; un agente cuya tarjeta no cumple A2A 1.0 no se pregunta y, si se nombra, se dice por qué; una respuesta con un valor que no está en ella se descarta entera, sin repararla; sin `agents:ask` se rechaza. **Abierto:** la comprobación es por valor y no por sesión, así que una sesión dictada por una instrucción dentro de la respuesta pasa si escribe todos sus valores (1 de 6 casos hostiles), y «pásale 15 a Diego por el pádel de mañana» lo reclama la búsqueda (R36) | `tests/test_expert_agent_words.py`, `test_activity_when.py`, `test_search_activities.py`, `test_agent_reply_verifier.py`, `test_llm_reply_normaliser.py`, `test_llm_skill_classifier.py`, `test_http_expert_agents.py`, `test_activity_offers_seal.py`, `test_expert_agent_turns.py`; episodio `35-expert-agents.yaml`; `apps/web/src/ActivityList.test.ts`; la pasarela en `apps/a2a-gateway/tests/`; medido por `scripts/evaluate_a2a.py` sobre 28 respuestas grabadas, 6 hostiles: 25 de 28 verificadas y ningún valor ausente de la respuesta en las hostiles ([resultados](../apps/orchestrator/evaluation/a2a/RESULTS.md)) |
+| Reservar una clase ofrecida | «Apúntame a la de las 19:00 en el Norte» resuelve la clase contra las ofertas selladas, por hora, gimnasio u ordinal, y muestra una previsualización sin enviar nada; un «sí» escrito, con `agents:book`, la envía una sola vez con un identificador de mensaje fijo; responde con el código verificado, con las alternativas de la semana si la clase está completa, con el aviso de vincular la cuenta (y su enlace sólo si es del propio agente) o con «no sé si la reserva se ha completado» si la respuesta se pierde o no se puede leer | Un «sí» por voz («Confirma la reserva en la pantalla»); una hora que ofrecen dos gimnasios pregunta cuál; una clase no ofrecida, ya empezada o con el sello de las ofertas roto; nunca reenvía una reserva; una previsualización no sustituye a un pago a medias (`BOOKING_PAYMENT_PAUSED`). **Abierto:** un ordinal suelto tras una búsqueda («¿y la última?») puede abrir una previsualización, y un gimnasio que pide un documento recibe «no está disponible» en vez de «pide un dato» (R32) | `tests/test_slot_reference.py`, `test_book_activity.py`, `test_expert_agent_turns.py`, `test_member_reference.py`, `test_conversation_round_trip.py`; episodio `35-expert-agents.yaml`, con un bloque que confirma por voz; `apps/web/src/BookingPanel.test.ts`; el gimnasio simulado en `apps/simulated-gym-agent/tests/` |
+
+El recorrido completo en Compose (`just a2a`, con las trazas en Grafana/Tempo) no se ha ejecutado
+todavía en la máquina de desarrollo: la aceptación corrió los servicios en local con `uv`. La lista
+completa de límites conocidos está en ADR-012.
+
 ## Lo que la evidencia de esta matriz no alcanza
 
 Anotado el 28 de agosto de 2026. Una columna de evidencia que no dice hasta dónde llega su prueba es

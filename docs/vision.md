@@ -390,84 +390,61 @@ A2A is used to interoperate with external agents, not as a replacement for every
 
 The standard defines concepts such as Agent Card, Task, Message, Part and Artifact. A task represents a unit of work with state, while concrete results must be returned as artifacts attached to the task.
 
-FinGuard can take both roles:
+FinGuard is an **A2A client**: it asks external agents for what they know — in the PoC, a gym's class timetable and a booking — and checks every answer before the person sees it. It is a consumer only: it publishes no Agent Card of its own, has no inbound A2A route and no push-notification webhook.
 
-- **A2A Server** — an external agent requests a capability from FinGuard.
-- **A2A Client** — FinGuard requests a capability from another agent.
+The **server role** — an external agent requesting a capability from FinGuard — is future work. If it ever comes, it will never expose payments (§7.8). Where other sections of this document describe FinGuard serving A2A (§3, §6.1.4, §8.2, §16), they describe that future work.
 
-### 7.2. A2A adapter
+The decision, its known limits and its measures are in [ADR-012](architecture/adr-012-a2a-consumer-gateway.md).
+
+### 7.2. A2A gateway
 
 ```mermaid
 flowchart LR
-    REMOTE[Remote agent]
-    A2A[A2A Adapter]
-    AUTH[Identity and Policy]
-    BUS[Command Bus]
-    DOMAIN[FinGuard Domain]
-    ARTIFACT[Artifact Mapper]
+    ORCH[Orchestrator]
+    GW[a2a-gateway]
+    REMOTE[External agent]
+    NORM[LLM normaliser]
+    VERIFY[Verifier]
+    OUT[Slots, sealed offers, booking preview]
 
-    REMOTE --> A2A
-    A2A --> AUTH
-    AUTH --> BUS
-    BUS --> DOMAIN
-    DOMAIN --> ARTIFACT
-    ARTIFACT --> A2A
-    A2A --> REMOTE
+    ORCH -->|ExpertAgentsPort, internal HTTP| GW
+    GW -->|A2A 1.0 message| REMOTE
+    REMOTE -->|task or message| GW
+    GW -->|reply parts| ORCH
+    ORCH --> NORM
+    NORM -->|closed draft| VERIFY
+    VERIFY --> OUT
 ```
 
-The domain never receives A2A SDK objects. The adapter transforms:
+`apps/a2a-gateway` is the only process that speaks A2A. It holds the registry of trusted agents, validates their cards, presents their credentials and bounds their replies; it has no LLM, no banking client and no conversation state. The orchestrator reaches it through the domain port `ExpertAgentsPort` and never receives A2A SDK objects:
 
 ```text
+Verified query
+    ↓ template: Spanish text plus the same data as JSON
 A2A Message
-    ↓
-Internal Command
-    ↓
-Domain Result
-    ↓
-A2A Artifact
+    ↓ external agent
+A2A Task or Message, parsed by the SDK
+    ↓ LLM normaliser: a closed schema, no field for an amount, an account or a URL
+Draft
+    ↓ verifier: every value grounded in the reply, or the whole reply is dropped
+Domain slots or a booking receipt
 ```
+
+A new agent is one URL in `A2A_GATEWAY_AGENTS`. No code anywhere is written for a particular provider: the model reads each agent's own vocabulary into FinGuard's one shape, and the code decides whether to believe it.
 
 ### 7.3. Agent Card
 
-FinGuard publishes its card at:
+FinGuard publishes no card. It reads the card of each registered agent at its well-known path:
 
 ```text
 /.well-known/agent-card.json
 ```
 
-The Agent Card describes identity, URL, capabilities, authentication requirements and skills. A2A supports discovery through the standardised path or through private registries, which suits enterprise environments particularly well.
+The Agent Card describes identity, interfaces, capabilities, authentication requirements and skills. The gateway resolves it with the SDK and validates it against A2A 1.0 before anything else reads it. An agent is usable only when its card parses as a 1.0 card with its required fields, declares a 1.x interface over JSON-RPC or HTTP+JSON on the registered host, declares at least one skill, and asks for an authentication scheme FinGuard supports with a credential it holds. Otherwise it is listed as unusable with a closed reason (`card_unreachable`, `card_invalid`, `version_unsupported`, `binding_unsupported`, `interface_untrusted`, `no_skills`, `auth_unsupported`, `credential_missing`) and never asked. Cards are read again after a time to live (300 s by default).
 
-Conceptual example:
+The model classifies each card's skills into a closed catalogue — `AVAILABILITY`, `BOOKING` or none — and a classification error leaves the agent without that capability, never with a guessed one.
 
-```json
-{
-  "name": "FinGuard Financial Assistant",
-  "description": "Secure financial consultation and operation-preparation agent",
-  "url": "https://finguard.example.com/a2a",
-  "version": "0.1.0",
-  "capabilities": {
-    "streaming": true
-  },
-  "skills": [
-    {
-      "id": "query-financial-movements",
-      "name": "Query financial movements",
-      "description": "Answers aggregated questions about authorized financial movements",
-      "inputModes": ["application/json", "text/plain"],
-      "outputModes": ["application/json", "text/plain"]
-    },
-    {
-      "id": "prepare-payment",
-      "name": "Prepare payment",
-      "description": "Prepares a simulated payment that requires user confirmation",
-      "inputModes": ["application/json"],
-      "outputModes": ["application/json"]
-    }
-  ]
-}
-```
-
-The public card does **not** include:
+If FinGuard ever publishes a card of its own (§7.8), it will not include:
 
 - Internal topology.
 - Table names.
@@ -475,60 +452,74 @@ The public card does **not** include:
 - Credentials.
 - Personal identifiers.
 - Administrative capabilities.
+- Any payment skill.
 
 ### 7.4. Concept mapping
 
 | A2A | FinGuard |
 | --- | --- |
-| Agent Card | FinGuard's public capabilities |
-| `contextId` | An authorised conversation or session |
-| Task | Execution of a query or an operation |
-| Message | An instruction or a clarification |
-| Artifact | A result, chart, preview or receipt |
-| TaskStatus | Normalised internal state |
-| `data` Part | Structured JSON contract |
+| Agent Card | An external agent's identity, interfaces, security and skills, validated before use |
+| Skill | Classified into a closed capability: availability, booking or none |
+| `contextId` | Kept per agent with the sealed offers, so a booking continues its search's context |
+| Task | One search or one booking at one agent |
+| TaskState | `COMPLETED`, `INPUT_REQUIRED` (alternatives to a full class), `AUTH_REQUIRED` (link a membership), `FAILED`, `REJECTED`, `CANCELED` |
+| Message | The template FinGuard sends: text, plus a `data` part when the agent accepts JSON |
+| Artifact and Part | The reply's text and data parts, normalised and verified; `file` parts are dropped and counted |
 
-### 7.5. Initial skills
+### 7.5. Capabilities consumed
 
-- `finguard.query_balance`
-- `finguard.query_movements`
-- `finguard.analyze_spending`
-- `finguard.generate_visualization`
-- `finguard.prepare_bizum`
-- `finguard.get_payment_status`
+- `AVAILABILITY` — an agent's sessions of one activity inside a window and a daily band.
+- `BOOKING` — one place in one offered session, sent only after the person confirms it.
 
-No skill called `execute_bizum` is exposed initially. Execution requires an authorisation produced outside the external agent.
+No FinGuard skill is exposed. The server skills once listed here (balance, movements, spending analysis, visualisation, Bizum preparation and payment status) are not built, and the payment ones are withdrawn.
 
 ### 7.6. A2A security
 
 A2A declares authentication requirements in the Agent Card, while credentials travel through standard web mechanisms kept separate from the message content.
 
-FinGuard applies:
+As a client, FinGuard applies:
+
+- A private registry of allowed agents (`A2A_GATEWAY_AGENTS`); no open discovery.
+- Conformance before use: a card that does not meet A2A 1.0 makes its agent unusable.
+- Credentials discovered from the card's `securitySchemes` (an `apiKey` header or `http` bearer), presented only in headers and only to interfaces on the registered host. OAuth 2.0, OpenID Connect and mutual TLS are not supported yet: such an agent is `auth_unsupported`.
+- Outgoing data limited to the activity, the window, the slot reference and a pairwise member reference that differs at every agent — never a name, an account, a balance or the person's sentence.
+- Request limits: 16 KiB of text and 64 KiB of data per reply, 10 s per call, a per-agent budget in the orchestrator, no retries.
+- Full validation of incoming data: the SDK parses every reply, the model's reading is a closed schema, and the verifier accepts only values the reply states. Reply text is never shown raw and never reaches a prompt, the planner or the payment path, so instructions inside it have nowhere to go.
+- A booking needs a typed confirmation on screen and the `agents:book` scope, and it is never re-sent.
+- No payment through an external agent.
+
+Agent Card signatures are not verified: the registry is the trust anchor. HTTPS is a deployment requirement; the development stack reaches its simulated agents over HTTP on its internal network.
+
+### 7.7. Implementation
+
+The official Python SDK is used: `a2a-sdk` 1.2.1, which implements A2A 1.0. The gateway uses its client side; only `apps/simulated-gym-agent`, which stands in for third parties, uses its server side.
+
+The implementation uses:
+
+- A2A 1.0
+- JSON-RPC and HTTP+JSON bindings
+- Blocking (non-streaming) sends; no SSE, no push notifications
+- Each agent's Agent Card at its well-known URI
+
+The compose profile `a2a` (`just a2a`) starts the gateway and three simulated gyms: two that answer the same question in different formats, and one with an A2A 0.3 card that the gate refuses. `just evaluate-a2a` measures the normaliser.
+
+### 7.8. The server role, if it comes
+
+Exposing FinGuard's own skills to other agents is future work and is never payments. It would require, at least:
 
 - Mandatory HTTPS.
 - OAuth 2.0 or OpenID Connect.
 - Per-skill scopes.
-- A private registry of allowed agents.
 - Audience and issuer verification.
 - Short-lived tokens.
 - Request limits.
 - Correlation IDs.
 - Full validation of incoming data.
-- An allowlist of agents during the competition.
+- An allowlist of agents.
 - Rejection of instructions that try to alter internal policies.
+- A decision of its own, recorded as an ADR.
 
-A2A v1.0 adds version and capability negotiation for verifying Agent Card signatures; FinGuard leaves room for both mechanisms.
-
-### 7.7. Implementation
-
-The official Python SDK will be used; it currently implements A2A 1.0 and offers optional integration with FastAPI, Starlette, gRPC and OpenTelemetry.
-
-The initial implementation uses:
-
-- A2A 1.0
-- HTTP + JSON
-- SSE for updates
-- Agent Card at the well-known URI
+A2A v1.0 adds version and capability negotiation for verifying Agent Card signatures; a published card would leave room for both mechanisms.
 
 ---
 
@@ -1252,7 +1243,7 @@ FinGuard is ready for submission when:
 - The conversation works by text.
 - Voice works, or a reliable text fallback exists.
 - The audit trail allows reconstructing an operation.
-- The Agent Card can be published.
+- An external agent's card is discovered and validated against A2A 1.0.
 - At least one A2A skill works.
 - The video lasts no more than three minutes.
 - The report describes architecture, security, results and limitations.
