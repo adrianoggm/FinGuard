@@ -29,7 +29,8 @@ GYM_API_KEY=gym-demo-key \
 ```
 
 Endpoints: `GET /.well-known/agent-card.json` (public), JSON-RPC at `/a2a/jsonrpc`, HTTP+JSON at
-`/a2a/rest`, `GET /health`, and `GET|POST /vincular` (the account-linking page, norte only).
+`/a2a/rest`, `GET /health`, and `GET|POST /vincular` (the account-linking page; both styles serve
+it, and only norte sends a member there).
 Everything under `/a2a/` needs the style's credential; the card and the linking page do not.
 
 ## Configuration
