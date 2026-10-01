@@ -318,8 +318,8 @@ def booking_unsupported(agent_name: str) -> str:
 
 
 def booking_failed(agent_name: str) -> str:
-    """What is true of every failure: nothing the gym said confirms a booking. Not «no se ha
-    hecho» -- a confirmation that did not verify is not proof that none happened."""
+    """The gym's own no (`FAILED`, `REJECTED`, `CANCELED`), or a failure before anything was sent.
+    A completed task that FinGuard could not verify is not this: it is `booking_unknown` (R17)."""
     return f"{agent_name} no ha confirmado la reserva."
 
 

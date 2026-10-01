@@ -234,6 +234,10 @@ def _sent(
             text = activity_writer.booking_unsupported(name)
         case "unknown":
             text = activity_writer.booking_unknown(name)
+            # Ruling R17: the class may be booked. It leaves the offers, so booking it again takes
+            # a new search -- where the gym's own timetable says whether it is still free -- and
+            # these offers can never mint a second message for it.
+            after = replace(after, activity_offers=_without(after.activity_offers, pending.slot))
         case _:
             text = activity_writer.booking_failed(name)
     return QuestionResponse(
@@ -243,6 +247,23 @@ def _sent(
         activities=_slot_payloads(slots, {pending.slot.agent_id: name}),
         agent_notices=notices,
         suggestions=activity_writer.choose_suggestions(slots),
+    )
+
+
+def _without(offers: ActivityOffers | None, slot: ActivitySlot) -> ActivityOffers | None:
+    """`offers` less `slot`, with the name and context of any gym left offering nothing dropped
+    too; `None` once nothing is left to offer."""
+    if offers is None:
+        return None
+    kept = tuple(each for each in offers.slots if each != slot)
+    if not kept:
+        return None
+    offering = {each.agent_id for each in kept}
+    return ActivityOffers(
+        kept,
+        tuple(item for item in offers.agent_names if item[0] in offering),
+        tuple(item for item in offers.contexts if item[0] in offering),
+        trusted=offers.trusted,
     )
 
 

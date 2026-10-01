@@ -349,10 +349,20 @@ async def test_confirm_outcomes() -> None:
         "booked", receipt=BookingReceipt("gym-norte", NORTE_1900, "NT-4821")
     )
 
-    forged = FakeNormaliser(booking=BookingDraft(True, "NT-9999", "2026-10-01T19:00", "Spinning"))
-    assert (await handler(normaliser=forged).confirm(PENDING, CALLER)).kind == "failed"
-    declined = FakeNormaliser(booking=BookingDraft(False))
-    assert (await handler(normaliser=declined).confirm(PENDING, CALLER)).kind == "failed"
+    # Ruling R17: a COMPLETED task that yields no verified receipt is unknown -- the gym completed
+    # something and FinGuard cannot prove what -- whether the draft is refused or reads «not
+    # booked». Each is still one send.
+    for draft in (
+        BookingDraft(True, "NT-9999", "2026-10-01T19:00", "Spinning"),  # a code the reply lacks
+        BookingDraft(True, "NT-4821", "2026-10-01T20:00", "Spinning"),  # another class
+        BookingDraft(False),
+    ):
+        agents = FakeAgents()
+        outcome = await handler(agents, normaliser=FakeNormaliser(booking=draft)).confirm(
+            PENDING, CALLER
+        )
+        assert outcome == BookingOutcome("unknown"), draft
+        assert len(agents.sent) == 1
 
     # Fix round 1, item 2: the model not reading a COMPLETED reply is a failure to read, after the
     # send, not the gym's refusal -- it may have booked.

@@ -15,20 +15,22 @@ attempted, anything that goes wrong -- the gateway's timeout, the agent's error,
 dropped with the request already out, the budget running out, the model failing to read a reply --
 is an unknown outcome: the gym may well have booked, and saying otherwise would invite the second
 booking this rule exists to prevent. Only what fails before the send (the listing, the card, no
-booking skill) is a plain failure.
+booking skill) and the gym's own refusal (`FAILED`, `REJECTED`, `CANCELED`) are plain failures.
 
 What an agent answers, and what it becomes:
 
     COMPLETED        the model's reading of the confirmation, `verify_booking`ed: `booked` with the
-                     receipt; `unknown` when the model could not read it at all, since the gym
-                     completed something; `failed` when the reading is refused.
+                     receipt, and otherwise `unknown` (ruling R17) -- an unreadable reply, a reading
+                     the verifier refuses and one that says «not booked» alike, because the gym
+                     completed something and nothing proves what.
     INPUT_REQUIRED   never a confirmation. Its alternatives are read with the availability reader
                      over the booked class's own day and verified like any search's: `alternatives`,
                      or `unsupported_request` when it asked for something else -- nothing it asked
                      for is forwarded (§7).
     AUTH_REQUIRED    `link_required`, with the linking address `link_in` finds on the agent's own
                      link hosts, or none.
-    anything else    `failed`.
+    FAILED, REJECTED, CANCELED
+                     `failed`: the gym's own explicit no, which the protocol states.
 """
 
 import asyncio
@@ -228,14 +230,19 @@ class BookActivityHandler:
             return await self._alternatives(pending.slot, reply, zone)
         if reply.state != "COMPLETED":
             return _FAILED
+        # Ruling R17: the task says the gym completed something, and only a verified receipt says
+        # what. A reading the model could not make, one the verifier refuses, or one that says «not
+        # booked» proves nothing either way -- so the outcome is unknown, never a failure.
         draft = await self._normaliser.booking(pending.slot, reply)
         if draft is None:
-            # The gym completed the task and the model could not read what it completed: a failure
-            # to read after the send, not the gym's refusal (fix round 1).
             return BookingOutcome("unknown")
         receipt = verify_booking(draft, slot=pending.slot, reply=reply)
         if isinstance(receipt, AgentRejection):
-            return _FAILED
+            logger.warning(
+                "expert_agents.booking_unverified",
+                extra={"agent": agent.id, "rule": receipt.rule},
+            )
+            return BookingOutcome("unknown")
         return BookingOutcome("booked", receipt=receipt)
 
     async def _alternatives(
