@@ -306,11 +306,23 @@ def booked(receipt: BookingReceipt, agent_name: str) -> str:
 def booking_alternatives(
     slot: ActivitySlot, agent_name: str, alternatives: Sequence[ActivitySlot]
 ) -> str:
-    """«La de las 19:00 no está disponible; Gimnasio Norte ofrece 20:00 y 21:00.» Not «completa»:
-    an agent pausing the booking with other sessions has not said why, and a full class is only
-    the likeliest reason."""
-    times = tuple(f"{each.start:%H:%M}" for each in alternatives)
+    """«La de las 19:00 no está disponible; Gimnasio Norte ofrece las 21:00 y el viernes 2 a las
+    18:30.» -- the day named for any alternative not on the booked class's (ruling R22). Not
+    «completa»: an agent pausing the booking with other sessions has not said why, and a full
+    class is only the likeliest reason."""
+    times = tuple(
+        f"las {each.start:%H:%M}"
+        if each.start.date() == slot.start.date()
+        else f"el {_weekday(each.start.date())} {each.start.day} a las {each.start:%H:%M}"
+        for each in alternatives
+    )
     return f"La de las {slot.start:%H:%M} no está disponible; {agent_name} ofrece {listed(times)}."
+
+
+def booking_unavailable(agent_name: str) -> str:
+    """A paused booking with no alternative that verifies (ruling R22): the gym asked for nothing,
+    the class is just not available as asked."""
+    return f"Esa clase no está disponible en {agent_name}; vuelve a buscar."
 
 
 def booking_link_required(agent_name: str) -> str:

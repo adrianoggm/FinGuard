@@ -42,7 +42,7 @@ import sys
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from datetime import time as clock
 from pathlib import Path
 from typing import Any
@@ -85,9 +85,13 @@ CASES_PATH = A2A / "cases.yaml"
 # The agent every case is read as coming from. Its name is not in any reply on purpose: what the
 # verifier binds a booking to is the agent that was asked, and here that is always this one.
 AGENT = "gym-evaluated"
-# A booking paused with other sessions is read over the booked class's own day, to its last
-# minute -- `BookActivityHandler._alternatives`, mirrored so the window rule is the deployment's.
+# A booking paused with other sessions is read over the week from the booked class's day and
+# verified against that day, to its last minute, then -- only on a `window` failure -- the week
+# (ruling R22): `BookActivityHandler._alternatives`, mirrored so the window rule is the
+# deployment's.
 _DAY_CLOSES = clock(23, 59)
+_WEEK_DAYS = 6
+_WEEK_CLOSES = clock(23, 0)
 
 
 @dataclass(frozen=True)
@@ -162,7 +166,7 @@ def load_cases(path: Path) -> tuple[datetime, list[Case]]:
                 query = ActivityQuery(
                     booked.activity,
                     datetime.combine(day, clock(0, 0), zone),
-                    datetime.combine(day, _DAY_CLOSES, zone),
+                    datetime.combine(day + timedelta(days=_WEEK_DAYS), _WEEK_CLOSES, zone),
                 )
         else:
             raise ValueError(f"{item['id']}: unknown reading {item['reading']!r}")
@@ -220,6 +224,26 @@ def _offered(case: Case, slots: tuple[ActivitySlot, ...]) -> tuple[ActivitySlot,
     if case.reading == "alternatives" and case.booked is not None:
         return tuple(slot for slot in slots if slot.start != case.booked.start)
     return slots
+
+
+def _verified_slots(
+    case: Case, draft: AvailabilityDraft, now: datetime
+) -> tuple[ActivitySlot, ...] | AgentRejection:
+    """`verify_slots` as the handler calls it: over the case's query -- and for a paused booking's
+    alternatives, over the booked day first and the week only after a `window` failure."""
+    assert case.query is not None
+    if case.reading != "alternatives":
+        return verify_slots(draft, query=case.query, reply=case.reply, agent_id=AGENT, now=now)
+    day = case.query.start.date()
+    on_the_day = ActivityQuery(
+        case.query.activity,
+        case.query.start,
+        datetime.combine(day, _DAY_CLOSES, case.query.start.tzinfo),
+    )
+    verified = verify_slots(draft, query=on_the_day, reply=case.reply, agent_id=AGENT, now=now)
+    if verified == AgentRejection("window"):
+        verified = verify_slots(draft, query=case.query, reply=case.reply, agent_id=AGENT, now=now)
+    return verified
 
 
 def _absent_values(text: str, slots: tuple[ActivitySlot, ...], code: str | None) -> list[str]:
@@ -348,7 +372,7 @@ async def judge(case: Case, normaliser: LlmReplyNormaliser, now: datetime) -> Re
             exact = bool(case.expect.get("unsupported"))
             output = ["unsupported"]
         else:
-            slots = verify_slots(draft, query=case.query, reply=case.reply, agent_id=AGENT, now=now)
+            slots = _verified_slots(case, draft, now)
             if isinstance(slots, AgentRejection):
                 rule = slots.rule
                 exact = False

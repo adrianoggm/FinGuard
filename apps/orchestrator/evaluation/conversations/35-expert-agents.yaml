@@ -19,10 +19,12 @@ episodes:
       shape -- norte in data parts, sur in a sentence -- merged into one list ordered by time;
       gym-legacy is listed by the gateway as unusable and is never asked. Turn 2 books the 20:00
       class at the Norte, which the list itself shows as full; nothing is sent to the gym until the
-      yes of turn 3, and that yes comes back paused with the next class instead. The alternative
-      is announced as «no está disponible», not «completa»: a paused booking does not say why.
-      Turn 4 resolves «la de las 21:00» against the alternatives, which are now the only offers,
-      and turn 5 books it with a code the reply states. Turn 6 is a balance: the offers outlive the
+      yes of turn 3, and that yes comes back paused with the next two classes instead -- the 21:00
+      the same day and the 18:30 of the next, whose day the answer names (ruling R22: the
+      alternatives are verified against the booked day and then the week). The class is announced
+      as «no está disponible», not «completa»: a paused booking does not say why. Turn 4 resolves
+      «la de las 21:00» against the alternatives, which are now the only offers, and turn 5 books
+      it with a code the reply states. Turn 6 is a balance: the offers outlive the
       booking, and must not make an ordinary question about money an agent's.
     metrics: [wrong_tool, context_retention, unnecessary_model_call]
     agents: [gym-norte, gym-sur, gym-legacy]
@@ -40,7 +42,7 @@ episodes:
         no_model: true
       - say: sí
         route: AGENTS
-        says: La de las 20:00 no está disponible; Gimnasio Norte ofrece 21:00.
+        says: La de las 20:00 no está disponible; Gimnasio Norte ofrece las 21:00 y el viernes 7 a las 18:30.
         not_says: Reserva hecha
         ends: true
         no_model: true

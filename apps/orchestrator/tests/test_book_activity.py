@@ -12,7 +12,7 @@ The fakes are the gateway, the classifier and the normaliser; `NOW` is Wednesday
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
@@ -396,9 +396,10 @@ async def test_confirm_outcomes() -> None:
     )
 
 
-async def test_a_full_class_offers_its_alternatives_read_as_a_timetable_of_its_day() -> None:
+async def test_a_full_class_offers_its_alternatives_read_as_a_timetable_of_its_week() -> None:
     """An INPUT_REQUIRED reply confirms nothing, so it is never read as a booking: its alternatives
-    are read with the availability reader over the slot's own day, and verified like any search."""
+    are read with the availability reader over the week from the slot's own day (ruling R22), and
+    verified like any search's."""
     normaliser = FakeNormaliser()
 
     outcome = await handler(FakeAgents(FULL_REPLY), normaliser=normaliser).confirm(PENDING, CALLER)
@@ -416,21 +417,130 @@ async def test_a_full_class_offers_its_alternatives_read_as_a_timetable_of_its_d
     )
     assert normaliser.bookings == []
     [query] = normaliser.queries
-    assert query.start.date() == query.end.date() == date(2026, 10, 1)
+    assert (query.start, query.end) == (
+        datetime(2026, 10, 1, 0, 0, tzinfo=ZONE),
+        datetime(2026, 10, 7, 23, 0, tzinfo=ZONE),
+    )
     assert query.band is None and query.activity == "Spinning"
 
 
 async def test_anything_else_a_paused_agent_asks_for_is_not_forwarded() -> None:
-    for draft in (
-        None,
-        AvailabilityDraft((), unsupported_request=True),
-        AvailabilityDraft(()),
-        # Another day is not an alternative to this class, and it is not in the reply either.
-        AvailabilityDraft((SlotDraft("Spinning", "2026-10-02T20:00", None, 3, None),)),
-    ):
+    for draft in (None, AvailabilityDraft((), unsupported_request=True)):
         asking = FakeNormaliser(availability=draft)
         outcome = await handler(FakeAgents(FULL_REPLY), normaliser=asking).confirm(PENDING, CALLER)
         assert outcome == BookingOutcome("unsupported_request"), draft
+
+
+NEXT_DAY_NORTE = reply(
+    "INPUT_REQUIRED",
+    DataReplyPart(
+        {
+            "alternativas": [
+                {
+                    "clase": "Spinning",
+                    "fecha": "2026-10-01",
+                    "hora_inicio": "21:00",
+                    "duracion_min": 45,
+                    "huecos": 3,
+                    "ref": "N-1001-2100",
+                },
+                {
+                    "clase": "Spinning",
+                    "fecha": "2026-10-02",
+                    "hora_inicio": "18:30",
+                    "duracion_min": 45,
+                    "huecos": 5,
+                    "ref": "N-1002-1830",
+                },
+            ]
+        }
+    ),
+)
+NEXT_DAY_NORTE_DRAFT = AvailabilityDraft(
+    (
+        SlotDraft("Spinning", "2026-10-01T21:00", "2026-10-01T21:45", 3, "N-1001-2100"),
+        SlotDraft("Spinning", "2026-10-02T18:30", "2026-10-02T19:15", 5, "N-1002-1830"),
+    )
+)
+NEXT_DAY_SUR = reply(
+    "INPUT_REQUIRED",
+    TextReplyPart(
+        "La clase de spinning de las 19:00 está completa. Te puedo ofrecer el jueves 1 de "
+        "octubre a las 21:00 o el viernes 2 de octubre a las 18:30."
+    ),
+)
+NEXT_DAY_SUR_DRAFT = AvailabilityDraft(
+    (
+        SlotDraft("spinning", "2026-10-01T21:00", None, None, None),
+        SlotDraft("spinning", "2026-10-02T18:30", None, None, None),
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ("answer", "draft"),
+    [(NEXT_DAY_NORTE, NEXT_DAY_NORTE_DRAFT), (NEXT_DAY_SUR, NEXT_DAY_SUR_DRAFT)],
+    ids=["norte-data", "sur-text"],
+)
+async def test_an_alternative_on_the_next_day_is_offered_with_the_same_day_one(
+    answer: AgentReply, draft: AvailabilityDraft
+) -> None:
+    """Acceptance finding A2 (ruling R22): the gym's next session can be tomorrow's. The draft is
+    verified against the booked day first and, only because a session is outside it, against the
+    week -- the same draft both times, never repaired."""
+    reading = FakeNormaliser(availability=draft)
+
+    outcome = await handler(FakeAgents(answer), normaliser=reading).confirm(PENDING, CALLER)
+
+    assert outcome.kind == "alternatives"
+    assert [slot.start for slot in outcome.alternatives] == [
+        datetime(2026, 10, 1, 21, 0, tzinfo=ZONE),
+        datetime(2026, 10, 2, 18, 30, tzinfo=ZONE),
+    ]
+
+
+async def test_an_undated_alternative_is_still_read_on_the_booked_day() -> None:
+    """«te ofrezco la de las 21:00» names no day: only the booked day's single-day reading can
+    date it, which is why the day is verified before the week."""
+    undated = reply(
+        "INPUT_REQUIRED",
+        TextReplyPart("La de spinning está completa. Te ofrezco la de las 21:00."),
+    )
+    reading = FakeNormaliser(
+        availability=AvailabilityDraft((SlotDraft("spinning", "21:00", None, None, None),))
+    )
+
+    outcome = await handler(FakeAgents(undated), normaliser=reading).confirm(PENDING, CALLER)
+
+    assert [slot.start for slot in outcome.alternatives] == [
+        datetime(2026, 10, 1, 21, 0, tzinfo=ZONE)
+    ]
+
+
+async def test_alternatives_that_cannot_be_verified_say_the_class_is_not_available() -> None:
+    """Ruling R22: a paused booking whose offers do not verify -- none at all, one the reply does
+    not state, or one more than a week away -- has not asked for anything; the class is simply
+    not available as asked."""
+    a_week_away = reply(
+        "INPUT_REQUIRED",
+        TextReplyPart(
+            "La de spinning está completa. Te puedo ofrecer el jueves 8 de octubre a las 18:30."
+        ),
+    )
+    for answer, draft in (
+        (FULL_REPLY, AvailabilityDraft(())),
+        (
+            FULL_REPLY,
+            AvailabilityDraft((SlotDraft("Spinning", "2026-10-02T20:00", None, 3, None),)),
+        ),
+        (
+            a_week_away,
+            AvailabilityDraft((SlotDraft("Spinning", "2026-10-08T18:30", None, None, None),)),
+        ),
+    ):
+        reading = FakeNormaliser(availability=draft)
+        outcome = await handler(FakeAgents(answer), normaliser=reading).confirm(PENDING, CALLER)
+        assert outcome == BookingOutcome("unavailable"), draft
 
 
 async def test_the_class_that_was_refused_is_not_its_own_alternative() -> None:
@@ -457,7 +567,7 @@ async def test_the_class_that_was_refused_is_not_its_own_alternative() -> None:
     ).confirm(PENDING, CALLER)
 
     assert [f"{slot.start:%H:%M}" for slot in offered.alternatives] == ["20:00"]
-    assert itself == BookingOutcome("unsupported_request")
+    assert itself == BookingOutcome("unavailable")
 
 
 async def test_an_agent_that_cannot_book_is_never_sent_anything() -> None:

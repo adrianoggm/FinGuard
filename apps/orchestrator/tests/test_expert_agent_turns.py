@@ -621,6 +621,17 @@ def alternatives(pending: BookingConfirmation) -> BookingOutcome:
     return BookingOutcome("alternatives", alternatives=tuple(later))
 
 
+def alternatives_over_two_days(pending: BookingConfirmation) -> BookingOutcome:
+    later = [
+        ActivitySlot(pending.slot.agent_id, "Spinning", at, None, 3, None)
+        for at in (
+            datetime(2026, 10, 1, 21, 0, tzinfo=ZONE),
+            datetime(2026, 10, 2, 18, 30, tzinfo=ZONE),
+        )
+    ]
+    return BookingOutcome("alternatives", alternatives=tuple(later))
+
+
 LINK = "http://127.0.0.1:9102/vincular?ref=abc"
 
 
@@ -635,7 +646,13 @@ LINK = "http://127.0.0.1:9102/vincular?ref=abc"
         (
             alternatives,
             "BOOKING_ALTERNATIVES",
-            "La de las 18:30 no está disponible; Gimnasio Sur ofrece 20:00 y 21:00.",
+            "La de las 18:30 no está disponible; Gimnasio Sur ofrece las 20:00 y las 21:00.",
+        ),
+        (
+            alternatives_over_two_days,
+            "BOOKING_ALTERNATIVES",
+            "La de las 18:30 no está disponible; Gimnasio Sur ofrece las 21:00 y el viernes 2 "
+            "a las 18:30.",
         ),
         (
             lambda _: BookingOutcome("link_required", link=LINK),
@@ -649,6 +666,11 @@ LINK = "http://127.0.0.1:9102/vincular?ref=abc"
             "Gimnasio Sur pide un dato que FinGuard no proporciona; la reserva no se ha hecho.",
         ),
         (
+            lambda _: BookingOutcome("unavailable"),
+            "BOOKING_UNAVAILABLE",
+            "Esa clase no está disponible en Gimnasio Sur; vuelve a buscar.",
+        ),
+        (
             lambda _: BookingOutcome("failed"),
             "BOOKING_FAILED",
             "Gimnasio Sur no ha confirmado la reserva.",
@@ -659,7 +681,16 @@ LINK = "http://127.0.0.1:9102/vincular?ref=abc"
             "No sé si la reserva se ha completado; consulta en Gimnasio Sur.",
         ),
     ],
-    ids=["booked", "alternatives", "link", "unsupported", "failed", "unknown"],
+    ids=[
+        "booked",
+        "alternatives",
+        "alternatives-two-days",
+        "link",
+        "unsupported",
+        "unavailable",
+        "failed",
+        "unknown",
+    ],
 )
 async def test_a_yes_on_screen_confirms_once_and_closes_the_booking(
     outcome: Callable[[BookingConfirmation], BookingOutcome], expected: str, text: str
