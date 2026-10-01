@@ -569,8 +569,8 @@ class ActivitySlotPayload(_Payload):
     start: AwareDatetime
     end: AwareDatetime | None = None
     free_places: int | None = Field(default=None, ge=0)
-    # Plain text wherever it is shown -- a reference may legally hold `:` and `/`, and is never a
-    # link (Task 3, ruling carried).
+    # Plain text wherever it is shown, and never a link: the domain's `REFERENCE`, which holds no
+    # `:` or `/` since ruling R26.
     slot_ref: str | None = Field(
         default=None, max_length=MAX_SLOT_REF, pattern=rf"^{REFERENCE.pattern}$"
     )

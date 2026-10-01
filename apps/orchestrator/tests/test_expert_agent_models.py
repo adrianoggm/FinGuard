@@ -106,13 +106,17 @@ def test_the_capability_catalogue_is_closed_and_an_error_carries_its_code() -> N
     assert ExpertAgentsError("timeout").reason is None
 
 
-@pytest.mark.parametrize("bad", ["N 1001", "-N1001", "N-1001\n", "Ñ-1001", "a" * 65])
+@pytest.mark.parametrize(
+    "bad",
+    ["N 1001", "-N1001", "N-1001\n", "Ñ-1001", "a" * 65, "N-1001:1900", "N/1001", "http://x/y"],
+)
 def test_a_reference_and_a_code_are_one_ascii_token(bad: str) -> None:
+    """Ruling R26: letters, digits, `.`, `_` and `-` -- no `:` or `/`, so never an address."""
     with pytest.raises(InvalidValueError):
         _slot(slot_ref=bad)
     with pytest.raises(InvalidValueError):
         BookingReceipt("gym-norte", _slot(), bad)
-    assert _slot(slot_ref="N-1001.19:00/a").slot_ref == "N-1001.19:00/a"
+    assert _slot(slot_ref="N-1001.19_00-a").slot_ref == "N-1001.19_00-a"
 
 
 def test_a_band_opens_before_it_closes() -> None:

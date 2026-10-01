@@ -7,7 +7,8 @@ answer with a closed rule name, and a rejected answer is that agent not respondi
 `verify_slots`, rule by rule over every slot, first failure wins:
 
     structure   each start is `YYYY-MM-DDTHH:MM` or `HH:MM`, each end the same or absent; the
-                activity is within its ceiling and carries no control or bidi character, and a
+                activity is within its ceiling, a name of letters in at most four words (ruling
+                R25) and carries no control or bidi character, and a
                 reference (or a booking code) is one ASCII token (`REFERENCE`) within its own --
                 never a phrase of the reply.
     grounding   the clock time is one the reply states (`stated_times`), and so is an end's -- or
@@ -79,6 +80,9 @@ _CAP: Final = 64 * 1024
 _FULL: Final = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})")
 _BARE: Final = re.compile(r"(\d{1,2}):(\d{2})")
 _URL: Final = re.compile(r"https?://[^\s\"'<>]+")
+# An activity is a name the holder reads (ruling R25): letters only, at most four words joined by a
+# space or a hyphen -- «Pilates Reformer», «Body Pump» -- never a sentence of the reply.
+_ACTIVITY_NAME: Final = re.compile(r"[^\W\d_]+(?:[ -][^\W\d_]+){0,3}")
 # What a reply (folded) says of a class with no places left, instead of writing «0» (ruling R21).
 _CALLED_FULL: Final = re.compile(
     r"\b(complet[ao]s?|llen[ao]s?|agotad[ao]s?|sin plazas|no quedan plazas|full)\b"
@@ -291,6 +295,7 @@ def _moment(written: str) -> tuple[date | None, time] | None:
 def _fits(slot: SlotDraft) -> bool:
     return (
         1 <= len(slot.activity) <= MAX_ACTIVITY_NAME
+        and _ACTIVITY_NAME.fullmatch(slot.activity) is not None
         and not _hides(slot.activity)
         and (slot.slot_ref is None or is_reference(slot.slot_ref, MAX_SLOT_REF))
     )

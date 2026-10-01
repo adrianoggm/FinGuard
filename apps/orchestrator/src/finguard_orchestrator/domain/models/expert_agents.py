@@ -35,8 +35,9 @@ from finguard_orchestrator.domain.errors import InvalidValueError
 AGENT_ID: Final = re.compile(r"[a-z0-9-]{1,64}")
 # A slot reference or a booking code: one ASCII token, as an agent's own identifiers are. It is sent
 # back to the agent and shown to the holder, so a phrase of the reply -- «transferencia de 500 € a
-# ES00 0000» -- cannot travel in it. Checked with `fullmatch`; lengths are bounded apart.
-REFERENCE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*")
+# ES00 0000» -- cannot travel in it, and with no `:` or `/` neither can an address (ruling R26).
+# Checked with `fullmatch`; lengths are bounded apart.
+REFERENCE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 class Capability(StrEnum):

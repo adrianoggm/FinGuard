@@ -18,10 +18,13 @@ accents and case are optional.
                 mañana» is a day and «pasa 20 a Laura» is not.
     never       a chart (`_VISUAL_CUES`): «muéstrame el gimnasio de este fin de semana en barras» is
                 drawn from the ledger (ruling R14).
+    never       an order to pay, as the payment path itself reads one (`payment_router.is_payment`,
+                ruling R24): «ingrésale 20 a Marta por el yoga de mañana» is a payment that names a
+                class, and this branch runs before the payment's own.
 
-`is_a_booking_request` reads the other half of the conversation (spec §5.2), with the same two
-vetoes and for the same reason: a sentence that mentions money, or asks for a chart, is the bank's,
-whatever else it mentions.
+`is_a_booking_request` reads the other half of the conversation (spec §5.2), with the same three
+vetoes and for the same reason: a sentence that mentions money, asks for a chart or orders a
+payment is the bank's, whatever else it mentions.
 
     verb        «apúntame», «resérvame», «me apunto», «quiero reservar», «reserva la/una
                 clase/plaza/sesión»: always a booking -- with nothing offered yet, the answer is to
@@ -60,6 +63,7 @@ from finguard_orchestrator.domain.services.activity_when import (
     _blank,
     _clocks,
 )
+from finguard_orchestrator.domain.services.payment_router import is_payment
 from finguard_orchestrator.domain.services.spanish import folded
 from finguard_orchestrator.domain.services.window_words import window_in
 
@@ -189,7 +193,7 @@ def _text(sentence: str) -> str:
 def asks_an_expert_agent(sentence: str) -> bool:
     """A timetable question about an activity or the gym, and nothing about money (module doc)."""
     text = _text(sentence)
-    if _MONEY_CUES.search(text) or _VISUAL_CUES.search(text):
+    if _MONEY_CUES.search(text) or _VISUAL_CUES.search(text) or is_payment(sentence):
         return False
     if _ACTIVITY.search(text) or _CLASS.search(text):
         return bool(_CUE.search(text) or any(pattern.search(text) for pattern in _DAY_OR_BAND))
@@ -203,7 +207,7 @@ def is_a_booking_request(sentence: str, *, has_offers: bool) -> bool:
     trusted or not: a broken seal is still a booking the holder asked for, answered by asking them
     to search again."""
     text = _text(sentence)
-    if _MONEY_CUES.search(text) or _VISUAL_CUES.search(text):
+    if _MONEY_CUES.search(text) or _VISUAL_CUES.search(text) or is_payment(sentence):
         return False
     if _BOOKING_VERB.search(text):
         return True
