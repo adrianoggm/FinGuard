@@ -69,6 +69,10 @@ Activity: {activity}
 From: {start}
 To: {end}
 Days: {days}
+Daily hours: {band}
+
+Copy only sessions of this activity that start between From and To and, on their day, inside the \
+daily hours; leave every other session out.
 
 The reply's state is {state}. COMPLETED: copy the sessions it offers. INPUT_REQUIRED: copy the \
 other sessions it offers instead, if any; if it asks for anything else, return no slots and \
@@ -173,6 +177,9 @@ def availability_prompt(query: ActivityQuery, reply: AgentReply) -> str:
         start=query.start.strftime("%Y-%m-%dT%H:%M"),
         end=query.end.strftime("%Y-%m-%dT%H:%M"),
         days=days,
+        band=(
+            f"{query.band[0]:%H:%M} to {query.band[1]:%H:%M}" if query.band is not None else "any"
+        ),
         state=reply.state,
         rules=_RULES,
         reply=_fenced(reply_text(reply), "REPLY"),
