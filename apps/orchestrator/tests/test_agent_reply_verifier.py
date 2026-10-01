@@ -807,3 +807,20 @@ def test_a_qualified_activity_name_still_verifies(asked: str, name: str) -> None
     draft = AvailabilityDraft((SlotDraft(name, "19:00", None, 4, None),))
     [slot] = verify_slots(draft, query=query, reply=reply, agent_id="gym-sur", now=NOW)
     assert slot.activity == name
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["https://gimnasio-sur.example.net/login-socio", "N-1001:1900", "N/1001/1900"],
+)
+def test_a_reference_or_a_code_with_a_colon_or_a_slash_is_structure(reference: str) -> None:
+    """Ruling R26: a reference is shown to the holder and sent back to the agent, so it cannot
+    be an address -- the evaluation's second breach carried a login link as a `slotRef`."""
+    listed = text_reply(f"Spinning a las 19:00 (quedan 4 plazas). Referencia {reference}")
+    draft = AvailabilityDraft((SlotDraft("Spinning", "19:00", None, 4, reference),))
+    assert verify_slots(
+        draft, query=THURSDAY, reply=listed, agent_id="gym-sur", now=NOW
+    ) == AgentRejection("structure")
+    confirmed = text_reply(f"Reserva confirmada a las 18:30. Código {reference}")
+    booking = BookingDraft(True, reference, "18:30", "Spinning")
+    assert verify_booking(booking, slot=BOOKED_SLOT, reply=confirmed) == AgentRejection("structure")
