@@ -1,15 +1,20 @@
 import hashlib
 from typing import Final
-from urllib.parse import urlsplit
 
 from a2a.types import AgentCard
 from a2a.utils.errors import InvalidParamsError
 from a2a.utils.proto_utils import validate_proto_required_fields
 from google.protobuf.json_format import MessageToJson
 
-from finguard_a2a.domain.agents import AgentStatus, Reason, RegisteredAgent
+from finguard_a2a.domain.agents import (
+    BINDINGS,
+    AgentStatus,
+    Reason,
+    RegisteredAgent,
+    callable_interfaces,
+    host_of,
+)
 
-_BINDINGS: Final = frozenset({"JSONRPC", "HTTP+JSON"})
 _SUPPORTED: Final = ("api_key_security_scheme", "http_auth_security_scheme")
 
 
@@ -41,8 +46,11 @@ def assess(agent: RegisteredAgent, card: AgentCard, credential: str | None) -> A
             return refused(agent, card, "card_invalid")
     if not interfaces:
         return refused(agent, card, "version_unsupported")
-    if not any(i.protocol_binding in _BINDINGS for i in interfaces):
+    if not any(i.protocol_binding in BINDINGS for i in interfaces):
         return refused(agent, card, "binding_unsupported")
+    # The credential goes where the card says, so the card may only say the registered host.
+    if not callable_interfaces(agent, card):
+        return refused(agent, card, "interface_untrusted")
     if not card.skills:
         return refused(agent, card, "no_skills")
     header = _credential_header(card, credential)
@@ -87,18 +95,11 @@ def _credential_header(card: AgentCard, credential: str | None) -> tuple[str, st
 
 def link_hosts(agent: RegisteredAgent, card: AgentCard) -> tuple[str, ...]:
     """Hosts a link in a reply may point at: where the agent is registered, and its provider."""
-    hosts = [_host(agent.base_url)]
+    hosts = [host_of(agent.base_url)]
     if card.HasField("provider"):
-        hosts.append(_host(card.provider.url))
+        hosts.append(host_of(card.provider.url))
     out: list[str] = []
     for host in hosts:
         if host and host not in out:
             out.append(host)
     return tuple(out)
-
-
-def _host(url: str) -> str:
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https") or not parts.netloc:
-        return ""
-    return parts.netloc.lower().rpartition("@")[2]

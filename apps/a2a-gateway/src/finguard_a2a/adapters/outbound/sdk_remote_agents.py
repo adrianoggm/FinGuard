@@ -21,7 +21,7 @@ from a2a.utils.errors import A2AError
 from google.protobuf.json_format import MessageToDict, ParseError
 from google.protobuf.struct_pb2 import Struct, Value
 
-from finguard_a2a.domain.agents import AgentStatus
+from finguard_a2a.domain.agents import AgentStatus, callable_interfaces
 from finguard_a2a.ports.remote_agents import RemoteError, RemoteReply
 
 _STATES: Final = frozenset(
@@ -109,6 +109,12 @@ class SdkRemoteAgents:
         http = httpx.AsyncClient(
             transport=_Through(self._shared), headers=headers, timeout=self._timeout
         )
+        # Only the interfaces on the registered host (ruling R30): the client carries the
+        # credential, and the card is not the one to say where it goes.
+        trusted = AgentCard()
+        trusted.CopyFrom(card)
+        del trusted.supported_interfaces[:]
+        trusted.supported_interfaces.extend(callable_interfaces(status.agent, card))
         client = ClientFactory(
             ClientConfig(
                 streaming=False,
@@ -118,7 +124,7 @@ class SdkRemoteAgents:
                     TransportProtocol.HTTP_JSON,
                 ],
             )
-        ).create(card)
+        ).create(trusted)
         self._clients[status.agent.id] = (status.card_digest, http, client)
         if cached is not None:
             asyncio.get_running_loop().create_task(cached[1].aclose())

@@ -1,9 +1,16 @@
 import httpx
+from a2a.types import AgentInterface
 from fakes import (
     AUTH,
+    DATA_ARTIFACT,
+    RPC_PATH,
+    HostRouter,
     Recorder,
+    agent_app,
+    api_key_security,
     data_agent,
     gateway_for,
+    make_card,
     reply_bare_message,
     reply_with,
     text_agent,
@@ -151,3 +158,34 @@ async def test_unknown_unusable_and_unknown_skill_are_refused_before_sending() -
     assert norte.headers == [] and sur.headers == []
     listing = (await client.get("/v1/agents", headers=AUTH)).json()["agents"]
     assert listing[1]["usable"] is False and listing[1]["skills"] == []
+
+
+async def test_the_credential_goes_only_to_an_interface_on_the_registered_host() -> None:
+    """Ruling R30: a card listing another host first must not receive the agent's credential --
+    the client is built from the interfaces on the host the agent was registered at."""
+    norte, elsewhere = Recorder(), Recorder()
+    card = make_card(url="http://evil:8000", security=api_key_security())
+    card.supported_interfaces.append(
+        AgentInterface(
+            url=f"http://gym-norte:8000{RPC_PATH}",
+            protocol_binding="JSONRPC",
+            protocol_version="1.0",
+        )
+    )
+    apps = {
+        "gym-norte": agent_app(
+            card, norte, reply_with(artifact=DATA_ARTIFACT), required_header=("x-api-key", "k1")
+        ),
+        "evil": agent_app(make_card(url="http://evil:8000"), elsewhere, reply_with()),
+    }
+    app = gateway_for(
+        {"gym-norte": apps["gym-norte"]},
+        ENV,
+        transport=HostRouter(apps),
+    )
+
+    response = await _client(app).post("/v1/agents/gym-norte/messages", json=BODY, headers=AUTH)
+
+    assert response.status_code == 200, response.text
+    assert norte.headers[-1]["x-api-key"] == "k1"
+    assert elsewhere.headers == []

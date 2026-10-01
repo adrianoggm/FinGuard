@@ -1,5 +1,5 @@
 import httpx
-from a2a.types import AgentCard
+from a2a.types import AgentCard, AgentInterface
 from fakes import (
     Recorder,
     agent_app,
@@ -162,6 +162,7 @@ async def test_every_reason_is_covered_by_a_test_here() -> None:
         "no_skills",
         "auth_unsupported",
         "credential_missing",
+        "interface_untrusted",
     }
     assert set(REASONS) == covered
 
@@ -204,3 +205,22 @@ async def test_the_card_is_refreshed_after_its_ttl_and_an_agent_can_become_unusa
     (status,) = await directory.statuses()
     assert (status.usable, status.reason) == (False, "card_unreachable")
     assert await directory.status("nobody") is None
+
+
+async def test_interface_untrusted_when_no_interface_is_on_the_registered_host() -> None:
+    """Ruling R30: the card names where messages go, and with them the credential. An agent
+    registered at `agent:8000` whose card sends everything elsewhere is not usable."""
+    card = make_card(url="http://elsewhere:8000", security=api_key_security())
+    status = await _status(_served(card), "k1")
+    assert (status.usable, status.reason) == (False, "interface_untrusted")
+
+
+async def test_one_interface_on_the_registered_host_is_enough() -> None:
+    card = make_card(url="http://elsewhere:8000")
+    card.supported_interfaces.append(
+        AgentInterface(
+            url="http://agent:8000/a2a/jsonrpc", protocol_binding="JSONRPC", protocol_version="1.0"
+        )
+    )
+    status = await _status(_served(card))
+    assert (status.usable, status.reason) == (True, None)
