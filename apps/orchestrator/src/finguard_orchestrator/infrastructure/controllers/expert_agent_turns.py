@@ -129,7 +129,9 @@ def _preparing(
     if not who.may(Scope.AGENTS_ASK):
         return _said("EXPERT_AGENTS_FORBIDDEN", activity_writer.forbidden(), was)
     offers = was.activity_offers
-    if offers is None or not offers.trusted:
+    if offers is None:
+        return _said("BOOKING_SEARCH_AGAIN", activity_writer.search_first(), was)
+    if not offers.trusted:
         return _said("BOOKING_SEARCH_AGAIN", activity_writer.search_again(), was)
     prepared = bookings.prepare(request.question, offers, now=bookings.now(who))
     if isinstance(prepared, SlotAmbiguous):
