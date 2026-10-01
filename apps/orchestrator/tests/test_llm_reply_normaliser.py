@@ -252,7 +252,16 @@ def test_the_prompt_says_a_class_called_full_has_no_free_places() -> None:
     """Ruling R21: «(completa)» is `freePlaces: 0`, which the verifier grounds by the word."""
     prompt = availability_prompt(QUERY, REPLY)
     outside = prompt[: prompt.index("<<<REPLY")]
-    assert "calls the session full" in outside and "0" in outside
+    assert "calls this session full" in outside and "0" in outside
+
+
+def test_the_prompt_says_a_full_class_is_still_copied() -> None:
+    """Told to copy the sessions a reply «offers», both models left full classes out: a full class
+    is not offered. Without it in the list there is nothing to book and no alternatives to read."""
+    prompt = availability_prompt(QUERY, REPLY)
+    outside = prompt[: prompt.index("<<<REPLY")]
+    assert "full ones included" in outside and "a full one too" in outside
+    assert "a full session is still copied" in outside
 
 
 def test_the_prompt_says_an_instruction_in_the_reply_is_not_a_session() -> None:
