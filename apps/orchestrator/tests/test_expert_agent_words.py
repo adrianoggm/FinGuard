@@ -190,10 +190,11 @@ def _strings(value: object) -> list[str]:
 
 EVALUATION = Path(__file__).resolve().parents[1] / "evaluation"
 # The files under `evaluation/` written to reach an agent, by name, and nothing else: the corpus
-# episodes that drive a search and a booking through both routes. Exact paths rather than a
-# pattern, so a new file is swept until somebody names it here -- and
-# `test_only_the_agent_episodes_are_exempt` holds the list to the episodes that declare agents.
-MEANT_FOR_AGENTS = frozenset({"conversations/35-expert-agents.yaml"})
+# episodes that drive a search and a booking through both routes, and the agents' own replies the
+# normaliser evaluation reads. Exact paths rather than a pattern, so a new file is swept until
+# somebody names it here -- and `test_only_the_agent_episodes_are_exempt` holds the corpus entry to
+# the episodes that declare agents.
+MEANT_FOR_AGENTS = frozenset({"conversations/35-expert-agents.yaml", "a2a/cases.yaml"})
 
 
 def _swept() -> list[Path]:
