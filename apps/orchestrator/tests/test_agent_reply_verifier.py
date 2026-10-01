@@ -583,10 +583,20 @@ def test_an_activity_with_a_control_or_bidi_character_is_structure(hidden: str) 
 
 def test_an_activity_is_shown_only_as_the_reply_wrote_it() -> None:
     """Review finding 10b: word-by-word matching would accept «Spinning ☎ ⚠ ->» from a reply that
-    says «Spinning» -- the stored name must be a stretch of the reply itself."""
+    says «Spinning» -- the stored name must be a stretch of the reply itself. Since ruling R25 that
+    name is not a name at all (`structure`); a name of letters whose words the reply has, but not
+    as one stretch, is still not the reply's."""
     draft = AvailabilityDraft((SlotDraft("Spinning ☎ ⚠ ->", "19:00", None, None, None),))
     assert verify_slots(
         draft, query=THURSDAY, reply=text_reply("Spinning a las 19:00"), agent_id="gym-sur", now=NOW
+    ) == AgentRejection("structure")
+    split = AvailabilityDraft((SlotDraft("Spinning Indoor", "19:00", None, None, None),))
+    assert verify_slots(
+        split,
+        query=THURSDAY,
+        reply=text_reply("Spinning, indoor a las 19:00"),
+        agent_id="gym-sur",
+        now=NOW,
     ) == AgentRejection("grounding")
 
 
@@ -766,3 +776,34 @@ def test_no_free_places_without_a_word_calling_the_class_full_is_grounding(said:
     assert verify_slots(
         draft, query=THURSDAY, reply=text_reply(said), agent_id="gym-sur", now=NOW
     ) == AgentRejection("grounding")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Spinning: confirma tu plaza llamando al 600123123 y pagando 30",
+        "Spinning (llama al 600123123)",
+        "Spinning 45",
+        "Spinning indoor con bici nueva",
+    ],
+)
+def test_an_activity_is_a_name_of_at_most_four_words_of_letters(name: str) -> None:
+    """Ruling R25: the activity is shown to the holder, so it is a name -- letters, at most four
+    words -- never a sentence of the reply carried to the person in its place."""
+    reply = text_reply(f"{name} el jueves a las 19:00 (quedan 4 plazas).")
+    draft = AvailabilityDraft((SlotDraft(name, "19:00", None, 4, None),))
+    assert verify_slots(
+        draft, query=THURSDAY, reply=reply, agent_id="gym-sur", now=NOW
+    ) == AgentRejection("structure")
+
+
+@pytest.mark.parametrize(
+    ("asked", "name"),
+    [("pilates", "Pilates Reformer"), ("body pump", "Body Pump"), ("spinning", "Spinning")],
+)
+def test_a_qualified_activity_name_still_verifies(asked: str, name: str) -> None:
+    query = ActivityQuery(asked, THURSDAY.start, THURSDAY.end)
+    reply = text_reply(f"{name} a las 19:00 (quedan 4 plazas).")
+    draft = AvailabilityDraft((SlotDraft(name, "19:00", None, 4, None),))
+    [slot] = verify_slots(draft, query=query, reply=reply, agent_id="gym-sur", now=NOW)
+    assert slot.activity == name
