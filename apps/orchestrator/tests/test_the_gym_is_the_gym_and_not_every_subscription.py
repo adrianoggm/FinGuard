@@ -12,11 +12,14 @@ one of them was right about the category and wrong about the question. The holde
 of thing inside it.
 
 The rule this pins (option «B1», chosen by the user) runs after the bank answers, so nothing a
-model reads changed: when the category was named by a *member* word — a word of its vocabulary
-that is not the category's own name — and that word is, as a whole word, in the name of the
-holder's shops inside the category in the window answered, the answer is narrowed to **every** one
-of those shops and says so. None called that: the category's figure stays, with one line saying
-why. «Suscripciones» and «supermercado» are the categories' own names and never narrow anything.
+model reads changed: when the category was named by a *member* word and by nothing else — a word of
+its vocabulary that is not the category's own name, and that a shop of that kind carries in its
+name — and that word is in the name of the holder's shops inside the category in the window
+answered, as a whole word or its Spanish plural («cine» is "Cines Yelmo"), the answer is narrowed
+to **every** one of those shops and says so. When it cannot be — no shop called that, more of them
+than a plan holds, a bank that could not say — the category's figure stays, with one line saying
+which figure it is and why. «Suscripciones» and «supermercado» are the categories' own names and
+never narrow anything.
 """
 
 import uuid
@@ -311,13 +314,24 @@ def test_a_kind_no_shop_is_named_after_is_the_category(sentence: str, category: 
     assert category_words.kinds_named_in(sentence, category) == ()
 
 
-def test_every_kind_is_a_word_of_its_own_category() -> None:
-    """One source of truth: a kind is a word the category's precise vocabulary already holds,
-    marked, never a second spelling of it kept somewhere else -- and never the category's name."""
-    for category, kinds in category_words._KINDS.items():
-        for kind in kinds:
-            assert kind in category_words._PRECISE[category], (category, kind)
-            assert kind != category_words.name_of(category), (category, kind)
+@pytest.mark.parametrize(
+    ("category", "kind"),
+    [(category, kind) for category, kinds in category_words._KINDS.items() for kind in kinds],
+)
+def test_every_kind_is_a_word_of_its_own_category_alone(category: str, kind: str) -> None:
+    """Three things a kind has to be, each of which a plausible edit to `_KINDS` would break.
+
+    A word the category's precise vocabulary already holds -- one source of truth, never a second
+    spelling kept here. A word of no other category, in either vocabulary: a kind narrows the plan's
+    one category to its shops, and a word two categories share would narrow whichever the plan
+    happened to hold. And a kind the rule can reach: said alone, it names the category by itself,
+    so no other word of the category's vocabulary hides inside it and switches it off for good."""
+    assert kind in category_words._PRECISE[category]
+    for other in category_words.keys():
+        if other != category:
+            assert kind not in category_words._PRECISE.get(other, ()), other
+            assert kind not in category_words._GLOSS.get(other, ()), other
+    assert category_words.kinds_named_in(f"¿Cuánto gasté en {kind}?", category) == (kind,)
 
 
 def test_a_shop_is_called_by_a_kind_as_a_whole_word_folded() -> None:
@@ -589,3 +603,87 @@ def test_an_account_choice_is_never_the_sentence_that_asked() -> None:
         == "¿Cuánto gasté en el gimnasio?"
     )
     assert _the_sentence_that_asked(asked_on_a_question, question="¿De qué periodo?") is None
+
+
+async def test_a_gym_named_outside_the_evidence_is_that_gym() -> None:
+    """Probed by review: «el gimnasio Altafit», with Altafit not among the movements beside the
+    figure, found no shop by name, then found two by kind, and answered both gyms. The shop the
+    sentence names wins once the window's whole list is in hand."""
+    ledger = Ledger(NETFLIX, GYM, SECOND_GYM, evidence=1)
+
+    result = await ask("¿Cuánto gasté en el gimnasio Altafit este año?", ledger)
+
+    assert ledger.plans[-1].merchants == ("Gimnasio Altafit",)
+    assert "29,90 € en Gimnasio Altafit" in result.text
+    assert "Gimnasio Municipal" not in result.text
+
+
+class FailsOn(Ledger):
+    """Answers the category and fails the one query a test names: the window's shop list, or the
+    narrowed figure -- every read of it, so the retries a handler makes fail too."""
+
+    def __init__(self, *charges: Charge, evidence: int = 10, listing: bool, narrowing: bool):
+        super().__init__(*charges, evidence=evidence)
+        self.listing = listing
+        self.narrowing = narrowing
+
+    async def run(self, plan: FinancialPlan, **kwargs: object) -> QueryAnswer:
+        if (self.listing and plan.group_by is GroupBy.MERCHANT) or (
+            self.narrowing and plan.merchants
+        ):
+            raise BankingUnavailableError("down")
+        return await super().run(plan, **kwargs)
+
+
+async def test_more_gyms_than_one_plan_holds_is_the_category_and_says_so() -> None:
+    """Eleven shops carry «gimnasio» and a plan names at most ten. Narrowing to ten of them would be
+    the failure this exists for, so the category's figure stays -- and says why, instead of
+    reading as the answer about the gym it is not."""
+    gyms = tuple(Charge(f"Gimnasio {n}", "SUBSCRIPTIONS", 1_000) for n in range(1, 12))
+    ledger = Ledger(NETFLIX, *gyms)
+
+    result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
+
+    assert all(not plan.merchants for plan in ledger.plans)
+    note = result.text.splitlines()[-1]
+    assert "toda la categoría suscripciones" in note
+    assert "«gimnasio»" in note
+    assert "10" in note
+
+
+async def test_a_shop_list_the_bank_could_not_give_is_said() -> None:
+    ledger = FailsOn(GYM, NETFLIX, SPOTIFY, evidence=1, listing=True, narrowing=False)
+
+    result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert "54,88" in result.text
+    note = result.text.splitlines()[-1]
+    assert "toda la categoría suscripciones" in note
+    assert "no he podido" in note
+
+
+async def test_a_narrowed_figure_the_bank_could_not_give_is_said() -> None:
+    ledger = FailsOn(GYM, NETFLIX, SPOTIFY, listing=False, narrowing=True)
+
+    result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert "54,88" in result.text
+    note = result.text.splitlines()[-1]
+    assert "toda la categoría suscripciones" in note
+    assert "Gimnasio Altafit" in note
+
+
+async def test_a_plan_with_two_categories_is_answered_whole() -> None:
+    """«El gimnasio y la farmacia» is two categories in one plan, and a plan cannot hold "these
+    gyms, or else that pharmacy": narrowing the first would drop the second from the figure."""
+    ledger = Ledger(GYM, NETFLIX, Charge("Farmacia Gran Via", "HEALTH", 1_250))
+
+    result = await ask("¿Cuánto gasté en el gimnasio y la farmacia este año?", ledger)
+
+    assert [(plan.categories, plan.merchants) for plan in ledger.plans] == [
+        (("SUBSCRIPTIONS", "HEALTH"), ())
+    ]
+    assert "56,39" in result.text
+    assert "comercio" not in result.text

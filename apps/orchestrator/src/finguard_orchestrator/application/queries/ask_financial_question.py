@@ -4801,10 +4801,17 @@ class AskFinancialQuestionHandler:
                 if kinds
                 else None
             )
-            of_that_kind = merchant_words.called(kinds, in_window or ())
+            # A shop the sentence names still wins over its kind once the window's whole list is
+            # in hand. The reader above saw only the evidence, so «el gimnasio Altafit» with
+            # Altafit outside it found no shop by name and then every gym by kind.
+            by_name = merchant_words.named_in(question, in_window) if in_window else None
+            of_that_kind = () if by_name else merchant_words.called(kinds, in_window or ())
+            if by_name is not None:
+                shops = (by_name,)
+                why = f"Solo {by_name}. La consulta que había construido cubría {named} entera."
             # More shops than one plan may name is an answer it cannot give whole, and one of them
             # is the failure this exists for; the category's own figure is the honest one left.
-            if 0 < len(of_that_kind) <= MAX_MERCHANTS:
+            elif 0 < len(of_that_kind) <= MAX_MERCHANTS:
                 shops = of_that_kind
                 which, carry = (
                     ("el comercio", "lleva") if len(shops) == 1 else ("los comercios", "llevan")
@@ -4820,12 +4827,24 @@ class AskFinancialQuestionHandler:
                 # do, so it asks instead of narrowing. The next turn inherits this window and is an
                 # ordinary follow-up.
                 nearly = merchant_words.almost_named_in(question, seen)
-                # And a kind no shop is called: the category's figure is still the honest answer
-                # to the plan, but not to the question, so it says which one it is. Not when the
-                # ledger could not list the shops -- "none is called that" would be a guess -- nor
-                # over an empty answer, where there is no total to explain.
-                no_such_shop = in_window is not None and not of_that_kind and not answer.is_empty
-                if nearly or no_such_shop:
+                # And a kind the figure could not be narrowed to: the category's figure is still
+                # the honest answer to the plan, but not to the question, so it says which one it
+                # is and why. Silence here was the reported defect itself -- the whole category,
+                # read as the gym. Not over an empty answer, where there is no total to explain.
+                whole_because = None
+                if kinds and not answer.is_empty:
+                    if in_window is None:
+                        whole_because = (
+                            f"no he podido comprobar qué comercios llevan {said} en el nombre"
+                        )
+                    elif of_that_kind:
+                        whole_because = (
+                            f"más de {MAX_MERCHANTS} comercios llevan {said} en el nombre,"
+                            " demasiados para una sola consulta"
+                        )
+                    else:
+                        whole_because = f"en este periodo ningún comercio lleva {said} en el nombre"
+                if nearly or whole_because:
                     # The figure that was planned is still the honest answer to the plan, so it is
                     # given rather than thrown away, and the question goes underneath it. The plan
                     # stays as the last answered one, which is what makes the reply — "Spotify" —
@@ -4850,8 +4869,8 @@ class AskFinancialQuestionHandler:
                     return replace(
                         answered,
                         text=(
-                            f"{answered.text}\n(Incluye toda la categoría {named}: en este periodo"
-                            f" ningún comercio lleva {said} en el nombre.)"
+                            f"{answered.text}\n"
+                            f"(Incluye toda la categoría {named}: {whole_because}.)"
                         ),
                     )
             if shops:
@@ -4869,6 +4888,24 @@ class AskFinancialQuestionHandler:
                 again = await self._answer(query, tighter, narrowed=True)
                 if again.outcome == PlanningOutcome.PLANNED.value and again.movement_count:
                     return replace(again, text=f"{again.text}\n({why})")
+                if again.outcome != PlanningOutcome.PLANNED.value:
+                    # The narrower figure could not be read. The category's is in hand and true,
+                    # so it is given -- as what it is, and not as the answer about the shops.
+                    answered = _answered(
+                        remembered,
+                        answer,
+                        query.conversation,
+                        query.sentence,
+                        reporting_timezone=query.reporting_timezone,
+                        ran_as=scoped,
+                    )
+                    return replace(
+                        answered,
+                        text=(
+                            f"{answered.text}\n(Incluye toda la categoría {named}: no he podido"
+                            f" consultar solo {answer_writer.listed(shops)}.)"
+                        ),
+                    )
 
         if answer.is_empty and plan.merchants and not narrowed:
             did_you_mean = await self._shops_like(plan, query)
