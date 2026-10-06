@@ -1679,11 +1679,11 @@ class AskFinancialQuestionHandler:
             said = explicit_facts.read(query.sentence, today=query.today)
             rescued = _from_what_the_sentence_said(planned, query)
             if rescued is None:
-                yield _decline(planned, was, said)
+                yield _decline(await self._waiting_for_the_window(planned, query), was, said)
                 return
             if not rescued.is_answerable:
                 # A question rather than a plan: the sentence named a category and no period.
-                yield _decline(rescued, was, said)
+                yield _decline(await self._waiting_for_the_window(rescued, query), was, said)
                 return
             planned = rescued
 
@@ -1840,9 +1840,18 @@ class AskFinancialQuestionHandler:
         `_ON_THE_SENTENCE_ITSELF` (a fresh plan the sentence alone produced) or
         `_ON_A_NAMED_SUBJECT`. Stamped onto the result here, once, rather than in each of the
         eleven producer methods those two runs dispatch to.
+
+        And the kind of thing the sentence named inside a category (`explicit_facts.of_its_kind`),
+        here once rather than in each reader: a reader builds its plan or its draft from the
+        sentence, and this is the one place every one of them passes before it is answered or kept
+        for a reply. A reader that already applied it through `explicit_facts.enforce` gets the
+        same plan back.
         """
         continuation = claimed.reader in _CONTINUATION_READERS
-        async for step in _ANSWERING[claimed.reader](self, query, was, claimed.plan):
+        plan = claimed.plan
+        if isinstance(plan, FinancialPlan | FinancialPlanDraft):
+            plan = explicit_facts.of_its_kind(plan, seam._stated(query))
+        async for step in _ANSWERING[claimed.reader](self, query, was, plan):
             if continuation and isinstance(step, AskFinancialQuestionResult):
                 step = replace(step, plan_continues_conversation=True)
             yield step
@@ -2624,7 +2633,11 @@ class AskFinancialQuestionHandler:
                 return None
             if plan_verifier.disagreement(query.sentence, finished, self._policy) is not None:
                 return None
-            return finished
+            # The reply named the category, so the reply is the sentence that says which kind of
+            # it: «el gimnasio» as the answer to «¿En qué categoría?».
+            return explicit_facts.of_its_kind(
+                finished, explicit_facts.read(query.sentence, today=query.today)
+            )
         if not draft.needs_a_window:
             return None
 
@@ -2646,7 +2659,12 @@ class AskFinancialQuestionHandler:
 
         if plan_verifier.disagreement(query.sentence, finished, self._policy) is not None:
             return None
-        return finished
+        # The draft already carries the kind its own sentence named, decided when it was built.
+        # A reply can still name one -- «el gimnasio este año» after «¿cuánto gasté en
+        # suscripciones?» -- and then the reply is the sentence that says it.
+        return explicit_facts.of_its_kind(
+            finished, explicit_facts.read(query.sentence, today=query.today)
+        )
 
     def _pending_continuation(self, query: AskFinancialQuestionQuery) -> ContinuationBase | None:
         """The validated fields behind an active clarification, completed as far as this turn can.
@@ -4534,9 +4552,10 @@ class AskFinancialQuestionHandler:
         could not say, which is not the same answer as no shops at all.
 
         The same plan with the merchant filter dropped and grouped by merchant answers "which shops
-        are in this window". Two callers: a misspelt shop wants candidates, and a kind of thing
-        named inside its category («el gimnasio») wants every shop of that kind, which the handful
-        of movements beside a figure cannot promise to hold.
+        are in this window". Its callers: a misspelt shop wants candidates, a plan held for a reply
+        wants the shop its question named (`_the_shop_it_names`), and a kind of thing named inside
+        its category («el gimnasio») wants every shop of that kind, which the handful of movements
+        beside a figure cannot promise to hold.
         """
         try:
             wider = await self._queries.run(
@@ -4559,6 +4578,84 @@ class AskFinancialQuestionHandler:
         except (BankingUnavailableError, QueryRejectedError):
             return None
         return tuple(group.key for group in wider.groups)
+
+    async def _the_shop_it_names[P: FinancialPlan | FinancialPlanDraft](
+        self, plan: P, query: AskFinancialQuestionQuery
+    ) -> P:
+        """A plan about to wait for a reply, narrowed to the shop its question named.
+
+        «¿Cuánto llevo gastado en Spotify?» planned as the category Spotify belongs to is the demo's
+        reported defect, and the turn that runs the plan repairs it from the answer it gets: the
+        movements carry their shops, and the sentence names one of them (`_answer`). A plan that
+        waits -- for «¿De qué periodo?», for «¿En qué cuenta?» -- runs on the reply's turn, and
+        «este año» names no shop. So the shop is looked for here, once, on the turn that asks, and
+        the plan that waits is the shop's: the reply completes it as it completes any plan, and
+        no turn has to find the sentence that asked.
+
+        The list is the holder's own shops in the category -- in the plan's window, or over the
+        last year for a draft that has none yet, across every account the holder has, because it
+        only decides which name the sentence said. A name the sentence typed and the ledger holds
+        is the same evidence the turn that runs the plan reads; nothing is guessed.
+
+        One query, and only for a plan of one category with no shop of its own, from a sentence
+        with a word a shop's name could carry. Unchanged when the ledger cannot say, or names no
+        shop the sentence said: then it waits as the category it was, which is what it was before.
+        """
+        if (
+            len(plan.categories) != 1
+            or plan.merchants
+            or plan.merchant_terms
+            or plan.excluded_merchants
+            or plan.counterparties
+            or plan.excluded_counterparties
+            or plan.counterparty_types
+            or plan.internal_only
+            or plan.transaction_ids
+            or not merchant_words.could_name_a_shop(query.sentence)
+        ):
+            return plan
+        listing = (
+            plan
+            if isinstance(plan, FinancialPlan)
+            else plan.with_window(RelativePeriod(Period.LAST_N_MONTHS, n=12))
+        )
+        if listing.only_account_id is None and not listing.only_account_ids:
+            listing = replace(listing, across_accounts=True)
+        shops = await self._merchants_in(listing, query)
+        shop = merchant_words.named_in(query.sentence, shops or ())
+        if shop is None:
+            return plan
+        return replace(plan, categories=(), merchants=(shop,))
+
+    async def _waiting_for_the_window(
+        self, planned: PlanningResult, query: AskFinancialQuestionQuery
+    ) -> PlanningResult:
+        """A question back about the window, with the draft it keeps narrowed to a shop it named.
+
+        Only the window: it is the question whose reply names nothing but a period. A question
+        about anything else keeps its draft as it is, and the reply that answers it is a sentence
+        of its own.
+
+        The kind first (`explicit_facts.of_its_kind`, which `_next_state` applies again to no
+        effect): «el gimnasio» is every gym and needs no list, so it never pays for one.
+
+        And last, the question asked again (`_the_kind_still_open`): a reply that answered nothing
+        gets the window asked a second time, over a draft that has lost the kind the open one
+        carried.
+        """
+        draft = planned.draft
+        if (
+            planned.outcome is not PlanningOutcome.NEEDS_CLARIFICATION
+            or draft is None
+            or planned.awaiting is not Slot.WINDOW
+            or not draft.needs_a_window
+        ):
+            return planned
+        draft = explicit_facts.of_its_kind(
+            draft, explicit_facts.read(query.sentence, today=query.today)
+        )
+        draft = await self._the_shop_it_names(draft, query)
+        return replace(planned, draft=_the_kind_still_open(draft, query))
 
     def _scope_question(
         self, required: AccountScopeRequiredError, was: Conversation
@@ -4620,6 +4717,12 @@ class AskFinancialQuestionHandler:
             scoped = await self._scoped(plan, query, clarify=True)
         except AccountScopeRequiredError as required:
             names = [candidate.display_name for candidate in required.candidates]
+            # The plan waits for the reply, whose words will name an account and no shop.
+            pending = (
+                await self._the_shop_it_names(required.plan, query)
+                if isinstance(required.plan, FinancialPlan)
+                else required.plan
+            )
             return AskFinancialQuestionResult(
                 outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
                 text="¿En qué cuenta quieres consultarlo? Puedes elegir "
@@ -4629,7 +4732,7 @@ class AskFinancialQuestionHandler:
                 suggestions=[*names, "Todas mis cuentas"],
                 conversation=query.conversation.with_active(
                     AccountScopeClarification(
-                        pending=required.plan,
+                        pending=pending,
                         candidates=required.candidates,
                         requested_count=required.count,
                         explicit_visualization=_asks_for_visualization(query.sentence),
@@ -4735,6 +4838,37 @@ class AskFinancialQuestionHandler:
                         ),
                     )
 
+        if answer.is_empty and not narrowed and _of_a_kind(plan):
+            # A kind no shop of the holder's is called -- «el gimnasio» from somebody whose gym is
+            # "McFit". The plan asked for the category's shops whose name says «gimnasio» (see
+            # `explicit_facts.of_its_kind`) and the bank found none, which is true and is not an
+            # answer: the holder asked what they spend on the gym, and «no he encontrado
+            # movimientos» reads as nothing at all. The category's figure is the honest one left,
+            # given as what it is, with one line saying why.
+            #
+            # One more query, and only here: an empty answer to a kind is the one case that pays
+            # for it. Not when the plan leaves a shop out, which `_of_a_kind` refuses: the shop left
+            # out may be the one that carries the word, and «ningún comercio lleva «gimnasio»» would
+            # then be false. `narrowed` stops the category's own answer being narrowed again, and
+            # its figure, not the empty one, is what this turn remembers.
+            whole = await self._answer(
+                query,
+                replace(plan, merchant_terms=()),
+                widened=True,
+                narrowed=True,
+                movements=movements,
+            )
+            if whole.outcome == PlanningOutcome.PLANNED.value and whole.movement_count:
+                named = category_words.name_of(plan.categories[0])
+                said = " o ".join(f"«{term}»" for term in plan.merchant_terms)
+                return replace(
+                    whole,
+                    text=(
+                        f"{whole.text}\n(Incluye toda la categoría {named}: en este periodo"
+                        f" ningún comercio lleva {said} en el nombre.)"
+                    ),
+                )
+
         if plan.categories and not plan.merchants and not narrowed:
             # The question named a shop and the plan filtered by the category the shop belongs to.
             # Reported from the demo: "¿cuánto llevo gastado en spotify este año?" answered
@@ -4776,7 +4910,13 @@ class AskFinancialQuestionHandler:
             why = ""
             if shop is not None:
                 shops = (shop,)
-                why = f"Solo {shop}. La consulta que había construido cubría {named} entera."
+                why = (
+                    # Inside a kind the plan already carries, the shop is one of its own: «el
+                    # gimnasio Altafit» is the gym called Altafit, out of every gym.
+                    f"Solo {shop}, de los {answer_writer.carrying(plan.merchant_terms)}."
+                    if plan.merchant_terms
+                    else f"Solo {shop}. La consulta que había construido cubría {named} entera."
+                )
             # Named a kind of thing inside the category, not the category. Reported from a live
             # session: «¿cuánto gasté en el gimnasio este año?» answered "421,79 € en
             # suscripciones, en 23 movimientos" -- Netflix, Spotify and Steam with the gym, which
@@ -4901,6 +5041,8 @@ class AskFinancialQuestionHandler:
                     plan,
                     categories=(),
                     merchants=shops,
+                    # The shop is the whole filter now; a kind beside it would only say it twice.
+                    merchant_terms=(),
                     excluded_merchants=tuple(
                         merchant
                         for merchant in plan.excluded_merchants
@@ -4921,10 +5063,15 @@ class AskFinancialQuestionHandler:
                         reporting_timezone=query.reporting_timezone,
                         ran_as=scoped,
                     )
+                    covered = (
+                        f"Incluye todos los {answer_writer.carrying(plan.merchant_terms)}"
+                        if plan.merchant_terms
+                        else f"Incluye toda la categoría {named}"
+                    )
                     return replace(
                         answered,
                         text=(
-                            f"{answered.text}\n(Incluye toda la categoría {named}: no he podido"
+                            f"{answered.text}\n({covered}: no he podido"
                             f" consultar solo {answer_writer.listed(shops)}.)"
                         ),
                     )
@@ -5202,6 +5349,60 @@ def _distinct_movements(movements: tuple[Movement, ...]) -> tuple[Movement, ...]
             seen.add(identity)
             found.append(movement)
     return tuple(found)
+
+
+def _the_kind_still_open(
+    draft: FinancialPlanDraft, query: AskFinancialQuestionQuery
+) -> FinancialPlanDraft:
+    """A draft the window is asked for again, with the kind the question still open carried.
+
+    «¿Cuánto gasté en el gimnasio?» → «¿De qué periodo?» → «no sé, el que quieras»: the reply
+    answers nothing, and the planner asks for the period a second time with a draft of its own --
+    subscriptions, and no gym, because a merchant term is not a field the planner can write. The
+    draft it replaces is the one the question kept, and it carried the gym. So a draft about the
+    same one category, naming no shop and no kind, from a sentence that did not say that category
+    itself, is the open question asked again, and keeps its kind: the same rule `plan_merger`
+    follows for a follow-up, where a field the model did not say it changed is inherited.
+
+    Read from the state, not the log: the open clarification is the question this turn replaces.
+    The sentence is only asked whether it named the category, because «¿y en suscripciones?»
+    while the gym's window is open is every subscription, said outright. A sentence that names a
+    shop the holder pays has had its draft narrowed to it already (`_the_shop_it_names`), and one
+    that names a kind, to that kind.
+    """
+    active = query.conversation.active
+    if not isinstance(active, FinancialClarification) or active.awaiting is not Slot.WINDOW:
+        return draft
+    open_draft = active.draft
+    if (
+        not _of_a_kind(open_draft)
+        or draft.categories != open_draft.categories
+        or draft.merchants
+        or draft.merchant_terms
+        or draft.excluded_merchants
+        or set(draft.categories) & set(category_words.named_in(query.sentence))
+    ):
+        return draft
+    return replace(draft, merchant_terms=open_draft.merchant_terms)
+
+
+def _of_a_kind(plan: FinancialPlan | FinancialPlanDraft) -> bool:
+    """Whether this plan is a category narrowed to a kind of its shops, and nothing else.
+
+    Every merchant term a kind of the plan's one category (`explicit_facts.of_its_kind`), and no
+    shop named or left out. A reader's own family terms («apuest», «bet») are not a kind: nothing
+    found there is the answer, not a reason to give the whole of leisure.
+    """
+    return (
+        len(plan.categories) == 1
+        and bool(plan.merchant_terms)
+        and not plan.merchants
+        and not plan.excluded_merchants
+        and all(
+            category_words.category_of_kind(term) == plan.categories[0]
+            for term in plan.merchant_terms
+        )
+    )
 
 
 def _with_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> FinancialPlan:

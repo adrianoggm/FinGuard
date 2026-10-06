@@ -361,7 +361,7 @@ def cards(wallet: Wallet) -> str:
 _KINDS: Final[dict[str, str]] = {"DEBIT": "débito", "CREDIT": "crédito", "PREPAID": "prepago"}
 
 
-def filter_of(plan: FinancialPlan | TopMovements) -> str:
+def filter_of(plan: FinancialPlan | TopMovements, shops: tuple[str, ...] = ()) -> str:
     """What the figure is a figure *of*, in words, or "" when the question named no filter.
 
     Two answers in a row that differ only in a number nobody can attribute is what made the
@@ -382,6 +382,9 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     supermarket ranking produced ", sin alquiler" above three identical rows. What the plan is
     still carrying is said by `inert_exclusion_note` instead, as the truth about the figure rather
     than as a filter on it.
+
+    `shops` are the shops a merchant-term figure turned out to be about (`_shops_shown`), named in
+    place of the term when the answer can name every one of them.
     """
     transaction_types = getattr(plan, "transaction_types", ())
     direct_debits_only = transaction_types == (TransactionType.DIRECT_DEBIT,)
@@ -392,7 +395,7 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     elif plan.merchants:
         included = f" en {listed(plan.merchants)}"
     elif isinstance(plan, FinancialPlan) and plan.merchant_terms:
-        included = f" en comercios cuyo nombre contiene {listed(plan.merchant_terms)}"
+        included = f" en {listed(shops)}" if shops else f" en {carrying(plan.merchant_terms)}"
     elif plan.categories:
         included = f" en {listed(tuple(category_words.name_of(c) for c in plan.categories))}"
     elif direct_debits_only:
@@ -469,6 +472,40 @@ def _inert_note(plan: FinancialPlan | TopMovements) -> str:
     """
     note = inert_exclusion_note(plan)
     return f"\n{note}" if note else ""
+
+
+def carrying(terms: tuple[str, ...]) -> str:
+    """The shops a merchant term stands for, as a person says it: «comercios con «gimnasio» en el
+    nombre».
+
+    "Comercios cuyo nombre contiene gimnasio" was the line, and it read as a query nobody had typed.
+    Joined with «o»: the terms are alternatives, and a shop that carries either one is counted --
+    «apuest» or «bet», not a shop that carries both.
+    """
+    said = [f"«{term}»" for term in terms]
+    joined = said[0] if len(said) == 1 else f"{', '.join(said[:-1])} o {said[-1]}"
+    return f"comercios con {joined} en el nombre"
+
+
+def _shops_shown(answer: QueryAnswer, plan: FinancialPlan) -> tuple[str, ...]:
+    """The shops a merchant-term answer is about, by name -- when its evidence shows all of them.
+
+    «29,90 € en Gimnasio Altafit» rather than «en comercios con «gimnasio» en el nombre»: the
+    holder asked about their gym, and the answer knows which one it is. Only when the movements
+    beside the figure are every movement behind it, though. A year of gym is twelve charges against
+    the ten the deployment sends, and naming the shops among the ten would leave out a second gym
+    that only appears in the other two -- a list that reads complete and is not.
+    """
+    if (
+        not plan.merchant_terms
+        or plan.merchants
+        or answer.movement_count == 0
+        or len(answer.movements) < answer.movement_count
+        # A movement with no shop's name is one the list cannot name, and would leave out.
+        or any(not movement.merchant_name for movement in answer.movements)
+    ):
+        return ()
+    return tuple(dict.fromkeys(movement.merchant_name or "" for movement in answer.movements))
 
 
 def listed(names: tuple[str, ...]) -> str:
@@ -779,7 +816,13 @@ def _one_line(plan: FinancialPlan | TopMovements, *, in_words: bool) -> str:
         # nothing there".
         parts.append("/".join(plan.merchants))
     if isinstance(plan, FinancialPlan) and plan.merchant_terms:
-        parts.append("comercio contiene " + "/".join(plan.merchant_terms))
+        # The identifier line keeps the words the planner and the turn interpreter were measured
+        # on; the person reads the shops the terms stand for, as the answer above says them.
+        parts.append(
+            carrying(plan.merchant_terms)
+            if in_words
+            else "comercio contiene " + "/".join(plan.merchant_terms)
+        )
     if plan.excluded_merchants:
         parts.append("sin " + "/".join(plan.excluded_merchants))
     if isinstance(plan, FinancialPlan):
@@ -871,7 +914,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     averaging_periods = plan.metric is Metric.PERIOD_AVERAGE
     accumulating = plan.metric is Metric.CUMULATIVE
     # What the figure is of. Empty for a question that named no filter, which is most of them.
-    about = filter_of(plan)
+    about = filter_of(plan, _shops_shown(answer, plan))
     # Why the figure is the same as the one above it, when a follow-up excluded something the
     # category filter was never counting. Empty for every other answer, which is most of them.
     inert_note = _inert_note(plan)
@@ -1142,7 +1185,7 @@ def when(
     every interval, never a sample or a model estimate.
     """
     window = window_of(plan)
-    about = filter_of(plan)
+    about = filter_of(plan, _shops_shown(answer, plan))
     note = _inert_note(plan)
     if answer.is_empty:
         return f"No he encontrado movimientos{about} {window}."
@@ -1194,7 +1237,7 @@ def recurring_expenses(
 ) -> str:
     """Describe only periodic patterns supported by the complete bounded movement set."""
     window = window_of(plan)
-    about = filter_of(plan)
+    about = filter_of(plan, _shops_shown(answer, plan))
     note = _inert_note(plan)
     if answer.is_empty:
         return f"No he encontrado movimientos{about} {window} con los que buscar recurrencias."

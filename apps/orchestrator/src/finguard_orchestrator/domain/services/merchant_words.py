@@ -254,7 +254,7 @@ def almost_named_in(sentence: str, merchants: tuple[str, ...], limit: int = 3) -
     go looking for a shop whose name is one letter from a word the holder used to mean the
     category, and that guess is worse than the silence it replaces.
     """
-    said = _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
+    said = _shop_words(sentence)
     if not said or not merchants:
         return ()
     found: dict[str, None] = {}
@@ -299,13 +299,28 @@ def named_in(sentence: str, merchants: tuple[str, ...]) -> str | None:
     """
     if not merchants:
         return None
-    said = _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
+    said = _shop_words(sentence)
     if not said:
         return None
     for merchant in merchants:
         if _tokens(merchant) & said:
             return merchant
     return None
+
+
+def could_name_a_shop(sentence: str) -> bool:
+    """Whether the sentence says any word `named_in` could match a shop's name by.
+
+    For a caller about to spend a query on the list of shops to match against: «¿suscripciones?»
+    says nothing but a category, and no list could find a shop in it.
+    """
+    return bool(_shop_words(sentence))
+
+
+def _shop_words(sentence: str) -> set[str]:
+    """The sentence's words a shop's name could carry: long enough, not a word that is never a
+    name, and not a word the category vocabulary already explains."""
+    return _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
 
 
 def called(words: tuple[str, ...], merchants: tuple[str, ...]) -> tuple[str, ...]:

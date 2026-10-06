@@ -188,9 +188,9 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
 # another, and that is the distinction this marks: «gimnasio» is a subscription and not every
 # subscription is a gym, while «supermercado» is every shop GROCERIES holds. Reported: «¿cuánto
 # gasté en el gimnasio este año?» answered every subscription -- Netflix, Spotify and Steam with
-# the gym -- because nothing could tell those two apart. `ask_financial_question._answer` reads
-# this once the bank has answered, and narrows a category named by a kind to the holder's shops
-# that carry the word.
+# the gym -- because nothing could tell those two apart. `explicit_facts.of_its_kind` reads this
+# when the question's plan is built, and the plan carries the kind as a merchant term: the
+# category stays, and the bank keeps only the shops whose name contains the word.
 #
 # A mark on the words above and not a vocabulary of its own: a kind is a precise word of the same
 # category, so the gate and this rule cannot disagree about how it is spelled. A precise word that
@@ -210,6 +210,13 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
 # ever reach its note, and "ningún comercio lleva «dentista» en el nombre" above the dental clinic
 # in the evidence reads as wrong even when it is literally true. They answer the category, with no
 # note, as they did before this rule.
+#
+# What "carries the word" means is the bank's, not ours: a merchant term is a case-insensitive
+# substring of the shop's name (`query_compiler`, `strpos(lower(...))`), so «cine» is "Cines Yelmo"
+# and "Cinesa" both, and «taxi» is "Taxistas Unidos" too. Those are cinemas and taxis, and the
+# category beside the term keeps a shop of any other kind out. It is not accent-folded: the term
+# goes as spelled here, «óptica», which a shop that writes "Optica" without the accent does not
+# contain.
 _KINDS: Final[dict[str, tuple[str, ...]]] = {
     "SUBSCRIPTIONS": ("gimnasio",),
     "HEALTH": ("farmacia", "óptica"),
@@ -340,9 +347,10 @@ def words_named_in(sentence: str) -> frozenset[str]:
     drops the word -- but no longer so that a question about the gym stays about every subscription.
     That was the old decision, and its reason was only ever not to answer about one gym when the
     holder may pay two: the shop reader returns the first shop that matches. A word that names a
-    kind inside its category (`kinds_named_in`) now narrows the answer to *every* shop of the
-    holder's that carries it, which is a rule of its own after the bank answers, and a category
-    called by its own name -- «suscripciones», «supermercado» -- still narrows nothing.
+    kind inside its category (`kinds_named_in`) now narrows the plan to *every* shop of the
+    holder's that carries it, as a merchant term the plan takes when it is built
+    (`explicit_facts.of_its_kind`), and a category called by its own name -- «suscripciones»,
+    «supermercado» -- still narrows nothing.
 
     Empty for a sentence that names no category, which is the common case and the cheap one.
     """
@@ -402,16 +410,14 @@ def kinds_named_in(sentence: str, category: str) -> tuple[str, ...]:
 
     Read the way `_hits` reads a category -- folded, whole words, one wrong letter in a long one --
     so a sentence the gate recognised as this category is the sentence this recognises.
+
+    The kinds are looked for first and the category's other words only when one was said: every
+    sentence a plan is built from passes through here (`explicit_facts.read`), and almost none of
+    them says a kind.
     """
     kinds = _KINDS.get(category, ())
     haystack = spanish.folded(sentence)
-    folded_kinds = {spanish.folded(kind) for kind in kinds}
-    others = {*_PRECISE.get(category, ()), *_GLOSS.get(category, ())}
-    if not kinds or any(
-        _said_at(word, haystack) for word in others if spanish.folded(word) not in folded_kinds
-    ):
-        return ()
-    return tuple(
+    said = tuple(
         kind
         for kind in kinds
         if any(
@@ -419,6 +425,36 @@ def kinds_named_in(sentence: str, category: str) -> tuple[str, ...]:
             and not _SET_APART.search(haystack[max(0, start - 100) : start])
             for start in _said_at(kind, haystack)
         )
+    )
+    if not said:
+        return ()
+    folded_kinds = {spanish.folded(kind) for kind in kinds}
+    others = {*_PRECISE.get(category, ()), *_GLOSS.get(category, ())}
+    if any(_said_at(word, haystack) for word in others if spanish.folded(word) not in folded_kinds):
+        return ()
+    return said
+
+
+def categories_with_kinds() -> tuple[str, ...]:
+    """The categories a kind can be named inside of -- the ones `kinds_named_in` can answer for."""
+    return tuple(_KINDS)
+
+
+def category_of_kind(term: str) -> str | None:
+    """The category `term` is a kind of, or None when it is not one of the kinds.
+
+    How a merchant term the kinds rule put on a plan is told from one a reader put there for a
+    family of its own («apuest», «bet»): only the first belongs to a category, and only it may be
+    dropped when the plan moves to another category or widened back to that category's figure.
+    """
+    folded = spanish.folded(term)
+    return next(
+        (
+            category
+            for category, kinds in _KINDS.items()
+            if any(spanish.folded(kind) == folded for kind in kinds)
+        ),
+        None,
     )
 
 

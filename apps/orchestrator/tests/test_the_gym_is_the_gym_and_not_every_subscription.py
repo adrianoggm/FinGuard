@@ -11,15 +11,16 @@ planner, the gate and the shop reader all agreed the sentence was about the cate
 one of them was right about the category and wrong about the question. The holder named one kind
 of thing inside it.
 
-The rule this pins (option «B1», chosen by the user) runs after the bank answers, so nothing a
-model reads changed: when the category was named by a *member* word and by nothing else — a word of
-its vocabulary that is not the category's own name, and that a shop of that kind carries in its
-name — and that word is in the name of the holder's shops inside the category in the window
-answered, as a whole word or its Spanish plural («cine» is "Cines Yelmo"), the answer is narrowed
-to **every** one of those shops and says so. When it cannot be — no shop called that, more of them
-than a plan holds, a bank that could not say — the category's figure stays, with one line saying
-which figure it is and why. «Suscripciones» and «supermercado» are the categories' own names and
-never narrow anything.
+The rule this pins (option «B1», chosen by the user) is decided once, from the sentence that asks,
+when its plan is built (`explicit_facts.of_its_kind`), and nothing a model reads changed: when the
+category was named by a *member* word and by nothing else — a word of its vocabulary that is not
+the category's own name, and that a shop of that kind carries in its name — the plan keeps the
+category and carries the word as a merchant term, which the bank matches as a substring of the
+shop's name, case folded («cine» is "Cines Yelmo" and "Cinesa"). So the answer is **every** shop of
+the holder's in the category that carries the word, and the plan carries that through every path a
+plan travels: the window question, the account question, a retry, a follow-up. When no shop carries
+it, the category's figure is given, with one line saying which figure it is and why. «Suscripciones»
+and «supermercado» are the categories' own names and never narrow anything.
 """
 
 import uuid
@@ -29,14 +30,14 @@ from datetime import date, datetime
 import pytest
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Period, PlanningOutcome
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.conversation import IDLE, Conversation, Slot, Turn
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
-from finguard_orchestrator.domain.services import category_words, merchant_words
+from finguard_orchestrator.domain.services import category_words, explicit_facts, merchant_words
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
@@ -64,7 +65,7 @@ class Ledger:
     """The window's charges, answered the way banking answers a plan over them.
 
     `evidence` is how many movements come back beside the figure. The deployment sends ten, and a
-    year of subscriptions is dozens, so a shop the rule must find may not be among them — the
+    year of subscriptions is dozens, so a shop the answer names may not be among them — the
     complete list is a breakdown by merchant, which is what this answers when asked for one.
     """
 
@@ -80,6 +81,11 @@ class Ledger:
             for charge in self.charges
             if (not plan.categories or charge.category in plan.categories)
             and (not plan.merchants or charge.merchant in plan.merchants)
+            # As the bank matches a term (`query_compiler`): a substring of the lowered name.
+            and (
+                not plan.merchant_terms
+                or any(term.lower() in charge.merchant.lower() for term in plan.merchant_terms)
+            )
             and charge.merchant not in plan.excluded_merchants
         ]
         groups = (
@@ -111,11 +117,13 @@ class PlansTheCategory:
 
     Read from the vocabulary rather than written per test, so the plan each sentence gets is the
     one the gate would accept for it -- the case this rule exists for is a plan nobody can fault.
-    `without` is a shop the plan leaves out, for a sentence that says so.
+    `without` is a shop the plan leaves out, for a sentence that says so, and `shops` the shops it
+    names, copied as written -- what the planning prompt asks of the model for «el gimnasio McFit».
     """
 
-    def __init__(self, without: tuple[str, ...] = ()) -> None:
+    def __init__(self, without: tuple[str, ...] = (), shops: tuple[str, ...] = ()) -> None:
         self.without = without
+        self.shops = shops
 
     async def plan(self, sentence: str, **_: object) -> PlanningResult:
         return PlanningResult.planned(
@@ -123,6 +131,7 @@ class PlansTheCategory:
                 direction=Direction.EXPENSE,
                 period=RelativePeriod(Period.THIS_YEAR),
                 categories=category_words.precisely_named_in(sentence),
+                merchants=self.shops,
                 excluded_merchants=self.without,
             )
         )
@@ -354,6 +363,97 @@ def test_a_shop_is_called_by_a_kind_in_its_plural() -> None:
     )
 
 
+# --- the plan: a kind is a merchant term beside its category -----------------------------------
+
+THIS_YEAR = RelativePeriod(Period.THIS_YEAR)
+
+
+def of_its_kind(sentence: str, **fields: object) -> FinancialPlan:
+    """A plan with these fields, as `explicit_facts.of_its_kind` leaves it after `sentence`."""
+    plan = FinancialPlan(direction=Direction.EXPENSE, period=THIS_YEAR, **fields)  # type: ignore[arg-type]
+    return explicit_facts.of_its_kind(plan, explicit_facts.read(sentence, today=TODAY))
+
+
+def test_the_gym_is_a_term_beside_the_category() -> None:
+    plan = of_its_kind("¿Cuánto gasté en el gimnasio?", categories=("SUBSCRIPTIONS",))
+
+    assert (plan.categories, plan.merchants, plan.merchant_terms) == (
+        ("SUBSCRIPTIONS",),
+        (),
+        ("gimnasio",),
+    )
+
+
+def test_a_half_read_plan_carries_it_too() -> None:
+    """The draft a window question keeps is the plan the reply completes, so the kind has to be on
+    it before the question is asked -- the reply «este año» names none."""
+    draft = explicit_facts.enforce(
+        FinancialPlanDraft(direction=Direction.EXPENSE, categories=("SUBSCRIPTIONS",)),
+        explicit_facts.read("¿Cuánto gasté en el gimnasio?", today=TODAY),
+    )
+
+    assert draft.merchant_terms == ("gimnasio",)
+    assert draft.with_window(THIS_YEAR).merchant_terms == ("gimnasio",)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        # A shop named exactly wins, and a shop left out is the holder's to account for.
+        {"merchants": ("McFit",)},
+        {"excluded_merchants": ("Gimnasio Altafit",)},
+        # A plan cannot hold "these gyms, or else that pharmacy".
+        {"categories": ("SUBSCRIPTIONS", "HEALTH")},
+        # A family of the reader's own is not this rule's to replace.
+        {"merchant_terms": ("apuest", "bet")},
+        # Never a payment to a person, nor a movement picked by pronoun.
+        {"counterparties": ("Marta",)},
+        {"transaction_ids": (uuid.UUID(int=7),)},
+    ],
+)
+def test_a_plan_the_kind_may_not_narrow_is_left_alone(fields: dict[str, object]) -> None:
+    """The sentence names the gym every time; what refuses the kind is the plan."""
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=THIS_YEAR,
+        **{"categories": ("SUBSCRIPTIONS",), **fields},  # type: ignore[arg-type]
+    )
+    said = explicit_facts.read("¿Cuánto gasté en el gimnasio?", today=TODAY)
+
+    assert said.kinds_of("SUBSCRIPTIONS") == ("gimnasio",)
+    assert explicit_facts.of_its_kind(plan, said) == plan
+
+
+def test_a_kind_leaves_with_its_category() -> None:
+    """«¿Y en salud?» after the gym: a merge that changes the category keeps the terms, because to
+    the model they are one field it did not say it changed. Health shops called «gimnasio» are no
+    question anybody asked, and the note under an empty answer would say so about health."""
+    plan = of_its_kind("¿y en salud?", categories=("HEALTH",), merchant_terms=("gimnasio",))
+
+    assert plan.merchant_terms == ()
+
+
+def test_a_kind_of_the_new_category_replaces_the_old_one() -> None:
+    assert of_its_kind(
+        "¿y en la farmacia?", categories=("HEALTH",), merchant_terms=("gimnasio",)
+    ).merchant_terms == ("farmacia",)
+    assert of_its_kind(
+        "¿y en la óptica?", categories=("HEALTH",), merchant_terms=("farmacia",)
+    ).merchant_terms == ("óptica",)
+
+
+def test_a_kind_stays_while_its_category_does() -> None:
+    """The follow-up that names no kind keeps the one the plan carries, and a plan the holder
+    widened past every category («buscar sin categoría») keeps it as well -- that is the gyms in
+    any category, which is what the button says."""
+    assert of_its_kind(
+        "¿y el año pasado?", categories=("SUBSCRIPTIONS",), merchant_terms=("gimnasio",)
+    ).merchant_terms == ("gimnasio",)
+    assert of_its_kind("¿y el año pasado?", merchant_terms=("gimnasio",)).merchant_terms == (
+        "gimnasio",
+    )
+
+
 # --- and end to end ---------------------------------------------------------------------------
 
 
@@ -363,13 +463,17 @@ async def test_the_gym_is_answered_as_the_gym() -> None:
     result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
 
     assert result.outcome == PlanningOutcome.PLANNED.value
-    assert ledger.plans[-1].merchants == ("Gimnasio Altafit",)
-    assert ledger.plans[-1].categories == ()
+    # One query, and it is the gym's: the category stays and the kind narrows it.
+    assert [(plan.categories, plan.merchant_terms) for plan in ledger.plans] == [
+        (("SUBSCRIPTIONS",), ("gimnasio",))
+    ]
     assert "29,90 € en Gimnasio Altafit" in result.text
     assert "54,88" not in result.text, "the whole category is the reported defect"
-    # «Ver la consulta» is the query that produced the figure, not the one the plan started as.
-    assert "Gimnasio Altafit" in result.plan_in_words
-    assert "suscripciones" not in result.plan_in_words
+    # «Ver la consulta» is the query that produced the figure, said as a person says it; the
+    # identifier line the planner reads keeps its own words.
+    assert result.plan_in_words.endswith("suscripciones, comercios con «gimnasio» en el nombre")
+    assert result.plan is not None
+    assert result.plan.endswith("subscriptions, comercio contiene gimnasio")
 
 
 async def test_the_cinema_is_the_cinema_the_ledger_calls_cines() -> None:
@@ -382,24 +486,49 @@ async def test_the_cinema_is_the_cinema_the_ledger_calls_cines() -> None:
     result = await ask("¿Cuánto gasté en el cine este año?", ledger)
 
     assert result.outcome == PlanningOutcome.PLANNED.value
-    assert ledger.plans[-1].merchants == ("Cines Yelmo",)
-    assert ledger.plans[-1].categories == ()
+    assert ledger.plans[-1].merchant_terms == ("cine",)
+    assert ledger.plans[-1].categories == ("LEISURE",)
     assert "18,50 € en Cines Yelmo" in result.text
     assert "ningún comercio" not in result.text
 
 
+async def test_a_shop_carries_the_kind_as_the_bank_reads_a_term() -> None:
+    """A term is a substring of the shop's name, case folded, and that is the bank's rule rather
+    than a plural rule of ours: «cine» is "Cinesa" as well as "Cines Yelmo". Both are cinemas, and
+    the category beside the term keeps a shop of any other kind out."""
+    ledger = Ledger(
+        Charge("Cines Yelmo", "LEISURE", 1_850),
+        Charge("Cinesa", "LEISURE", 900),
+        Charge("Fnac", "LEISURE", 3_499),
+    )
+
+    result = await ask("¿Cuánto gasté en el cine este año?", ledger)
+
+    assert "27,50 € en Cines Yelmo y Cinesa" in result.text
+    assert "Fnac" not in result.text
+
+
 async def test_two_gyms_are_both_gyms() -> None:
-    """Every shop the word names, never one of them -- and found in the window, not only in the
-    handful of movements that came back as evidence: here that handful holds no gym at all."""
-    ledger = Ledger(NETFLIX, GYM, SECOND_GYM, evidence=1)
+    """Every shop the word names, never one of them: the bank adds up every gym of the window, so
+    there is no list of them to get right first."""
+    ledger = Ledger(NETFLIX, GYM, SECOND_GYM)
 
     result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
 
     assert result.outcome == PlanningOutcome.PLANNED.value
-    assert set(ledger.plans[-1].merchants) == {"Gimnasio Altafit", "Gimnasio Municipal"}
-    assert "47,90" in result.text
-    assert "Gimnasio Altafit" in result.text
-    assert "Gimnasio Municipal" in result.text
+    assert [plan.merchant_terms for plan in ledger.plans] == [("gimnasio",)]
+    assert "47,90 € en Gimnasio Altafit y Gimnasio Municipal" in result.text
+
+
+async def test_gyms_the_evidence_cannot_all_show_are_said_by_their_kind() -> None:
+    """The answer names the shops only when the movements beside the figure are all of them. Here
+    one of two came back, and naming it would read as the whole list."""
+    ledger = Ledger(NETFLIX, GYM, SECOND_GYM, evidence=1)
+
+    result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
+
+    assert "47,90 € en comercios con «gimnasio» en el nombre" in result.text
+    assert "Gimnasio Altafit" not in result.text.splitlines()[0]
 
 
 async def test_no_gym_is_the_category_and_says_so() -> None:
@@ -408,11 +537,32 @@ async def test_no_gym_is_the_category_and_says_so() -> None:
     result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
 
     assert result.outcome == PlanningOutcome.PLANNED.value
-    assert [plan.merchants for plan in ledger.plans] == [()]
-    assert "24,98" in result.text
+    # The kind, which found nothing, and then the category -- the one extra query this costs.
+    assert [plan.merchant_terms for plan in ledger.plans] == [("gimnasio",), ()]
+    assert "24,98 € en suscripciones" in result.text
     note = result.text.splitlines()[-1]
-    assert "toda la categoría suscripciones" in note
-    assert "«gimnasio»" in note
+    assert note == (
+        "(Incluye toda la categoría suscripciones: en este periodo ningún comercio lleva"
+        " «gimnasio» en el nombre.)"
+    )
+    # «Ver la consulta» is the query that produced the figure, and the turn remembers it.
+    assert result.plan_in_words.endswith("gastos, suscripciones")
+    remembered = result.conversation.last_plan
+    assert isinstance(remembered, FinancialPlan)
+    assert (remembered.categories, remembered.merchant_terms) == (("SUBSCRIPTIONS",), ())
+
+
+async def test_no_gym_in_an_empty_category_is_nothing_found() -> None:
+    """With nothing in the category either, there is no figure for the note to explain: the answer
+    is the kind's own «no he encontrado», which is true."""
+    ledger = Ledger(Charge("Farmacia Gran Via", "HEALTH", 1_250))
+
+    result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
+
+    assert result.text.startswith(
+        "No he encontrado movimientos en comercios con «gimnasio» en el nombre"
+    )
+    assert "Incluye" not in result.text
 
 
 async def test_the_dentist_is_the_health_category_as_before() -> None:
@@ -488,25 +638,25 @@ async def test_an_own_name_inside_a_shop_name_narrows_nothing() -> None:
 
 
 async def test_a_follow_up_keeps_the_gym() -> None:
-    """The narrowed plan is the one remembered, as for any question about a shop, so «¿y el año
-    pasado?» is still about the gym rather than about every subscription last year."""
+    """The kind is on the plan, and the plan is what a follow-up inherits, so «¿y el año pasado?»
+    is still about the gym rather than about every subscription last year."""
     ledger = Ledger(GYM, NETFLIX, SPOTIFY)
     first = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
 
     await ask("¿y el año pasado?", ledger, first.conversation)
 
     follow_up = ledger.plans[-1]
-    assert follow_up.merchants == ("Gimnasio Altafit",)
-    assert follow_up.categories == ()
+    assert follow_up.merchant_terms == ("gimnasio",)
+    assert follow_up.categories == ("SUBSCRIPTIONS",)
     assert follow_up.date_range is not None
     assert follow_up.date_range.start.year == 2025
 
 
 async def test_the_gym_survives_the_account_question() -> None:
     """The live session's own route: «¿En qué cuenta…?» in between, and «Todas mis cuentas» as the
-    reply. The pending plan runs on the reply's turn, whose sentence names no gym at all -- the
-    question that did is the turn before it, in the log -- and the answer came back as every
-    subscription the holder pays."""
+    reply. The pending plan runs on the reply's turn, whose sentence names no gym at all, and the
+    answer came back as every subscription the holder pays. The plan the question keeps is the
+    gym's, so the reply's words do not have to be."""
     ledger = Ledger(GYM, NETFLIX, SPOTIFY)
     asked = await ask("¿Cuánto gasté en el gimnasio este año?", ledger, directory=TwoAccounts())
     assert asked.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
@@ -515,29 +665,32 @@ async def test_the_gym_survives_the_account_question() -> None:
     answered = await ask("Todas mis cuentas", ledger, asked.conversation, TwoAccounts())
 
     assert answered.outcome == PlanningOutcome.PLANNED.value
-    assert ledger.plans[-1].merchants == ("Gimnasio Altafit",)
+    assert ledger.plans[-1].merchant_terms == ("gimnasio",)
     assert ledger.plans[-1].across_accounts
     assert "29,90 € en Gimnasio Altafit" in answered.text
 
 
 async def test_a_shop_named_beside_its_category_survives_the_account_question() -> None:
-    """The same readers, the same route: the shop reader read the reply too, so «suscripciones de
-    Netflix» answered every subscription once an account had been chosen."""
+    """The same route for a shop: the shop reader read the reply too, so «suscripciones de
+    Netflix» answered every subscription once an account had been chosen. The plan the question
+    keeps is Netflix's -- looked up on the turn that asked -- and the reply answers it."""
     ledger = Ledger(GYM, NETFLIX, SPOTIFY)
     asked = await ask(
         "¿Cuánto gasté en suscripciones de Netflix este año?", ledger, directory=TwoAccounts()
     )
+    # The holder's shops in the category, listed once, on the turn that asked.
+    assert [plan.group_by for plan in ledger.plans] == [GroupBy.MERCHANT]
 
     answered = await ask("Todas mis cuentas", ledger, asked.conversation, TwoAccounts())
 
-    assert ledger.plans[-1].merchants == ("Netflix",)
-    assert "Solo Netflix" in answered.text
+    assert (ledger.plans[-1].categories, ledger.plans[-1].merchants) == ((), ("Netflix",))
+    assert "13,99 € en Netflix" in answered.text
 
 
 async def test_the_gym_survives_the_window_question() -> None:
     """Probed by review: «¿Cuánto gasté en el gimnasio?» → «¿De qué periodo?» → «este año»
-    answered every subscription. The reply completes a plan its own sentence never stated, the
-    same shape as the account question's reply, and was read the same wrong way."""
+    answered every subscription. The reply completes a plan its own sentence never stated -- the
+    draft the question kept, which carries the kind."""
     ledger = Ledger(GYM, NETFLIX, SPOTIFY)
     asked = await ask("¿Cuánto gasté en el gimnasio?", ledger, planner=AsksForTheWindow())
     assert asked.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
@@ -545,7 +698,7 @@ async def test_the_gym_survives_the_window_question() -> None:
     answered = await ask("este año", ledger, asked.conversation, planner=AsksForTheWindow())
 
     assert answered.outcome == PlanningOutcome.PLANNED.value
-    assert ledger.plans[-1].merchants == ("Gimnasio Altafit",)
+    assert ledger.plans[-1].merchant_terms == ("gimnasio",)
     assert "29,90 € en Gimnasio Altafit" in answered.text
 
 
@@ -562,12 +715,12 @@ async def test_a_category_given_as_the_reply_is_read_from_the_reply() -> None:
 
     await ask("el gimnasio", ledger, asked.conversation, planner=AsksForTheCategory())
 
-    assert ledger.plans[-1].merchants == ("Gimnasio Altafit",)
+    assert ledger.plans[-1].merchant_terms == ("gimnasio",)
 
 
 async def test_the_gym_survives_a_retry() -> None:
-    """The kept plan is the category's, and «reintenta» names nothing: the turn the bank could not
-    answer is the one that asked, and its plan line is the plan being retried."""
+    """«Reintenta» names nothing, and needs to name nothing: the plan kept for the retry is the
+    gym's."""
     ledger = Unreachable(GYM, NETFLIX, SPOTIFY, failures=2)
     failed = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
     assert failed.outcome == "BANKING_UNAVAILABLE"
@@ -575,8 +728,134 @@ async def test_the_gym_survives_a_retry() -> None:
     retried = await ask("reintenta", ledger, failed.conversation)
 
     assert retried.outcome == PlanningOutcome.PLANNED.value
-    assert ledger.plans[-1].merchants == ("Gimnasio Altafit",)
+    assert ledger.plans[-1].merchant_terms == ("gimnasio",)
     assert "29,90 € en Gimnasio Altafit" in retried.text
+
+
+# --- the plan carries it through every path a kept plan travels --------------------------------
+#
+# Each of these is a route review found the turn-log reading lost: a reply whose own words name
+# nothing, completing or resuming a plan another turn built. The kind is on that plan, so no route
+# has to find the sentence that asked.
+
+
+async def test_the_gym_survives_the_window_and_then_the_account_question() -> None:
+    """Probed by review: «¿gimnasio?» → «este año» → «¿En qué cuenta?» → «Todas mis cuentas»
+    answered every subscription. Two replies, neither naming the gym, and the account question
+    asked on the turn that completed the window."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+    asked = await ask("¿gimnasio?", ledger, directory=TwoAccounts(), planner=AsksForTheWindow())
+    which = await ask(
+        "este año", ledger, asked.conversation, TwoAccounts(), planner=AsksForTheWindow()
+    )
+    assert which.question == "¿En qué cuenta quieres consultarlo?"
+
+    answered = await ask(
+        "Todas mis cuentas", ledger, which.conversation, TwoAccounts(), planner=AsksForTheWindow()
+    )
+
+    assert answered.outcome == PlanningOutcome.PLANNED.value
+    assert [(plan.merchant_terms, plan.across_accounts) for plan in ledger.plans] == [
+        (("gimnasio",), True)
+    ]
+    assert "29,90 € en Gimnasio Altafit" in answered.text
+
+
+async def test_the_gym_survives_the_window_and_then_a_retry() -> None:
+    """Probed by review: the turn the bank could not answer was the window's reply, «este año», and
+    the retry read that turn's sentence as the question."""
+    ledger = Unreachable(GYM, NETFLIX, SPOTIFY, failures=2)
+    asked = await ask("¿Cuánto gasté en el gimnasio?", ledger, planner=AsksForTheWindow())
+    failed = await ask("este año", ledger, asked.conversation, planner=AsksForTheWindow())
+    assert failed.outcome == "BANKING_UNAVAILABLE"
+
+    retried = await ask("reintenta", ledger, failed.conversation, planner=AsksForTheWindow())
+
+    assert retried.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[-1].merchant_terms == ("gimnasio",)
+    assert "29,90 € en Gimnasio Altafit" in retried.text
+
+
+async def test_the_gym_average_survives_its_own_window_question() -> None:
+    """«¿Cuál es mi gasto medio en el gimnasio?» is built by a reader, not the planner, and asks
+    its own period question. The draft it keeps is the gym's, and so is the average."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+    asked = await ask("¿cuál es mi gasto medio en el gimnasio?", ledger)
+    assert asked.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+
+    answered = await ask("este año", ledger, asked.conversation)
+
+    assert answered.outcome == PlanningOutcome.PLANNED.value
+    assert [(plan.metric, plan.merchant_terms) for plan in ledger.plans] == [
+        (Metric.AVERAGE, ("gimnasio",))
+    ]
+    assert "medio por movimiento en Gimnasio Altafit" in answered.text
+    assert "29,90 €" in answered.text
+
+
+class CallsTheShopItsCategory(PlansTheCategory):
+    """The model's misreading the demo reported -- a shop planned as the category it belongs to --
+    made while it stops to ask for the window. Whatever the sentence, a draft of subscriptions."""
+
+    async def plan(self, sentence: str, **_: object) -> PlanningResult:
+        return PlanningResult.needs_clarification(
+            "¿De qué periodo?",
+            draft=FinancialPlanDraft(direction=Direction.EXPENSE, categories=("SUBSCRIPTIONS",)),
+        )
+
+
+@pytest.mark.parametrize(
+    ("sentence", "shop", "figure"),
+    [
+        ("¿Cuánto llevo gastado en Spotify?", "Spotify", "10,99 € en Spotify"),
+        ("¿Cuánto gasté en Altafit?", "Gimnasio Altafit", "29,90 € en Gimnasio Altafit"),
+    ],
+)
+async def test_a_shop_the_model_read_as_its_category_survives_the_window_question(
+    sentence: str, shop: str, figure: str
+) -> None:
+    """Probed by review: the category came from the model, «este año» named nothing, and the
+    answer was every subscription, 54,88 €, with no note. The shop is looked up among the holder's
+    own shops on the turn that asks, and the draft the question keeps is that shop's."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+    planner = CallsTheShopItsCategory()
+    asked = await ask(sentence, ledger, planner=planner)
+    assert asked.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+
+    answered = await ask("este año", ledger, asked.conversation, planner=planner)
+
+    assert (ledger.plans[-1].categories, ledger.plans[-1].merchants) == ((), (shop,))
+    assert figure in answered.text
+    assert "54,88" not in answered.text
+
+
+async def test_another_shop_asked_while_the_window_is_open_is_that_shop() -> None:
+    """Probed by review: «¿Cuánto gasté en el gimnasio?» → «¿y en Spotify?», the period asked
+    again → «este año» answered «Solo Gimnasio Altafit», the older question. The draft the second
+    question keeps is the second question's: Spotify's."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+    planner = CallsTheShopItsCategory()
+    gym = await ask("¿Cuánto gasté en el gimnasio?", ledger, planner=planner)
+    spotify = await ask("¿y en Spotify?", ledger, gym.conversation, planner=planner)
+    assert spotify.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+
+    answered = await ask("este año", ledger, spotify.conversation, planner=planner)
+
+    assert ledger.plans[-1].merchants == ("Spotify",)
+    assert ledger.plans[-1].merchant_terms == ()
+    assert "10,99 € en Spotify" in answered.text
+    assert "Altafit" not in answered.text
+
+
+async def test_a_question_naming_no_shop_costs_no_list() -> None:
+    """The list is read for a sentence with a word a shop could be called, and only for one: the
+    category by its own name says nothing a list could match."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+
+    asked = await ask("¿suscripciones?", ledger, planner=AsksForTheWindow())
+
+    assert asked.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert ledger.plans == []
 
 
 def test_an_account_choice_is_never_the_sentence_that_asked() -> None:
@@ -605,74 +884,76 @@ def test_an_account_choice_is_never_the_sentence_that_asked() -> None:
     assert _the_sentence_that_asked(asked_on_a_question, question="¿De qué periodo?") is None
 
 
-async def test_a_gym_named_outside_the_evidence_is_that_gym() -> None:
-    """Probed by review: «el gimnasio Altafit», with Altafit not among the movements beside the
-    figure, found no shop by name, then found two by kind, and answered both gyms. The shop the
-    sentence names wins once the window's whole list is in hand."""
+async def test_a_gym_named_by_its_own_name_is_that_gym() -> None:
+    """Probed by review: «el gimnasio Altafit» answered both gyms. The plan asks for the gyms, and
+    the shop reader then finds the one the sentence names among the gyms the answer shows -- the
+    evidence of a figure that already holds nothing but gyms."""
     ledger = Ledger(NETFLIX, GYM, SECOND_GYM, evidence=1)
 
     result = await ask("¿Cuánto gasté en el gimnasio Altafit este año?", ledger)
 
     assert ledger.plans[-1].merchants == ("Gimnasio Altafit",)
+    assert ledger.plans[-1].merchant_terms == ()
     assert "29,90 € en Gimnasio Altafit" in result.text
     assert "Gimnasio Municipal" not in result.text
+    assert result.text.splitlines()[-1] == (
+        "(Solo Gimnasio Altafit, de los comercios con «gimnasio» en el nombre.)"
+    )
 
 
-class FailsOn(Ledger):
-    """Answers the category and fails the one query a test names: the window's shop list, or the
-    narrowed figure -- every read of it, so the retries a handler makes fail too."""
+@pytest.mark.parametrize(
+    ("sentence", "shop", "charges", "figure"),
+    [
+        (
+            "¿Cuánto gasté en el gimnasio McFit este año?",
+            "McFit",
+            (GYM, NETFLIX, Charge("McFit", "SUBSCRIPTIONS", 2_500)),
+            "25,00 € en McFit",
+        ),
+        (
+            "¿Cuánto gasté en el cine Kinepolis este año?",
+            "Kinepolis",
+            (Charge("Cines Yelmo", "LEISURE", 1_850), Charge("Kinepolis", "LEISURE", 1_200)),
+            "12,00 € en Kinepolis",
+        ),
+        (
+            "¿Cuánto gasté en el taxi de Uber este año?",
+            "Uber",
+            (
+                Charge("Taxi Express", "TRANSPORT_PUBLIC", 1_500),
+                Charge("Uber", "TRANSPORT_PUBLIC", 2_200),
+            ),
+            "22,00 € en Uber",
+        ),
+    ],
+)
+async def test_a_shop_named_beside_its_kind_is_that_shop(
+    sentence: str, shop: str, charges: tuple[Charge, ...], figure: str
+) -> None:
+    """Probed by review: «el gimnasio McFit» answered Gimnasio Altafit, «el cine Kinepolis» Cines
+    Yelmo and «el taxi de Uber» every taxi -- a shop whose name lacks the kind lost to the shops
+    whose name has it. The planner copies the shop the sentence names into the plan, as its prompt
+    asks, and a plan that names a shop exactly is never narrowed to a kind: the shop wins."""
+    ledger = Ledger(*charges)
 
-    def __init__(self, *charges: Charge, evidence: int = 10, listing: bool, narrowing: bool):
-        super().__init__(*charges, evidence=evidence)
-        self.listing = listing
-        self.narrowing = narrowing
+    result = await ask(sentence, ledger, planner=PlansTheCategory(shops=(shop,)))
 
-    async def run(self, plan: FinancialPlan, **kwargs: object) -> QueryAnswer:
-        if (self.listing and plan.group_by is GroupBy.MERCHANT) or (
-            self.narrowing and plan.merchants
-        ):
-            raise BankingUnavailableError("down")
-        return await super().run(plan, **kwargs)
+    assert [(plan.merchants, plan.merchant_terms) for plan in ledger.plans] == [((shop,), ())]
+    assert figure in result.text
 
 
-async def test_more_gyms_than_one_plan_holds_is_the_category_and_says_so() -> None:
-    """Eleven shops carry «gimnasio» and a plan names at most ten. Narrowing to ten of them would be
-    the failure this exists for, so the category's figure stays -- and says why, instead of
-    reading as the answer about the gym it is not."""
+async def test_more_gyms_than_a_plan_could_name_are_all_the_gym() -> None:
+    """Eleven shops carry «gimnasio», and a plan names at most ten shops exactly -- which is why
+    this used to give the category's figure with a note. A term names none of them: the bank adds
+    up every gym it finds, however many, in the one query."""
     gyms = tuple(Charge(f"Gimnasio {n}", "SUBSCRIPTIONS", 1_000) for n in range(1, 12))
     ledger = Ledger(NETFLIX, *gyms)
 
     result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
 
-    assert all(not plan.merchants for plan in ledger.plans)
-    note = result.text.splitlines()[-1]
-    assert "toda la categoría suscripciones" in note
-    assert "«gimnasio»" in note
-    assert "10" in note
-
-
-async def test_a_shop_list_the_bank_could_not_give_is_said() -> None:
-    ledger = FailsOn(GYM, NETFLIX, SPOTIFY, evidence=1, listing=True, narrowing=False)
-
-    result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
-
-    assert result.outcome == PlanningOutcome.PLANNED.value
-    assert "54,88" in result.text
-    note = result.text.splitlines()[-1]
-    assert "toda la categoría suscripciones" in note
-    assert "no he podido" in note
-
-
-async def test_a_narrowed_figure_the_bank_could_not_give_is_said() -> None:
-    ledger = FailsOn(GYM, NETFLIX, SPOTIFY, listing=False, narrowing=True)
-
-    result = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
-
-    assert result.outcome == PlanningOutcome.PLANNED.value
-    assert "54,88" in result.text
-    note = result.text.splitlines()[-1]
-    assert "toda la categoría suscripciones" in note
-    assert "Gimnasio Altafit" in note
+    assert [plan.merchant_terms for plan in ledger.plans] == [("gimnasio",)]
+    assert "110,00 € en comercios con «gimnasio» en el nombre" in result.text
+    assert "Incluye" not in result.text
 
 
 async def test_a_plan_with_two_categories_is_answered_whole() -> None:
@@ -693,15 +974,15 @@ async def test_a_plan_with_two_categories_is_answered_whole() -> None:
 
 
 @pytest.mark.parametrize(
-    ("reply", "merchants", "figure"),
+    ("reply", "merchants", "terms", "figure"),
     [
-        ("Netflix este año", ("Netflix",), "13,99 € en Netflix"),
-        ("el gimnasio este año", ("Gimnasio Altafit",), "29,90 € en Gimnasio Altafit"),
-        ("este año, solo Netflix", ("Netflix",), "13,99 € en Netflix"),
+        ("Netflix este año", ("Netflix",), (), "13,99 € en Netflix"),
+        ("el gimnasio este año", (), ("gimnasio",), "29,90 € en Gimnasio Altafit"),
+        ("este año, solo Netflix", ("Netflix",), (), "13,99 € en Netflix"),
     ],
 )
 async def test_a_window_reply_that_names_a_shop_is_read_itself(
-    reply: str, merchants: tuple[str, ...], figure: str
+    reply: str, merchants: tuple[str, ...], terms: tuple[str, ...], figure: str
 ) -> None:
     """The asking turn's sentence is the fallback, never the replacement. «¿Cuánto gasté en
     suscripciones?» → «¿De qué periodo?» → «Netflix este año» is about Netflix, and the reply is the
@@ -712,6 +993,7 @@ async def test_a_window_reply_that_names_a_shop_is_read_itself(
     answered = await ask(reply, ledger, asked.conversation, planner=AsksForTheWindow())
 
     assert ledger.plans[-1].merchants == merchants
+    assert ledger.plans[-1].merchant_terms == terms
     assert figure in answered.text
 
 
@@ -744,7 +1026,8 @@ async def test_a_place_in_the_name_does_not_swap_the_gyms_for_another_shop() -> 
 
     result = await ask("¿Cuánto gasté en el gimnasio de Madrid este año?", ledger)
 
-    assert set(ledger.plans[-1].merchants) == {"Gimnasio Altafit", "Gimnasio Municipal"}
+    assert [(plan.merchants, plan.merchant_terms) for plan in ledger.plans] == [((), ("gimnasio",))]
+    assert "47,90" in result.text
     assert "Netflix Madrid" not in result.text
 
 
@@ -763,17 +1046,56 @@ class KeepsAsking(PlansTheCategory):
 
 
 async def test_the_question_asked_again_is_not_the_question() -> None:
-    """«No sé» asks for the period a second time and states nothing; the sentence the reply
-    completes is still the one that named the gym."""
+    """«No sé» asks for the period a second time and states nothing. The planner's second draft is
+    subscriptions -- a kind is not a field it can write -- and it replaces the draft the open
+    question kept, which carried the gym: that is the question the reply still completes."""
     ledger = Ledger(GYM, NETFLIX, SPOTIFY)
     planner = KeepsAsking()
     first = await ask("¿Cuánto gasté en el gimnasio?", ledger, planner=planner)
     again = await ask("no sé, el que quieras", ledger, first.conversation, planner=planner)
     assert again.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
 
-    await ask("este año", ledger, again.conversation, planner=planner)
+    answered = await ask("este año", ledger, again.conversation, planner=planner)
 
-    assert ledger.plans[-1].merchants == ("Gimnasio Altafit",)
+    assert ledger.plans[-1].merchant_terms == ("gimnasio",)
+    assert "29,90 € en Gimnasio Altafit" in answered.text
+
+
+async def test_the_question_asked_again_keeps_the_gym_through_the_account_question() -> None:
+    """The re-asked window, and then the account question on the reply's turn: three turns after
+    the one that named the gym, none of them naming it. Read back out of the log, the account's
+    reply found «este año» as the question it answered."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+    planner = KeepsAsking()
+    first = await ask(
+        "¿Cuánto gasté en el gimnasio?", ledger, directory=TwoAccounts(), planner=planner
+    )
+    again = await ask(
+        "no sé, el que quieras", ledger, first.conversation, TwoAccounts(), planner=planner
+    )
+    which = await ask("este año", ledger, again.conversation, TwoAccounts(), planner=planner)
+    assert which.question == "¿En qué cuenta quieres consultarlo?"
+
+    answered = await ask(
+        "Todas mis cuentas", ledger, which.conversation, TwoAccounts(), planner=planner
+    )
+
+    assert ledger.plans[-1].merchant_terms == ("gimnasio",)
+    assert "29,90 € en Gimnasio Altafit" in answered.text
+
+
+async def test_the_category_said_while_the_gym_is_open_is_the_category() -> None:
+    """«¿Y en suscripciones?» while the gym's window is open says the category outright, and the
+    draft it leaves is every subscription -- not the gym the open question carried."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+    planner = KeepsAsking()
+    first = await ask("¿Cuánto gasté en el gimnasio?", ledger, planner=planner)
+    again = await ask("¿y en suscripciones?", ledger, first.conversation, planner=planner)
+
+    answered = await ask("este año", ledger, again.conversation, planner=planner)
+
+    assert ledger.plans[-1].merchant_terms == ()
+    assert "54,88 € en suscripciones" in answered.text
 
 
 @pytest.mark.parametrize(

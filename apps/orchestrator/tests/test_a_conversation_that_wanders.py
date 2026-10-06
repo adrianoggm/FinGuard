@@ -1150,7 +1150,9 @@ def test_a_clarification_is_finished_by_a_bare_window_without_a_model() -> None:
 
     assert finished["outcome"] == PlanningOutcome.PLANNED.value
     assert len(planner.asked) == asked, "the reply to a clarification reached the model"
-    assert ledger.plans[0].period == LAST_MONTH
+    # The query the reply ran. The question may have read the holder's shops first, to keep a shop
+    # it named on the draft (`_the_shop_it_names`); that is a list, not the answer.
+    assert ledger.plans[-1].period == LAST_MONTH
 
 
 def test_a_clarification_does_not_survive_a_change_of_subject() -> None:
@@ -1185,7 +1187,7 @@ def test_the_slot_survives_an_aside_so_the_reply_after_it_still_lands() -> None:
     finished = chat.say("el mes pasado")
 
     assert finished["outcome"] == PlanningOutcome.PLANNED.value
-    assert ledger.plans[0].period == LAST_MONTH
+    assert ledger.plans[-1].period == LAST_MONTH
 
 
 def test_a_reply_that_answers_nothing_goes_to_the_model_rather_than_being_guessed_at() -> None:
