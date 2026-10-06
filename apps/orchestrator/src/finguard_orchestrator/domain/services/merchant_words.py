@@ -30,6 +30,7 @@ service just stopped being the last to see it.
 """
 
 import difflib
+import re
 from typing import Final
 
 from finguard_orchestrator.domain.services import category_words, spanish
@@ -280,8 +281,9 @@ def named_in(sentence: str, merchants: tuple[str, ...]) -> str | None:
     come back first. Both are the failure this exists to stop, pointing the other way.
 
     A word the category vocabulary already explains is never a merchant here, however well it
-    matches. "Gimnasio Altafit" is a merchant and "gimnasio" is how somebody says SUBSCRIPTIONS,
-    so a question about the gym is about the category and this must not narrow it to one shop.
+    matches. "Gimnasio Altafit" is a merchant and "gimnasio" is a kind of subscription, and this
+    returns one shop -- the first that matches -- where the holder may pay two gyms. The gym is
+    `called` below instead, which answers with every shop the word names.
 
     **Those words are dropped, not the sentence.** Until 2026-09-14 a sentence that named any
     category at all was refused here outright, which is a different and much wider rule: it also
@@ -304,3 +306,25 @@ def named_in(sentence: str, merchants: tuple[str, ...]) -> str | None:
         if _tokens(merchant) & said:
             return merchant
     return None
+
+
+def called(words: tuple[str, ...], merchants: tuple[str, ...]) -> tuple[str, ...]:
+    """Every shop whose name carries one of these words, in the order the ledger gave them.
+
+    For a kind of thing a category holds (`category_words.kinds_named_in`): «gimnasio» is "Gimnasio
+    Altafit" *and* "Gimnasio Municipal", and an answer about one of them would be the old defect
+    pointing the other way -- a true figure for part of what was asked.
+
+    A whole word, folded the way the vocabulary folds, and nothing looser. "Gimnasiolandia" is not
+    called «gimnasio» any more than "Bar Manolo" is called «bares»; a shop this misses keeps the
+    category's figure, which is the answer the holder had before, while a shop it wrongly claimed
+    would be a real figure about a shop nobody named.
+    """
+    wanted = [
+        re.compile(rf"(?<![a-z0-9]){re.escape(spanish.folded(word))}(?![a-z0-9])") for word in words
+    ]
+    return tuple(
+        merchant
+        for merchant in dict.fromkeys(merchants)
+        if any(pattern.search(spanish.folded(merchant)) for pattern in wanted)
+    )

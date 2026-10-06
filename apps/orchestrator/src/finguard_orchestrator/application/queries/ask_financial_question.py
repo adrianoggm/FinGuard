@@ -68,6 +68,7 @@ from finguard_orchestrator.application.queries.readers.windows import (
     _is_whole_year,
 )
 from finguard_orchestrator.domain.constants import (
+    MAX_MERCHANTS,
     MAX_SELECTED_TRANSACTIONS,
     MAX_SUPPORTING_MOVEMENTS,
     MAX_TURN_SENTENCE,
@@ -4139,7 +4140,12 @@ class AskFinancialQuestionHandler:
             else:
                 result = await self._ranked(resumed_query, scoped)
         else:
-            result = await self._answer(resumed_query, scoped)
+            # The plan is the question's and the sentence is the reply's: «Todas mis cuentas»
+            # names no shop and no kind of one, so the readers that narrow a category answer
+            # after the bank has answered it read the question, from the turn that asked.
+            result = await self._answer(
+                resumed_query, scoped, asked=_the_sentence_asked_which_account(query.conversation)
+            )
         if pending.explicit_visualization:
             result = replace(result, explicit_visualization=True)
         return result
@@ -4485,14 +4491,28 @@ class AskFinancialQuestionHandler:
         """The shops in this account that look like the one nothing matched.
 
         A second query, and it only happens on a turn that already found nothing — so the cost is
-        paid exactly where the alternative was telling the user to give up. The same plan with the
-        merchant filter dropped and grouped by merchant answers "which shops are in this window",
-        which is the list a suggestion has to come from: guessing from a vocabulary of our own
-        would offer shops this account has never paid.
+        paid exactly where the alternative was telling the user to give up. The list a suggestion
+        has to come from is the shops in this window: guessing from a vocabulary of our own would
+        offer shops this account has never paid.
 
         An outage here is not worth reporting. The turn already has an answer — "no encontré
         nada" — and a second failure on top of it would replace a true statement with a vaguer
         one.
+        """
+        return merchant_words.close_to(
+            plan.merchants[0], await self._merchants_in(plan, query) or ()
+        )
+
+    async def _merchants_in(
+        self, plan: FinancialPlan, query: AskFinancialQuestionQuery
+    ) -> tuple[str, ...] | None:
+        """Every shop in this plan's window, as the ledger spells them -- or None when the ledger
+        could not say, which is not the same answer as no shops at all.
+
+        The same plan with the merchant filter dropped and grouped by merchant answers "which shops
+        are in this window". Two callers: a misspelt shop wants candidates, and a kind of thing
+        named inside its category («el gimnasio») wants every shop of that kind, which the handful
+        of movements beside a figure cannot promise to hold.
         """
         try:
             wider = await self._queries.run(
@@ -4504,16 +4524,17 @@ class AskFinancialQuestionHandler:
                     # discovering merchant names, so retaining the temporal divisor here turns a
                     # harmless misspelling into a domain-level 422.
                     metric=Metric.SUM,
+                    # Every shop, not the plan's top few: a ranking's cut decides which rows are
+                    # drawn, never which shops the window holds.
+                    group_limit=None,
                 ),
                 account_id=query.account_id,
                 today=query.today,
                 reporting_timezone=query.reporting_timezone,
             )
         except (BankingUnavailableError, QueryRejectedError):
-            return ()
-        return merchant_words.close_to(
-            plan.merchants[0], tuple(group.key for group in wider.groups)
-        )
+            return None
+        return tuple(group.key for group in wider.groups)
 
     def _scope_question(
         self, required: AccountScopeRequiredError, was: Conversation
@@ -4562,7 +4583,11 @@ class AskFinancialQuestionHandler:
         widened: bool = False,
         narrowed: bool = False,
         movements: int | None = None,
+        asked: str | None = None,
     ) -> AskFinancialQuestionResult:
+        # `asked` is the sentence that asked this plan, when this turn's is not it: a reply to the
+        # account question runs a plan its own sentence never stated.
+        #
         # Scoped for the run and not on the plan itself. Which accounts the figures came from is a
         # property of how the question was answered; the plan is what was *asked*, and that is what
         # gets described to the user and remembered for a follow-up.
@@ -4707,15 +4732,72 @@ class AskFinancialQuestionHandler:
                     if movement.merchant_name
                 )
             )
-            shop = merchant_words.named_in(query.sentence, seen)
-            if shop is None:
+            question = asked or query.sentence
+            shop = merchant_words.named_in(question, seen)
+            named = " y ".join(category_words.name_of(c) for c in plan.categories)
+            shops: tuple[str, ...] = ()
+            why = ""
+            if shop is not None:
+                shops = (shop,)
+                why = f"Solo {shop}. La consulta que había construido cubría {named} entera."
+            # Named a kind of thing inside the category, not the category. Reported from a live
+            # session: «¿cuánto gasté en el gimnasio este año?» answered "421,79 € en
+            # suscripciones, en 23 movimientos" -- Netflix, Spotify and Steam with the gym, which
+            # alone is 29,90 € a month. «Gimnasio» is a word of the SUBSCRIPTIONS vocabulary, so the
+            # planner, the gate and the reader above all agreed it named the category, and the
+            # reader drops it on purpose: it returns one shop, and the holder may pay two gyms.
+            #
+            # So the word is matched here against every shop the window holds, and the answer is
+            # narrowed to all of those that carry it. The handful of movements beside a figure is
+            # that list only when it holds every movement; otherwise it is asked for, which costs a
+            # query on exactly the turns that named a kind. Nothing a model reads changes: the
+            # planner's prompt and its evaluations still see the category, and this runs after the
+            # bank has answered it.
+            #
+            # A category called by its own name -- «suscripciones», «supermercado» -- names no kind
+            # (`category_words.kinds_named_in`), and one plan with two categories is left whole: a
+            # plan cannot hold "these gyms, or else groceries", and answering half of it would be
+            # the wider-figure failure pointing the other way.
+            kinds = (
+                category_words.kinds_named_in(question, plan.categories[0])
+                if shop is None and len(plan.categories) == 1 and not plan.merchant_terms
+                else ()
+            )
+            said = " o ".join(f"«{kind}»" for kind in kinds)
+            in_window = (
+                (
+                    seen
+                    if len(answer.movements) >= answer.movement_count
+                    else await self._merchants_in(scoped, query)
+                )
+                if kinds
+                else None
+            )
+            of_that_kind = merchant_words.called(kinds, in_window or ())
+            # More shops than one plan may name is an answer it cannot give whole, and one of them
+            # is the failure this exists for; the category's own figure is the honest one left.
+            if 0 < len(of_that_kind) <= MAX_MERCHANTS:
+                shops = of_that_kind
+                which, carry = (
+                    ("el comercio", "lleva") if len(shops) == 1 else ("los comercios", "llevan")
+                )
+                why = (
+                    f"Solo {answer_writer.listed(shops)}, {which} de {named} que {carry}"
+                    f" {said} en el nombre."
+                )
+            if not shops:
                 # Named it, nearly. "Spoti" was in the sentence and Spotify was in the evidence,
                 # and no token matched — so the answer stayed the whole category. A near miss is a
                 # guess, though, and a guess that produces a figure is what this service does not
                 # do, so it asks instead of narrowing. The next turn inherits this window and is an
                 # ordinary follow-up.
-                nearly = merchant_words.almost_named_in(query.sentence, seen)
-                if nearly:
+                nearly = merchant_words.almost_named_in(question, seen)
+                # And a kind no shop is called: the category's figure is still the honest answer
+                # to the plan, but not to the question, so it says which one it is. Not when the
+                # ledger could not list the shops -- "none is called that" would be a guess -- nor
+                # over an empty answer, where there is no total to explain.
+                no_such_shop = in_window is not None and not of_that_kind and not answer.is_empty
+                if nearly or no_such_shop:
                     # The figure that was planned is still the honest answer to the plan, so it is
                     # given rather than thrown away, and the question goes underneath it. The plan
                     # stays as the last answered one, which is what makes the reply — "Spotify" —
@@ -4729,33 +4811,36 @@ class AskFinancialQuestionHandler:
                         reporting_timezone=query.reporting_timezone,
                         ran_as=scoped,
                     )
+                    if nearly:
+                        return replace(
+                            answered,
+                            text=(
+                                f"{answered.text}\n¿Querías solo {answer_writer.listed(nearly)}?"
+                            ),
+                            suggestions=list(nearly),
+                        )
                     return replace(
                         answered,
-                        text=(f"{answered.text}\n¿Querías solo {answer_writer.listed(nearly)}?"),
-                        suggestions=list(nearly),
+                        text=(
+                            f"{answered.text}\n(Incluye toda la categoría {named}: en este periodo"
+                            f" ningún comercio lleva {said} en el nombre.)"
+                        ),
                     )
-            if shop is not None:
+            if shops:
+                kept = {name.casefold() for name in shops}
                 tighter = replace(
                     plan,
                     categories=(),
-                    merchants=(shop,),
+                    merchants=shops,
                     excluded_merchants=tuple(
                         merchant
                         for merchant in plan.excluded_merchants
-                        if merchant.casefold() != shop.casefold()
+                        if merchant.casefold() not in kept
                     ),
                 )
                 again = await self._answer(query, tighter, narrowed=True)
                 if again.outcome == PlanningOutcome.PLANNED.value and again.movement_count:
-                    named = " y ".join(category_words.name_of(c) for c in plan.categories)
-                    return replace(
-                        again,
-                        text=(
-                            f"{again.text}\n"
-                            f"(Solo {shop}. La consulta que había construido cubría"
-                            f" {named} entera.)"
-                        ),
-                    )
+                    return replace(again, text=f"{again.text}\n({why})")
 
         if answer.is_empty and plan.merchants and not narrowed:
             did_you_mean = await self._shops_like(plan, query)
@@ -6353,12 +6438,27 @@ def _asked_which_account_about(was: Conversation, offered: tuple[str, ...]) -> s
     """
     if was.last_asked is not Slot.ACCOUNT or was.awaiting is not None:
         return None
+    asked = _the_sentence_asked_which_account(was)
+    if asked is None or _answers_account_scope(asked, offered):
+        return None
+    return asked
+
+
+def _the_sentence_asked_which_account(was: Conversation) -> str | None:
+    """The sentence on the newest turn that asked anything, when what it asked was the account.
+
+    Both account questions leave it there: the backstop's, whose sentence is asked again, and the
+    resumable one in `_answer`, whose plan the reply runs while the reply's own sentence says only
+    which account. The second needs the sentence for the readers that narrow a category answer to
+    a shop -- «¿cuánto gasté en el gimnasio?» is the gym on the turn that asked it and on the turn
+    that chose the account alike.
+
+    None for a sentence the log may have cut: half a question is not the question.
+    """
     asked = next((turn for turn in reversed(was.turns) if turn.question is not None), None)
     if asked is None or asked.question != _WHICH_ACCOUNT:
         return None
     if not asked.sentence.strip() or len(asked.sentence) >= MAX_TURN_SENTENCE:
-        return None
-    if _answers_account_scope(asked.sentence, offered):
         return None
     return asked.sentence
 

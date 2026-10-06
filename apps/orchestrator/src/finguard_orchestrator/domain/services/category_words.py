@@ -183,6 +183,32 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
     "INTEREST": ("intereses", "interes"),
 }
 
+# The member words: the precise words above that name one *kind* of thing inside a category rather
+# than the category itself. Every other precise word is the category's own name, said one way or
+# another, and that is the distinction this marks: «gimnasio» is a subscription and not every
+# subscription is a gym, while «supermercado» is every shop GROCERIES holds. Reported: «¿cuánto
+# gasté en el gimnasio este año?» answered every subscription -- Netflix, Spotify and Steam with
+# the gym -- because nothing could tell those two apart. `ask_financial_question._answer` reads
+# this once the bank has answered, and narrows a category named by a kind to the holder's shops
+# that carry the word.
+#
+# A mark on the words above and not a vocabulary of its own: a kind is a precise word of the same
+# category, so the gate and this rule cannot disagree about how it is spelled. A precise word that
+# is not here is the category's own name, which narrows nothing -- so a word added up there keeps
+# the old answer until somebody decides it names a kind.
+#
+# Out, though the glossary would suggest otherwise: «gasolinera», «coche», «repostar» and the fuels
+# are the whole of TRANSPORT_FUEL, because every shop in it is a petrol station; «comer fuera» is
+# every restaurant. And only the precise words, for `_PRECISE`'s own reason: «café» is a kind of
+# restaurant in the glossary and "Cafe Central" a shop in the ledger, and "¿cuánto gasto en café?"
+# is every coffee at every bar, not the one bar whose name says so.
+_KINDS: Final[dict[str, tuple[str, ...]]] = {
+    "SUBSCRIPTIONS": ("gimnasio", "streaming"),
+    "HEALTH": ("farmacia", "dentista", "óptica"),
+    "TRANSPORT_PUBLIC": ("metro", "autobús", "taxi"),
+    "LEISURE": ("cine", "videojuegos", "apuestas", "casa de apuestas", "casas de apuestas"),
+}
+
 # B-1 (Wave 3 hardening): the gerund ("quitando") was here; the imperative a holder actually
 # types was not. "Quita restaurantes", "elimina restaurantes", "borra restaurantes", "saca
 # restaurantes", "fuera restaurantes" and "excluye restaurantes" all named the category and
@@ -298,10 +324,17 @@ def words_named_in(sentence: str) -> frozenset[str]:
 
     `named_in` answers *which* categories a sentence mentions; this answers *with which words*, and
     the difference is what lets a shop be recognised inside a sentence that also names a category.
-    «Gimnasio Altafit» matched by «gimnasio» is this vocabulary talking and must not narrow a
-    question about the gym to one gym; «Netflix» inside «suscripciones de Netflix» is not, and a
-    reader that gave up on the whole sentence because it mentioned a category answered the wider
-    question with a real figure -- the one failure this service is built around.
+    «Netflix» inside «suscripciones de Netflix» is not this vocabulary talking, and a reader that
+    gave up on the whole sentence because it mentioned a category answered the wider question with
+    a real figure -- the one failure this service is built around.
+
+    «Gimnasio Altafit» matched by «gimnasio» *is* this vocabulary talking, and the shop reader still
+    drops the word -- but no longer so that a question about the gym stays about every subscription.
+    That was the old decision, and its reason was only ever not to answer about one gym when the
+    holder may pay two: the shop reader returns the first shop that matches. A word that names a
+    kind inside its category (`kinds_named_in`) now narrows the answer to *every* shop of the
+    holder's that carries it, which is a rule of its own after the bank answers, and a category
+    called by its own name -- «suscripciones», «supermercado» -- still narrows nothing.
 
     Empty for a sentence that names no category, which is the common case and the cheap one.
     """
@@ -344,3 +377,49 @@ def precisely_excluded_in(sentence: str) -> tuple[str, ...]:
             if category in found:
                 break
     return tuple(sorted(found, key=lambda category: found[category]))
+
+
+def kinds_named_in(sentence: str, category: str) -> tuple[str, ...]:
+    """The member words (`_KINDS`) this sentence called `category` by, spelled as the vocabulary
+    spells them -- empty unless a kind is *all* it called the category.
+
+    The category's own name anywhere in the sentence means the holder asked about the category:
+    «suscripciones, gimnasio incluido» is every subscription, and «suscripciones aparte del
+    gimnasio» is the opposite of the gym, in words no exclusion marker reads. Neither may narrow,
+    and both keep the answer they always had. A kind behind an exclusion marker («sin el
+    gimnasio») is what the holder asked to leave out, so it is not a kind they asked about.
+
+    Read the way `_hits` reads a category -- folded, whole words, one wrong letter in a long one --
+    so a sentence the gate recognised as this category is the sentence this recognises.
+    """
+    kinds = _KINDS.get(category, ())
+    haystack = spanish.folded(sentence)
+    if not kinds or any(
+        _said_at(word, haystack) for word in _PRECISE[category] if word not in kinds
+    ):
+        return ()
+    return tuple(
+        kind
+        for kind in kinds
+        if any(
+            not _EXCLUSION_PREFIX.search(haystack[max(0, start - 100) : start])
+            for start in _said_at(kind, haystack)
+        )
+    )
+
+
+def _said_at(word: str, haystack: str) -> list[int]:
+    """Where a folded sentence says `word`: as a whole word, or one wrong letter from it when the
+    word is long enough for `_one_wrong_letter`'s rule to hold."""
+    folded = spanish.folded(word)
+    exact = [
+        match.start()
+        for match in re.finditer(rf"(?<![a-z0-9]){re.escape(folded)}(?![a-z0-9])", haystack)
+    ]
+    if exact or " " in folded or len(folded) < _FUZZY_FLOOR or folded in _NEVER_FUZZY:
+        return exact
+    return [
+        token.start()
+        for token in _WORDS.finditer(haystack)
+        if spanish.one_edit_apart(token.group(), folded)
+    ]

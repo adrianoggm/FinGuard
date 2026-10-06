@@ -94,6 +94,10 @@ class Turn:
     says the question is still open. Nothing is decided on the sentence itself: it is asked again,
     through every gate a sentence passes, which is what the holder would get by retyping it.
 
+    The resumable account question reads it as well, derived the same way: its plan is kept, but
+    the readers that narrow a category's answer to a shop read the words that asked it, and the
+    reply's words name only an account.
+
     ponytail: two representations of the same history. If another branch needs the log, derive
     its field from this the same way instead of adding a seventeenth one beside it.
     """
