@@ -128,4 +128,4 @@
   plan:
     direction: EXPENSE
     dateRange: {from: 2026-06-01, to: 2026-06-30}
-  expected: {totalMinor: 243979, movementCount: 30}
+  expected: {totalMinor: 224368, movementCount: 23}

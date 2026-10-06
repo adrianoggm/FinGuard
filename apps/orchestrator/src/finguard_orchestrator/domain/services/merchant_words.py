@@ -315,13 +315,16 @@ def called(words: tuple[str, ...], merchants: tuple[str, ...]) -> tuple[str, ...
     Altafit" *and* "Gimnasio Municipal", and an answer about one of them would be the old defect
     pointing the other way -- a true figure for part of what was asked.
 
-    A whole word, folded the way the vocabulary folds, and nothing looser. "Gimnasiolandia" is not
-    called «gimnasio» any more than "Bar Manolo" is called «bares»; a shop this misses keeps the
-    category's figure, which is the answer the holder had before, while a shop it wrongly claimed
-    would be a real figure about a shop nobody named.
+    A whole word, folded the way the vocabulary folds, or that word's Spanish plural -- and nothing
+    looser. Shops name themselves in the plural as often as not: whole words alone answered «¿cuánto
+    gasté en el cine?» with every leisure shop and a note that none was called «cine», above "Cines
+    Yelmo" in the evidence. "Gimnasiolandia" is still not called «gimnasio», nor "Bar Manolo"
+    «bares»; a shop this misses keeps the category's figure, which is the answer the holder had
+    before, while a shop it wrongly claimed would be a real figure about a shop nobody named.
     """
     wanted = [
-        re.compile(rf"(?<![a-z0-9]){re.escape(spanish.folded(word))}(?![a-z0-9])") for word in words
+        re.compile(rf"(?<![a-z0-9]){re.escape(spanish.folded(word))}(?:e?s)?(?![a-z0-9])")
+        for word in words
     ]
     return tuple(
         merchant

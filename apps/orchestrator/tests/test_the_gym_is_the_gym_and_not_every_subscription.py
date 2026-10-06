@@ -23,6 +23,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 
+import pytest
+
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
@@ -188,8 +190,25 @@ def test_the_own_name_beside_the_kind_is_the_category_still() -> None:
 
 def test_a_kind_left_out_is_not_the_kind_asked_about() -> None:
     assert category_words.kinds_named_in(
-        "¿Cuánto gasté en streaming sin el gimnasio?", "SUBSCRIPTIONS"
-    ) == ("streaming",)
+        "¿Cuánto gasté en taxi sin el metro?", "TRANSPORT_PUBLIC"
+    ) == ("taxi",)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "category"),
+    [
+        ("¿Cuánto gasté en streaming?", "SUBSCRIPTIONS"),
+        ("¿Cuánto gasté en el dentista?", "HEALTH"),
+        ("¿Cuánto gasté en autobús?", "TRANSPORT_PUBLIC"),
+        ("¿Cuánto gasté en videojuegos?", "LEISURE"),
+        ("¿Cuánto gasté en casas de apuestas?", "LEISURE"),
+    ],
+)
+def test_a_kind_no_shop_is_named_after_is_the_category(sentence: str, category: str) -> None:
+    """Kinds a shop rarely carries in its name -- a dentist is a «Clínica Dental», a bus line is
+    «EMT Madrid» -- would only ever reach the note, and the note would read as wrong beside the
+    shop that plainly is one. They answer the category, as they did before the rule."""
+    assert category_words.kinds_named_in(sentence, category) == ()
 
 
 def test_every_kind_is_a_word_of_its_own_category() -> None:
@@ -202,10 +221,23 @@ def test_every_kind_is_a_word_of_its_own_category() -> None:
 
 
 def test_a_shop_is_called_by_a_kind_as_a_whole_word_folded() -> None:
-    shops = ("Gimnasio Altafit", "Gimnasios Rivas", "Netflix", "Óptica Roca")
+    shops = ("Gimnasio Altafit", "Gimnasiolandia", "Netflix", "Óptica Roca")
     assert merchant_words.called(("gimnasio",), shops) == ("Gimnasio Altafit",)
-    assert merchant_words.called(("óptica",), shops) == ("Óptica Roca",)
+    assert merchant_words.called(("optica",), shops) == ("Óptica Roca",)
     assert merchant_words.called(("streaming",), shops) == ()
+
+
+def test_a_shop_is_called_by_a_kind_in_its_plural() -> None:
+    """Shops name themselves in the plural as often as not -- «Cines Yelmo», «Farmacias Trébol» --
+    and a whole-word match alone told the holder no shop was called «cine» beside Cines Yelmo. The
+    Spanish plural and nothing looser: +s, +es."""
+    shops = ("Cines Yelmo", "Farmacias Trébol", "Gimnasios Rivas", "Cinesa", "Fnac")
+    assert merchant_words.called(("cine",), shops) == ("Cines Yelmo",)
+    assert merchant_words.called(("farmacia",), shops) == ("Farmacias Trébol",)
+    assert merchant_words.called(("gimnasio",), shops) == ("Gimnasios Rivas",)
+    assert merchant_words.called(("taxi",), ("Taxis Madrid", "Taxistas Unidos")) == (
+        "Taxis Madrid",
+    )
 
 
 # --- and end to end ---------------------------------------------------------------------------
@@ -224,6 +256,22 @@ async def test_the_gym_is_answered_as_the_gym() -> None:
     # «Ver la consulta» is the query that produced the figure, not the one the plan started as.
     assert "Gimnasio Altafit" in result.plan_in_words
     assert "suscripciones" not in result.plan_in_words
+
+
+async def test_the_cinema_is_the_cinema_the_ledger_calls_cines() -> None:
+    ledger = Ledger(
+        Charge("Cines Yelmo", "LEISURE", 1_850),
+        Charge("Fnac", "LEISURE", 3_499),
+        Charge("Decathlon", "LEISURE", 4_200),
+    )
+
+    result = await ask("¿Cuánto gasté en el cine este año?", ledger)
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[-1].merchants == ("Cines Yelmo",)
+    assert ledger.plans[-1].categories == ()
+    assert "18,50 € en Cines Yelmo" in result.text
+    assert "ningún comercio" not in result.text
 
 
 async def test_two_gyms_are_both_gyms() -> None:
@@ -251,6 +299,20 @@ async def test_no_gym_is_the_category_and_says_so() -> None:
     note = result.text.splitlines()[-1]
     assert "toda la categoría suscripciones" in note
     assert "«gimnasio»" in note
+
+
+async def test_the_dentist_is_the_health_category_as_before() -> None:
+    ledger = Ledger(
+        Charge("Clinica Dental Sur", "HEALTH", 6_000), Charge("Farmacia Gran Via", "HEALTH", 1_250)
+    )
+
+    result = await ask("¿cuánto gasté en el dentista?", ledger)
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert [(plan.categories, plan.merchants) for plan in ledger.plans] == [(("HEALTH",), ())]
+    assert result.text == (
+        "72,50 € en salud en lo que va de año, en 2 movimientos.\nConsultado en todas tus cuentas."
+    )
 
 
 async def test_the_category_by_its_own_name_is_answered_whole() -> None:

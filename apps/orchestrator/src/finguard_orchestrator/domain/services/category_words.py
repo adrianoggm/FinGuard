@@ -202,11 +202,19 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
 # every restaurant. And only the precise words, for `_PRECISE`'s own reason: «café» is a kind of
 # restaurant in the glossary and "Cafe Central" a shop in the ledger, and "¿cuánto gasto en café?"
 # is every coffee at every bar, not the one bar whose name says so.
+#
+# And only the kinds whose shops carry the word in their names -- a gym is "Gimnasio Altafit", a
+# cinema "Cines Yelmo", a pharmacy "Farmacia Gran Vía". «Streaming», «dentista», «autobús»,
+# «videojuegos» and «apuestas» are kinds too, but the shop rarely says so: the dentist is "Clínica
+# Dental Sur", the bus "EMT Madrid", the streaming service "Netflix". For those the rule could only
+# ever reach its note, and "ningún comercio lleva «dentista» en el nombre" above the dental clinic
+# in the evidence reads as wrong even when it is literally true. They answer the category, with no
+# note, as they did before this rule.
 _KINDS: Final[dict[str, tuple[str, ...]]] = {
-    "SUBSCRIPTIONS": ("gimnasio", "streaming"),
-    "HEALTH": ("farmacia", "dentista", "óptica"),
-    "TRANSPORT_PUBLIC": ("metro", "autobús", "taxi"),
-    "LEISURE": ("cine", "videojuegos", "apuestas", "casa de apuestas", "casas de apuestas"),
+    "SUBSCRIPTIONS": ("gimnasio",),
+    "HEALTH": ("farmacia", "óptica"),
+    "TRANSPORT_PUBLIC": ("metro", "taxi"),
+    "LEISURE": ("cine",),
 }
 
 # B-1 (Wave 3 hardening): the gerund ("quitando") was here; the imperative a holder actually
