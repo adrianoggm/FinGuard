@@ -391,19 +391,24 @@ def kinds_named_in(sentence: str, category: str) -> tuple[str, ...]:
     """The member words (`_KINDS`) this sentence called `category` by, spelled as the vocabulary
     spells them -- empty unless a kind is *all* it called the category.
 
-    The category's own name anywhere in the sentence means the holder asked about the category:
-    «suscripciones, gimnasio incluido» is every subscription, and «suscripciones aparte del
-    gimnasio» is the opposite of the gym, in words no exclusion marker reads. Neither may narrow,
-    and both keep the answer they always had. A kind behind an exclusion marker («sin el
-    gimnasio») is what the holder asked to leave out, so it is not a kind they asked about.
+    Any other word for the category anywhere in the sentence -- its own name, or a glossary word
+    that is not a kind -- means the kind is not all the holder asked about: «suscripciones,
+    gimnasio incluido» is every subscription, «metro y tren» is Renfe as well as Metro de Madrid,
+    and «taxi o VTC» is Cabify too. Those keep the answer they always had. Both vocabularies,
+    because the planner reads the glossary: «tren», «VTC», «libros» and «médico» are not precise
+    words, and a check that read only those narrowed every one of the four to the kind's shops. A
+    kind behind an exclusion marker («sin el gimnasio») is what the holder asked to leave out, so it
+    is not a kind they asked about.
 
     Read the way `_hits` reads a category -- folded, whole words, one wrong letter in a long one --
     so a sentence the gate recognised as this category is the sentence this recognises.
     """
     kinds = _KINDS.get(category, ())
     haystack = spanish.folded(sentence)
+    folded_kinds = {spanish.folded(kind) for kind in kinds}
+    others = {*_PRECISE.get(category, ()), *_GLOSS.get(category, ())}
     if not kinds or any(
-        _said_at(word, haystack) for word in _PRECISE[category] if word not in kinds
+        _said_at(word, haystack) for word in others if spanish.folded(word) not in folded_kinds
     ):
         return ()
     return tuple(
@@ -411,9 +416,22 @@ def kinds_named_in(sentence: str, category: str) -> tuple[str, ...]:
         for kind in kinds
         if any(
             not _EXCLUSION_PREFIX.search(haystack[max(0, start - 100) : start])
+            and not _SET_APART.search(haystack[max(0, start - 100) : start])
             for start in _said_at(kind, haystack)
         )
     )
+
+
+# What else puts a kind aside, for `kinds_named_in` alone. Probed by review: «¿y aparte del
+# gimnasio?» after a question about subscriptions was answered with the gym, the one shop the holder
+# had set apart. Not in `_EXCLUSION_PREFIX`, which builds negative category filters for the gate and
+# the readers, and whose reach is measured; here the cost of reading one too many is only the
+# category's figure, which is the answer the holder had before the kinds rule.
+_SET_APART: Final = re.compile(
+    r"(?:\ba\s*parte\s+de|\bademas\s+de|\bque\s+no\s+sean?)"
+    r"(?:\s+(?:el|la|los|las|de|gastos?|movimientos?|y|ni))*"
+    r"[a-z0-9\s,/-]{0,60}$"
+)
 
 
 def _said_at(word: str, haystack: str) -> list[int]:

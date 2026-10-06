@@ -777,7 +777,10 @@ class AskFinancialQuestionHandler:
             if isinstance(retry, TopMovements):
                 yield await self._ranked(query, retry)
             else:
-                yield await self._answer(query, retry)
+                # «Reintenta» names nothing; the turn the bank failed on is the question.
+                yield await self._answer(
+                    query, retry, asked=_the_sentence_that_asked(was, retrying=retry)
+                )
             return
         if retry_control in {
             query_recovery.RetryAction.CHANGE,
@@ -1607,7 +1610,18 @@ class AskFinancialQuestionHandler:
             # and the slot are closed vocabularies — so there is nothing here to infer.
             yield Stage("planned", answer_writer.plan_in_words(finished))
             yield Stage("querying")
-            yield await self._answer(query, finished)
+            # «Este año» completes a plan the turn that asked stated, so that turn's sentence is
+            # the one the shop readers read. Not when the reply was the category: then the reply
+            # is the sentence that named it, and the question never did.
+            asked_for_a_category = (
+                isinstance(was.active, FinancialClarification)
+                and was.active.awaiting is Slot.CATEGORY
+            )
+            yield await self._answer(
+                query,
+                finished,
+                asked=None if asked_for_a_category else _the_sentence_that_asked(was),
+            )
             return
 
         pending_continuation = self._pending_continuation(query)
@@ -4144,7 +4158,13 @@ class AskFinancialQuestionHandler:
             # names no shop and no kind of one, so the readers that narrow a category answer
             # after the bank has answered it read the question, from the turn that asked.
             result = await self._answer(
-                resumed_query, scoped, asked=_the_sentence_asked_which_account(query.conversation)
+                resumed_query,
+                scoped,
+                asked=_the_sentence_that_asked(
+                    query.conversation,
+                    tuple(candidate.display_name for candidate in pending.candidates),
+                    question=_WHICH_ACCOUNT,
+                ),
             )
         if pending.explicit_visualization:
             result = replace(result, explicit_visualization=True)
@@ -4758,9 +4778,17 @@ class AskFinancialQuestionHandler:
             # (`category_words.kinds_named_in`), and one plan with two categories is left whole: a
             # plan cannot hold "these gyms, or else groceries", and answering half of it would be
             # the wider-figure failure pointing the other way.
+            #
+            # Nor a plan that already leaves shops out. The window's shops are read under the plan's
+            # own exclusions, so «el gimnasio, quitando Altafit» found no gym and said none was
+            # called that, about a holder who pays one; which of the shops left out the kind should
+            # cover is the holder's to say, not this rule's to guess.
             kinds = (
                 category_words.kinds_named_in(question, plan.categories[0])
-                if shop is None and len(plan.categories) == 1 and not plan.merchant_terms
+                if shop is None
+                and len(plan.categories) == 1
+                and not plan.merchant_terms
+                and not plan.excluded_merchants
                 else ()
             )
             said = " o ".join(f"«{kind}»" for kind in kinds)
@@ -6438,27 +6466,54 @@ def _asked_which_account_about(was: Conversation, offered: tuple[str, ...]) -> s
     """
     if was.last_asked is not Slot.ACCOUNT or was.awaiting is not None:
         return None
-    asked = _the_sentence_asked_which_account(was)
-    if asked is None or _answers_account_scope(asked, offered):
-        return None
-    return asked
+    return _the_sentence_that_asked(was, offered, question=_WHICH_ACCOUNT)
 
 
-def _the_sentence_asked_which_account(was: Conversation) -> str | None:
-    """The sentence on the newest turn that asked anything, when what it asked was the account.
+def _the_sentence_that_asked(
+    was: Conversation,
+    offered: tuple[str, ...] = (),
+    *,
+    question: str | None = None,
+    retrying: PlannedQuery | None = None,
+) -> str | None:
+    """The sentence on the newest turn that asked anything -- the question a reply now answers.
 
-    Both account questions leave it there: the backstop's, whose sentence is asked again, and the
-    resumable one in `_answer`, whose plan the reply runs while the reply's own sentence says only
-    which account. The second needs the sentence for the readers that narrow a category answer to
-    a shop -- «¿cuánto gasté en el gimnasio?» is the gym on the turn that asked it and on the turn
-    that chose the account alike.
+    Every reply that completes a kept plan leaves the reply's own sentence on the turn that runs
+    it: «Todas mis cuentas» after «¿En qué cuenta…?», «este año» after «¿De qué periodo?»,
+    «reintenta» after the bank failed. The backstop's account question asks the sentence again;
+    the others run the plan, and need the sentence for the readers that narrow a category's
+    answer to a shop -- «¿cuánto gasté en el gimnasio?» is the gym on the turn that asked it and
+    on the turn that answered it alike.
 
-    None for a sentence the log may have cut: half a question is not the question.
+    `question`, when given, is what that turn must have asked: an aside asks nothing and leaves it
+    newest, but a different question in between means this reply answers that one. A turn the bank
+    could not answer asked too when `retrying` is given -- «¿Reintento?» is what it offered -- and
+    then it must be the turn whose plan line is the plan being retried.
+
+    None for a sentence the log may have cut: half a question is not the question. Nor is an
+    account choice, judged against `offered` -- the names the question listed -- like any reply.
+    One is recorded under the question when a resumed question asks it again on the reply's own
+    turn (the directory changed between two reads of that turn), and asked as a question «Todas
+    mis cuentas» is a balance.
     """
-    asked = next((turn for turn in reversed(was.turns) if turn.question is not None), None)
-    if asked is None or asked.question != _WHICH_ACCOUNT:
+    asked = next(
+        (
+            turn
+            for turn in reversed(was.turns)
+            if turn.question is not None
+            or (retrying is not None and turn.outcome == "BANKING_UNAVAILABLE")
+        ),
+        None,
+    )
+    if asked is None:
+        return None
+    if question is not None and asked.question != question:
+        return None
+    if retrying is not None and asked.plan != answer_writer.describe(retrying):
         return None
     if not asked.sentence.strip() or len(asked.sentence) >= MAX_TURN_SENTENCE:
+        return None
+    if _answers_account_scope(asked.sentence, offered):
         return None
     return asked.sentence
 
