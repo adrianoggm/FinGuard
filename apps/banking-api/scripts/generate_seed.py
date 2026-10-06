@@ -27,8 +27,8 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 SEED = 20260730
-END_DATE = date(2026, 7, 31)
-MONTHS = 18
+END_DATE = date(2026, 10, 5)
+MONTHS = 21
 BATCH = 500
 
 CURRENCY = "EUR"

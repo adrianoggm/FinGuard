@@ -21,11 +21,13 @@ import re
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
 from support import episodes
 
+from finguard_orchestrator.application import metrics_executor
 from finguard_orchestrator.application.queries import ask_financial_question
 from finguard_orchestrator.bootstrap.dependencies import turn_interpreter
 from finguard_orchestrator.bootstrap.main import app
@@ -36,7 +38,7 @@ from finguard_orchestrator.domain.enums import (
     Metric,
     Period,
 )
-from finguard_orchestrator.domain.services import answer_writer, category_words
+from finguard_orchestrator.domain.services import answer_writer, category_words, explainer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
@@ -242,28 +244,67 @@ def test_the_turn_interpreter_still_reads_the_identifiers() -> None:
     assert first["plan"] not in shown
 
 
-def test_every_result_keeps_the_identifier_line_and_also_says_it_in_words() -> None:
-    """Per call site, because that is where the two lines are written: a result whose `plan` is
-    built from `describe` carries `plan_in_words` beside it, and no result writes the Spanish line
-    into `plan`, which is the field the turn log records for the turn interpreter. Read from the
-    handler's source, since a site no test happens to reach is still a site the model is shown."""
-    tree = ast.parse(Path(ask_financial_question.__file__).read_text(encoding="utf-8"))
-    results = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "AskFinancialQuestionResult"
+def calls_in(module: ModuleType) -> list[ast.Call]:
+    """Every call in a module's source, read as written — a site no test happens to reach is
+    still a site the model or the person is shown."""
+    tree = ast.parse(Path(str(module.__file__)).read_text(encoding="utf-8"))
+    return [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+
+
+def named(call: ast.Call) -> str:
+    return call.func.id if isinstance(call.func, ast.Name) else ""
+
+
+def test_every_line_goes_to_its_own_audience() -> None:
+    """Per call site, because that is where the two lines are written.
+
+    A result whose `plan` is built from `describe` carries `plan_in_words` beside it, and no result
+    writes the Spanish line into `plan` — the field the turn log records for the turn interpreter —
+    nor the identifier line into `plan_in_words`. Every `planned` stage, which only the person sees,
+    is the Spanish line and never the identifier one."""
+    calls = calls_in(ask_financial_question)
+    results = [call for call in calls if named(call) == "AskFinancialQuestionResult"]
+    planned = [
+        call
+        for call in calls
+        if named(call) == "Stage"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and call.args[0].value == "planned"
     ]
     spanish_for_models, english_for_people = [], []
-    for node in results:
-        written = {keyword.arg: ast.unparse(keyword.value) for keyword in node.keywords}
+    for call in results:
+        written = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
         plan = written.get("plan", "")
         if "plan_in_words(" in plan:
-            spanish_for_models.append(node.lineno)
+            spanish_for_models.append(call.lineno)
         if "describe(" in plan and "plan_in_words" not in written:
-            english_for_people.append(node.lineno)
+            english_for_people.append(call.lineno)
+        if "describe(" in written.get("plan_in_words", ""):
+            english_for_people.append(call.lineno)
+    for call in planned:
+        shown = " ".join(ast.unparse(argument) for argument in call.args[1:])
+        if "describe(" in shown or "plan_in_words(" not in shown:
+            english_for_people.append(call.lineno)
 
-    assert results, "the scan found no result at all, so it checked nothing"
+    assert results and planned, "the scan found nothing to check, so it checked nothing"
     assert not spanish_for_models, f"`plan` is the model's line, at lines {spanish_for_models}"
-    assert not english_for_people, f"no Spanish line for the person, at {english_for_people}"
+    assert not english_for_people, f"the person is shown identifiers at {english_for_people}"
+
+
+@pytest.mark.parametrize(
+    "module", [explainer, metrics_executor], ids=lambda module: module.__name__
+)
+def test_the_person_only_lines_never_use_the_identifier_one(module: ModuleType) -> None:
+    """The explainer's «La consulta que hice fue: …» and a saved metric's «Ver la consulta» reach
+    nobody but the person, so neither module has any business with `describe`."""
+    used = {
+        call.func.attr
+        for call in calls_in(module)
+        if isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "answer_writer"
+    }
+
+    assert "plan_in_words" in used
+    assert "describe" not in used

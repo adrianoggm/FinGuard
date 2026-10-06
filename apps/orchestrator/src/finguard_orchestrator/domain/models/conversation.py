@@ -103,8 +103,10 @@ class Turn:
     sentence: str
     # What this service decided, by the name the result already carries. A closed vocabulary.
     outcome: str
-    # The query behind the answer, in the same words the answer showed the user. Absent when the
-    # turn ran no query — a greeting, a refusal, a question asked back.
+    # The query behind the answer, in the ledger's identifiers (`answer_writer.describe`) — not the
+    # Spanish line «Ver la consulta» showed the person (`plan_in_words`). The turn interpreter's
+    # prompt quotes this back as "you answered: …" and was measured on these words, so they stay
+    # its words. Absent when the turn ran no query — a greeting, a refusal, a question asked back.
     plan: str | None = None
     # The question this turn asked back, when it asked one.
     question: str | None = None
