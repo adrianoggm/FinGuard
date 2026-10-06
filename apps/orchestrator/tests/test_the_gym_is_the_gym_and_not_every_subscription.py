@@ -746,3 +746,68 @@ async def test_a_place_in_the_name_does_not_swap_the_gyms_for_another_shop() -> 
 
     assert set(ledger.plans[-1].merchants) == {"Gimnasio Altafit", "Gimnasio Municipal"}
     assert "Netflix Madrid" not in result.text
+
+
+class KeepsAsking(PlansTheCategory):
+    """Asks for the window every time, keeping the draft of the sentence that named a category."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.draft: FinancialPlanDraft | None = None
+
+    async def plan(self, sentence: str, **_: object) -> PlanningResult:
+        named = category_words.precisely_named_in(sentence)
+        if self.draft is None or named:
+            self.draft = FinancialPlanDraft(direction=Direction.EXPENSE, categories=named)
+        return PlanningResult.needs_clarification("¿De qué periodo?", draft=self.draft)
+
+
+async def test_the_question_asked_again_is_not_the_question() -> None:
+    """«No sé» asks for the period a second time and states nothing; the sentence the reply
+    completes is still the one that named the gym."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+    planner = KeepsAsking()
+    first = await ask("¿Cuánto gasté en el gimnasio?", ledger, planner=planner)
+    again = await ask("no sé, el que quieras", ledger, first.conversation, planner=planner)
+    assert again.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+
+    await ask("este año", ledger, again.conversation, planner=planner)
+
+    assert ledger.plans[-1].merchants == ("Gimnasio Altafit",)
+
+
+@pytest.mark.parametrize(
+    "in_between",
+    [
+        # What a drill-down leaves when it fits several bars: its own outcome, and the plan it
+        # would have drilled into.
+        Turn(
+            sentence="¿y el cine?",
+            outcome="DRILL_AMBIGUOUS",
+            question="¿Cuál de ellas quieres ver: cine o libros?",
+            plan="en lo que va de año, expense, leisure",
+        ),
+        # And an ask about the answer in view, as «nada» gets.
+        Turn(
+            sentence="el cine",
+            outcome="NEEDS_CLARIFICATION",
+            question=(
+                "No sé a qué te refieres; ¿quieres cambiar el gráfico, el periodo o la categoría?"
+            ),
+            plan="en lo que va de año, expense, leisure",
+        ),
+    ],
+)
+async def test_a_question_asked_in_between_is_not_the_question(in_between: Turn) -> None:
+    """While «¿De qué periodo?» stays open, other turns ask other things. One that says «cine» is
+    not the sentence «este año» completes -- the plan is the one «¿cuánto gasté en ocio?» stated,
+    and every leisure shop is its answer."""
+    ledger = Ledger(Charge("Cines Yelmo", "LEISURE", 1_850), Charge("Fnac", "LEISURE", 3_499))
+    asked = await ask("¿Cuánto gasté en ocio?", ledger, planner=AsksForTheWindow())
+
+    await ask(
+        "este año", ledger, asked.conversation.with_turn(in_between), planner=AsksForTheWindow()
+    )
+
+    assert ledger.plans[-1].merchants == ()
+    assert ledger.plans[-1].categories == ("LEISURE",)

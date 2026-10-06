@@ -1611,7 +1611,7 @@ class AskFinancialQuestionHandler:
             yield Stage("planned", answer_writer.plan_in_words(finished))
             yield Stage("querying")
             # «Este año» completes a plan the turn that asked stated, so that turn's sentence is
-            # the one the shop readers read. Not when the reply was the category: then the reply
+            # the shop readers' fallback. Not when the reply was the category: then the reply
             # is the sentence that named it, and the question never did.
             asked_for_a_category = (
                 isinstance(was.active, FinancialClarification)
@@ -1620,7 +1620,11 @@ class AskFinancialQuestionHandler:
             yield await self._answer(
                 query,
                 finished,
-                asked=None if asked_for_a_category else _the_sentence_that_asked(was),
+                asked=(
+                    None
+                    if asked_for_a_category
+                    else _the_sentence_a_window_completes(was, finished)
+                ),
             )
             return
 
@@ -6566,11 +6570,50 @@ def _the_sentence_that_asked(
         return None
     if retrying is not None and asked.plan != answer_writer.describe(retrying):
         return None
-    if not asked.sentence.strip() or len(asked.sentence) >= MAX_TURN_SENTENCE:
+    return _a_whole_question(asked.sentence, offered)
+
+
+def _the_sentence_a_window_completes(was: Conversation, plan: FinancialPlan) -> str | None:
+    """The sentence whose half-read plan a reply to «¿De qué periodo?» completes.
+
+    Not simply the newest turn that asked anything, as `_the_sentence_that_asked` reads it for the
+    account. The window clarification stays open while other turns ask other things, and none of
+    them is the question: «nada» is asked what to change, a drill-down which bar, and «no sé» is
+    asked for the period a second time without stating anything. One of them that says «cine»
+    would narrow a figure about leisure nobody asked to narrow.
+
+    The clarification keeps no copy of its question, and the window questions are several -- the
+    planner's, each reader's, the model's own wording for a year -- so the turn is told by what it
+    was instead. It asked about a half-read query, which is the one ask with no plan line behind
+    it (`DRILL_*` and the asks about an answer carry the plan in view), and its sentence named the
+    category the plan is about, which an ask that only repeated the question did not. Newest
+    first, and never past an answer: a clarification still open was asked after the last one.
+    """
+    for turn in reversed(was.turns):
+        if turn.outcome == PlanningOutcome.PLANNED.value:
+            return None
+        if (
+            turn.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+            and turn.question is not None
+            and turn.plan is None
+            and set(category_words.named_in(turn.sentence)) & set(plan.categories)
+        ):
+            return _a_whole_question(turn.sentence)
+    return None
+
+
+def _a_whole_question(sentence: str, offered: tuple[str, ...] = ()) -> str | None:
+    """`sentence`, when a turn's sentence can stand for the question it asked.
+
+    Not one the log may have cut: half a question is not the question. Nor an account choice,
+    judged against `offered` -- the names the question listed -- like any reply: «Todas mis
+    cuentas» asked as a question is a balance.
+    """
+    if not sentence.strip() or len(sentence) >= MAX_TURN_SENTENCE:
         return None
-    if _answers_account_scope(asked.sentence, offered):
+    if _answers_account_scope(sentence, offered):
         return None
-    return asked.sentence
+    return sentence
 
 
 def _remember_explicit_scope(

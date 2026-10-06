@@ -69,7 +69,7 @@ def test_the_investment_is_not_inside_the_total() -> None:
 
 def test_the_investment_is_still_mentioned_and_says_what_it_is() -> None:
     """Left out of the total, not left out of the answer. Omitting it would be its own wrong
-    answer — somebody with 2.700 € invested has not been told about it."""
+    answer — somebody with 3.150 € invested has not been told about it."""
     answer = said("¿Cuánto tengo?")
 
     assert "3.150,00 € en Fondo indexado" in answer

@@ -36,7 +36,7 @@ episodes:
       - say: me gustaria traspasar el total de fondo indexado a la cuenta de ahorros
         route: TRANSFER
         not_says: más de una cuenta
-      - say: 2700 €
+      - say: 3150 €
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION
       - say: ¿cuánto tengo ahora?

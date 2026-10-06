@@ -694,7 +694,7 @@ class Bank:
             recipient="Marta Solis Vega",
             amount_minor=2_000,
             currency="EUR",
-            balance_after_minor=225_042,
+            balance_after_minor=213_648,
             confirmed_at=datetime(2026, 8, 5, 10, 1, tzinfo=UTC),
         )
 

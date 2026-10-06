@@ -22,7 +22,7 @@ episodes:
         route: TRANSFER
         awaiting: AMOUNT
         not_says: más de una cuenta
-      - say: 2700 euros
+      - say: 3150 euros
         route: PAYMENT
         says: Hucha
         keeps: PAYMENT_CONFIRMATION
