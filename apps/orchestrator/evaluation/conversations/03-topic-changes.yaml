@@ -210,19 +210,19 @@ episodes:
     turns:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿y en la corriente?
         route: BALANCE
-        says: "2.270,42"
+        says: "2.156,48"
       - say: ¿y en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿y en el fondo?
         route: BALANCE
-        says: "2.700,00"
+        says: "3.150,00"
       - say: ¿y en total?
         route: BALANCE
-        says: "7.755,92"
+        says: "8.571,98"
       - say: gracias
         route: COURTESY
 

@@ -687,3 +687,62 @@ async def test_a_plan_with_two_categories_is_answered_whole() -> None:
     ]
     assert "56,39" in result.text
     assert "comercio" not in result.text
+
+
+# --- a reply that narrows on its own, and a question asked in between ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("reply", "merchants", "figure"),
+    [
+        ("Netflix este año", ("Netflix",), "13,99 € en Netflix"),
+        ("el gimnasio este año", ("Gimnasio Altafit",), "29,90 € en Gimnasio Altafit"),
+        ("este año, solo Netflix", ("Netflix",), "13,99 € en Netflix"),
+    ],
+)
+async def test_a_window_reply_that_names_a_shop_is_read_itself(
+    reply: str, merchants: tuple[str, ...], figure: str
+) -> None:
+    """The asking turn's sentence is the fallback, never the replacement. «¿Cuánto gasté en
+    suscripciones?» → «¿De qué periodo?» → «Netflix este año» is about Netflix, and the reply is the
+    only sentence that says so; reading the question in its place answered every subscription."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+    asked = await ask("¿Cuánto gasté en suscripciones?", ledger, planner=AsksForTheWindow())
+
+    answered = await ask(reply, ledger, asked.conversation, planner=AsksForTheWindow())
+
+    assert ledger.plans[-1].merchants == merchants
+    assert figure in answered.text
+
+
+async def test_a_place_in_the_name_does_not_pick_a_shop_of_another_kind() -> None:
+    """Probed by review: with only Renfe in the evidence, «el metro de Madrid» re-read the whole
+    window by name and «Madrid» picked EMT Madrid -- a bus, not the metro the kind had found."""
+    ledger = Ledger(
+        Charge("Renfe", "TRANSPORT_PUBLIC", 900),
+        Charge("EMT Madrid", "TRANSPORT_PUBLIC", 400),
+        Charge("Metro de Madrid", "TRANSPORT_PUBLIC", 1_200),
+        evidence=1,
+    )
+
+    result = await ask("¿Cuánto gasté en el metro de Madrid este año?", ledger)
+
+    assert ledger.plans[-1].merchants == ("Metro de Madrid",)
+    assert "12,00 € en Metro de Madrid" in result.text
+    assert "EMT" not in result.text
+
+
+async def test_a_place_in_the_name_does_not_swap_the_gyms_for_another_shop() -> None:
+    ledger = Ledger(
+        NETFLIX,
+        SPOTIFY,
+        GYM,
+        SECOND_GYM,
+        Charge("Netflix Madrid", "SUBSCRIPTIONS", 500),
+        evidence=1,
+    )
+
+    result = await ask("¿Cuánto gasté en el gimnasio de Madrid este año?", ledger)
+
+    assert set(ledger.plans[-1].merchants) == {"Gimnasio Altafit", "Gimnasio Municipal"}
+    assert "Netflix Madrid" not in result.text

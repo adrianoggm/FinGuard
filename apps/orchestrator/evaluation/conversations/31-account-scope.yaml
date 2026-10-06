@@ -46,7 +46,7 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
         no_model: true
-        says: 5.485,50
+        says: 6.415,50
       - say: gracias
         route: COURTESY
         no_model: true
@@ -86,7 +86,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
         no_model: true
-        says: 7.755,92
+        says: 8.571,98
       - say: gracias, adiós
         route: COURTESY
         no_model: true
@@ -111,7 +111,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
         no_model: true
-        says: 7.755,92
+        says: 8.571,98
         keeps: ACCOUNT_SCOPE
       # And the question asked three turns ago is what this answers, with the window it had.
       - say: Cuenta corriente
@@ -156,7 +156,7 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
         no_model: true
-        says: 5.485,50
+        says: 6.415,50
       - say: vale
         route: COURTESY
         no_model: true

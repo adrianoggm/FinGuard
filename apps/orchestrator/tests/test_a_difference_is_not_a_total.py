@@ -2,7 +2,7 @@
 
 `total_minor` is what a client renders next to the answer text, and `answer_writer.leading_figure`
 is where that contract is written down: the field and the sentence are two representations of one
-decision, so a client showing 2.270,42 € under a sentence saying 7.755,92 € is what happens when
+decision, so a client showing 2.156,48 € under a sentence saying 8.571,98 € is what happens when
 they disagree.
 
 Three answer shapes were disagreeing. All three subtract two figures and put the *difference* in
@@ -82,10 +82,10 @@ class Bank:
     async def of(self, *_: object, **__: object) -> AccountSummary:
         return AccountSummary(
             currency="EUR",
-            booked_minor=227_042,
-            available_minor=227_042,
+            booked_minor=215_648,
+            available_minor=215_648,
             as_of=datetime(2026, 8, 8, 9, 30, tzinfo=UTC),
-            holdings=(Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042),),
+            holdings=(Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 215_648),),
         )
 
 

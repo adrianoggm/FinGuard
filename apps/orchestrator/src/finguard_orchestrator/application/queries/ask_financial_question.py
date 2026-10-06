@@ -4606,7 +4606,8 @@ class AskFinancialQuestionHandler:
         asked: str | None = None,
     ) -> AskFinancialQuestionResult:
         # `asked` is the sentence that asked this plan, when this turn's is not it: a reply to the
-        # account question runs a plan its own sentence never stated.
+        # account question runs a plan its own sentence never stated. The shop readers fall back
+        # to it; they never prefer it to a reply that names a shop itself.
         #
         # Scoped for the run and not on the plan itself. Which accounts the figures came from is a
         # property of how the question was answered; the plan is what was *asked*, and that is what
@@ -4752,7 +4753,19 @@ class AskFinancialQuestionHandler:
                     if movement.merchant_name
                 )
             )
-            question = asked or query.sentence
+            # The reply's own words first. A reply that names a shop or a word of a category --
+            # «Netflix este año», «el gimnasio este año» -- is the sentence that says what to narrow
+            # to, and reading the question in its place answered every subscription. The sentence
+            # that asked is the fallback, for a reply that names neither: «este año», «Todas mis
+            # cuentas», «reintenta». A near miss is not naming: a guess decides nothing here.
+            replied = query.sentence
+            question = (
+                replied
+                if asked is None
+                or category_words.named_in(replied)
+                or merchant_words.named_in(replied, seen) is not None
+                else asked
+            )
             shop = merchant_words.named_in(question, seen)
             named = " y ".join(category_words.name_of(c) for c in plan.categories)
             shops: tuple[str, ...] = ()
@@ -4801,11 +4814,16 @@ class AskFinancialQuestionHandler:
                 if kinds
                 else None
             )
-            # A shop the sentence names still wins over its kind once the window's whole list is
-            # in hand. The reader above saw only the evidence, so «el gimnasio Altafit» with
-            # Altafit outside it found no shop by name and then every gym by kind.
-            by_name = merchant_words.named_in(question, in_window) if in_window else None
-            of_that_kind = () if by_name else merchant_words.called(kinds, in_window or ())
+            of_that_kind = merchant_words.called(kinds, in_window or ())
+            # Which of them the sentence names, when it names one. The reader above saw only the
+            # evidence, so «el gimnasio Altafit» with Altafit outside it found no shop by name and
+            # then every gym by kind. Only among the kind's own shops, though: a word one of them
+            # shares with a shop of another kind is not that shop's name. Read over the whole
+            # window, «el metro de Madrid» was EMT Madrid and «el gimnasio de Madrid» a shop called
+            # Netflix Madrid.
+            by_name = (
+                merchant_words.named_in(question, of_that_kind) if len(of_that_kind) > 1 else None
+            )
             if by_name is not None:
                 shops = (by_name,)
                 why = f"Solo {by_name}. La consulta que había construido cubría {named} entera."

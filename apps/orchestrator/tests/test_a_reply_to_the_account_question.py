@@ -3,7 +3,7 @@
 Reported from the running demo, by somebody asking ordinary questions:
 
     ¿Gasté más en gasolina en junio o en julio?  → "¿En qué cuenta quieres consultarlo?"
-    Todas mis cuentas                            → "Tienes 7.755,92 € entre tus cuentas…"
+    Todas mis cuentas                            → "Tienes 8.571,98 € entre tus cuentas…"
 
 The second answer is a true figure about the wrong question. The comparison was asked by a reader
 (`_direct_period_comparison`), and a reader that meets several accounts reaches the scope question
@@ -328,7 +328,7 @@ class ChangesAfterOneRead:
         if self.reads_before_the_change > 0:
             self.reads_before_the_change -= 1
             return episodes.HOLDINGS
-        reopened = Holding(uuid.uuid4(), "CURRENT", "Cuenta corriente", "EUR", 227_042)
+        reopened = Holding(uuid.uuid4(), "CURRENT", "Cuenta corriente", "EUR", 215_648)
         return (reopened, *episodes.HOLDINGS[1:])
 
 

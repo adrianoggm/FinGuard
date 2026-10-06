@@ -26,13 +26,13 @@ TODAY = datetime(2026, 7, 15, tzinfo=UTC).date()
 
 THREE_ACCOUNTS = AccountSummary(
     currency="EUR",
-    booked_minor=227_042,
-    available_minor=227_042,
+    booked_minor=215_648,
+    available_minor=215_648,
     as_of=datetime(2026, 7, 15, 9, 30, tzinfo=UTC),
     holdings=(
-        Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042),
-        Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 548_550),
-        Holding(FUND, "ASSET", "Fondo indexado", "EUR", 270_000),
+        Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 215_648),
+        Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 641_550),
+        Holding(FUND, "ASSET", "Fondo indexado", "EUR", 315_000),
     ),
 )
 
@@ -80,7 +80,7 @@ async def test_the_wire_names_are_the_contract_names() -> None:
         "kind": "SAVINGS",
         "display_name": "Hucha",
         "currency": "EUR",
-        "booked_minor": 548_550,
+        "booked_minor": 641_550,
     }
 
 
@@ -103,15 +103,15 @@ async def test_an_account_nobody_named_keeps_no_name() -> None:
 async def test_the_balance_at_the_top_is_still_only_the_declared_account() -> None:
     """The property that makes this additive, and the one worth keeping.
 
-    Three accounts holding 10.455,92 € between them, and `bookedMinor` stays 2.270,42 — the
+    Three accounts holding 11.721,98 € between them, and `bookedMinor` stays 2.156,48 — the
     declared account's. A home screen written before this change goes on showing exactly what it
     showed. If this ever starts returning the sum, every existing client silently begins reporting
     a different figure under the same label, which is the failure this whole phase is about.
     """
     response = llm_mapper.summary_to_dto(await result_for(THREE_ACCOUNTS))
 
-    assert response.booked_minor == 227_042
-    assert sum(holding.booked_minor for holding in response.holdings) == 1_045_592
+    assert response.booked_minor == 215_648
+    assert sum(holding.booked_minor for holding in response.holdings) == 1_172_198
 
 
 async def test_a_summary_with_no_holdings_is_still_a_summary() -> None:
@@ -119,12 +119,12 @@ async def test_a_summary_with_no_holdings_is_still_a_summary() -> None:
     a banking that has not been deployed yet degrades to what the screen showed yesterday."""
     plain = AccountSummary(
         currency="EUR",
-        booked_minor=227_042,
-        available_minor=227_042,
+        booked_minor=215_648,
+        available_minor=215_648,
         as_of=datetime(2026, 7, 15, 9, 30, tzinfo=UTC),
     )
 
     response = llm_mapper.summary_to_dto(await result_for(plain))
 
     assert response.holdings == []
-    assert response.booked_minor == 227_042
+    assert response.booked_minor == 215_648

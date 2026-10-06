@@ -82,9 +82,9 @@ FROM (
      WHERE account_reference = 'ES-0001' AND entry_type = 'DEBIT' AND category = 'HEALTH'
        AND occurred_at >= '2026-07-13 00:00 Europe/Madrid' AND occurred_at < '2026-07-16 00:00 Europe/Madrid'
     UNION ALL
-    SELECT 'leisure_july_excluding_pending', amount_minor FROM movements
+    SELECT 'leisure_since_july_excluding_pending', amount_minor FROM movements
      WHERE account_reference = 'ES-0001' AND entry_type = 'DEBIT' AND category = 'LEISURE'
-       AND occurred_at >= '2026-07-01 00:00 Europe/Madrid' AND occurred_at < '2026-08-01 00:00 Europe/Madrid'
+       AND occurred_at >= '2026-07-01 00:00 Europe/Madrid' AND occurred_at < '2026-10-06 00:00 Europe/Madrid'
     UNION ALL
     SELECT 'spending_june_third_account', amount_minor FROM movements
      WHERE account_reference = 'ES-0003' AND entry_type = 'DEBIT'

@@ -178,9 +178,9 @@ TODAY = date(2026, 8, 5)
 
 # The demo dataset's own figures, so an episode that asserts one is asserting what is on screen.
 HOLDINGS = (
-    Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042),
-    Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 548_550),
-    Holding(FUND, "ASSET", "Fondo indexado", "EUR", 270_000),
+    Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 215_648),
+    Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 641_550),
+    Holding(FUND, "ASSET", "Fondo indexado", "EUR", 315_000),
 )
 
 # Two Martas on purpose. Resolving a name has to be a question rather than a choice, and a directory
@@ -593,8 +593,8 @@ class Accounts:
     async def of(self, *_: object, **__: object) -> AccountSummary:
         return AccountSummary(
             currency="EUR",
-            booked_minor=227_042,
-            available_minor=227_042,
+            booked_minor=215_648,
+            available_minor=215_648,
             as_of=datetime(2026, 8, 5, 9, 30, tzinfo=UTC),
             holdings=HOLDINGS,
         )
@@ -660,8 +660,8 @@ class Bank:
                 recipient_phone=None,
                 amount_minor=request.amount_minor,
                 currency=request.currency,
-                balance_before_minor=227_042,
-                balance_after_minor=227_042 - request.amount_minor,
+                balance_before_minor=215_648,
+                balance_after_minor=215_648 - request.amount_minor,
                 expires_at=datetime(2026, 8, 5, 10, 5, tzinfo=UTC),
                 rail=Rail.INTERNAL,
             )
@@ -681,8 +681,8 @@ class Bank:
             recipient_phone=who.phone,
             amount_minor=request.amount_minor,
             currency=request.currency,
-            balance_before_minor=227_042,
-            balance_after_minor=227_042 - request.amount_minor,
+            balance_before_minor=215_648,
+            balance_after_minor=215_648 - request.amount_minor,
             expires_at=datetime(2026, 8, 5, 10, 5, tzinfo=UTC),
         )
 

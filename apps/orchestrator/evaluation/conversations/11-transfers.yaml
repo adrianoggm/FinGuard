@@ -173,7 +173,7 @@ episodes:
         not_says: Hecho
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       # And with the preview given up, a later yes has nothing to find. This is why the intent is
       # cancelled at the bank rather than merely dropped here.
       - say: sí

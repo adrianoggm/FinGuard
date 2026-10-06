@@ -20,7 +20,7 @@ episodes:
         no_model: true
       - say: ¿y en el fondo?
         route: BALANCE
-        says: "2.700,00"
+        says: "3.150,00"
       - say: quiero traspasar del fondo a hucha
         route: TRANSFER
         awaiting: AMOUNT
@@ -55,7 +55,7 @@ episodes:
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: vale gracias
         route: COURTESY
 
@@ -67,7 +67,7 @@ episodes:
     turns:
       - say: ¿cuánto dinero tengo?
         route: BALANCE
-        total: 775592
+        total: 857198
       - say: quiero mover 200 € a la hucha
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION
@@ -94,19 +94,19 @@ episodes:
       - say: Oye cual es el estado actual de mi hucha de ahorros
         route: BALANCE
         no_model: true
-        says: "5.485,50"
+        says: "6.415,50"
       - say: El total
         route: BALANCE
         no_model: true
       - say: En mi Hucha ?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: Y en EL FONDO
         route: BALANCE
-        says: "2.700,00"
+        says: "3.150,00"
       - say: y la corriente
         route: BALANCE
-        says: "2.270,42"
+        says: "2.156,48"
       - say: vale
         route: COURTESY
 
@@ -131,7 +131,7 @@ episodes:
         route: BALANCE
       - say: ¿y en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: gracias
         route: COURTESY
 

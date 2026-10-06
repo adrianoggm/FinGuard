@@ -233,7 +233,7 @@ episodes:
       - say: ¿Cuánto tengo en la cuenta corriente?
         route: BALANCE
         no_model: true
-        says: 2.270,42
+        says: 2.156,48
       - say: Gracias.
         route: COURTESY
         no_model: true

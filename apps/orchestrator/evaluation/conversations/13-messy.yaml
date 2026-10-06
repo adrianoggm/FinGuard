@@ -22,15 +22,15 @@ episodes:
         says: Fondo indexado
       - say: Cuanto dinero tengo en mi cuenta de ahorros ?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: En mi Hucha ?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: Cuanto dinero tengo en mi Hucha?
         route: BALANCE
       - say: Y en EL FONDO
         route: BALANCE
-        says: "2.700,00"
+        says: "3.150,00"
       - say: Pero en el fondo inversion que cuanto tengo ?
         route: BALANCE
       - say: me gustaria traspasar el total de fondo indexado a la cuenta de ahorros
@@ -61,7 +61,7 @@ episodes:
         ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
-        says: "2.700,00"
+        says: "3.150,00"
       # The direction is the episode. A question about money arriving became an order to send some,
       # and `route: QUERY` only says it stopped being a payment — INCOME is what says it was read as
       # money received rather than as spending on Marta.
@@ -94,12 +94,12 @@ episodes:
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: Oye cual es el estado actual de mi hucha de ahorros
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: El total
         route: BALANCE
       - say: Cual es el saldo de mi hucha
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: Me gustaria enviarme dinero a la cuenta corriente
         route: TRANSFER
         awaiting: AMOUNT
@@ -240,7 +240,7 @@ episodes:
         route: BALANCE
       - say: ¿y en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: gracias
         route: COURTESY
 
@@ -341,7 +341,7 @@ episodes:
         route: IDENTITY
       - say: ¿cuánto dinero tengo?
         route: BALANCE
-        total: 775592
+        total: 857198
       - say: ¿y en la hucha?
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
@@ -371,7 +371,7 @@ episodes:
         no_model: true
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
-        says: "2.700,00"
+        says: "3.150,00"
       - say: gracias
         route: COURTESY
 
@@ -383,22 +383,22 @@ episodes:
     turns:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿seguro?
         route: QUERY
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       # The last turn of somebody who asked the same thing five times and finally accepted it. Two
       # halves and both are manners, which is what the comma rule was written for — "vale" was
       # already a pleasantry and "me fío" was not, so the whole turn went to the planner.
