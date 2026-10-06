@@ -70,6 +70,7 @@ from finguard_orchestrator.application.queries.readers.windows import (
 from finguard_orchestrator.domain.constants import (
     MAX_SELECTED_TRANSACTIONS,
     MAX_SUPPORTING_MOVEMENTS,
+    MAX_TURN_SENTENCE,
 )
 from finguard_orchestrator.domain.enums import (
     CounterpartyType,
@@ -87,6 +88,7 @@ from finguard_orchestrator.domain.errors import (
     InvalidValueError,
     QueryRejectedError,
 )
+from finguard_orchestrator.domain.models.account_summary import Holding
 from finguard_orchestrator.domain.models.chart import (
     PresentationContext,
     VisualContext,
@@ -204,15 +206,10 @@ class AccountScopeRequiredError(Exception):
         self.count = count
 
 
-_COUNTERPARTY_LABELS: Final[dict[CounterpartyType, str]] = {
-    CounterpartyType.MERCHANT: "comercio",
-    CounterpartyType.PERSON: "persona",
-    CounterpartyType.EMPLOYER: "empresa pagadora",
-    CounterpartyType.BILLER: "emisor de recibos",
-    CounterpartyType.ACCOUNT: "cuenta contraparte",
-    CounterpartyType.BANK: "banco",
-    CounterpartyType.UNKNOWN: "contraparte",
-}
+# The question `_scope_question` asks, in the words the resumable paths use too. Named because a
+# later turn reads it back: the backstop leaves no workflow, only this question on its turn in the
+# log, and `_asked_which_account_about` knows a reply is answering it by finding it there.
+_WHICH_ACCOUNT: Final = "¿En qué cuenta quieres consultarlo?"
 
 # The default when a handler is built without one, which is every test that does not care. The
 # deployment's number is `banking_read_attempts` in configuration — this is operational policy, and
@@ -628,6 +625,8 @@ class AskFinancialQuestionHandler:
                             Turn(
                                 sentence=query.sentence,
                                 outcome=step.outcome,
+                                # The identifier line, never `plan_in_words`: the turn
+                                # interpreter's prompt quotes this log, and was measured on it.
                                 plan=step.plan,
                                 question=step.question,
                             )
@@ -745,7 +744,7 @@ class AskFinancialQuestionHandler:
                 # `retry_control` is only RETRY when this is set, three lines up — so this is the
                 # coupling written down rather than a case anybody has reached.
                 raise RuntimeError("a retry was accepted with no plan to retry")
-            yield Stage("planned", answer_writer.describe(retry))
+            yield Stage("planned", answer_writer.plan_in_words(retry))
             yield Stage("querying")
             if isinstance(retry, TopMovements):
                 yield await self._ranked(query, retry)
@@ -791,7 +790,7 @@ class AskFinancialQuestionHandler:
                 )
                 return
             target = previous_request
-            yield Stage("planned", answer_writer.describe(target))
+            yield Stage("planned", answer_writer.plan_in_words(target))
             yield Stage("querying")
             restored = (
                 await self._ranked(query, target)
@@ -861,6 +860,20 @@ class AskFinancialQuestionHandler:
                 interpreter=self._interpreter,
                 today=query.today,
             )
+        # The backstop's account question, answered. `_scope_question` asks «¿En qué cuenta…?»
+        # with no `AccountScopeClarification` behind it, so the resume further down never sees the
+        # reply — and read as a sentence of its own, «Todas mis cuentas» was a balance question.
+        # Here, once the intent is known (a payment or a transfer keeps its turn), and before the
+        # chart relationship is classified: the turn this becomes is the pending question, which
+        # is the one whose relationship to a chart is worth recording.
+        rescoped = await self._answering_the_scope_question(query, analysis.intent)
+        if isinstance(rescoped, AskFinancialQuestionResult):
+            yield rescoped
+            return
+        if rescoped is not None:
+            async for step in self._steps(rescoped, follow_up_seen):
+                yield step
+            return
         follow_up_seen[0] = _classify_and_record_visual_follow_up(query, analysis, was)
         intent = analysis.intent
         if intent is Intent.CORRECTION:
@@ -879,7 +892,9 @@ class AskFinancialQuestionHandler:
         # independent of a pending ledger choice and must never be swallowed by its chip parser.
         account_choice = isinstance(
             was.active, AccountScopeClarification
-        ) and _answers_account_scope(query.sentence, was.active)
+        ) and _answers_account_scope(
+            query.sentence, tuple(candidate.display_name for candidate in was.active.candidates)
+        )
         if isinstance(was.active, AccountScopeClarification) and (
             intent
             not in {
@@ -936,7 +951,7 @@ class AskFinancialQuestionHandler:
         if relaxed is not None:
             # These are the exact actions offered after an empty result. They patch one field in
             # code and therefore cannot drift with the configured model.
-            yield Stage("planned", answer_writer.describe(relaxed))
+            yield Stage("planned", answer_writer.plan_in_words(relaxed))
             yield Stage("querying")
             if isinstance(relaxed, TopMovements):
                 yield await self._ranked(query, relaxed)
@@ -994,6 +1009,7 @@ class AskFinancialQuestionHandler:
                     query.sentence, previous if isinstance(previous, FinancialPlan) else None
                 ),
                 plan=answer_writer.describe(previous) if previous else None,
+                plan_in_words=answer_writer.plan_in_words(previous) if previous else None,
                 conversation=was,
             )
             return
@@ -1091,7 +1107,7 @@ class AskFinancialQuestionHandler:
             )
             return
         if isinstance(incoming_payment, FinancialPlan):
-            yield Stage("planned", answer_writer.describe(incoming_payment))
+            yield Stage("planned", answer_writer.plan_in_words(incoming_payment))
             yield Stage("querying")
             yield await self._answer(query, incoming_payment)
             return
@@ -1112,7 +1128,7 @@ class AskFinancialQuestionHandler:
             )
             return
         if isinstance(past_payment, FinancialPlan):
-            yield Stage("planned", answer_writer.describe(past_payment))
+            yield Stage("planned", answer_writer.plan_in_words(past_payment))
             yield Stage("querying")
             yield await self._answer(query, past_payment)
             return
@@ -1168,7 +1184,7 @@ class AskFinancialQuestionHandler:
             else None
         )
         if account_follow_up is not None:
-            yield Stage("planned", answer_writer.describe(account_follow_up))
+            yield Stage("planned", answer_writer.plan_in_words(account_follow_up))
             yield Stage("querying")
             yield await self._answer(query, account_follow_up)
             return
@@ -1213,6 +1229,11 @@ class AskFinancialQuestionHandler:
                     if isinstance(was.last_plan, FinancialPlan)
                     else None
                 ),
+                plan_in_words=(
+                    answer_writer.plan_in_words(was.last_plan)
+                    if isinstance(was.last_plan, FinancialPlan)
+                    else None
+                ),
                 conversation=was,
             )
             return
@@ -1242,6 +1263,11 @@ class AskFinancialQuestionHandler:
                 ),
                 plan=(
                     answer_writer.describe(was.last_plan)
+                    if isinstance(was.last_plan, FinancialPlan)
+                    else None
+                ),
+                plan_in_words=(
+                    answer_writer.plan_in_words(was.last_plan)
                     if isinstance(was.last_plan, FinancialPlan)
                     else None
                 ),
@@ -1380,6 +1406,9 @@ class AskFinancialQuestionHandler:
                     text=drill.text,
                     question=drill.text,
                     plan=answer_writer.describe(previous) if previous is not None else None,
+                    plan_in_words=answer_writer.plan_in_words(previous)
+                    if previous is not None
+                    else None,
                     conversation=was,
                     # Item 5 (Wave 3 hardening, T8b): empty for the ordinary several-bars ask
                     # (the question already names its own alternatives); the NONE-grouped ask's
@@ -1396,11 +1425,14 @@ class AskFinancialQuestionHandler:
                     text=drill.text,
                     question=drill.text,
                     plan=answer_writer.describe(previous) if previous is not None else None,
+                    plan_in_words=answer_writer.plan_in_words(previous)
+                    if previous is not None
+                    else None,
                     conversation=was,
                 )
                 return
             if isinstance(drill, DrillDown):
-                yield Stage("planned", answer_writer.describe(drill.plan))
+                yield Stage("planned", answer_writer.plan_in_words(drill.plan))
                 yield Stage("querying")
                 answered = await self._answer(
                     query, drill.plan, movements=MAX_SELECTED_TRANSACTIONS
@@ -1415,7 +1447,7 @@ class AskFinancialQuestionHandler:
 
         referenced_result = await self._referenced_result_plan(query)
         if referenced_result is not None:
-            yield Stage("planned", answer_writer.describe(referenced_result))
+            yield Stage("planned", answer_writer.plan_in_words(referenced_result))
             yield Stage("querying")
             # I-2 (fix wave): ask the ledger for exactly the movements this turn re-lists, rather
             # than none -- the real adapter substitutes the deployment's own `supporting_movements`
@@ -1451,6 +1483,7 @@ class AskFinancialQuestionHandler:
                         "pregunta sin empezar de cero."
                     ),
                     plan=answer_writer.describe(previous) if previous else None,
+                    plan_in_words=answer_writer.plan_in_words(previous) if previous else None,
                     conversation=was,
                 )
                 return
@@ -1482,7 +1515,7 @@ class AskFinancialQuestionHandler:
             # "¿Y el segundo?" after a ranking. One field changes and nothing is read again, which
             # is what stops this from depending on how the continuation happens to be phrased — the
             # failure the review pointed at when this was a regex over ordinals.
-            yield Stage("planned", answer_writer.describe(deeper))
+            yield Stage("planned", answer_writer.plan_in_words(deeper))
             yield Stage("querying")
             yield await self._ranked(query, deeper)
             return
@@ -1493,7 +1526,7 @@ class AskFinancialQuestionHandler:
             # as the last twelve months is a different question, and refusing the phrase outright —
             # which is what happened, because no `Period` names it — sent the turn to the model and
             # started a clarification loop about a period the user had just given.
-            yield Stage("planned", answer_writer.describe(shifted))
+            yield Stage("planned", answer_writer.plan_in_words(shifted))
             yield Stage("querying")
             if isinstance(shifted, TopMovements):
                 yield await self._ranked(query, shifted)
@@ -1534,7 +1567,7 @@ class AskFinancialQuestionHandler:
         month_fallback = self._pending_month_fallback(query)
         if month_fallback is not None:
             first, second = month_fallback
-            yield Stage("planned", answer_writer.describe(first))
+            yield Stage("planned", answer_writer.plan_in_words(first))
             yield Stage("querying")
             yield await self._answer_with_month_fallback(query, first, second)
             return
@@ -1543,7 +1576,7 @@ class AskFinancialQuestionHandler:
         if finished is not None:
             # No model. The question back was about a slot, the reply fills it, and both the window
             # and the slot are closed vocabularies — so there is nothing here to infer.
-            yield Stage("planned", answer_writer.describe(finished))
+            yield Stage("planned", answer_writer.plan_in_words(finished))
             yield Stage("querying")
             yield await self._answer(query, finished)
             return
@@ -1698,6 +1731,7 @@ class AskFinancialQuestionHandler:
                     outcome=PlanningOutcome.INVALID_DOMAIN.value,
                     text=_refusal_for(broken, query.sentence, checked),
                     plan=answer_writer.describe(checked),
+                    plan_in_words=answer_writer.plan_in_words(checked),
                     # The plan is shown but not remembered: it is the one that misread the
                     # question, and inheriting from it would carry the misreading into the
                     # next turn.
@@ -1705,7 +1739,7 @@ class AskFinancialQuestionHandler:
                 )
                 return
 
-        yield Stage("planned", answer_writer.describe(checked))
+        yield Stage("planned", answer_writer.plan_in_words(checked))
         yield Stage("querying")
         if isinstance(checked, TopMovements):
             yield await self._ranked(query, checked)
@@ -1808,7 +1842,7 @@ class AskFinancialQuestionHandler:
     async def _a_payee_count(
         self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
-        yield Stage("planned", answer_writer.describe(plan))
+        yield Stage("planned", answer_writer.plan_in_words(plan))
         yield Stage("querying")
         yield await self._how_many_payees(query, plan)
 
@@ -1864,14 +1898,14 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         multi_ranking, count = plan
-        yield Stage("planned", f"{answer_writer.describe(multi_ranking)}, top {count}")
+        yield Stage("planned", f"{answer_writer.plan_in_words(multi_ranking)}, top {count}")
         yield Stage("querying")
         yield await self._ranked_many(query, multi_ranking, count)
 
     async def _a_single_movement(
         self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
-        yield Stage("planned", answer_writer.describe(plan))
+        yield Stage("planned", answer_writer.plan_in_words(plan))
         yield Stage("querying")
         yield await self._ranked(query, plan)
 
@@ -1938,7 +1972,7 @@ class AskFinancialQuestionHandler:
         It was spelled nine times in `_steps` — nine identical four-line blocks, which is the part
         of the interleaving that was pure repetition rather than a difference anybody chose.
         """
-        yield Stage("planned", answer_writer.describe(plan))
+        yield Stage("planned", answer_writer.plan_in_words(plan))
         yield Stage("querying")
         yield await self._answer(query, plan)
 
@@ -2078,6 +2112,7 @@ class AskFinancialQuestionHandler:
             outcome=Spoken.CARDS.value,
             text=answer_writer.cards(wallet),
             plan=answer_writer.describe(was.last_plan) if was.last_plan else None,
+            plan_in_words=answer_writer.plan_in_words(was.last_plan) if was.last_plan else None,
             conversation=was,
         )
 
@@ -2103,6 +2138,7 @@ class AskFinancialQuestionHandler:
             outcome=Spoken.CONTACTS.value,
             text=answer_writer.contacts(found),
             plan=answer_writer.describe(was.last_plan) if was.last_plan else None,
+            plan_in_words=answer_writer.plan_in_words(was.last_plan) if was.last_plan else None,
             conversation=was,
             contacts=[
                 SpokenContact(
@@ -2237,7 +2273,7 @@ class AskFinancialQuestionHandler:
                 conversation=query.conversation,
             )
         if found.movement_count < 1:
-            label = _COUNTERPARTY_LABELS[counterparty_type]
+            label = answer_writer.COUNTERPARTY_LABELS[counterparty_type]
             return AskFinancialQuestionResult(
                 outcome=Spoken.GUIDANCE.value,
                 text=(
@@ -2253,7 +2289,7 @@ class AskFinancialQuestionHandler:
             outcome=Spoken.GUIDANCE.value,
             text=(
                 f"Entendido: cuando digas «{alias}», filtraré por {target} "
-                f"como {_COUNTERPARTY_LABELS[counterparty_type]}."
+                f"como {answer_writer.COUNTERPARTY_LABELS[counterparty_type]}."
             ),
             conversation=remembered,
         )
@@ -2312,6 +2348,7 @@ class AskFinancialQuestionHandler:
             outcome=Spoken.BALANCE.value,
             text=answer_writer.balance(summary, named, selected=selected),
             plan=answer_writer.describe(was.last_plan) if was.last_plan else None,
+            plan_in_words=answer_writer.plan_in_words(was.last_plan) if was.last_plan else None,
             # Remembered, so "¿y en la hucha?" on the next turn is about the balance rather than
             # about spending. The rest of the conversation passes through: a balance is a turn, not
             # a reset.
@@ -2847,6 +2884,7 @@ class AskFinancialQuestionHandler:
                         "He entendido la pregunta, pero la consulta que he construido no es válida."
                     ),
                     plan=answer_writer.describe(ranking),
+                    plan_in_words=answer_writer.plan_in_words(ranking),
                     conversation=query.conversation,
                 )
             except BankingUnavailableError:
@@ -2859,6 +2897,7 @@ class AskFinancialQuestionHandler:
                         "reintentarlo sin volver a escribirla."
                     ),
                     plan=answer_writer.describe(ranking),
+                    plan_in_words=answer_writer.plan_in_words(ranking),
                     conversation=query.conversation.awaiting_retry(ranking),
                     suggestions=query_recovery.retry_suggestions(),
                 )
@@ -2874,6 +2913,7 @@ class AskFinancialQuestionHandler:
                 )
             ),
             plan=answer_writer.describe(ranking),
+            plan_in_words=answer_writer.plan_in_words(ranking),
             # Banking's, never this layer's. A hard-coded "EUR" here labelled a movement on a
             # dollar account as euros — the one kind of wrong answer a ledger-backed product
             # cannot afford, because the figure beside it is correct.
@@ -2920,6 +2960,7 @@ class AskFinancialQuestionHandler:
                         outcome=PlanningOutcome.INVALID_DOMAIN.value,
                         text="He entendido el ranking, pero el banco ha rechazado la consulta.",
                         plan=f"{answer_writer.describe(ranking)}, top {count}",
+                        plan_in_words=f"{answer_writer.plan_in_words(ranking)}, top {count}",
                         conversation=query.conversation,
                     )
                 except BankingUnavailableError:
@@ -2929,6 +2970,7 @@ class AskFinancialQuestionHandler:
                         outcome="BANKING_UNAVAILABLE",
                         text="El banco no ha respondido. Vuelve a intentarlo.",
                         plan=f"{answer_writer.describe(ranking)}, top {count}",
+                        plan_in_words=f"{answer_writer.plan_in_words(ranking)}, top {count}",
                         conversation=query.conversation,
                     )
             if movement is None:
@@ -2949,6 +2991,7 @@ class AskFinancialQuestionHandler:
                 )
             ),
             plan=f"{answer_writer.describe(ranking)}, top {count}",
+            plan_in_words=f"{answer_writer.plan_in_words(ranking)}, top {count}",
             currency=one_currency,
             # A ranked list can span accounts. Different currencies must stay as separate rows;
             # adding them would manufacture a monetary total with no valid unit.
@@ -3054,6 +3097,7 @@ class AskFinancialQuestionHandler:
             outcome=PlanningOutcome.PLANNED.value,
             text=answer_writer.movement_examples(movements, answer.currency),
             plan=answer_writer.describe(plan),
+            plan_in_words=answer_writer.plan_in_words(plan),
             conversation=query.conversation,
             currency=answer.currency,
             total_minor=movement.amount_minor if movement is not None else None,
@@ -3258,6 +3302,7 @@ class AskFinancialQuestionHandler:
             outcome=PlanningOutcome.PLANNED.value,
             text=answer_writer.how_many_payees(counted, scoped),
             plan=answer_writer.describe(scoped),
+            plan_in_words=answer_writer.plan_in_words(scoped),
             plan_context=_spoken(scoped),
             conversation=answered_with_result(
                 query.conversation,
@@ -3523,6 +3568,10 @@ class AskFinancialQuestionHandler:
                 )
             ),
             plan=(f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"),
+            plan_in_words=(
+                f"{answer_writer.plan_in_words(latest)} frente a "
+                f"{answer_writer.plan_in_words(earlier)}"
+            ),
             plan_context=_spoken(latest),
             # Keep the compared pair as validated query memory. This makes a direct comparison
             # behave like two consecutive questions: a later "compáralos otra vez" or a repair can
@@ -3730,6 +3779,10 @@ class AskFinancialQuestionHandler:
                 f"{answer_writer.describe(scoped_part)} respecto a "
                 f"{answer_writer.describe(scoped_whole)}"
             ),
+            plan_in_words=(
+                f"{answer_writer.plan_in_words(scoped_part)} respecto a "
+                f"{answer_writer.plan_in_words(scoped_whole)}"
+            ),
             plan_context=_spoken(scoped_whole),
             conversation=query.conversation.answered_ratio(executed),
             currency=part_answer.currency,
@@ -3800,6 +3853,7 @@ class AskFinancialQuestionHandler:
                     "No he encontrado la n\u00f3mina consultada, as\u00ed que no puedo compararla."
                 ),
                 plan=answer_writer.describe(current),
+                plan_in_words=answer_writer.plan_in_words(current),
                 conversation=query.conversation,
                 currency=current_answer.currency,
             )
@@ -3817,6 +3871,7 @@ class AskFinancialQuestionHandler:
                     "precedentes con la que compararla."
                 ),
                 plan=answer_writer.describe(history),
+                plan_in_words=answer_writer.plan_in_words(history),
                 conversation=query.conversation,
                 currency=current_answer.currency,
                 total_minor=current_answer.total_minor,
@@ -3861,6 +3916,9 @@ class AskFinancialQuestionHandler:
             outcome=PlanningOutcome.PLANNED.value,
             text=text,
             plan=f"{answer_writer.describe(current)} frente a las doce n\u00f3minas anteriores",
+            plan_in_words=(
+                f"{answer_writer.plan_in_words(current)} frente a las doce n\u00f3minas anteriores"
+            ),
             plan_context=_spoken(current),
             # This is an answer about the payroll already in view. Keep that plan in view so
             # "compruebalo con el mes anterior" is anchored to its month, not to today's month.
@@ -4020,37 +4078,25 @@ class AskFinancialQuestionHandler:
             )
         valid = {holding.account_id: holding for holding in holdings}
         candidates = {candidate.account_id for candidate in pending.candidates}
-        if account_words.asks_for_all_accounts(query.sentence):
-            selection = AccountSelection(AccountSelectionMode.ALL)
+        selection = _chosen_account_scope(query.sentence, holdings, candidates)
+        if selection is None:
+            return _choose_one_of(
+                tuple(
+                    valid[account_id].display_name
+                    for account_id in candidates
+                    if account_id in valid
+                ),
+                query.conversation,
+            )
+        if selection.mode is AccountSelectionMode.ALL:
             scoped = replace(
                 pending.pending, across_accounts=True, only_account_id=None, only_account_ids=()
             )
         else:
-            names = tuple(
-                valid[account_id].display_name for account_id in candidates if account_id in valid
-            )
-            custom = account_words.custom_chosen_among(query.sentence, names)
-            kinds = account_words.named_in(query.sentence)
-            chosen = [
-                holding
-                for holding in holdings
-                if holding.account_id in candidates
-                and (holding.display_name in custom or (not custom and holding.kind in kinds))
-            ]
-            if len(chosen) != 1:
-                return AskFinancialQuestionResult(
-                    outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-                    text="Elige una de estas cuentas: "
-                    + ", ".join(names)
-                    + ", o Todas mis cuentas.",
-                    suggestions=[*names, "Todas mis cuentas"],
-                    conversation=query.conversation,
-                )
-            selection = AccountSelection(AccountSelectionMode.SELECTED, (chosen[0].account_id,))
             scoped = replace(
                 pending.pending,
                 across_accounts=False,
-                only_account_id=chosen[0].account_id,
+                only_account_id=selection.account_ids[0],
                 only_account_ids=(),
             )
         conversation = replace(
@@ -4069,6 +4115,62 @@ class AskFinancialQuestionHandler:
         if pending.explicit_visualization:
             result = replace(result, explicit_visualization=True)
         return result
+
+    async def _answering_the_scope_question(
+        self, query: AskFinancialQuestionQuery, intent: Intent
+    ) -> AskFinancialQuestionQuery | AskFinancialQuestionResult | None:
+        """The question the backstop asked about, asked again under the account the reply chose.
+
+        `_scope_question` asks «¿En qué cuenta…?» for a reader — a comparison, a payee count, a
+        ratio — that raised before it had a plan anybody could keep, so there is no
+        `AccountScopeClarification` for `_resume_account_scope` to finish. What the conversation
+        does keep is the sentence that asked: `stream` records every turn, and the backstop's turn
+        is the newest one carrying that question. So the reply is resolved exactly as on the
+        resumable path — the same chip test and the same matching, against the accounts the
+        question offered — and that *sentence* is returned to go through the whole pipeline again,
+        with the selection in place. Re-planning rather than replaying is the only option and also
+        the honest one: there is no plan, and the same sentence under a settled scope is exactly
+        what the holder would have got had the scope been settled first. It does not ask a second
+        time: with a selection just checked against the directory, `_scoped` answers from it
+        before either of the two raises the backstop catches.
+
+        `None` means this turn is not an answer to that question, and is then read exactly as it
+        always was: nothing pending, a reply that chooses no account, a payment or a transfer
+        (they own their turns whatever account they name), a deployment without a directory, or a
+        directory that cannot be reached — the sentence read as itself is what happened before
+        this existed. A reply naming an account the question did not offer gets the resumable
+        path's own answer: the choice again.
+        """
+        asked_about = _asked_which_account_about(query.conversation)
+        if (
+            asked_about is None
+            or intent in {Intent.PAYMENT, Intent.OWN_TRANSFER}
+            or self._account_directory is None
+        ):
+            return None
+        try:
+            holdings = await self._account_directory.all_of(query.account_id)
+        except BankingUnavailableError:
+            return None
+        # What `_scoped` offered when it raised: every account with a name to show.
+        offered = tuple(holding for holding in holdings if holding.display_name)
+        names = tuple(holding.display_name for holding in offered)
+        if not _answers_account_scope(query.sentence, names):
+            return None
+        selection = _chosen_account_scope(
+            query.sentence, holdings, {holding.account_id for holding in offered}
+        )
+        if selection is None:
+            return _choose_one_of(names, query.conversation)
+        return replace(
+            query,
+            sentence=asked_about,
+            conversation=replace(query.conversation, last_asked=None, account_selection=selection),
+            # Read afresh. What the edge read was the reply, and the reply is not what is being
+            # asked now: «Todas mis cuentas» read as a balance is the defect this exists for.
+            intent=None,
+            analysis=None,
+        )
 
     async def _scoped(
         self, plan: FinancialPlan, query: AskFinancialQuestionQuery, *, clarify: bool = False
@@ -4390,24 +4492,30 @@ class AskFinancialQuestionHandler:
         which had nothing and therefore produced a 500: a comparison, a ratio or a net cash flow
         asked first, by anybody with more than one account.
 
-        No `AccountScopeClarification` here on purpose. A path that never registered the pending
-        plan cannot resume it, and offering to resume something that is not stored is worse than
-        asking the whole question again.
+        Still no `AccountScopeClarification`, because there is no plan to put in one: the readers
+        that land here raise from inside their own reading, and a half-read comparison is not a
+        `PlannedQuery`. What this leaves is two facts, and together they make the question
+        answerable all the same.
 
-        Which is exactly why `asking` is here. The three sites that build the clarification record
-        the slot on the workflow and `awaiting` reads it there; this path leaves no workflow, so
-        `last_asked` is the only thing that can remember the question — the case that comment on
-        `last_asked` was written for, in a second path that had never used it. Without it the
-        backstop asked "¿en qué cuenta?" and left behind a conversation claiming nothing had been
-        asked, so a comparison or a ratio could re-ask it every turn and no counter would see it.
+        `asking` records the slot. The three sites that build the clarification record it on the
+        workflow and `awaiting` reads it there; this path leaves no workflow, so `last_asked` is
+        the only thing that can remember the question — the case that comment on `last_asked` was
+        written for. Without it the backstop asked "¿en qué cuenta?" and left behind a
+        conversation claiming nothing had been asked, so a comparison or a ratio could re-ask it
+        every turn and no counter would see it.
+
+        And `question` is `_WHICH_ACCOUNT`, which `stream` writes onto this turn in the log beside
+        the sentence that raised. That pair is the pending question. On the next turn,
+        `_answering_the_scope_question` finds it, resolves the reply against the accounts offered
+        here, and asks the sentence again with the selection in place. Before it did, the reply
+        was read as a sentence of its own, and «Todas mis cuentas» after «¿Gasté más en gasolina en
+        junio o en julio?» answered the balance — a true figure for a question nobody had asked.
         """
         names = [candidate.display_name for candidate in required.candidates]
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-            text="¿En qué cuenta quieres consultarlo? Puedes elegir "
-            + ", ".join(names)
-            + " o Todas mis cuentas.",
-            question="¿En qué cuenta quieres consultarlo?",
+            text=f"{_WHICH_ACCOUNT} Puedes elegir " + ", ".join(names) + " o Todas mis cuentas.",
+            question=_WHICH_ACCOUNT,
             suggestions=[*names, "Todas mis cuentas"],
             conversation=was.asking(Slot.ACCOUNT),
         )
@@ -4499,6 +4607,7 @@ class AskFinancialQuestionHandler:
                         "He entendido la pregunta, pero la consulta que he construido no es válida."
                     ),
                     plan=answer_writer.describe(remembered),
+                    plan_in_words=answer_writer.plan_in_words(remembered),
                     conversation=query.conversation,
                 )
             except BankingUnavailableError:
@@ -4511,6 +4620,7 @@ class AskFinancialQuestionHandler:
                         "reintentarlo sin volver a escribirla."
                     ),
                     plan=answer_writer.describe(remembered),
+                    plan_in_words=answer_writer.plan_in_words(remembered),
                     conversation=query.conversation.awaiting_retry(remembered),
                     suggestions=query_recovery.retry_suggestions(),
                 )
@@ -4638,6 +4748,7 @@ class AskFinancialQuestionHandler:
                         f"¿Te refieres a {answer_writer.listed(did_you_mean)}?"
                     ),
                     plan=answer_writer.describe(plan),
+                    plan_in_words=answer_writer.plan_in_words(plan),
                     conversation=query.conversation,
                     suggestions=list(did_you_mean),
                 )
@@ -6058,6 +6169,7 @@ def _answered(
         outcome=PlanningOutcome.PLANNED.value,
         text=text,
         plan=answer_writer.describe(plan),
+        plan_in_words=answer_writer.plan_in_words(plan),
         plan_context=_spoken(plan),
         # Answered: nothing is left open, and this plan becomes the memory the next follow-up
         # inherits from.
@@ -6125,8 +6237,13 @@ def _is_scope_change_followup(sentence: str, *, today: date) -> bool:
     return account_words.asks_for_all_accounts(sentence) or bool(account_words.named_in(sentence))
 
 
-def _answers_account_scope(sentence: str, pending: AccountScopeClarification) -> bool:
-    """Whether the short sentence is an account-choice chip, not a new financial question."""
+def _answers_account_scope(sentence: str, names: tuple[str, ...]) -> bool:
+    """Whether the short sentence is an account-choice chip, not a new financial question.
+
+    `names` are the display names the question offered, which is all a custom-named chip can be
+    matched against — the pending clarification's candidates, or the live accounts the backstop
+    listed.
+    """
     folded = spanish.folded(sentence).strip(" \t\r\n¿?!.,;:")
     if not folded or any(
         word in folded.split() for word in ("cuanto", "cuánta", "saldo", "tengo", "dinero")
@@ -6134,10 +6251,75 @@ def _answers_account_scope(sentence: str, pending: AccountScopeClarification) ->
         return False
     if account_words.asks_for_all_accounts(sentence):
         return len(folded.split()) <= 5
-    names = tuple(candidate.display_name for candidate in pending.candidates)
     if account_words.custom_chosen_among(sentence, names):
         return len(folded.split()) <= 5
     return bool(account_words.named_in(sentence)) and len(folded.split()) <= 4
+
+
+def _chosen_account_scope(
+    sentence: str, holdings: tuple[Holding, ...], candidates: set[UUID]
+) -> AccountSelection | None:
+    """The selection a reply to «¿En qué cuenta…?» makes among the accounts it was offered.
+
+    «Todas mis cuentas» is every account. Otherwise exactly one offered account has to be named,
+    by its own display name or, failing that, by its kind; anything else — two of them, none, one
+    the question did not offer — selects nothing, and the caller asks again rather than guessing.
+    `holdings` is the live directory, so an account that has gone since the question was asked
+    cannot be chosen.
+    """
+    if account_words.asks_for_all_accounts(sentence):
+        return AccountSelection(AccountSelectionMode.ALL)
+    names = tuple(holding.display_name for holding in holdings if holding.account_id in candidates)
+    custom = account_words.custom_chosen_among(sentence, names)
+    kinds = account_words.named_in(sentence)
+    chosen = [
+        holding
+        for holding in holdings
+        if holding.account_id in candidates
+        and (holding.display_name in custom or (not custom and holding.kind in kinds))
+    ]
+    if len(chosen) != 1:
+        return None
+    return AccountSelection(AccountSelectionMode.SELECTED, (chosen[0].account_id,))
+
+
+def _choose_one_of(
+    names: tuple[str, ...], conversation: Conversation
+) -> AskFinancialQuestionResult:
+    """The account question again, as a choice, when a reply named no single offered account.
+
+    The conversation goes back untouched, so whatever made the reply an answer — the open
+    clarification, or the backstop's question in the log — is still there for the next one.
+    """
+    return AskFinancialQuestionResult(
+        outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+        text="Elige una de estas cuentas: " + ", ".join(names) + ", o Todas mis cuentas.",
+        suggestions=[*names, "Todas mis cuentas"],
+        conversation=conversation,
+    )
+
+
+def _asked_which_account_about(was: Conversation) -> str | None:
+    """The sentence the backstop's account question is still waiting on, if it is.
+
+    Three facts have to agree. `last_asked` is the account and nothing else is waiting — a
+    clarification, a payment or a transfer with a slot of its own owns the reply instead. And the
+    newest turn that asked anything asked `_WHICH_ACCOUNT`: an aside in between («gracias»,
+    «¿quién eres?») asks nothing and leaves `last_asked` alone, so the question survives it exactly
+    as the resumable clarification does.
+
+    A sentence the log may have cut is not resumed. `Turn` truncates at `MAX_TURN_SENTENCE`, and
+    asking the first two hundred characters of a longer question would answer something the holder
+    did not ask; those few are read as they were before, and the holder can ask again.
+    """
+    if was.last_asked is not Slot.ACCOUNT or was.awaiting is not None:
+        return None
+    asked = next((turn for turn in reversed(was.turns) if turn.question is not None), None)
+    if asked is None or asked.question != _WHICH_ACCOUNT:
+        return None
+    if not asked.sentence.strip() or len(asked.sentence) >= MAX_TURN_SENTENCE:
+        return None
+    return asked.sentence
 
 
 def _remember_explicit_scope(

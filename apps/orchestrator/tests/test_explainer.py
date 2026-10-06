@@ -44,10 +44,13 @@ def test_the_identity_says_what_it_cannot_do_too() -> None:
 
 
 def test_explaining_restates_the_query_that_ran() -> None:
+    """In the words the answer used: the restated query said "expense, transport_fuel" until the
+    query line learnt to speak Spanish, about a question the holder had asked about «gasolina»."""
     said = explainer.explain("¿qué consulta has hecho?", plan("TRANSPORT_FUEL"))
 
     assert "el mes pasado" in said
-    assert "transport_fuel" in said.lower()
+    assert "gasolina" in said
+    assert "transport_fuel" not in said.lower()
 
 
 def test_the_misfiled_question_is_answered_plainly() -> None:

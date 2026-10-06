@@ -83,14 +83,19 @@ class Turn:
     them is lossy at every hop, which is exactly why an ellipsis three turns deep stops resolving.
     A log loses nothing, because nobody decides what it keeps.
 
-    Deliberately not the state. Nothing branches on this: the code still reads `last_plan` and
-    `awaiting`, which are validated values a decision can safely rest on, and a sentence is neither.
-    This exists so the *model* has the antecedent, and denying it one was measurably the largest
-    thing wrong with the classification prompt.
+    Deliberately not the state. The code still reads `last_plan` and `awaiting`, which are validated
+    values a decision can safely rest on, and a sentence is neither. This exists so the *model* has
+    the antecedent, and denying it one was measurably the largest thing wrong with the
+    classification prompt.
 
-    ponytail: two representations of the same history, and the log is the one with no reader in
-    the control flow. If a branch ever needs it, derive that field from this instead of adding a
-    seventeenth one beside it.
+    One branch reads it, as the note below asked: the account question the handler's backstop asks
+    (`_scope_question`) has no plan to keep, so the turn that asked it is the only record of what
+    was asked, and `_asked_which_account_about` takes the sentence back from here once `last_asked`
+    says the question is still open. Nothing is decided on the sentence itself: it is asked again,
+    through every gate a sentence passes, which is what the holder would get by retyping it.
+
+    ponytail: two representations of the same history. If another branch needs the log, derive
+    its field from this the same way instead of adding a seventeenth one beside it.
     """
 
     # As the holder wrote it, truncated rather than refused: a long sentence is still evidence of

@@ -98,7 +98,7 @@ def financial_metric_executor(
             "outcome": "ANSWERED",
             # The query in words, which is what "Ver la consulta" shows. A saved metric is a stored
             # plan, so the one screen that reopens one is the screen that most needs to say which.
-            "plan": answer_writer.describe(plan),
+            "plan": answer_writer.plan_in_words(plan),
             # The evidence banking already returned with the figure. It was absent altogether, and
             # `Answer.movements` is not optional -- so the disclosure that reads it crashed the
             # whole screen rather than showing one card without movements.

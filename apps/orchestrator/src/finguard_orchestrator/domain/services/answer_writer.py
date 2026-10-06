@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from typing import Final
 
 from finguard_orchestrator.domain.enums import (
+    CounterpartyType,
     Direction,
     GroupBy,
     Metric,
@@ -676,15 +677,81 @@ def _conversational_window_of(plan: FinancialPlan | TopMovements) -> str:
     return window_of(plan)
 
 
+# What a counterparty type is called in a sentence. Here rather than beside the alias answers that
+# used it first, because the query line says the same thing and a second vocabulary for one fact
+# is how two screens come to disagree.
+COUNTERPARTY_LABELS: Final[dict[CounterpartyType, str]] = {
+    CounterpartyType.MERCHANT: "comercio",
+    CounterpartyType.PERSON: "persona",
+    CounterpartyType.EMPLOYER: "empresa pagadora",
+    CounterpartyType.BILLER: "emisor de recibos",
+    CounterpartyType.ACCOUNT: "cuenta contraparte",
+    CounterpartyType.BANK: "banco",
+    CounterpartyType.UNKNOWN: "contraparte",
+}
+
+# The rest of the line's identifiers, in the words already on screen: the direction and the
+# calendar buckets as the chart titles name them ("Gastos por mes"), the other dimensions as the
+# answer sentences do ("tus 3 comercios con…"), and the two measures `describe` left raw as the
+# answers state them — a count of movements, and an average amount per movement.
+_DIRECTION_WORDS: Final[dict[Direction, str]] = {
+    Direction.EXPENSE: "gastos",
+    Direction.INCOME: "ingresos",
+    Direction.ALL: "movimientos",
+}
+_GROUPING_WORDS: Final[dict[GroupBy, str]] = {
+    GroupBy.DAY: "día",
+    GroupBy.WEEK: "semana",
+    GroupBy.MONTH: "mes",
+    GroupBy.CATEGORY: "categoría",
+    GroupBy.MERCHANT: "comercio",
+    GroupBy.COUNTERPARTY: "contraparte",
+    GroupBy.ACCOUNT: "cuenta",
+}
+_METRIC_WORDS: Final[dict[Metric, str]] = {
+    Metric.COUNT: "número de movimientos",
+    Metric.AVERAGE: "importe medio por movimiento",
+}
+
+
 def describe(plan: FinancialPlan | TopMovements) -> str:
-    """The plan in one readable line.
+    """The plan in one line, in the ledger's own identifiers: the line the planner is shown.
+
+    `prompt.py` quotes this into the planner's prompt as the previous question, and counts on
+    every token in it coming from a closed set — enum values, ISO dates, category identifiers.
+    The planner's evaluations were measured against that prompt, so this line stays exactly what
+    it was. It used to be the person's line too, and that is how «Ver la consulta» came to read
+    "en el último mes, expense, subscriptions": a person reads `plan_in_words` now.
+    """
+    return _one_line(plan, in_words=False)
+
+
+def plan_in_words(plan: FinancialPlan | TopMovements) -> str:
+    """The plan in one readable line, for the person who asked: «Ver la consulta».
 
     Shown with every answer on purpose. A figure whose derivation the user cannot
     inspect is a number to be believed, and there is a language model in this pipeline —
     showing the question it actually asked is the difference between a tool and an
     oracle.
+
+    Field for field the same line as `describe`, with every identifier said the way the answers
+    already say it — "suscripciones" from `category_words`, "por comercio", "gastos" — rather
+    than in a second vocabulary written for this line. An answer that says «suscripciones» above
+    a query line saying «subscriptions» reads as two different questions.
     """
-    parts = [window_of(plan), plan.direction.value.lower()]
+    return _one_line(plan, in_words=True)
+
+
+def _one_line(plan: FinancialPlan | TopMovements, *, in_words: bool) -> str:
+    """Both lines, from one walk over the plan, so they cannot disagree about which fields exist.
+
+    `in_words` decides only how an identifier is said. Everything already Spanish — the window,
+    "solo traspasos", "media por periodo" — is the same text in both.
+    """
+    parts = [
+        window_of(plan),
+        _DIRECTION_WORDS[plan.direction] if in_words else plan.direction.value.lower(),
+    ]
     if isinstance(plan, FinancialPlan) and plan.internal_only:
         parts.append("solo traspasos entre cuentas")
     if isinstance(plan, FinancialPlan) and plan.transaction_types == (
@@ -696,7 +763,11 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         # line for "el más caro" and "el segundo más caro".
         parts.append(f"nº {plan.rank} por importe")
     if plan.categories:
-        parts.append("/".join(plan.categories).lower())
+        parts.append(
+            "/".join(category_words.name_of(category) for category in plan.categories)
+            if in_words
+            else "/".join(plan.categories).lower()
+        )
     if plan.excluded_categories:
         parts.append(
             "sin "
@@ -717,11 +788,18 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         if plan.excluded_counterparties:
             parts.append("sin " + "/".join(plan.excluded_counterparties))
         if plan.counterparty_types:
-            parts.append("tipo " + "/".join(item.value.lower() for item in plan.counterparty_types))
+            parts.append(
+                "tipo "
+                + "/".join(
+                    COUNTERPARTY_LABELS[item] if in_words else item.value.lower()
+                    for item in plan.counterparty_types
+                )
+            )
         # The grouping and the metric belong to an aggregate. A ranking has neither, and its rank is
         # appended above — where the reader is looking for what makes the two lines different.
         if plan.group_by.value != "NONE":
-            parts.append(f"por {plan.group_by.value.lower()}")
+            grouping = _GROUPING_WORDS[plan.group_by] if in_words else plan.group_by.value.lower()
+            parts.append(f"por {grouping}")
         if plan.group_limit is not None:
             parts.append(f"top {plan.group_limit}")
         if plan.metric is Metric.PERIOD_AVERAGE:
@@ -733,7 +811,11 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         elif plan.metric is Metric.RECURRENCE:
             parts.append("gastos recurrentes")
         elif plan.metric.value != "SUM":
-            parts.append(plan.metric.value.lower())
+            parts.append(
+                _METRIC_WORDS.get(plan.metric, plan.metric.value.lower())
+                if in_words
+                else plan.metric.value.lower()
+            )
     return ", ".join(parts)
 
 

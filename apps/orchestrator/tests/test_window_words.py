@@ -49,6 +49,18 @@ from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRa
         ("los dos últimos meses", Period.LAST_N_MONTHS, 2),
         ("los últimos dos meses", Period.LAST_N_MONTHS, 2),
         ("los cinco últimos meses", Period.LAST_N_MONTHS, 5),
+        # A plural with no number is a few, not one. «Los últimos meses» read as one month, and in
+        # the live log that rule's LAST_N_MONTHS:1 overrode the model's LAST_N_MONTHS:3.
+        ("los últimos meses", Period.LAST_N_MONTHS, 3),
+        ("¿cuánto gasté en los últimos meses?", Period.LAST_N_MONTHS, 3),
+        ("los últimos días", Period.LAST_N_DAYS, 7),
+        # The singular with no number is still exactly one.
+        ("el último mes", Period.LAST_N_MONTHS, 1),
+        ("el último día", Period.LAST_N_DAYS, 1),
+        ("el último año", Period.LAST_N_MONTHS, 12),
+        # And a stated count wins over either default, on both sides of the word.
+        ("los últimos 2 años", Period.LAST_N_MONTHS, 24),
+        ("los 2 últimos días", Period.LAST_N_DAYS, 2),
         # Inside a longer sentence, because a reply to "¿de qué periodo?" is often a small sentence
         # rather than a bare phrase.
         ("pues el mes pasado", Period.LAST_MONTH, None),
@@ -133,17 +145,32 @@ def test_the_singular_forms_are_read_too() -> None:
     assert window_words.window_in("el último mes") == window_words.window_in("los últimos 1 meses")
 
 
-def test_a_word_beside_the_last_that_is_not_a_number_still_means_one() -> None:
+def test_a_word_beside_the_last_that_is_not_a_number_is_not_a_count() -> None:
     """The article and the preposition sit exactly where a count would, and neither is one.
 
     This is what makes reading the count on both sides safe: "el último mes" and "de los últimos
-    días" put a word there and mean one, and an amount that happens to end up adjacent — "gasté 500
-    euros el último mes" — is separated from the word by the article it needs."""
+    días" put a word there and state no count, so each means what it means without one — one month,
+    and a few days — and an amount that happens to end up adjacent — "gasté 500 euros el último
+    mes" — is separated from the word by the article it needs.
+
+    "De los últimos días" was one day until the plural learnt to mean a few; that is the only
+    expectation here the change moved, and it moved because one day was the wrong reading."""
     assert window_words.window_in("el último mes") == RelativePeriod(Period.LAST_N_MONTHS, n=1)
-    assert window_words.window_in("de los últimos días") == RelativePeriod(Period.LAST_N_DAYS, n=1)
+    assert window_words.window_in("de los últimos días") == RelativePeriod(Period.LAST_N_DAYS, n=7)
     assert window_words.window_in("gasté 500 euros el último mes") == RelativePeriod(
         Period.LAST_N_MONTHS, n=1
     )
+
+
+def test_a_few_years_is_more_than_a_window_may_span_so_the_model_reads_it() -> None:
+    """«Los últimos años» is a few years like the other plurals, and three years is past
+    `MAX_PERIOD_MONTHS`. So this vocabulary declines it, exactly as it declines any count it cannot
+    build — and it is *not* an impossible count the holder stated, which would have the planner
+    refuse a sentence that named no number at all instead of letting the model read it."""
+    assert window_words.window_in("los últimos años") is None
+    assert not window_words.has_invalid_counted_window("¿cuánto gasté en los últimos años?")
+    # A count the holder did state is still checked against the bound.
+    assert window_words.has_invalid_counted_window("los últimos tres años")
 
 
 # --- the phrasings the loop was made of ----------------------------------------------

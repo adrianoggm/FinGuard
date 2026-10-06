@@ -880,7 +880,7 @@ def test_a_ranking_is_explained_without_inventing_a_grouping_it_has_not_got() ->
     assert why["outcome"] == Spoken.EXPLANATION.value
     assert (len(planner.asked), len(ledger.rankings)) == (asked, ranked)
     described = why["plan"].lower()
-    assert "transport_fuel" in described, "the explanation lost which question it is about"
+    assert "gasolina" in described, "the explanation lost which question it is about"
     assert "1" in described, "it lost which position of the ranking"
     for invented in ("agrupad", "media", "suma de"):
         assert invented not in why["text"].lower()
