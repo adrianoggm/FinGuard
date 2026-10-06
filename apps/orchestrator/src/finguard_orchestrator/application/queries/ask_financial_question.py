@@ -198,12 +198,28 @@ from finguard_orchestrator.observability import (
 
 
 class AccountScopeRequiredError(Exception):
+    """A read that cannot pick an account by itself, raised from `_scoped`.
+
+    `conversation` is the one the read was running in — `_steps`' working conversation, which
+    keeps `query.conversation` in step with `was` at every change it makes. The backstop builds its
+    question from this rather than from the conversation the turn arrived with: by the time a read
+    raises, the turn may already have ended a transfer, suspended a payment or dropped a retry, and
+    the arriving conversation brings each of them back. A transfer resurrected that way left the
+    account question behind a slot of its own, so the reply was never read as an answer to it.
+    """
+
     def __init__(
-        self, plan: PlannedQuery, candidates: tuple[AccountCandidate, ...], count: int | None = None
+        self,
+        plan: PlannedQuery,
+        candidates: tuple[AccountCandidate, ...],
+        count: int | None = None,
+        *,
+        conversation: Conversation,
     ):
         self.plan = plan
         self.candidates = candidates
         self.count = count
+        self.conversation = conversation
 
 
 # The question `_scope_question` asks, in the words the resumable paths use too. Named because a
@@ -595,8 +611,12 @@ class AskFinancialQuestionHandler:
         # `step.conversation` (already on the result) while this one depends on `analysis`, which
         # never is.
         follow_up_seen: list[VisualFollowUp | None] = [None]
+        # The same kind of box, for the sentence the turn ends up answering. It is the holder's
+        # sentence except on one path: a reply to the backstop's account question answers the
+        # question it settled, and `_steps` writes that one here when it resumes it.
+        answering: list[str] = [query.sentence]
         try:
-            async for step in self._steps_answering_scope(query, follow_up_seen):
+            async for step in self._steps_answering_scope(query, follow_up_seen, answering):
                 if isinstance(step, AskFinancialQuestionResult):
                     outcome = step.outcome
                     # The turn, as one decision. Here rather than in the `finally` below on
@@ -665,8 +685,10 @@ class AskFinancialQuestionHandler:
                     # The chart is decided once for the turn using the presentation circumstances
                     # supplied at the edge. The deterministic floor may currently ignore some of
                     # them, but the application seam is complete for planners that do not.
+                    # The question answered, not the chip that settled its scope: the visual
+                    # planner reads it to choose the chart.
                     decided = await _decided_visual(
-                        step, self._visual_policy, query.presentation, query.sentence
+                        step, self._visual_policy, query.presentation, answering[0]
                     )
                     step = replace(decided, visual_follow_up=follow_up_seen[0])
                 yield step
@@ -686,6 +708,7 @@ class AskFinancialQuestionHandler:
         self,
         query: AskFinancialQuestionQuery,
         follow_up_seen: list[VisualFollowUp | None],
+        answering: list[str],
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         """`_steps`, with an account-scope requirement answered instead of raised.
 
@@ -701,19 +724,23 @@ class AskFinancialQuestionHandler:
         and reports the same `outcome` to the log as every other answer, instead of needing a
         second copy of both.
 
-        `follow_up_seen` is `stream`'s own box, passed through untouched: this layer decides
-        nothing about the chart, it only forwards what `_steps` writes into it.
+        `follow_up_seen` and `answering` are `stream`'s own boxes, passed through untouched: this
+        layer decides nothing about the chart, it only forwards what `_steps` writes into them.
+
+        The question is built from the conversation the read raised in, never from `query`'s: see
+        `AccountScopeRequiredError`.
         """
         try:
-            async for step in self._steps(query, follow_up_seen):
+            async for step in self._steps(query, follow_up_seen, answering):
                 yield step
         except AccountScopeRequiredError as required:
-            yield self._scope_question(required, query.conversation)
+            yield self._scope_question(required, required.conversation)
 
     async def _steps(
         self,
         query: AskFinancialQuestionQuery,
         follow_up_seen: list[VisualFollowUp | None],
+        answering: list[str],
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         was = query.conversation
         asked_again = query_recovery.retry_action(query.sentence)
@@ -871,7 +898,8 @@ class AskFinancialQuestionHandler:
             yield rescoped
             return
         if rescoped is not None:
-            async for step in self._steps(rescoped, follow_up_seen):
+            answering[0] = rescoped.sentence
+            async for step in self._steps(rescoped, follow_up_seen, answering):
                 yield step
             return
         follow_up_seen[0] = _classify_and_record_visual_follow_up(query, analysis, was)
@@ -4141,9 +4169,8 @@ class AskFinancialQuestionHandler:
         this existed. A reply naming an account the question did not offer gets the resumable
         path's own answer: the choice again.
         """
-        asked_about = _asked_which_account_about(query.conversation)
         if (
-            asked_about is None
+            query.conversation.last_asked is not Slot.ACCOUNT
             or intent in {Intent.PAYMENT, Intent.OWN_TRANSFER}
             or self._account_directory is None
         ):
@@ -4155,7 +4182,8 @@ class AskFinancialQuestionHandler:
         # What `_scoped` offered when it raised: every account with a name to show.
         offered = tuple(holding for holding in holdings if holding.display_name)
         names = tuple(holding.display_name for holding in offered)
-        if not _answers_account_scope(query.sentence, names):
+        asked_about = _asked_which_account_about(query.conversation, names)
+        if asked_about is None or not _answers_account_scope(query.sentence, names):
             return None
         selection = _chosen_account_scope(
             query.sentence, holdings, {holding.account_id for holding in offered}
@@ -4167,7 +4195,11 @@ class AskFinancialQuestionHandler:
             sentence=asked_about,
             conversation=replace(query.conversation, last_asked=None, account_selection=selection),
             # Read afresh. What the edge read was the reply, and the reply is not what is being
-            # asked now: «Todas mis cuentas» read as a balance is the defect this exists for.
+            # asked now: «Todas mis cuentas» read as a balance is the defect this exists for. It
+            # makes this turn the one that reads two sentences — the edge's read of the reply and
+            # `_steps`' read of the question, a second interpreter call in `hybrid` when the
+            # question is worth one — and that is kept on purpose: reusing the reading the
+            # question got when it was first asked would mean carrying an analysis on the wire.
             intent=None,
             analysis=None,
         )
@@ -4298,7 +4330,9 @@ class AskFinancialQuestionHandler:
                             for h in live
                             if h.display_name
                         )
-                        raise AccountScopeRequiredError(plan, candidates)
+                        raise AccountScopeRequiredError(
+                            plan, candidates, conversation=query.conversation
+                        )
                 return replace(
                     plan,
                     group_by=GroupBy.NONE,
@@ -4346,7 +4380,7 @@ class AskFinancialQuestionHandler:
                 for h in holdings
                 if h.display_name
             )
-            raise AccountScopeRequiredError(plan, candidates)
+            raise AccountScopeRequiredError(plan, candidates, conversation=query.conversation)
 
         if not named and self._account_directory is not None:
             try:
@@ -4384,7 +4418,7 @@ class AskFinancialQuestionHandler:
                     for h in holdings
                     if h.display_name
                 )
-                raise AccountScopeRequiredError(plan, candidates)
+                raise AccountScopeRequiredError(plan, candidates, conversation=query.conversation)
             return _across_every_account(plan)
 
         try:
@@ -6299,7 +6333,7 @@ def _choose_one_of(
     )
 
 
-def _asked_which_account_about(was: Conversation) -> str | None:
+def _asked_which_account_about(was: Conversation, offered: tuple[str, ...]) -> str | None:
     """The sentence the backstop's account question is still waiting on, if it is.
 
     Three facts have to agree. `last_asked` is the account and nothing else is waiting — a
@@ -6311,6 +6345,11 @@ def _asked_which_account_about(was: Conversation) -> str | None:
     A sentence the log may have cut is not resumed. `Turn` truncates at `MAX_TURN_SENTENCE`, and
     asking the first two hundred characters of a longer question would answer something the holder
     did not ask; those few are read as they were before, and the holder can ask again.
+
+    Nor is an account choice, judged against `offered` — the names the question lists — like any
+    reply. One is recorded under the question when a resumed question asks it again on the reply's
+    own turn (the directory changed between two reads of that turn), and asked as a question
+    «Todas mis cuentas» is the balance this exists to stop; the next reply is read as itself.
     """
     if was.last_asked is not Slot.ACCOUNT or was.awaiting is not None:
         return None
@@ -6318,6 +6357,8 @@ def _asked_which_account_about(was: Conversation) -> str | None:
     if asked is None or asked.question != _WHICH_ACCOUNT:
         return None
     if not asked.sentence.strip() or len(asked.sentence) >= MAX_TURN_SENTENCE:
+        return None
+    if _answers_account_scope(asked.sentence, offered):
         return None
     return asked.sentence
 
