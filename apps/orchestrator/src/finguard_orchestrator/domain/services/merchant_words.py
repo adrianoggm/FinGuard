@@ -30,7 +30,6 @@ service just stopped being the last to see it.
 """
 
 import difflib
-import re
 from typing import Final
 
 from finguard_orchestrator.domain.services import category_words, spanish
@@ -282,8 +281,9 @@ def named_in(sentence: str, merchants: tuple[str, ...]) -> str | None:
 
     A word the category vocabulary already explains is never a merchant here, however well it
     matches. "Gimnasio Altafit" is a merchant and "gimnasio" is a kind of subscription, and this
-    returns one shop -- the first that matches -- where the holder may pay two gyms. The gym is
-    `called` below instead, which answers with every shop the word names.
+    returns one shop -- the first that matches -- where the holder may pay two gyms. The gym is a
+    merchant term on the plan instead (`explicit_facts.of_its_kind`), which the bank answers with
+    every shop whose name contains the word.
 
     **Those words are dropped, not the sentence.** Until 2026-09-14 a sentence that named any
     category at all was refused here outright, which is a different and much wider rule: it also
@@ -321,28 +321,3 @@ def _shop_words(sentence: str) -> set[str]:
     """The sentence's words a shop's name could carry: long enough, not a word that is never a
     name, and not a word the category vocabulary already explains."""
     return _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
-
-
-def called(words: tuple[str, ...], merchants: tuple[str, ...]) -> tuple[str, ...]:
-    """Every shop whose name carries one of these words, in the order the ledger gave them.
-
-    For a kind of thing a category holds (`category_words.kinds_named_in`): «gimnasio» is "Gimnasio
-    Altafit" *and* "Gimnasio Municipal", and an answer about one of them would be the old defect
-    pointing the other way -- a true figure for part of what was asked.
-
-    A whole word, folded the way the vocabulary folds, or that word's Spanish plural -- and nothing
-    looser. Shops name themselves in the plural as often as not: whole words alone answered «¿cuánto
-    gasté en el cine?» with every leisure shop and a note that none was called «cine», above "Cines
-    Yelmo" in the evidence. "Gimnasiolandia" is still not called «gimnasio», nor "Bar Manolo"
-    «bares»; a shop this misses keeps the category's figure, which is the answer the holder had
-    before, while a shop it wrongly claimed would be a real figure about a shop nobody named.
-    """
-    wanted = [
-        re.compile(rf"(?<![a-z0-9]){re.escape(spanish.folded(word))}(?:e?s)?(?![a-z0-9])")
-        for word in words
-    ]
-    return tuple(
-        merchant
-        for merchant in dict.fromkeys(merchants)
-        if any(pattern.search(spanish.folded(merchant)) for pattern in wanted)
-    )

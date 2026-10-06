@@ -94,11 +94,12 @@ class Turn:
     says the question is still open. Nothing is decided on the sentence itself: it is asked again,
     through every gate a sentence passes, which is what the holder would get by retyping it.
 
-    Every other reply that completes a kept plan reads it as well, derived the same way
-    (`_the_sentence_that_asked`): the resumable account question, a window given after «¿De qué
-    periodo?», a retry. The plan is kept, but the readers that narrow a category's answer to a
-    shop read the words that asked it, and the reply's words name only an account, a window or a
-    retry.
+    No other reply reads it. The resumable account question, a window given after «¿De qué
+    periodo?» and a retry each complete a plan that was kept, and the plan already carries what
+    the question named -- the kind of shop and the shop (`explicit_facts.of_its_kind`, and the
+    handler's `_the_shop_it_names`) -- so the reply's words, which name only an account, a window
+    or a retry, have nothing to look up. Reading the asking sentence back out of this log on those
+    routes was tried, and each route found a way to pick the wrong turn.
 
     ponytail: two representations of the same history. If another branch needs the log, derive
     its field from this the same way instead of adding a seventeenth one beside it.

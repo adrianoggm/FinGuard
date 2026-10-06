@@ -37,7 +37,7 @@ from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.conversation import IDLE, Conversation, Slot, Turn
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
-from finguard_orchestrator.domain.services import category_words, explicit_facts, merchant_words
+from finguard_orchestrator.domain.services import category_words, explicit_facts
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
@@ -341,26 +341,6 @@ def test_every_kind_is_a_word_of_its_own_category_alone(category: str, kind: str
             assert kind not in category_words._PRECISE.get(other, ()), other
             assert kind not in category_words._GLOSS.get(other, ()), other
     assert category_words.kinds_named_in(f"¿Cuánto gasté en {kind}?", category) == (kind,)
-
-
-def test_a_shop_is_called_by_a_kind_as_a_whole_word_folded() -> None:
-    shops = ("Gimnasio Altafit", "Gimnasiolandia", "Netflix", "Óptica Roca")
-    assert merchant_words.called(("gimnasio",), shops) == ("Gimnasio Altafit",)
-    assert merchant_words.called(("optica",), shops) == ("Óptica Roca",)
-    assert merchant_words.called(("streaming",), shops) == ()
-
-
-def test_a_shop_is_called_by_a_kind_in_its_plural() -> None:
-    """Shops name themselves in the plural as often as not -- «Cines Yelmo», «Farmacias Trébol» --
-    and a whole-word match alone told the holder no shop was called «cine» beside Cines Yelmo. The
-    Spanish plural and nothing looser: +s, +es."""
-    shops = ("Cines Yelmo", "Farmacias Trébol", "Gimnasios Rivas", "Cinesa", "Fnac")
-    assert merchant_words.called(("cine",), shops) == ("Cines Yelmo",)
-    assert merchant_words.called(("farmacia",), shops) == ("Farmacias Trébol",)
-    assert merchant_words.called(("gimnasio",), shops) == ("Gimnasios Rivas",)
-    assert merchant_words.called(("taxi",), ("Taxis Madrid", "Taxistas Unidos")) == (
-        "Taxis Madrid",
-    )
 
 
 # --- the plan: a kind is a merchant term beside its category -----------------------------------
@@ -847,6 +827,35 @@ async def test_another_shop_asked_while_the_window_is_open_is_that_shop() -> Non
     assert "Altafit" not in answered.text
 
 
+@pytest.mark.parametrize(
+    ("before", "failures"),
+    [
+        # Another plan's period question, still in the log: the average asked about the gym.
+        (["¿cuál es mi gasto medio en el gimnasio?"], 0),
+        # And a turn the bank could not answer, between the gym and the question being answered.
+        (["¿Cuánto gasté en el gimnasio?", "este año"], 2),
+    ],
+)
+async def test_an_older_question_about_the_gym_is_not_the_one_answered(
+    before: list[str], failures: int
+) -> None:
+    """Probed by review: walking the log back for the sentence a window completes stepped over
+    the question that asked it -- it named no category, the model had read one into «Spotify» --
+    and found an older one about the gym. The window answers the draft its own question kept."""
+    ledger = Unreachable(GYM, NETFLIX, SPOTIFY, failures=failures)
+    planner = CallsTheShopItsCategory()
+    conversation = IDLE
+    for sentence in before:
+        conversation = (await ask(sentence, ledger, conversation, planner=planner)).conversation
+    spotify = await ask("¿Cuánto llevo gastado en Spotify?", ledger, conversation, planner=planner)
+    assert spotify.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+
+    answered = await ask("este año", ledger, spotify.conversation, planner=planner)
+
+    assert ledger.plans[-1].merchants == ("Spotify",)
+    assert "10,99 € en Spotify" in answered.text
+
+
 async def test_a_question_naming_no_shop_costs_no_list() -> None:
     """The list is read for a sentence with a word a shop could be called, and only for one: the
     category by its own name says nothing a list could match."""
@@ -856,32 +865,6 @@ async def test_a_question_naming_no_shop_costs_no_list() -> None:
 
     assert asked.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
     assert ledger.plans == []
-
-
-def test_an_account_choice_is_never_the_sentence_that_asked() -> None:
-    """The guard 09915d9 put on the backstop, kept on every route that reads the log: the account
-    question asked again on a reply's own turn leaves the reply there, and a chip is not the
-    question anybody is answering."""
-    from finguard_orchestrator.application.queries.ask_financial_question import (
-        _the_sentence_that_asked,
-    )
-
-    which = "¿En qué cuenta quieres consultarlo?"
-    asked_on_a_chip = IDLE.with_turn(
-        Turn(sentence="Todas mis cuentas", outcome="NEEDS_CLARIFICATION", question=which)
-    )
-    asked_on_a_question = IDLE.with_turn(
-        Turn(
-            sentence="¿Cuánto gasté en el gimnasio?", outcome="NEEDS_CLARIFICATION", question=which
-        )
-    )
-
-    assert _the_sentence_that_asked(asked_on_a_chip, ("Hucha",), question=which) is None
-    assert (
-        _the_sentence_that_asked(asked_on_a_question, ("Hucha",), question=which)
-        == "¿Cuánto gasté en el gimnasio?"
-    )
-    assert _the_sentence_that_asked(asked_on_a_question, question="¿De qué periodo?") is None
 
 
 async def test_a_gym_named_by_its_own_name_is_that_gym() -> None:
@@ -940,6 +923,45 @@ async def test_a_shop_named_beside_its_kind_is_that_shop(
 
     assert [(plan.merchants, plan.merchant_terms) for plan in ledger.plans] == [((shop,), ())]
     assert figure in result.text
+
+
+class FailsTheShop(Ledger):
+    """Answers the category and the kind, and fails every read of a plan that names a shop."""
+
+    async def run(self, plan: FinancialPlan, **kwargs: object) -> QueryAnswer:
+        if plan.merchants:
+            raise BankingUnavailableError("down")
+        return await super().run(plan, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "figure", "note"),
+    [
+        (
+            "¿Cuánto gasté en suscripciones de Netflix este año?",
+            "72,88 € en suscripciones",
+            "(Incluye toda la categoría suscripciones: no he podido consultar solo Netflix.)",
+        ),
+        (
+            "¿Cuánto gasté en el gimnasio Altafit este año?",
+            "47,90 € en Gimnasio Altafit y Gimnasio Municipal",
+            "(Incluye todos los comercios con «gimnasio» en el nombre: no he podido consultar"
+            " solo Gimnasio Altafit.)",
+        ),
+    ],
+)
+async def test_a_narrower_figure_the_bank_could_not_give_is_said(
+    sentence: str, figure: str, note: str
+) -> None:
+    """The figure in hand is true and wider than the shop the sentence named, so it is given as
+    what it is: the category's, or the kind's."""
+    ledger = FailsTheShop(GYM, SECOND_GYM, NETFLIX, SPOTIFY)
+
+    result = await ask(sentence, ledger)
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert figure in result.text
+    assert result.text.splitlines()[-1] == note
 
 
 async def test_more_gyms_than_a_plan_could_name_are_all_the_gym() -> None:
