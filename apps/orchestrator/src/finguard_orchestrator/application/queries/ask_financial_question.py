@@ -5652,8 +5652,12 @@ def _a_bare_shop_name(
     # Continuation markers qualify the request, not the shop's name. Keeping "Y" in
     # "Y Spotify?" queries a nonexistent merchant; "Y solo Netflix?" used to miss
     # this path altogether. Preserve the original spelling of the name after them.
+    # Only the markers: what follows them is the name or nothing this reads. "¿Y en Amazon?" and
+    # "no, en general" are phrases -- the first goes to the planner, as the corpus decided for a
+    # shop the ledger may not have (30-income-and-unnamed-shops), and the second is the correction
+    # that widens -- so a remainder that opens with a preposition is refused below.
     stripped = re.sub(
-        r"^(?:y\s+(?:s[oó]lo\s+)?(?:en\s+)?|s[oó]lo\s+(?:en\s+)?|no,\s*)",
+        r"^(?:y\s+(?:s[oó]lo\s+)?|s[oó]lo\s+|no,\s*)",
         "",
         stripped,
         flags=re.I,
@@ -5677,7 +5681,7 @@ def _a_bare_shop_name(
                 facts.excluded_categories
                 or facts.excluded_merchants
                 or re.match(
-                    r"(?:no|sin|excepto|salvo|lo|la|el|los|las|este|esta|ese|esa|por)\b",
+                    r"(?:en|no|sin|excepto|salvo|lo|la|el|los|las|este|esta|ese|esa|por)\b",
                     said,
                 )
                 or _THE_WHOLE_LOT.fullmatch(said)
