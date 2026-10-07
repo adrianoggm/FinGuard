@@ -192,9 +192,10 @@ Each was found by a review or a run, ruled on and left in place.
   está disponible» would be true.
 - R34: the evaluation case `sur_two_sessions_one_full` still expects no places for the full class,
   where R21 reads 0, so exact reads 24/28 and would read 25/28; fixing it needs a re-run.
-- R36: «pásale 15 a Diego por el pádel de mañana», «dale 8 a Laura por la clase de yoga de mañana»
-  and «pásame 10 por el pádel del sábado» are claimed by the agent path, because the payment reader
-  does not read them: a gym search instead of a payment preview. Nothing is paid either way.
+- R36 (narrowed): «pásale 15 a Diego por el pádel de mañana» and «dale 8 a Laura por la clase de
+  yoga de mañana» are now orders to pay (`fix(payments): «quiero mandarle 20 €» and «pásale 20 a
+  Marta» are orders to pay`). Left open: «pásame 10 por el pádel del sábado», which asks to be
+  handed money and is still claimed by the agent path as a gym search. Nothing is paid either way.
 - R37: «en el Antiguo» or «en el Centro», names not in the offers, resolve to another gym's slot (the
   preview names the gym and a «sí» is required); the host check compares `host:port` literally, so
   a card writing the default port explicitly reads `interface_untrusted`.

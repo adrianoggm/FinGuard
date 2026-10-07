@@ -389,6 +389,19 @@ def test_an_agent_is_named_by_its_shown_name_as_well_as_by_its_card() -> None:
 @pytest.mark.parametrize(
     "sentence",
     [
+        "pásale 15 a Diego por el pádel de mañana",
+        "dale 8 a Laura por la clase de yoga de mañana",
+    ],
+)
+def test_r36_a_payment_named_with_an_activity_is_a_payment_not_a_search(sentence: str) -> None:
+    """Ruling R36, closed: the imperative without a currency word is still an order to pay."""
+    assert payment_router.is_payment(sentence)
+    assert not asks_an_expert_agent(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
         "ingrésale 20 a Marta por el yoga de mañana",
         "devuélvele 12 a Diego por el pádel del sábado",
         "ingresa 30 a Laura por las clases de natación de esta semana",

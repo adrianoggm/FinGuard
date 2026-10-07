@@ -39,6 +39,15 @@ from finguard_orchestrator.domain.services import payment_router
         "quiero hacerle un bizum a Marta",
         "Tengo que enviar 20 euros a Marta, puedo hacerlo por bizum, ¿verdad?",
         "Quiero mandrle 20 euros a Marta por bizum, ¿cómo lo hago?",
+        # The infinitive with a clitic, and a bare amount to a person: measured in a real
+        # conversation, where «ahora quiero mandarle 20 euros a Marta» was refused as a calculation.
+        "ahora quiero mandarle 20 euros a Marta",
+        "quiero mandarle 20 euros a Marta",
+        "quiero enviarle 30 € a Javi",
+        "tengo que pasarle 15 euros a Aitor",
+        "quiero hacerle un bizum de 20 a Marta",
+        "pásale 20 a Marta",
+        "mándale 20 a Javi",
     ],
 )
 def test_an_instruction_to_pay_is_recognised(sentence: str) -> None:
@@ -67,6 +76,13 @@ def test_an_instruction_to_pay_is_recognised(sentence: str) -> None:
         "Quiero transferir dinero de una de mis cuentas a otra",
         "Estoy intentando hacer una transferencia entre mis cuentas, ¿cómo lo hago?",
         "Eso fue nomina o un bizum?",
+        # The new verbs are not payments by themselves: a bare number is money only as the amount
+        # handed to a person, and the past stays a question.
+        "¿cuánto le mandé a Marta este mes?",
+        "¿cuánto le pasé a Javi en julio?",
+        "quiero saber cuánto le mandé a Marta",
+        "pásale el informe a Marta",
+        "pásale el informe de 2024 a Marta",
     ],
 )
 def test_everything_else_is_not_a_payment(sentence: str) -> None:

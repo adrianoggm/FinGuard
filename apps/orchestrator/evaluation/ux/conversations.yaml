@@ -5,40 +5,52 @@ episodes:
     why: Cambiar comercio y periodo sin perder el alcance de la consulta.
     turns:
       - say: q llevo gastado en suscripciones estos ultimos 9 meses
+        mechanism: intent
         route: QUERY
         ran: {window: 'LAST_N_MONTHS:9', categories: [SUBSCRIPTIONS]}
       - say: solo Netflix
+        mechanism: slot_carryover
         route: QUERY
         ran: {window: 'LAST_N_MONTHS:9', merchants: [Netflix]}
       - say: y este mes?
+        mechanism: follow_up
         route: QUERY
         ran: {window: THIS_MONTH, merchants: [Netflix]}
       - say: no, Spotify
+        mechanism: slot_carryover
         route: QUERY
         ran: {window: THIS_MONTH, merchants: [Spotify]}
       - say: y el mes pasado?
+        mechanism: follow_up
         route: QUERY
         ran: {window: LAST_MONTH, merchants: [Spotify]}
       - say: gracias
+        mechanism: intent
         route: COURTESY
 
   - name: 02-cambio-de-tema
     why: Intercalar saldo y agenda antes de volver al gasto.
     turns:
       - say: cuanto gaste en el super en julio de 2026
+        mechanism: intent
         route: QUERY
         ran: {window: '2026-07-01..2026-07-31', categories: [GROCERIES]}
       - say: cuanto tengo en la hucha
+        mechanism: intent
         route: BALANCE
       - say: quienes son mis contactos
+        mechanism: intent
         route: CONTACTS
       - say: volviendo al super, y en junio de 2026?
+        mechanism: interruption
         route: QUERY
         ran: {window: '2026-06-01..2026-06-30', categories: [GROCERIES]}
       - say: solo Mercadona
+        mechanism: slot_carryover
         route: QUERY
         ran: {window: '2026-06-01..2026-06-30', merchants: [Mercadona]}
       - say: y en julio de 2026?
+        mechanism: follow_up
         route: QUERY
         ran: {window: '2026-07-01..2026-07-31', merchants: [Mercadona]}
 
@@ -46,21 +58,27 @@ episodes:
     why: Corregir fecha, categoria y eliminar el filtro sin alterar la fecha.
     turns:
       - say: gastos de julio de 2026
+        mechanism: intent
         route: QUERY
         ran: {window: '2026-07-01..2026-07-31'}
       - say: perdon junio de 2026
+        mechanism: slot_carryover
         route: QUERY
         ran: {window: '2026-06-01..2026-06-30'}
       - say: solo gasolina
+        mechanism: slot_carryover
         route: QUERY
         ran: {window: '2026-06-01..2026-06-30', categories: [TRANSPORT_FUEL]}
       - say: mejor restaurantes
+        mechanism: slot_carryover
         route: QUERY
         ran: {window: '2026-06-01..2026-06-30', categories: [RESTAURANTS]}
       - say: quita el filtro, todos los gastos de junio de 2026
+        mechanism: reset
         route: QUERY
         ran: {window: '2026-06-01..2026-06-30', categories: [], merchants: []}
       - say: cuantos movimientos son?
+        mechanism: follow_up
         route: QUERY
         ran: {window: '2026-06-01..2026-06-30', metric: COUNT}
 
@@ -69,143 +87,185 @@ episodes:
     scope: unset
     turns:
       - say: cuanto gaste en supermercados el mes pasado
+        mechanism: intent
         route: CLARIFY
       - say: en todas
+        mechanism: pending_resolution
         route: QUERY
         ran: {window: LAST_MONTH, categories: [GROCERIES]}
       - say: por comercio
+        mechanism: follow_up
         route: QUERY
         ran: {window: LAST_MONTH, group_by: COUNTERPARTY, categories: [GROCERIES]}
       - say: y este mes
+        mechanism: follow_up
         route: QUERY
         ran: {window: THIS_MONTH, group_by: COUNTERPARTY, categories: [GROCERIES]}
       - say: mejor por categoria
+        mechanism: slot_carryover
         route: QUERY
         ran: {window: THIS_MONTH, group_by: CATEGORY}
       - say: cuanto tengo?
+        mechanism: intent
         route: BALANCE
 
   - name: 05-erratas
     why: Inferir vocabulario informal sin inventar filtros.
     turns:
       - say: cuanto gaste en el super el mes pasao
+        mechanism: intent
         route: QUERY
         ran: {window: LAST_MONTH, categories: [GROCERIES]}
       - say: y restauantes?
+        mechanism: follow_up
         route: QUERY
         ran: {window: LAST_MONTH, categories: [RESTAURANTS], merchants: []}
       - say: solo esta semna
+        mechanism: slot_carryover
         route: QUERY
         ran: {window: THIS_WEEK, categories: [RESTAURANTS], merchants: []}
       - say: y gasolina?
+        mechanism: follow_up
         route: QUERY
         ran: {window: THIS_WEEK, categories: [TRANSPORT_FUEL], merchants: []}
       - say: cunato tengo
+        mechanism: intent
         route: BALANCE
       - say: gracias
+        mechanism: intent
         route: COURTESY
 
   - name: 06-bizum
     why: Preparar, corregir y cancelar sin confirmar ningun pago.
     turns:
       - say: haz un bixum a Marta Solis Vega
+        mechanism: intent
         route: PAYMENT
       - say: 20 euros
+        mechanism: pending_resolution
         route: PAYMENT
       - say: mejor 25
+        mechanism: pending_resolution
         route: PAYMENT
       - say: "no"
+        mechanism: pending_resolution
         route: PAYMENT
         ends: true
       - say: cuanto tengo
+        mechanism: intent
         route: BALANCE
       - say: gracias
+        mechanism: intent
         route: COURTESY
 
   - name: 07-consulta-u-operacion
     why: No confundir historial enviado, recibido y un nuevo pago.
     turns:
       - say: cuanto le mande a Marta este mes
+        mechanism: intent
         route: QUERY
         ran: {direction: EXPENSE, window: THIS_MONTH}
       - say: y lo que me mando ella?
+        mechanism: reference
         route: QUERY
         ran: {direction: INCOME, window: THIS_MONTH}
       - say: ahora quiero mandarle 20 euros a Marta
+        mechanism: interruption
         route: PAYMENT
       - say: "no"
+        mechanism: pending_resolution
         route: PAYMENT
         ends: true
       - say: mis contactos
+        mechanism: intent
         route: CONTACTS
       - say: cuanto tengo
+        mechanism: intent
         route: BALANCE
 
   - name: 08-comparaciones
     why: Cambiar la categoria conservando ambos periodos de una comparacion.
     turns:
       - say: compara mis gastos en restaurantes de junio y julio de 2026
+        mechanism: intent
         route: QUERY
         ran:
           - {window: '2026-07-01..2026-07-31', categories: [RESTAURANTS]}
           - {window: '2026-06-01..2026-06-30', categories: [RESTAURANTS]}
       - say: y en gasolina?
+        mechanism: comparison
         route: QUERY
         ran:
           - {window: '2026-07-01..2026-07-31', categories: [TRANSPORT_FUEL]}
           - {window: '2026-06-01..2026-06-30', categories: [TRANSPORT_FUEL]}
       - say: ahora solo julio de 2026
+        mechanism: comparison
         route: QUERY
         ran: {window: '2026-07-01..2026-07-31', categories: [TRANSPORT_FUEL]}
       - say: por comercio
+        mechanism: follow_up
         route: QUERY
         ran: {window: '2026-07-01..2026-07-31', group_by: COUNTERPARTY}
       - say: y junio de 2026
+        mechanism: follow_up
         route: QUERY
         ran: {window: '2026-06-01..2026-06-30', group_by: COUNTERPARTY}
       - say: gracias
+        mechanism: intent
         route: COURTESY
 
   - name: 09-graficos
     why: Reformular un grafico y seguir consultando sus datos.
     turns:
       - say: gastos de los ultimos 3 meses por categoria
+        mechanism: intent
         route: QUERY
         ran: {window: 'LAST_N_MONTHS:3', group_by: CATEGORY}
         groups: [[GROCERIES, 20000, 5], [RESTAURANTS, 10000, 3]]
       - say: por meses mejor
+        mechanism: follow_up
         route: QUERY
         ran: {window: 'LAST_N_MONTHS:3', group_by: MONTH}
         groups: [['2026-06', 10000, 2], ['2026-07', 30000, 6], ['2026-08', 5000, 1]]
       - say: ponlo en lineas
+        mechanism: follow_up
         route: VISUAL
         banking_calls: 0
       - say: por que julio es tan alto?
+        mechanism: reference
         route: QUERY
         ran: {window: '2026-07-01..2026-07-31'}
       - say: y solo restaurantes en julio de 2026?
+        mechanism: slot_carryover
         route: QUERY
         ran: {window: '2026-07-01..2026-07-31', categories: [RESTAURANTS]}
       - say: gracias
+        mechanism: intent
         route: COURTESY
 
   - name: 10-recuperacion
     why: Rechazar una respuesta y reiniciar con una consulta independiente.
     turns:
       - say: cuanto gaste en supermercado el mes pasado
+        mechanism: intent
         route: QUERY
         ran: {window: LAST_MONTH, categories: [GROCERIES]}
       - say: no era eso
+        mechanism: reset
         route: CLARIFY
       - say: me referia a gasolina este mes
+        mechanism: pending_resolution
         route: QUERY
         ran: {window: THIS_MONTH, categories: [TRANSPORT_FUEL]}
       - say: olvidalo
+        mechanism: reset
         route: CLARIFY
         banking_calls: 0
       - say: cuanto he ingresado este ano
+        mechanism: intent
         route: QUERY
         ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: []}
       - say: y el mes pasado?
+        mechanism: follow_up
         route: QUERY
         ran: {window: LAST_MONTH, direction: INCOME, categories: [], merchants: []}

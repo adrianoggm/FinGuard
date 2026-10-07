@@ -26,12 +26,17 @@ scripts/real_conversation.py --help`. What it checks and why: `evaluation/real/R
    `just migrate`, not a `psql` as the owner. Loading truncates the demo's bank; it is the person's
    step. The runner only reads, as `finguard_query_reader`.
 2. **Never confirm anything that executes.** No «sí», «vale», «ok», «confirmo» to a payment,
-   transfer or booking preview, through the API or the web. A goal that ends in a payment is met
-   at a correct preview; answer «no». The runner refuses a yes to an open preview (exit 3) — if
-   you hit it, that was your mistake.
+   transfer or booking preview, through the API or the web. In the web, **never click a yes
+   button**, each of which sends «sí»: «Sí, enviar» and «Sí, reservar» in the conversation
+   sheet (`apps/web/src/Conversation.tsx`), «Confirmar» on the Bizum and Traspaso preview card
+   (`apps/web/src/Approval.tsx`). Use «No» or «Cancelar», or type «no». A goal that ends in a
+   payment is met at a correct preview. The runner refuses a yes to an open preview (exit 3) —
+   if you hit it, that was your mistake — but it cannot see the browser: there, only you stand
+   between a click and a real payment.
 3. **Never edit an expectation** in `evaluation/real/conversations.yaml` to make a turn pass, and
    never "correct" the person's words (typos, missing accents, chips stay as typed).
 4. **A `figure_check: mismatch` is a failed turn.** No exceptions, no "the model was close".
+   So is `figure_check: error`: the figure should have been checked and could not be.
 5. Never start, stop or rebuild the compose stack or the model unless the person asked you to.
 
 ## 1. Preflight
@@ -60,13 +65,17 @@ The run's name is `evaluation/real/<YYYY-MM-DD>-<sha>`, with the orchestrator's 
 ## 2. Replay the person's conversations
 
 ```bash
-uv run python scripts/real_conversation.py replay --out evaluation/real/<YYYY-MM-DD>-<sha>
+uv run python scripts/real_conversation.py replay --ux evaluation/ux/conversations.yaml \
+  --out evaluation/real/<YYYY-MM-DD>-<sha>
 ```
 
-It runs preflight again, sends every conversation of `evaluation/real/conversations.yaml` turn by
-turn (echoing the conversation the service returns, as a client does), and writes `<run>.json`
-(every record plus the preflight) and `<run>.md` (transcripts, empty verdict columns). One line per
-turn while it runs. An HTTP error or a timeout is a failed turn, recorded as such.
+It runs preflight again, then sends every conversation of `evaluation/real/conversations.yaml`
+and, with `--ux`, the battery's ten episodes as `ux-<name>` (their `route` is the expectation;
+turns without a mechanism tag count as `untagged`), turn by turn, echoing the conversation the
+service returns as a client does. It writes `<run>.json` (every record plus the preflight) and
+`<run>.md` (transcripts, empty verdict columns) **after every turn**, so a crash keeps what ran.
+One line per turn while it runs. An HTTP error or a timeout is a failed turn, recorded as such;
+a figure the SQL could not check is `error`, also a failure.
 
 ## 3. Improvise at least three conversations
 
@@ -92,8 +101,11 @@ uv run python scripts/real_conversation.py say --state <tmp>/<name>.json "<frase
 ```
 
 `<tmp>` is a scratch directory outside the repository (your scratchpad); `<name>` is short and
-unique, e.g. `impro-gimnasio-marta`. Each call prints what FinGuard said, the suggestions, the
-query line, the SQL figure and the open state. The state files are folded into the run in step 6.
+unique, e.g. `impro-gimnasio-marta`. The conversation is named after the file and always starts
+with `impro-` (the script adds it if missing), so it can never take the place of a replayed
+conversation; `summarise` refuses one that would. Each call prints what FinGuard said, the
+suggestions, the query line, the SQL figure and the open state. The state files are folded
+into the run in step 6.
 
 **An improvised conversation that fails a turn becomes a replayed one.** Append it to
 `evaluation/real/conversations.yaml` (new `name`, its `goal`, the turns exactly as you sent them,
@@ -156,19 +168,22 @@ is not `200`):
    snapshot again; `browser_take_screenshot` when a chart is drawn. Check
    `browser_console_messages` for errors.
 4. Capture the answer: `browser_evaluate` with `() => window.__finguardAnswers.at(-1)` and
-   `filename` set to `<tmp>/web-<name>-<n>.json` (if the tool cannot write there, take the returned
-   JSON and write the file yourself), and record the turn with its figure check:
+   `filename` set to `<tmp>/captures/<name>-<n>.json` — a directory of its own, so the step-6
+   glob over `<tmp>/*.json` finds only conversations (if the tool cannot write there, take the
+   returned JSON and write the file yourself) — and record the turn with its figure check:
 
    ```bash
    uv run python scripts/real_conversation.py observe --state <tmp>/web-<name>.json \
-     --goal "<objetivo>" --said "<lo que escribiste o el chip>" --response <tmp>/web-<name>-<n>.json
+     --goal "<objetivo>" --said "<lo que escribiste o el chip>" \
+     --response <tmp>/captures/<name>-<n>.json
    ```
 
 Judge the page as well as the record: the bubble says what the API said; «Ver la consulta» shows
 the plan that answered; «Ver los movimientos (n de m)» agrees with the count; a chart's title,
 axis and values agree with the groups; the chips offered are ones the service can act on; nothing
-is broken, cut off or in English. The same two rules hold: no «sí» to a preview, and a chip is
-typed or clicked exactly as shown.
+is broken, cut off or in English. The same two rules hold: no «sí» and no yes button («Sí,
+enviar», «Sí, reservar», «Confirmar») on a preview, and a chip is typed or clicked exactly as
+shown. The web conversations are named `web-<name>` (the script adds the prefix).
 
 ## 5. Judge every turn
 
@@ -202,8 +217,8 @@ The rubric, one value per column (Spanish or a short code; `—` when it does no
 | `mechanism` | Which mechanism the turn exercises (tags below). Keep `expect.mechanism` on replayed turns. | — |
 | `notes` | One line: the reason for the verdict, in Spanish. | — |
 
-- `verdict` is `fail` if any column fails, and always if `figure_check` is `mismatch` (the summary
-  enforces this whatever you write).
+- `verdict` is `fail` if any column fails, and always if `figure_check` is `mismatch` or `error`
+  (the summary enforces this whatever you write).
 - On replayed turns, judge against `expect.want`: it is the intended behaviour. A run before a
   change is expected to fail several of them; that is the baseline, judge it honestly.
 - `n/a` figures (comparisons, groupings, rankings, balances, payments) are not checked by the
@@ -237,14 +252,19 @@ uv run python scripts/real_conversation.py summarise evaluation/real/<run>.json 
   --previous evaluation/real/<previous-run>.json
 ```
 
-It folds the improvised and web conversations into the run, enforces the mismatch rule, and
-rewrites `<run>.md`: preflight, findings, the per-mechanism table (with the previous run's rate
+It folds the improvised and web conversations into the run (a file that is not a conversation,
+such as a stray capture, is skipped and named; a conversation named like a replayed one is
+refused and nothing is written), enforces the mismatch and error rules, and rewrites
+`<run>.md`: preflight, findings, the per-mechanism table (with the previous run's rate
 beside each), the recovery rate (after a failed turn, is the next one right?), the figure checks,
 latency (median, p95, max, and per turn in every table), then every transcript with your verdicts.
 `--previous` is the newest earlier `evaluation/real/*.json`; leave it out only for the first run.
 
-The `.md` is generated: never edit it by hand, change the JSON and run `summarise` again. Commit the
-two files of the run, and nothing from `<tmp>`:
+The `.md` is generated: never edit it by hand. Judge the improvised and web turns in their state
+files **before** the first `summarise`; afterwards the run's JSON is the record — to change a
+verdict, edit the run's JSON and run `summarise evaluation/real/<run>.json` alone (passing a
+state file again replaces its turns, judgements included, with the file's). Commit the two
+files of the run, and nothing from `<tmp>`:
 
 ```bash
 git commit -m "docs(evaluation): real conversations <YYYY-MM-DD>, <sha>" -- \
@@ -254,7 +274,8 @@ git commit -m "docs(evaluation): real conversations <YYYY-MM-DD>, <sha>" -- \
 ## 7. Before you say it passed
 
 - Every turn has a `judgement`; the summary shows no `Sin juzgar`.
-- No `mismatch` anywhere. One is a failed run, whatever the rest says.
+- No `mismatch` and no `error` anywhere. One is a failed run, whatever the rest says.
 - At least three improvised conversations and two web ones are in the run.
 - No expectation was edited; any new replayed conversation is in its own commit.
-- The person's data was not touched and no payment, transfer or booking was confirmed.
+- The person's data was not touched and no payment, transfer or booking was confirmed — not by
+  a «sí», not by a yes button.

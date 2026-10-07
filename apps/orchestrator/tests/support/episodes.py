@@ -1120,6 +1120,10 @@ SCOPES = (SETTLED, UNSET, LEGACY)
 @dataclass(frozen=True)
 class Turn:
     say: str
+    # Which conversation mechanism this turn exercises, as the evaluation battery's report names it
+    # (`scripts/real_conversation.py` MECHANISMS). Reporting only: no assertion reads it, so the
+    # corpus, which leaves it unset, is unaffected.
+    mechanism: str | None = None
     route: str | None = None
     # One phrase, or several that must all appear: a search answered by two gyms names both.
     says: str | list[str] | None = None

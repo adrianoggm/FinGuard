@@ -148,7 +148,25 @@ _PAYING: Final = re.compile(
     # 20 euros". These are payment verbs and nothing else — unlike "hagas", which is deliberately
     # absent because "que hagas el desglose" is not a payment.
     r"|mandes|envies|pagues|transfieras"
-    r"|devuelve|devuelvele)\b"
+    r"|devuelve|devuelvele"
+    # The infinitive with its clitic, which is how the order is given after a volitional verb:
+    # "quiero mandarle 20 euros a Marta". `mandar\b` above stops short of the `l`, so the form
+    # people actually say was a different word to it, and the sentence was refused as a calculation.
+    # `pasar` and `dar` are not here: they are payment verbs only when an amount follows them
+    # (`_HANDING_OVER`), and nothing about "pasarle el informe" says money.
+    r"|(?:mandar|enviar|pagar)(?:le|les))\b"
+)
+
+# «pásale 20 a Marta», «dale 8 a Laura», «quiero pasarle 15 euros a Aitor»: the verbs that hand
+# something over are payment verbs only when what they hand over is an amount, so the number is
+# part of the match and not left to `_MONEY`, which accepts any digit anywhere. The recipient is
+# required as well ("a <name>"): «pásale 20 minutos» is not a payment, and «pásale el informe de
+# 2024 a Marta» has no amount straight behind the verb. Imperative and infinitive-with-clitic only:
+# «le pasé 20 a Javi» is `_ALREADY`'s, and a bare «pasa» is also «qué pasa», so it needs the amount
+# right behind it to count.
+_HANDING_OVER: Final = re.compile(
+    r"\b(?:pasale|pasales|pasarle|pasarles|dale|dales|pasa)\s+"
+    r"\d+(?:[.,]\d{1,2})?\s*(?:€|euros?\b)?\s+a\s+[a-z]"
 )
 
 # A fully stated instruction remains an instruction when the user appends ``¿cómo lo hago?`` or
@@ -157,7 +175,8 @@ _PAYING: Final = re.compile(
 _EXPLICIT_ORDER: Final = re.compile(
     r"\b(?:quiero|necesito|voy\s+a|vamos\s+a|tengo\s+que)\s+"
     r"(?:hacer\s+(?:una?\s+)?|dar(?:le|les|me)?\s+(?:el\s+|un\s+|una\s+)?)?"
-    r"(?:bi[xz]um|transferencia|tra[nm]sferir|enviar|mandar|mandrle|pagar)\b"
+    r"(?:bi[xz]um|transferencia|tra[nm]sferir|enviar|mandar|mandrle|pagar"
+    r"|(?:enviar|mandar|pasar|pagar)(?:le|les))\b"
 )
 
 # The same instruction in the subjunctive, which is how Spanish actually gives one: "que le hagas el
@@ -326,6 +345,7 @@ def is_explicit_order(sentence: str) -> bool:
         or _SUBJUNCTIVE_ORDER.search(folded)
         or _IMPERATIVE_ORDER.search(folded)
         or _MAKING.search(folded)
+        or _HANDING_OVER.search(folded)
     )
 
 
@@ -365,4 +385,6 @@ def is_payment(sentence: str) -> bool:
     # `_MONEY` already said about "bizum" — said here as well so a misspelling keeps that property
     # instead of losing it in two places at once.
     rail = payment_words.names_a_rail(sentence)
+    if _HANDING_OVER.search(folded):
+        return True
     return (bool(_PAYING.search(folded)) or rail) and (bool(_MONEY.search(folded)) or rail)

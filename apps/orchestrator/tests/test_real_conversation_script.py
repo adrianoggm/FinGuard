@@ -6,15 +6,20 @@ the baseline would carry it into the comparison, so the rules are pinned here: t
 which answers it checks at all, what counts as a mismatch, the euros as the answers write them, the
 one reply it refuses to send, and how a run is counted.
 
-Pure functions only. Nothing here reaches the network or the database; the smoke run against the
-live stack is the script's own `preflight` and `replay`.
+Nothing here reaches the network or the database: where a test needs a turn or a ledger read, it
+stands in for it. The smoke run against the live stack is the script's own `preflight` and
+`replay`.
 """
 
+import asyncio
 import importlib.util
+import json
 import sys
 from datetime import date
 from pathlib import Path
+from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +91,10 @@ def test_euros_are_formatted_as_the_answers_write_them() -> None:
     assert formatted_euros(189597) == "1.895,97 €"
 
 
+# Read from banking's source (evaluation/real/README.md says why); a checkout without it skips.
+@pytest.mark.skipif(
+    not real.BANKING_SOURCE.exists(), reason="apps/banking-api/src is not in this checkout"
+)
 def test_a_named_period_is_resolved_by_bankings_own_calendar() -> None:
     """Banking is where a period becomes days; a second calendar here would be a second answer."""
     last_month = {**PLAN, "start": None, "end": None, "period": "LAST_MONTH"}
@@ -179,7 +188,7 @@ def test_a_mismatch_fails_the_turn_whatever_the_judge_said_and_recovery_is_the_n
     assert report["by_mechanism"]["intent"] == {"turns": 2, "failed": 2, "unjudged": 0}
     # a/2 failed and a/3 passed: recovered; b/1 failed and b/2 failed: not recovered.
     assert report["recovery_rate"] == 0.5
-    assert report["figures"] == {"match": 0, "mismatch": 1, "n/a": 4}
+    assert report["figures"] == {"match": 0, "mismatch": 1, "error": 0, "n/a": 4}
 
 
 def test_the_replayed_conversations_are_the_persons_own_words() -> None:
@@ -206,3 +215,152 @@ def test_the_replayed_conversations_are_the_persons_own_words() -> None:
         for turn in conversation["turns"]:
             assert turn["say"]
             assert turn["expect"]["mechanism"] in real.MECHANISMS
+
+
+def _options() -> Any:
+    return real.Options(account=LAURA, timezone="Europe/Madrid", database="unused")
+
+
+def test_a_figure_that_could_not_be_checked_is_an_error_and_fails_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`n/a` passes. A check that should have run and did not — whatever raised — must not."""
+
+    class WindowRefusedError(Exception):
+        pass
+
+    async def refusing(*_: object) -> dict[str, int]:
+        raise WindowRefusedError("THIS_WEEKEND has not started yet")
+
+    monkeypatch.setattr(real, "ledger", refusing)
+    plan = {**PLAN, "metric": "SUM", "group_by": "NONE", "action": "AGGREGATE"}
+    record = asyncio.run(
+        real.record_of(
+            _options(), name="a", turn=1, said="¿cuánto?", body=_answered(plan), seconds=1.0
+        )
+    )
+    assert record["figure_check"] == "error"
+    assert "WindowRefusedError" in record["figure_note"]
+
+    record["expect"] = {"mechanism": "intent"}
+    record["judgement"] = {"verdict": "pass"}
+    report = real.summarise([record])
+    assert report["by_mechanism"]["intent"] == {"turns": 1, "failed": 1, "unjudged": 0}
+    assert report["figures"]["error"] == 1
+
+
+def test_a_replay_that_crashes_keeps_every_turn_before_the_crash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def turn(
+        _client: object, _options: object, *, name: str, turn: int, said: str, **_: object
+    ) -> tuple[dict[str, object], None]:
+        if turn == 3:
+            raise RuntimeError("the network went away")
+        return {"conversation": name, "turn": turn, "said": said, "figure_check": "n/a"}, None
+
+    monkeypatch.setattr(real, "_turn", turn)
+    run: dict[str, Any] = {"name": "run", "preflight": {}, "goals": {}, "records": []}
+    says = [{"say": "uno"}, {"say": "dos"}, {"say": "tres"}]
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            real._replay(
+                _options(), [{"name": "a", "turns": says}], real._keeper(tmp_path / "run", run)
+            )
+        )
+    kept = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
+    assert [record["said"] for record in kept["records"]] == ["uno", "dos"]
+    assert "«dos»" in (tmp_path / "run.md").read_text(encoding="utf-8")
+
+
+def _run_with(tmp_path: Path, *files: dict[str, Any]) -> list[str]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for number, content in enumerate(files):
+        path = tmp_path / f"file-{number}.json"
+        path.write_text(json.dumps(content, ensure_ascii=False), encoding="utf-8")
+        paths.append(str(path))
+    return paths
+
+
+def test_summarise_skips_what_is_not_a_conversation_and_refuses_a_name_the_run_has(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    replayed = {
+        "conversation": "spotify-llevo",
+        "turn": 1,
+        "said": "¿Cuánto?",
+        "figure_check": "n/a",
+    }
+    run_path = tmp_path / "run.json"
+    run_path.write_text(json.dumps({"name": "run", "records": [replayed]}), encoding="utf-8")
+
+    def summarise(*states: str) -> int:
+        options = real.Options(run=str(run_path), states=list(states), previous=None)
+        return int(real.summarise_command(options))
+
+    improvised = {**replayed, "conversation": "impro-gym", "said": "y el gym?"}
+    capture = {"type": "answer", "outcome": "PLANNED", "text": "76,93 €", "_seconds": 1.2}
+    state = {"name": "impro-gym", "goal": "gimnasio", "conversation": None, "turns": [improvised]}
+    files = _run_with(tmp_path, capture, state)
+    assert summarise(*files) == 0
+    assert "skipped" in capsys.readouterr().out
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    assert [record["conversation"] for record in run["records"]] == ["spotify-llevo", "impro-gym"]
+
+    # Folding the same state again refreshes it rather than duplicating it.
+    assert summarise(*files) == 0
+    assert len(json.loads(run_path.read_text(encoding="utf-8"))["records"]) == 2
+
+    # A state named like a replayed conversation would replace its turns in silence.
+    before = run_path.read_text(encoding="utf-8")
+    colliding = {**state, "name": "spotify-llevo"}
+    assert summarise(*_run_with(tmp_path / "colliding", colliding)) == 1
+    assert "refused" in capsys.readouterr().out
+    assert run_path.read_text(encoding="utf-8") == before
+
+
+def test_improvised_and_web_conversations_are_named_apart(tmp_path: Path) -> None:
+    assert real._state(tmp_path / "gym.json", None, real.IMPROVISED)["name"] == "impro-gym"
+    assert real._state(tmp_path / "impro-gym.json", None, real.IMPROVISED)["name"] == "impro-gym"
+    assert real._state(tmp_path / "gym.json", "g", real.WEB)["name"] == "web-gym"
+
+
+def test_the_battery_replays_live_with_its_routes_as_the_expectation() -> None:
+    battery = {
+        "episodes": [
+            {
+                "name": "01-x",
+                "why": "porque",
+                "turns": [
+                    {"say": "y este mes?", "route": "QUERY", "ran": {"window": "THIS_MONTH"}},
+                    {"say": "gracias", "route": "COURTESY"},
+                ],
+            }
+        ]
+    }
+    (conversation,) = real.ux_conversations(battery)
+    assert conversation["name"] == "ux-01-x" and conversation["goal"] == "porque"
+    first, second = conversation["turns"]
+    assert first["say"] == "y este mes?" and first["expect"]["route"] == "QUERY"
+    assert "THIS_MONTH" in first["expect"]["want"] and "mechanism" not in first["expect"]
+    assert second["expect"] == {"route": "COURTESY"}
+
+    real_battery = yaml.safe_load(
+        (ROOT / "evaluation" / "ux" / "conversations.yaml").read_text(encoding="utf-8")
+    )
+    assert len(real.ux_conversations(real_battery)) == len(real_battery["episodes"])
+
+
+def test_the_subscriptions_conversation_is_the_batterys_own_words() -> None:
+    replayed = yaml.safe_load(
+        (ROOT / "evaluation" / "real" / "conversations.yaml").read_text(encoding="utf-8")
+    )["conversations"]
+    battery = yaml.safe_load(
+        (ROOT / "evaluation" / "ux" / "conversations.yaml").read_text(encoding="utf-8")
+    )["episodes"]
+    (subscriptions,) = [item for item in replayed if item["name"] == "suscripciones"]
+    (episode,) = [item for item in battery if item["name"] == "01-suscripciones"]
+    assert [turn["say"] for turn in subscriptions["turns"]] == [
+        turn["say"] for turn in episode["turns"]
+    ]

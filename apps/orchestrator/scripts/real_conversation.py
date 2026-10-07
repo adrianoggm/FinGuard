@@ -2,7 +2,7 @@
 
     uv run python scripts/real_conversation.py preflight
     uv run python scripts/real_conversation.py replay --file evaluation/real/conversations.yaml \
-        --out evaluation/real/<YYYY-MM-DD>-<sha>
+        [--ux evaluation/ux/conversations.yaml] --out evaluation/real/<YYYY-MM-DD>-<sha>
     uv run python scripts/real_conversation.py say --state <file.json> [--goal "..."] "<frase>"
     uv run python scripts/real_conversation.py observe --state <file.json> --said "<frase>" \
         --response <answer.json>
@@ -20,7 +20,8 @@ Two kinds of verdict, kept apart on purpose:
 
 * **Figures are mechanical.** An answer that is a single sum or count of the plan it ran is re-done
   here in SQL, through the read-only role and the holder-scoped views, and a figure that differs is
-  a failure whatever else is right. Everything else is `n/a` here and judged by the rubric.
+  a failure whatever else is right. So is `error`: a figure that should have been checked and
+  could not be. Everything else is `n/a` here and judged by the rubric.
 * **The conversation is judged** by the skill that drives this script
   (`.claude/skills/finguard-real-conversation`), against a rubric. This script leaves those columns
   empty, and `summarise` only counts them once the judge has filled them in.
@@ -37,6 +38,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -451,16 +453,24 @@ async def record_of(
     error: str | None = None,
     expect: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The turn as the report keeps it, with its figure checked against the ledger."""
+    """The turn as the report keeps it, with its figure checked against the ledger.
+
+    A check that should have run and could not is `error`, never `n/a`: `n/a` passes, and a broken
+    instrument would otherwise read as a clean run. Any exception counts — the driver's, banking's
+    calendar refusing a window, a connection dropped — because which one it was matters less than
+    that the figure went unchecked, and the class and message say which.
+    """
     body = body or {}
     state = body.get("conversation") or {}
     sql: dict[str, int] | None = None
     plan, note = figure_plan(body) if not error else (None, "sin respuesta")
+    failed = False
     if plan is not None:
         try:
             sql = await ledger(plan, options.account, options.timezone, options.database)
-        except (OSError, asyncpg.PostgresError, ValueError) as problem:
-            note = f"la SQL ha fallado: {problem}"
+        except Exception as problem:  # every failure is recorded, none ends the run
+            failed = True
+            note = f"la comprobación en SQL ha fallado: {type(problem).__name__}: {problem}"
     answer = answer_figures(body, plan) if plan is not None else {}
     return {
         "conversation": name,
@@ -478,7 +488,7 @@ async def record_of(
         "state": {key: state.get(key) for key in ("workflow", "awaiting", "last_asked")},
         "seconds": seconds,
         "sql": sql,
-        "figure_check": figure_check(answer, sql),
+        "figure_check": "error" if failed else figure_check(answer, sql),
         "figure_note": note,
         "expect": expect,
         "error": error,
@@ -527,8 +537,9 @@ def _line(record: dict[str, Any]) -> str:
     seconds = record.get("seconds")
     took = f"{seconds:.1f}s" if seconds is not None else "-"
     return (
-        f"[{record['conversation']} {record['turn']}] {record.get('outcome') or record['error']}"
-        f" {took} {record['figure_check']} — «{record['said']}»"
+        f"[{record['conversation']} {record['turn']}] "
+        f"{record.get('outcome') or record.get('error')}"
+        f" {took} {record.get('figure_check')} — «{record['said']}»"
     )
 
 
@@ -584,7 +595,7 @@ async def _services(options: Options) -> dict[str, Any]:
             {"timezone": options.timezone},
         )
         found["newest"] = row["newest"].isoformat() if row and row["newest"] else None
-    except (OSError, asyncpg.PostgresError) as error:
+    except Exception as error:  # whatever stops the read, the ledger is not reachable: exit 1
         found["newest"] = {"error": f"{type(error).__name__}: {error}"}
     return found
 
@@ -668,8 +679,9 @@ def _print_preflight(found: dict[str, Any]) -> None:
 
 
 def _status(record: dict[str, Any]) -> str:
-    """failed, passed or unjudged. A mismatch or an error fails the turn whatever the judge said."""
-    if record.get("figure_check") == "mismatch" or record.get("error"):
+    """failed, passed or unjudged. A mismatch, a figure that could not be checked, or a turn that
+    got no answer fails whatever the judge said."""
+    if record.get("figure_check") in ("mismatch", "error") or record.get("error"):
         return "failed"
     verdict = (record.get("judgement") or {}).get("verdict")
     return {"fail": "failed", "pass": "passed"}.get(verdict, "unjudged")
@@ -710,7 +722,7 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
         opportunities += 1
         recovered += _status(after) == "passed"
 
-    figures = {"match": 0, "mismatch": 0, "n/a": 0}
+    figures = {"match": 0, "mismatch": 0, "error": 0, "n/a": 0}
     for record in turns:
         figures[record.get("figure_check", "n/a")] += 1
 
@@ -820,8 +832,13 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
         f"({_percent(summary['recovery_rate'])})"
         + (f" · antes {_percent(earlier['recovery_rate'])}" if earlier else ""),
         f"- Cifras contra el libro: {figures['match']} match · {figures['mismatch']} mismatch · "
-        f"{figures['n/a']} n/a"
-        + (f" · antes {earlier['figures']['mismatch']} mismatch" if earlier else ""),
+        f"{figures['error']} sin poder comprobar (error) · {figures['n/a']} n/a"
+        + (
+            f" · antes {earlier['figures']['mismatch']} mismatch, "
+            f"{earlier['figures'].get('error', 0)} error"
+            if earlier
+            else ""
+        ),
         f"- Latencia por turno: mediana {_seconds(latency.get('median'))} · "
         f"p95 {_seconds(latency.get('p95'))} · máx {_seconds(latency.get('max'))} "
         f"({latency.get('turns', 0)} turnos)",
@@ -922,8 +939,26 @@ def _write_run(out: Path, run: dict[str, Any], previous: dict[str, Any] | None) 
     out.with_suffix(".md").write_text(report(run, previous), encoding="utf-8")
 
 
-async def _replay(options: Options, conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
+def _keeper(out: Path, run: dict[str, Any]) -> Callable[[dict[str, Any]], None]:
+    """Keep each turn the moment it exists.
+
+    The run's files are rewritten after every turn, so a crash halfway — the network, the database,
+    this script — loses the turn it was on and nothing before it. A run is dozens of model calls;
+    writing once at the end made the last one decide whether any of them was kept.
+    """
+
+    def keep(record: dict[str, Any]) -> None:
+        run["records"].append(record)
+        _write_run(out, run, None)
+
+    return keep
+
+
+async def _replay(
+    options: Options,
+    conversations: list[dict[str, Any]],
+    keep: Callable[[dict[str, Any]], None],
+) -> None:
     async with httpx.AsyncClient(timeout=300.0) as client:
         for conversation in conversations:
             state: dict[str, Any] | None = None
@@ -937,9 +972,39 @@ async def _replay(options: Options, conversations: list[dict[str, Any]]) -> list
                     conversation=state,
                     expect=turn.get("expect"),
                 )
-                records.append(record)
+                keep(record)
                 print(_line(record), flush=True)
-    return records
+
+
+def ux_conversations(battery: dict[str, Any]) -> list[dict[str, Any]]:
+    """The battery's episodes (`evaluation/ux/conversations.yaml`) as conversations to replay live.
+
+    The battery runs them on a simulated bank and a fixed date. Here they meet the real ledger and
+    today, so its `route` is the expectation and what it says the turn ran (`ran`, `groups`, `ends`,
+    `banking_calls`) travels as a note for the judge — a description of the intent, not figures or
+    dates to match. Its `mechanism` tags arrive with the battery's own tagging; a turn without one
+    is counted as untagged. Names are prefixed, so an episode cannot collide with a conversation of
+    `evaluation/real/conversations.yaml`.
+    """
+    conversations = []
+    for episode in battery["episodes"]:
+        turns = []
+        for turn in episode["turns"]:
+            if not isinstance(turn["say"], str):
+                raise ValueError(f"{episode['name']}: {turn['say']!r} is not a sentence; quote it")
+            expect: dict[str, Any] = {"route": turn.get("route")}
+            if turn.get("mechanism"):
+                expect["mechanism"] = turn["mechanism"]
+            meant = {
+                key: turn[key] for key in ("ran", "groups", "ends", "banking_calls") if key in turn
+            }
+            if meant:
+                expect["want"] = "en la batería: " + json.dumps(meant, ensure_ascii=False)
+            turns.append({"say": turn["say"], "expect": expect})
+        conversations.append(
+            {"name": f"ux-{episode['name']}", "goal": episode.get("why"), "turns": turns}
+        )
+    return conversations
 
 
 def replay_command(options: Options) -> int:
@@ -949,28 +1014,45 @@ def replay_command(options: Options) -> int:
         return code
     path = Path(options.file)
     conversations = yaml.safe_load(path.read_text(encoding="utf-8"))["conversations"]
+    if options.ux:
+        battery = yaml.safe_load(Path(options.ux).read_text(encoding="utf-8"))
+        conversations += ux_conversations(battery)
+    names = [item["name"] for item in conversations]
+    if len(set(names)) != len(names):
+        print(f"refused: two conversations share a name in {names}")
+        return 1
     if options.only:
         conversations = [item for item in conversations if item["name"] in options.only]
     sha = (found.get("version") or {}).get("sha") or "unknown"
     out = Path(options.out) if options.out else path.parent / f"{found['today']}-{sha}"
-    run = {
+    run: dict[str, Any] = {
         "name": out.name,
         "preflight": found,
         "goals": {item["name"]: item.get("goal") for item in conversations},
-        "records": asyncio.run(_replay(options, conversations)),
+        "records": [],
         "findings": [],
     }
+    # On disk before the first turn, and again after each one.
     _write_run(out, run, None)
-    print(f"wrote {out.with_suffix('.json')} and {out.with_suffix('.md')}")
+    try:
+        asyncio.run(_replay(options, conversations, _keeper(out, run)))
+    finally:
+        print(f"{len(run['records'])} turns kept in {out.with_suffix('.json')} and .md")
     return 0
 
 
-def _state(path: Path, goal: str | None) -> dict[str, Any]:
-    state: dict[str, Any] = (
-        json.loads(path.read_text(encoding="utf-8"))
-        if path.exists()
-        else {"name": path.stem, "goal": None, "conversation": None, "turns": []}
-    )
+# Improvised and web conversations are named apart from the replayed ones, so folding them into a
+# run can never take a replayed conversation's place.
+IMPROVISED = "impro-"
+WEB = "web-"
+
+
+def _state(path: Path, goal: str | None, prefix: str) -> dict[str, Any]:
+    if path.exists():
+        state: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        name = path.stem if path.stem.startswith(prefix) else f"{prefix}{path.stem}"
+        state = {"name": name, "goal": None, "conversation": None, "turns": []}
     if goal:
         state["goal"] = goal
     return state
@@ -1013,7 +1095,7 @@ async def _say(options: Options, state: dict[str, Any]) -> dict[str, Any]:
 
 def say_command(options: Options) -> int:
     path = Path(options.state)
-    state = _state(path, options.goal)
+    state = _state(path, options.goal, IMPROVISED)
     record = asyncio.run(_say(options, state))
     state["turns"].append(record)
     _save_state(path, state)
@@ -1028,7 +1110,7 @@ def observe_command(options: Options) -> int:
     the time the browser waited for it, which stands in when `--seconds` is not given.
     """
     path = Path(options.state)
-    state = _state(path, options.goal)
+    state = _state(path, options.goal, WEB)
     body = json.loads(Path(options.response).read_text(encoding="utf-8"))
     # A browser tool may save what the page returned as a JSON string of the answer rather than the
     # answer itself; one more decode reads both.
@@ -1053,19 +1135,61 @@ def observe_command(options: Options) -> int:
     return 0
 
 
+def _conversation_state(path: Path) -> dict[str, Any] | None:
+    """The file as a conversation's state (`say`/`observe`), or None when it is anything else —
+    a captured answer, a run, a stray file in the same directory."""
+    try:
+        content = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (
+        isinstance(content, dict)
+        and isinstance(content.get("name"), str)
+        and isinstance(content.get("turns"), list)
+    ):
+        return content
+    return None
+
+
 def summarise_command(options: Options) -> int:
     """Fold improvised and web transcripts into the run and write its report again.
 
     The run's JSON is the record: judgements are written into its records (and the state files'
     turns) by the judge, and the Markdown is always generated from it, so the two cannot disagree.
+
+    A file that is not a conversation's state is skipped and said so: a glob over a scratch
+    directory also finds the captured web answers. A state whose name the run already has as a
+    *replayed* conversation is refused, because folding it in would replace those turns in silence;
+    folding the same state again replaces its own earlier copy, which is how a re-run refreshes it.
     """
     run_path = Path(options.run)
     run = json.loads(run_path.read_text(encoding="utf-8"))
+    if not isinstance(run, dict) or not isinstance(run.get("records"), list):
+        print(f"refused: {run_path} is not a run (no `records`)")
+        return 1
+    folded = set(run.get("folded", []))
+    replayed = {record["conversation"] for record in run["records"]} - folded
+    states: list[dict[str, Any]] = []
     for extra in options.states:
-        state = json.loads(Path(extra).read_text(encoding="utf-8"))
+        state = _conversation_state(Path(extra))
+        if state is None:
+            print(f"skipped {extra}: not a conversation's state (a captured answer?)")
+            continue
+        name = state["name"]
+        if name in replayed or name in {item["name"] for item in states}:
+            print(
+                f"refused: {extra} is the conversation «{name}», which this run already has. "
+                f"Rename the state (improvised ones start with {IMPROVISED!r}, web ones with "
+                f"{WEB!r}); nothing was written."
+            )
+            return 1
+        states.append(state)
+    for state in states:
         run.setdefault("goals", {})[state["name"]] = state.get("goal")
         kept = [record for record in run["records"] if record["conversation"] != state["name"]]
         run["records"] = kept + state["turns"]
+        folded.add(state["name"])
+    run["folded"] = sorted(folded)
     previous = (
         json.loads(Path(options.previous).read_text(encoding="utf-8")) if options.previous else None
     )
@@ -1113,6 +1237,10 @@ def main() -> int:
     replay.add_argument("--file", default=str(ROOT / "evaluation" / "real" / "conversations.yaml"))
     replay.add_argument("--out", help="path without extension; .json and .md are written")
     replay.add_argument("--only", nargs="*", help="replay only these conversations, by name")
+    replay.add_argument(
+        "--ux",
+        help="also replay the battery's episodes (evaluation/ux/conversations.yaml) live",
+    )
     replay.set_defaults(run_command=replay_command)
 
     say = commands.add_parser("say", parents=[common])
