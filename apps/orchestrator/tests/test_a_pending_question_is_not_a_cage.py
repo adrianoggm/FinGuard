@@ -18,7 +18,13 @@ import pytest
 from support import episodes
 from support.pending import SETTLED, ask, asking_for_the_window_stack
 
+from finguard_orchestrator.application import (
+    AskFinancialQuestionHandler,
+    AskFinancialQuestionQuery,
+)
 from finguard_orchestrator.bootstrap.main import app
+from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.turn_arbiter import Arbitration, TurnType
 
 RESET_TEXT = "Vale, lo dejamos. ¿Qué quieres consultar?"
 
@@ -59,6 +65,26 @@ def test_reset_pending() -> None:
     assert forgotten["conversation"].get("last_plan") is None
     balance = ask(stack, "¿cuánto tengo?", forgotten["conversation"])
     assert balance["outcome"] == "BALANCE"
+
+
+def test_an_answered_balance_drops_the_question_left_open() -> None:
+    """Ruling R12. «¿cuánto tengo?» while «¿De qué periodo?» waits is a clear new intent, and it
+    used to be answered with the question still open behind it — so «en julio» on the next turn ran
+    the restaurants question the holder had walked away from. A clear new intent leaves the pending
+    question (spec §3.1): the balance is answered and nothing is left waiting."""
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    assert asked["conversation"]["workflow"] == "FINANCIAL_CLARIFICATION"
+
+    balance = ask(stack, "¿cuánto tengo?", asked["conversation"])
+
+    assert balance["outcome"] == "BALANCE"
+    assert balance["conversation"]["workflow"] is None
+    assert balance["conversation"]["last_asked"] is None
+    ask(stack, "en julio", balance["conversation"])
+    assert not [
+        plan for plan in stack.ledger.ran if getattr(plan, "categories", ()) == ("RESTAURANTS",)
+    ], "the abandoned restaurants question was run"
 
 
 def test_a_reset_says_so_and_keeps_what_was_chosen() -> None:
@@ -177,3 +203,38 @@ def test_a_reset_reaches_the_stream_too() -> None:
     assert answer["text"] == RESET_TEXT
     assert answer["conversation"]["workflow"] is None
     assert answer["conversation"]["last_asked"] is None
+
+
+async def test_the_question_asked_again_under_the_chosen_account_is_arbitrated_afresh() -> None:
+    """Ruling R16. «Todas mis cuentas», answering the backstop's «¿En qué cuenta…?», sends the
+    question that asked back through the pipeline — a different sentence from the one the edge
+    arbitrated. Its intent and analysis are read afresh for that reason, and so is its kind: the
+    reply's arbitration (a balance-shaped NEW_OPERATION here) says nothing about the comparison."""
+    handler = AskFinancialQuestionHandler(
+        episodes.AnyPlan(),  # type: ignore[arg-type]
+        episodes.Ledger(),  # type: ignore[arg-type]
+        accounts=episodes.Accounts(),  # type: ignore[arg-type]
+        account_directory=episodes.Directory(),  # type: ignore[arg-type]
+        contacts=episodes.Contacts(),
+        cards=episodes.NoCards(),  # type: ignore[arg-type]
+    )
+    comparison = "¿Gasté más en gasolina en junio o en julio?"
+    asked = await handler.handle(
+        AskFinancialQuestionQuery(comparison, episodes.ACCOUNT, episodes.TODAY)
+    )
+    assert asked.question == "¿En qué cuenta quieres consultarlo?"
+
+    rescoped = await handler._answering_the_scope_question(
+        AskFinancialQuestionQuery(
+            "Todas mis cuentas",
+            episodes.ACCOUNT,
+            episodes.TODAY,
+            conversation=asked.conversation,
+            arbitration=Arbitration(TurnType.NEW_OPERATION),
+        ),
+        Intent.ACCOUNT_BALANCE,
+    )
+
+    assert isinstance(rescoped, AskFinancialQuestionQuery)
+    assert rescoped.sentence == comparison
+    assert rescoped.arbitration is None

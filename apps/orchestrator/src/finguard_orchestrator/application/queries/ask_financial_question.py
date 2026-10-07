@@ -4295,6 +4295,10 @@ class AskFinancialQuestionHandler:
             # question got when it was first asked would mean carrying an analysis on the wire.
             intent=None,
             analysis=None,
+            # And its kind with them: the edge arbitrated the reply, and the reply's kind — a
+            # balance-shaped NEW_OPERATION for «Todas mis cuentas» — says nothing about the
+            # question being asked again.
+            arbitration=None,
         )
 
     async def _scoped(

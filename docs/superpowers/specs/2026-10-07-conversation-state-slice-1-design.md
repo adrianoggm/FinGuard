@@ -88,6 +88,11 @@ Consequences, each a stated behaviour:
 - A clear new intent **leaves the pending question** (it is dropped, not kept: keeping an abandoned
   draft is *Later*). «¿De qué periodo?» → «ahora quiero mandarle 20 euros a Marta» starts the
   payment preview.
+  One exception, kept on purpose: the **account question survives** an aside and a balance
+  (`31-account-scope.yaml` `the_account_question_survives_an_aside_and_a_balance`). Its reply is a
+  chip naming one of the person's accounts and can mean nothing else, while a window reply
+  («en julio») reads as a follow-up to whatever was answered last -- so only the window question
+  is dropped.
 - An answer is **absorbed whole**: every slot it fills goes into the open draft, and FinGuard asks
   only for what is still missing. «¿De qué periodo?» → «en todas mis cuentas» sets the account and
   asks the period again (naming the subject, §3.5); «¿En qué cuenta?» → «este año» keeps the window

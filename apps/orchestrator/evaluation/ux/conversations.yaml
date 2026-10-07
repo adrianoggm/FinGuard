@@ -250,16 +250,18 @@ episodes:
         mechanism: intent
         route: QUERY
         ran: {window: LAST_MONTH, categories: [GROCERIES]}
+      # Rulings R11/R13: a turn that is only reset words is a reset — «Vale, lo dejamos» — not
+      # the correction clarification. The next turn names its own window and category.
       - say: no era eso
         mechanism: reset
-        route: CLARIFY
+        route: GUIDANCE
       - say: me referia a gasolina este mes
         mechanism: pending_resolution
         route: QUERY
         ran: {window: THIS_MONTH, categories: [TRANSPORT_FUEL]}
       - say: olvidalo
         mechanism: reset
-        route: CLARIFY
+        route: GUIDANCE
         banking_calls: 0
       - say: cuanto he ingresado este ano
         mechanism: intent

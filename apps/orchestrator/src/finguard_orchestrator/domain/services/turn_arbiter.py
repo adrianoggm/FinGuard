@@ -103,9 +103,14 @@ def is_a_reset(sentence: str) -> bool:
     and «olvidalo» are the same turn. Any other word — a category, a window, «más» — makes it a
     request that happens to contain one: «no, déjalo en restaurantes», «nada más que gasolina».
 
+    A question is never one (ruling R16): «¿nada?» asks whether there was nothing, «¿olvídalo?»
+    whether to leave it, and wiping the conversation answers neither. A reset is said, not asked.
+
     Needs no conversation and no reading, which is what lets the handler answer it for a caller
     that brought no arbitration: RESET is first in the order, so the sentence alone decides it.
     """
+    if "?" in sentence or "¿" in sentence:
+        return False
     words = _WORD.findall(spanish.folded(sentence))
     said_one, at = False, 0
     while at < len(words):

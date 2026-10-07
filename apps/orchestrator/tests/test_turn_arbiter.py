@@ -118,6 +118,15 @@ def test_courtesy_alone_is_not_a_reset(sentence: str) -> None:
     assert is_a_reset(sentence) is False
 
 
+@pytest.mark.parametrize(
+    "sentence", ["¿nada?", "¿olvídalo?", "nada?", "¿no importa?", "¿no era eso?", "¿déjalo"]
+)
+def test_a_question_is_never_a_reset(sentence: str) -> None:
+    """Ruling R16. «¿Nada?» asks something — whether there was nothing, whether to leave it — and
+    wiping the conversation is not an answer to a question. A reset is said, never asked."""
+    assert is_a_reset(sentence) is False
+
+
 async def test_a_reset_wins_over_the_question_left_open() -> None:
     """First in the order, because a reset is the one turn that is about the open question itself:
     read as its answer, «olvídalo» is asked about again («Sigo sin tener claro el periodo»)."""
