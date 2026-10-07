@@ -755,7 +755,16 @@ def of_its_kind[P: FinancialPlan | FinancialPlanDraft | TopMovements](
         or plan.transaction_ids
     ):
         return plan
-    kinds = facts.kinds_of(plan.categories[0])
+    # Each kind as the vocabulary spells it and without its accents, as alternatives: the bank
+    # lowers a name but does not fold it, so «óptica» alone is not "Optica Roca", and the note
+    # under an empty answer would then say no shop carries a word one plainly does.
+    kinds = tuple(
+        dict.fromkeys(
+            spelling
+            for kind in facts.kinds_of(plan.categories[0])
+            for spelling in (kind, spanish.folded(kind))
+        )
+    )
     if not kinds or kinds == plan.merchant_terms:
         return plan
     return replace(plan, merchant_terms=kinds)

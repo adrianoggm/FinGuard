@@ -419,7 +419,23 @@ def test_a_kind_of_the_new_category_replaces_the_old_one() -> None:
     ).merchant_terms == ("farmacia",)
     assert of_its_kind(
         "¿y en la óptica?", categories=("HEALTH",), merchant_terms=("farmacia",)
-    ).merchant_terms == ("óptica",)
+    ).merchant_terms == ("óptica", "optica")
+
+
+async def test_a_kind_is_carried_with_and_without_its_accent() -> None:
+    """Probed by review: the bank lowers a shop's name and does not fold it, so «óptica» alone is
+    not "Optica Roca" -- and the note under the category's figure then said no shop carried the
+    word, beside the one that does. Both spellings go as alternatives; the person reads one."""
+    ledger = Ledger(
+        Charge("Optica Roca", "HEALTH", 9_000), Charge("Farmacia Gran Via", "HEALTH", 1_250)
+    )
+
+    result = await ask("¿Cuánto gasté en la óptica este año?", ledger)
+
+    assert ledger.plans[-1].merchant_terms == ("óptica", "optica")
+    assert "90,00 € en Optica Roca" in result.text
+    assert "ningún comercio" not in result.text
+    assert result.plan_in_words.endswith("salud, comercios con «óptica» en el nombre")
 
 
 def test_a_kind_stays_while_its_category_does() -> None:
@@ -525,11 +541,29 @@ async def test_no_gym_is_the_category_and_says_so() -> None:
         "(Incluye toda la categoría suscripciones: en este periodo ningún comercio lleva"
         " «gimnasio» en el nombre.)"
     )
-    # «Ver la consulta» is the query that produced the figure, and the turn remembers it.
+    # «Ver la consulta» is the query that produced the figure; the turn remembers the question.
     assert result.plan_in_words.endswith("gastos, suscripciones")
     remembered = result.conversation.last_plan
     assert isinstance(remembered, FinancialPlan)
-    assert (remembered.categories, remembered.merchant_terms) == (("SUBSCRIPTIONS",), ())
+    assert (remembered.categories, remembered.merchant_terms) == (("SUBSCRIPTIONS",), ("gimnasio",))
+
+
+async def test_the_turn_after_the_note_is_still_about_the_gym() -> None:
+    """Probed by review: after «ningún comercio lleva «gimnasio»», «¿y el año pasado?» was every
+    subscription with no note -- the turn had remembered the category's figure as the question.
+    The question was the gym, and last year is asked about the gym."""
+    ledger = Ledger(NETFLIX, SPOTIFY)
+    first = await ask("¿Cuánto gasté en el gimnasio este año?", ledger)
+    ran = len(ledger.plans)
+
+    result = await ask("¿y el año pasado?", ledger, first.conversation)
+
+    assert ledger.plans[ran].merchant_terms == ("gimnasio",)
+    assert ledger.plans[ran].date_range is not None
+    assert result.text.splitlines()[-1] == (
+        "(Incluye toda la categoría suscripciones: en este periodo ningún comercio lleva"
+        " «gimnasio» en el nombre.)"
+    )
 
 
 async def test_no_gym_in_an_empty_category_is_nothing_found() -> None:
@@ -884,20 +918,34 @@ async def test_a_gym_named_by_its_own_name_is_that_gym() -> None:
     )
 
 
+MCFIT = Charge("McFit", "SUBSCRIPTIONS", 2_500)
+
+
 @pytest.mark.parametrize(
-    ("sentence", "shop", "charges", "figure"),
+    ("sentence", "shop", "charges", "figure", "covered"),
     [
         (
             "¿Cuánto gasté en el gimnasio McFit este año?",
             "McFit",
-            (GYM, NETFLIX, Charge("McFit", "SUBSCRIPTIONS", 2_500)),
+            (GYM, NETFLIX, MCFIT),
             "25,00 € en McFit",
+            "suscripciones",
+        ),
+        # McFit the only gym: the shop is still the answer, never «ningún comercio lleva
+        # «gimnasio»» beside it.
+        (
+            "¿Cuánto gasté en el gimnasio McFit este año?",
+            "McFit",
+            (NETFLIX, SPOTIFY, MCFIT),
+            "25,00 € en McFit",
+            "suscripciones",
         ),
         (
             "¿Cuánto gasté en el cine Kinepolis este año?",
             "Kinepolis",
             (Charge("Cines Yelmo", "LEISURE", 1_850), Charge("Kinepolis", "LEISURE", 1_200)),
             "12,00 € en Kinepolis",
+            "ocio",
         ),
         (
             "¿Cuánto gasté en el taxi de Uber este año?",
@@ -907,22 +955,57 @@ async def test_a_gym_named_by_its_own_name_is_that_gym() -> None:
                 Charge("Uber", "TRANSPORT_PUBLIC", 2_200),
             ),
             "22,00 € en Uber",
+            "transporte público",
         ),
     ],
 )
 async def test_a_shop_named_beside_its_kind_is_that_shop(
-    sentence: str, shop: str, charges: tuple[Charge, ...], figure: str
+    sentence: str, shop: str, charges: tuple[Charge, ...], figure: str, covered: str
 ) -> None:
-    """Probed by review: «el gimnasio McFit» answered Gimnasio Altafit, «el cine Kinepolis» Cines
-    Yelmo and «el taxi de Uber» every taxi -- a shop whose name lacks the kind lost to the shops
-    whose name has it. The planner copies the shop the sentence names into the plan, as its prompt
-    asks, and a plan that names a shop exactly is never narrowed to a kind: the shop wins."""
+    """Probed by review: with a planner that read only the category, «el gimnasio McFit» answered
+    Gimnasio Altafit, «el cine Kinepolis» Cines Yelmo -- the kind's query never shows a shop whose
+    name lacks the kind. The category's shops are listed first, a shop the sentence names whole
+    wins over its kind, and the line under the figure says the answer is narrower."""
     ledger = Ledger(*charges)
 
-    result = await ask(sentence, ledger, planner=PlansTheCategory(shops=(shop,)))
+    result = await ask(sentence, ledger)
 
-    assert [(plan.merchants, plan.merchant_terms) for plan in ledger.plans] == [((shop,), ())]
+    assert [plan.group_by for plan in ledger.plans] == [GroupBy.MERCHANT, GroupBy.NONE]
+    assert (ledger.plans[-1].merchants, ledger.plans[-1].merchant_terms) == ((shop,), ())
     assert figure in result.text
+    assert result.text.splitlines()[-1] == (
+        f"(Solo {shop}. La consulta que había construido cubría {covered} entera.)"
+    )
+
+
+async def test_a_shop_the_planner_copied_is_left_as_it_is() -> None:
+    """The planner's prompt asks it to copy the shop a sentence names, and a plan that names one
+    exactly is never narrowed to a kind, nor looked up again: it already says which shop."""
+    ledger = Ledger(GYM, NETFLIX, MCFIT)
+
+    result = await ask(
+        "¿Cuánto gasté en el gimnasio McFit este año?",
+        ledger,
+        planner=PlansTheCategory(shops=("McFit",)),
+    )
+
+    assert [(plan.merchants, plan.merchant_terms) for plan in ledger.plans] == [(("McFit",), ())]
+    assert "25,00 € en McFit" in result.text
+
+
+async def test_a_place_beside_a_kind_names_no_shop_of_another_kind() -> None:
+    """A shop that does not carry the kind is named whole or not at all: «el taxi de Madrid» is
+    the taxis, not "EMT Madrid", which shares only the place."""
+    ledger = Ledger(
+        Charge("Taxi Express", "TRANSPORT_PUBLIC", 1_500),
+        Charge("EMT Madrid", "TRANSPORT_PUBLIC", 400),
+    )
+
+    result = await ask("¿Cuánto gasté en el taxi de Madrid este año?", ledger)
+
+    assert ledger.plans[-1].merchant_terms == ("taxi",)
+    assert "15,00 € en Taxi Express" in result.text
+    assert "EMT" not in result.text
 
 
 class FailsTheShop(Ledger):
@@ -942,12 +1025,6 @@ class FailsTheShop(Ledger):
             "72,88 € en suscripciones",
             "(Incluye toda la categoría suscripciones: no he podido consultar solo Netflix.)",
         ),
-        (
-            "¿Cuánto gasté en el gimnasio Altafit este año?",
-            "47,90 € en Gimnasio Altafit y Gimnasio Municipal",
-            "(Incluye todos los comercios con «gimnasio» en el nombre: no he podido consultar"
-            " solo Gimnasio Altafit.)",
-        ),
     ],
 )
 async def test_a_narrower_figure_the_bank_could_not_give_is_said(
@@ -962,6 +1039,19 @@ async def test_a_narrower_figure_the_bank_could_not_give_is_said(
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert figure in result.text
     assert result.text.splitlines()[-1] == note
+
+
+async def test_a_gym_found_before_its_kind_ran_is_kept_for_the_retry() -> None:
+    """«El gimnasio Altafit» is narrowed to the gym before the kind's query runs, so a bank that
+    cannot read the gym has nothing wider in hand to give: the shop's plan is kept for a retry."""
+    ledger = FailsTheShop(GYM, SECOND_GYM, NETFLIX, SPOTIFY)
+
+    result = await ask("¿Cuánto gasté en el gimnasio Altafit este año?", ledger)
+
+    assert result.outcome == "BANKING_UNAVAILABLE"
+    retry = result.conversation.retry_plan
+    assert isinstance(retry, FinancialPlan)
+    assert retry.merchants == ("Gimnasio Altafit",)
 
 
 async def test_more_gyms_than_a_plan_could_name_are_all_the_gym() -> None:
@@ -1048,7 +1138,12 @@ async def test_a_place_in_the_name_does_not_swap_the_gyms_for_another_shop() -> 
 
     result = await ask("¿Cuánto gasté en el gimnasio de Madrid este año?", ledger)
 
-    assert [(plan.merchants, plan.merchant_terms) for plan in ledger.plans] == [((), ("gimnasio",))]
+    # The category's shops, listed for the word «Madrid», and then the gyms: Netflix Madrid is not
+    # a gym, and is not named whole.
+    assert [(plan.group_by, plan.merchants, plan.merchant_terms) for plan in ledger.plans] == [
+        (GroupBy.MERCHANT, (), ()),
+        (GroupBy.NONE, (), ("gimnasio",)),
+    ]
     assert "47,90" in result.text
     assert "Netflix Madrid" not in result.text
 
@@ -1155,3 +1250,105 @@ async def test_a_question_asked_in_between_is_not_the_question(in_between: Turn)
 
     assert ledger.plans[-1].merchants == ()
     assert ledger.plans[-1].categories == ("LEISURE",)
+
+
+# --- what the next review found: the waiting plans, and the words that are no shop -------------
+
+
+async def test_a_reader_draft_keeps_the_shop_its_question_named() -> None:
+    """Probed by review: «¿cuál es mi gasto medio en suscripciones de Netflix?» is a reader's
+    draft, and «este año» answered the average over every subscription. The draft is narrowed to
+    Netflix on the turn that asks, and that turn says so."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+    asked = await ask("¿cuál es mi gasto medio en suscripciones de Netflix?", ledger)
+    assert asked.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert asked.text.splitlines()[-1] == (
+        "(Solo Netflix. La consulta que había construido cubría suscripciones entera.)"
+    )
+
+    answered = await ask("este año", ledger, asked.conversation)
+
+    assert ledger.plans[-1].merchants == ("Netflix",)
+    assert "medio por movimiento en Netflix" in answered.text
+    assert "13,99 €" in answered.text
+
+
+async def test_the_question_that_narrowed_a_waiting_plan_says_so() -> None:
+    """Probed by review: «¿Cuánto gasté en suscripciones en Madrid?» → «este año» answered Netflix
+    Madrid with no word of the narrowing, which the same question with its window says. The
+    waiting plan was narrowed on the turn that asked, and the line goes under that question."""
+    ledger = Ledger(NETFLIX, SPOTIFY, Charge("Netflix Madrid", "SUBSCRIPTIONS", 500))
+    asked = await ask(
+        "¿Cuánto gasté en suscripciones en Madrid?", ledger, planner=AsksForTheWindow()
+    )
+    assert asked.text.splitlines()[-1] == (
+        "(Solo Netflix Madrid. La consulta que había construido cubría suscripciones entera.)"
+    )
+
+    answered = await ask("este año", ledger, asked.conversation, planner=AsksForTheWindow())
+
+    assert "5,00 € en Netflix Madrid" in answered.text
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿suscripciones?",
+        "¿Cuánto gasté en suscripciones?",
+        "¿Cuánto he gastado en el supermercado?",
+        "¿Me gustaría saber cuánto he gastado en el gimnasio durante este año?",
+        # Money coming in names who paid, not a shop: the corpus's own payroll question.
+        "¿Sabrías decirme si he cobrado mi nómina en qué cuenta?",
+    ],
+)
+async def test_the_words_every_question_is_made_of_cost_no_list(sentence: str) -> None:
+    """Probed by review: «cuánto» and «gasté» passed for a shop's name, so nearly every window
+    question paid for the list of shops. Only a word no question is built from does."""
+    ledger = Ledger(GYM, NETFLIX, SPOTIFY)
+
+    await ask(sentence, ledger, planner=AsksForTheWindow())
+
+    assert all(plan.group_by is not GroupBy.MERCHANT for plan in ledger.plans)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "charges", "wrong"),
+    [
+        (
+            "¿Cuánto gasté en el gimnasio de Madrid este año?",
+            (NETFLIX, SPOTIFY, Charge("Netflix Madrid", "SUBSCRIPTIONS", 500)),
+            "Netflix Madrid",
+        ),
+        (
+            "¿Cuánto gasté en el metro de Madrid este año?",
+            (
+                Charge("EMT Madrid", "TRANSPORT_PUBLIC", 400),
+                Charge("Renfe Cercanias", "TRANSPORT_PUBLIC", 900),
+                Charge("Consorcio Transportes", "TRANSPORT_PUBLIC", 2_000),
+            ),
+            "EMT Madrid",
+        ),
+        (
+            "¿Cuánto gasté en la farmacia de Triana este año?",
+            (
+                Charge("Optica Triana", "HEALTH", 9_000),
+                Charge("Clinica Dental Sur", "HEALTH", 5_000),
+            ),
+            "Optica Triana",
+        ),
+    ],
+)
+async def test_a_place_beside_a_kind_that_found_nothing_names_no_other_shop(
+    sentence: str, charges: tuple[Charge, ...], wrong: str
+) -> None:
+    """When no shop carries the kind, the answer falls back to the whole category -- and the
+    category's evidence then holds shops of other kinds that share the sentence's place word.
+    «Madrid» is not a name for "EMT Madrid" when the question was about the metro: a shop that
+    does not carry the kind is named only in full, as `merchant_words.named_beside_a_kind` says,
+    on the fallback as everywhere else."""
+    ledger = Ledger(*charges)
+
+    answered = await ask(sentence, ledger)
+
+    assert f"Solo {wrong}" not in answered.text
+    assert all(plan.merchants != (wrong,) for plan in ledger.plans)

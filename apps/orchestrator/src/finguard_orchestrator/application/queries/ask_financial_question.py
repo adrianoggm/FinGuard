@@ -1659,12 +1659,12 @@ class AskFinancialQuestionHandler:
             # this sentence stated has to reach it — see `_next_state`.
             said = explicit_facts.read(query.sentence, today=query.today)
             rescued = _from_what_the_sentence_said(planned, query)
-            if rescued is None:
-                yield _decline(await self._waiting_for_the_window(planned, query), was, said)
-                return
-            if not rescued.is_answerable:
-                # A question rather than a plan: the sentence named a category and no period.
-                yield _decline(await self._waiting_for_the_window(rescued, query), was, said)
+            if rescued is None or not rescued.is_answerable:
+                # A question rather than a plan: the sentence named a category and no period, or
+                # the model asked one of its own.
+                asking, note = await self._waiting_for_the_window(rescued or planned, query)
+                declined = _decline(asking, was, said)
+                yield replace(declined, text=f"{declined.text}\n({note})") if note else declined
                 return
             planned = rescued
 
@@ -1832,9 +1832,25 @@ class AskFinancialQuestionHandler:
         plan = claimed.plan
         if isinstance(plan, FinancialPlan | FinancialPlanDraft):
             plan = explicit_facts.of_its_kind(plan, seam._stated(query))
+        # A draft that waits for the window waits for a reply that names no shop -- «¿cuál es mi
+        # gasto medio en suscripciones de Netflix?» → «este año» -- so the shop it named is looked
+        # up now, as for the planner's own drafts (`_waiting_for_the_window`), and said under the
+        # question this turn asks.
+        note = None
+        if isinstance(plan, FinancialPlanDraft) and plan.needs_a_window:
+            named, shop = await self._the_shop_it_names(plan, query)
+            if shop is not None:
+                note = _only_the_shop(plan, shop)
+                plan = named
         async for step in _ANSWERING[claimed.reader](self, query, was, plan):
             if continuation and isinstance(step, AskFinancialQuestionResult):
                 step = replace(step, plan_continues_conversation=True)
+            if (
+                note is not None
+                and isinstance(step, AskFinancialQuestionResult)
+                and step.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+            ):
+                step = replace(step, text=f"{step.text}\n({note})")
             yield step
 
     async def _a_ratio(
@@ -4553,31 +4569,41 @@ class AskFinancialQuestionHandler:
 
     async def _the_shop_it_names[P: FinancialPlan | FinancialPlanDraft](
         self, plan: P, query: AskFinancialQuestionQuery
-    ) -> P:
-        """A plan about to wait for a reply, narrowed to the shop its question named.
+    ) -> tuple[P, str | None]:
+        """The plan narrowed to the shop its question named, and that shop -- or the plan as it
+        came, and None.
 
         «¿Cuánto llevo gastado en Spotify?» planned as the category Spotify belongs to is the demo's
         reported defect, and the turn that runs the plan repairs it from the answer it gets: the
-        movements carry their shops, and the sentence names one of them (`_answer`). A plan that
-        waits -- for «¿De qué periodo?», for «¿En qué cuenta?» -- runs on the reply's turn, and
-        «este año» names no shop. So the shop is looked for here, once, on the turn that asks, and
-        the plan that waits is the shop's: the reply completes it as it completes any plan, and
-        no turn has to find the sentence that asked.
+        movements carry their shops, and the sentence names one of them (`_answer`). Two kinds of
+        plan cannot wait for that. One that waits -- for «¿De qué periodo?», for «¿En qué cuenta?»
+        -- runs on the reply's turn, and «este año» names no shop. And one narrowed to a kind of
+        shop -- «el gimnasio McFit» -- never sees McFit in its answer, because the bank was asked
+        for the shops called «gimnasio» and McFit is not one. So the shop is looked for here, once,
+        on the turn that asks, and the plan becomes the shop's: a named shop wins over its kind,
+        and the reply completes the shop's plan as it completes any plan.
 
-        The list is the holder's own shops in the category -- in the plan's window, or over the
-        last year for a draft that has none yet, across every account the holder has, because it
-        only decides which name the sentence said. A name the sentence typed and the ledger holds
-        is the same evidence the turn that runs the plan reads; nothing is guessed.
+        The list is the holder's own shops in the category, kind or no kind -- in the plan's
+        window, or over the last year for a draft that has none yet, across every account the
+        holder has unless the plan was given one, because it only decides which name the sentence
+        said. Beside a kind, a shop that does not carry it has to be named whole
+        (`merchant_words.named_beside_a_kind`): «el gimnasio de Madrid» is the gyms, not "Netflix
+        Madrid". A name the sentence typed and the ledger holds is the same evidence the turn that
+        runs the plan reads; nothing is guessed.
 
-        One query, and only for a plan of one category with no shop of its own, from a sentence
-        with a word a shop's name could carry. Unchanged when the ledger cannot say, or names no
-        shop the sentence said: then it waits as the category it was, which is what it was before.
+        One query, and only for a plan of one category with no shop and no family of its own, from
+        a sentence with a word that could be a shop's name (`merchant_words.could_name_a_shop`).
+        Not for money coming in: who paid it is a counterparty, not a shop, and a list of shops
+        would be paid for to match nothing («¿he cobrado la nómina?»). Unchanged when the ledger
+        cannot say, or holds no shop the sentence named.
         """
+        kinds = plan.merchant_terms
         if (
-            len(plan.categories) != 1
+            plan.direction is Direction.INCOME
+            or len(plan.categories) != 1
             or plan.merchants
-            or plan.merchant_terms
             or plan.excluded_merchants
+            or (kinds and not _of_a_kind(plan))
             or plan.counterparties
             or plan.excluded_counterparties
             or plan.counterparty_types
@@ -4585,31 +4611,37 @@ class AskFinancialQuestionHandler:
             or plan.transaction_ids
             or not merchant_words.could_name_a_shop(query.sentence)
         ):
-            return plan
-        listing = (
-            plan
-            if isinstance(plan, FinancialPlan)
-            else plan.with_window(RelativePeriod(Period.LAST_N_MONTHS, n=12))
+            return plan, None
+        listing = replace(
+            plan if isinstance(plan, FinancialPlan) else plan.with_window(_A_YEAR_OF_SHOPS),
+            merchant_terms=(),
         )
         if listing.only_account_id is None and not listing.only_account_ids:
             listing = replace(listing, across_accounts=True)
-        shops = await self._merchants_in(listing, query)
-        shop = merchant_words.named_in(query.sentence, shops or ())
+        shops = await self._merchants_in(listing, query) or ()
+        shop = (
+            merchant_words.named_beside_a_kind(query.sentence, shops, kinds)
+            if kinds
+            else merchant_words.named_in(query.sentence, shops)
+        )
         if shop is None:
-            return plan
-        return replace(plan, categories=(), merchants=(shop,))
+            return plan, None
+        return replace(plan, categories=(), merchants=(shop,), merchant_terms=()), shop
 
     async def _waiting_for_the_window(
         self, planned: PlanningResult, query: AskFinancialQuestionQuery
-    ) -> PlanningResult:
-        """A question back about the window, with the draft it keeps narrowed to a shop it named.
+    ) -> tuple[PlanningResult, str | None]:
+        """A question back about the window, with the draft it keeps narrowed to a shop it named,
+        and the note that says so -- or None when it narrowed nothing.
 
         Only the window: it is the question whose reply names nothing but a period. A question
         about anything else keeps its draft as it is, and the reply that answers it is a sentence
         of its own.
 
         The kind first (`explicit_facts.of_its_kind`, which `_next_state` applies again to no
-        effect): «el gimnasio» is every gym and needs no list, so it never pays for one.
+        effect), then the shop the sentence named (`_the_shop_it_names`), which wins over it. The
+        note goes on this turn, under the question: it is the turn that decided, and the reply's
+        answer will name the shop.
 
         And last, the question asked again (`_the_kind_still_open`): a reply that answered nothing
         gets the window asked a second time, over a draft that has lost the kind the open one
@@ -4622,12 +4654,13 @@ class AskFinancialQuestionHandler:
             or planned.awaiting is not Slot.WINDOW
             or not draft.needs_a_window
         ):
-            return planned
+            return planned, None
         draft = explicit_facts.of_its_kind(
             draft, explicit_facts.read(query.sentence, today=query.today)
         )
-        draft = await self._the_shop_it_names(draft, query)
-        return replace(planned, draft=_the_kind_still_open(draft, query))
+        named, shop = await self._the_shop_it_names(draft, query)
+        note = _only_the_shop(draft, shop) if shop is not None else None
+        return replace(planned, draft=_the_kind_still_open(named, query)), note
 
     def _scope_question(
         self, required: AccountScopeRequiredError, was: Conversation
@@ -4677,6 +4710,21 @@ class AskFinancialQuestionHandler:
         narrowed: bool = False,
         movements: int | None = None,
     ) -> AskFinancialQuestionResult:
+        if not widened and not narrowed and _of_a_kind(plan):
+            # A shop named beside the kind -- «el gimnasio McFit», «el cine Kinepolis». The kind's
+            # query would never show it: the bank is asked for the shops called «gimnasio», and
+            # McFit is not one, so the shop reader below finds nothing to narrow to and the answer
+            # is somebody else's gym. Looked up first, among the category's shops, and a named
+            # shop wins over its kind (`_the_shop_it_names`); the line under the figure says so.
+            # Costs the one list, and only for a sentence with a word that could be a shop's name.
+            shop_plan, shop = await self._the_shop_it_names(plan, query)
+            if shop is not None:
+                found = await self._answer(query, shop_plan, narrowed=True, movements=movements)
+                if found.movement_count or (
+                    found.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+                ):
+                    return replace(found, text=f"{found.text}\n({_only_the_shop(plan, shop)})")
+                return found
         # Scoped for the run and not on the plan itself. Which accounts the figures came from is a
         # property of how the question was answered; the plan is what was *asked*, and that is what
         # gets described to the user and remembered for a follow-up.
@@ -4684,17 +4732,20 @@ class AskFinancialQuestionHandler:
             scoped = await self._scoped(plan, query, clarify=True)
         except AccountScopeRequiredError as required:
             names = [candidate.display_name for candidate in required.candidates]
-            # The plan waits for the reply, whose words will name an account and no shop.
-            pending = (
-                await self._the_shop_it_names(required.plan, query)
-                if isinstance(required.plan, FinancialPlan)
-                else required.plan
-            )
+            # The plan waits for the reply, whose words will name an account and no shop. A kind
+            # has had its shop looked up already, above.
+            pending: PlannedQuery = required.plan
+            note = ""
+            if isinstance(required.plan, FinancialPlan) and not _of_a_kind(required.plan):
+                pending, shop = await self._the_shop_it_names(required.plan, query)
+                if shop is not None:
+                    note = f"\n({_only_the_shop(required.plan, shop)})"
             return AskFinancialQuestionResult(
                 outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
                 text="¿En qué cuenta quieres consultarlo? Puedes elegir "
                 + ", ".join(names)
-                + " o Todas mis cuentas.",
+                + " o Todas mis cuentas."
+                + note,
                 question="¿En qué cuenta quieres consultarlo?",
                 suggestions=[*names, "Todas mis cuentas"],
                 conversation=query.conversation.with_active(
@@ -4816,25 +4867,42 @@ class AskFinancialQuestionHandler:
             # One more query, and only here: an empty answer to a kind is the one case that pays
             # for it. Not when the plan leaves a shop out, which `_of_a_kind` refuses: the shop left
             # out may be the one that carries the word, and «ningún comercio lleva «gimnasio»» would
-            # then be false. `narrowed` stops the category's own answer being narrowed again, and
-            # its figure, not the empty one, is what this turn remembers.
+            # then be false. The category's answer is read like any other, so a shop the sentence
+            # names in its evidence still narrows it, and says so -- the plan has no terms left to
+            # recurse on.
             whole = await self._answer(
-                query,
-                replace(plan, merchant_terms=()),
-                widened=True,
-                narrowed=True,
-                movements=movements,
+                query, replace(plan, merchant_terms=()), widened=True, movements=movements
             )
-            if whole.outcome == PlanningOutcome.PLANNED.value and whole.movement_count:
+            narrowed_to = whole.conversation.last_plan
+            if (
+                whole.outcome == PlanningOutcome.PLANNED.value
+                and whole.movement_count
+                and not (isinstance(narrowed_to, FinancialPlan) and narrowed_to.merchants)
+            ):
                 named = category_words.name_of(plan.categories[0])
-                said = " o ".join(f"«{term}»" for term in plan.merchant_terms)
+                said = answer_writer.terms_said(plan.merchant_terms)
+                # The kind's plan is what was asked, and what a follow-up continues: «¿y el año
+                # pasado?» after «ningún comercio lleva «gimnasio»» is still about the gym. «Ver la
+                # consulta» is the category's, which is the query behind this figure.
+                answered_whole = whole.conversation
                 return replace(
                     whole,
                     text=(
                         f"{whole.text}\n(Incluye toda la categoría {named}: en este periodo"
                         f" ningún comercio lleva {said} en el nombre.)"
                     ),
+                    conversation=replace(
+                        answered_whole,
+                        last_plan=remembered,
+                        result_reference=(
+                            replace(answered_whole.result_reference, source_query=remembered)
+                            if answered_whole.result_reference is not None
+                            else None
+                        ),
+                    ),
                 )
+            if whole.outcome == PlanningOutcome.PLANNED.value and whole.movement_count:
+                return whole
 
         if plan.categories and not plan.merchants and not narrowed:
             # The question named a shop and the plan filtered by the category the shop belongs to.
@@ -4865,7 +4933,22 @@ class AskFinancialQuestionHandler:
             # este año» -- is the sentence that says it. Inside a kind, the evidence is the kind's
             # own shops, so «el gimnasio Altafit» finds the gym called Altafit and «el metro de
             # Madrid» cannot find a bus.
-            shop = merchant_words.named_in(query.sentence, seen)
+            #
+            # Except when the kind found nothing and this is the category it fell back to: then the
+            # evidence holds shops of every kind, and the place word the kind's shops share with
+            # somebody else's -- «el metro de Madrid», "EMT Madrid" -- would name the wrong one. A
+            # sentence that named a kind names any other shop only in full, here as in
+            # `_the_shop_it_names`.
+            kinds = (
+                category_words.kinds_named_in(query.sentence, plan.categories[0])
+                if len(plan.categories) == 1
+                else ()
+            )
+            shop = (
+                merchant_words.named_beside_a_kind(query.sentence, seen, kinds)
+                if kinds
+                else merchant_words.named_in(query.sentence, seen)
+            )
             if shop is None:
                 # Named it, nearly. "Spoti" was in the sentence and Spotify was in the evidence,
                 # and no token matched — so the answer stayed the whole category. A near miss is a
@@ -5245,6 +5328,26 @@ def _the_kind_still_open(
     ):
         return draft
     return replace(draft, merchant_terms=open_draft.merchant_terms)
+
+
+# The window a draft's shops are listed over, when it has none of its own yet: long enough to hold
+# a shop paid every month or every year, and the same for every draft.
+_A_YEAR_OF_SHOPS: Final = RelativePeriod(Period.LAST_N_MONTHS, n=12)
+
+
+def _only_the_shop(before: FinancialPlan | FinancialPlanDraft, shop: str) -> str:
+    """The line that says a plan was narrowed to the shop its question named.
+
+    What the narrower figure is narrower than: the kind's shops, when the shop is one of them --
+    «el gimnasio Altafit» -- and otherwise the category the question was read as, which is the
+    query the shop replaced. The same line on the turn that answers and on the turn that asks.
+    """
+    terms = before.merchant_terms
+    folded = spanish.folded(shop)
+    if terms and any(spanish.folded(term) in folded for term in terms):
+        return f"Solo {shop}, de los {answer_writer.carrying(terms)}."
+    named = " y ".join(category_words.name_of(c) for c in before.categories)
+    return f"Solo {shop}. La consulta que había construido cubría {named} entera."
 
 
 def _of_a_kind(plan: FinancialPlan | FinancialPlanDraft) -> bool:

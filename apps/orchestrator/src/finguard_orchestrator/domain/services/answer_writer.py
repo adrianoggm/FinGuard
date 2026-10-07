@@ -33,6 +33,7 @@ from finguard_orchestrator.domain.services import (
     category_words,
     frequency_analyzer,
     recurrence_analyzer,
+    spanish,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -479,12 +480,23 @@ def carrying(terms: tuple[str, ...]) -> str:
     nombre».
 
     "Comercios cuyo nombre contiene gimnasio" was the line, and it read as a query nobody had typed.
-    Joined with «o»: the terms are alternatives, and a shop that carries either one is counted --
-    «apuest» or «bet», not a shop that carries both.
     """
-    said = [f"«{term}»" for term in terms]
-    joined = said[0] if len(said) == 1 else f"{', '.join(said[:-1])} o {said[-1]}"
-    return f"comercios con {joined} en el nombre"
+    return f"comercios con {terms_said(terms)} en el nombre"
+
+
+def terms_said(terms: tuple[str, ...]) -> str:
+    """Merchant terms as a person reads them: «gimnasio», «apuest» o «bet».
+
+    Joined with «o»: the terms are alternatives, and a shop that carries either one is counted --
+    «apuest» or «bet», not a shop that carries both. One spelling of a word is said once: the plan
+    carries «óptica» and «optica» because the bank does not fold accents and a shop may write
+    either, and the person asked about one word.
+    """
+    spelled: dict[str, str] = {}
+    for term in terms:
+        spelled.setdefault(spanish.folded(term), term)
+    said = [f"«{term}»" for term in spelled.values()]
+    return said[0] if len(said) == 1 else f"{', '.join(said[:-1])} o {said[-1]}"
 
 
 def _shops_shown(answer: QueryAnswer, plan: FinancialPlan) -> tuple[str, ...]:
