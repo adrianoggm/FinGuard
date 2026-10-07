@@ -238,7 +238,7 @@ RULES: Final = frozenset(name for name, _ in _FAMILIES)
 #
 # The words for a movement, as somebody names one. Exported because two recognisers need the same
 # list and a second copy is a second thing to forget: this one decides that a superlative is a
-# ranking rather than a comparison, and `_SELF_CONTAINED_FINANCIAL_QUESTION` in the application uses
+# ranking rather than a comparison, and `_SELF_CONTAINED_FINANCIAL_QUESTION` in `turn_arbiter` uses
 # it to decide that a sentence naming one of these plus a window is a question and not an ellipsis.
 #
 # A fragment rather than a compiled pattern: no group, no anchor, no `\b`, so each caller keeps its

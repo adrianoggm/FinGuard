@@ -10,8 +10,9 @@ lives here. What `LAST_MONTH` covers is banking's business, and two implementati
 that would be one too many.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
@@ -35,6 +36,10 @@ from finguard_orchestrator.domain.enums import (
     TransactionType,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
+
+if TYPE_CHECKING:
+    # The conversation imports this module for its drafts, so the selection is a type here only.
+    from finguard_orchestrator.domain.models.conversation import AccountSelection
 
 
 @dataclass(frozen=True)
@@ -309,6 +314,28 @@ class FinancialPlanDraft:
             only_account_ids=self.only_account_ids,
             transaction_ids=self.transaction_ids,
             transaction_types=self.transaction_types,
+        )
+
+    def with_accounts(self, selection: "AccountSelection") -> "FinancialPlanDraft":
+        """This draft, scoped to the accounts a reply chose before its window is known.
+
+        The account is the other slot a reply to «¿De qué periodo?» can fill (spec §3.2): «en todas
+        mis cuentas» answers part of the question, and keeping it is what lets the next reply be
+        «este año» alone. A draft and not a plan, unlike `with_window`, because the window may still
+        be the question.
+
+        Every account widens and drops the narrowing being given up, the rule the handler's
+        `_across_every_account` writes for a plan; a choice narrows to its accounts, one or several,
+        as `_scoped` writes them. Read off the ids rather than the mode, which is the same fact by
+        `AccountSelection`'s own invariant — every account carries none, a choice at least one —
+        and keeps this module from importing the conversation that imports it.
+        """
+        ids = selection.account_ids
+        return replace(
+            self,
+            across_accounts=not ids,
+            only_account_id=ids[0] if len(ids) == 1 else None,
+            only_account_ids=ids if len(ids) > 1 else (),
         )
 
     def into_plan(self) -> FinancialPlan | None:

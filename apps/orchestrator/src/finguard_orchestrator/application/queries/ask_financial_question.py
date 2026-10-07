@@ -229,6 +229,11 @@ class AccountScopeRequiredError(Exception):
 # log, and `_asked_which_account_about` knows a reply is answering it by finding it there.
 _WHICH_ACCOUNT: Final = "¿En qué cuenta quieres consultarlo?"
 
+# The window question as this service asks it when no model wrote one: the planner's own wording
+# (`llm_query_planner.WINDOW_QUESTION`, which this layer may not import), copied once here instead
+# of at each place that asks it.
+_WHICH_PERIOD: Final = "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
+
 # The default when a handler is built without one, which is every test that does not care. The
 # deployment's number is `banking_read_attempts` in configuration — this is operational policy, and
 # a constant here was a policy nobody could change without a release.
@@ -942,6 +947,15 @@ class AskFinancialQuestionHandler:
                 interpreter=self._interpreter,
                 today=query.today,
             )
+        # The kind of turn: the edge's when it brought one, and otherwise decided here by the same
+        # function from the same reading — for a caller that builds the query itself (the tests,
+        # a compound clause, the question the account backstop asks again), so a reply is a reply
+        # whoever sent it. RESET was settled above from the sentence alone; what is acted on below
+        # is ANSWER_PENDING, a reply that fills the question left open.
+        arbitration = query.arbitration or turn_arbiter.arbitrate(
+            query.sentence, was, analysis, today=query.today
+        )
+        answering_it = arbitration.type is TurnType.ANSWER_PENDING
         # The backstop's account question, answered. `_scope_question` asks «¿En qué cuenta…?»
         # with no `AccountScopeClarification` behind it, so the resume further down never sees the
         # reply — and read as a sentence of its own, «Todas mis cuentas» was a balance question.
@@ -993,6 +1007,21 @@ class AskFinancialQuestionHandler:
                 query = replace(query, conversation=replace(was, active=None))
                 was = query.conversation
             else:
+                # A reply that names a window corrects the plan waiting for its account before the
+                # account is chosen (spec §3.2): «este año» to «¿En qué cuenta…?» was asked about
+                # again with the plan's own window kept, so the figure that finally ran was for a
+                # period the holder had already replaced.
+                kept = (
+                    self._with_the_window_it_names(query, account_scope)
+                    if answering_it and Slot.WINDOW in arbitration.fills
+                    else None
+                )
+                if kept is not None:
+                    account_scope = kept
+                    if Slot.ACCOUNT not in arbitration.fills:
+                        # The window was all it said: kept, and the account asked again.
+                        yield _which_account_again(was, account_scope)
+                        return
                 resumed = await self._resume_account_scope(query, account_scope)
                 if resumed is not None:
                     yield resumed
@@ -1014,6 +1043,30 @@ class AskFinancialQuestionHandler:
             # stepped aside so a later bare amount or name cannot resume it without warning.
             was = was.suspend()
             query = replace(query, conversation=was)
+
+        if answering_it and isinstance(was.active, FinancialClarification):
+            # A reply to the question a half-read query left open — «¿De qué periodo?», or the
+            # category a model asked about — straight to that question and past every reader below
+            # that acts on the query in view: `contextual_follow_up_plan` claimed «este año» first,
+            # and after an answered question it completed the *previous* plan. An account it names
+            # goes into the draft, whether or not it was the slot asked; then the slot asked
+            # completes the draft, or the window is asked for again if it is all that is missing.
+            open_question = was.active
+            query, window_asked = await self._with_the_account_it_names(
+                query, open_question, arbitration.fills
+            )
+            was = query.conversation
+            if window_asked is not None:
+                yield window_asked
+                return
+            if open_question.awaiting in arbitration.fills:
+                # No base but the open draft, which `_pending_continuation` hands the planner
+                # completed: the last answer is exactly what a reply to this question must never
+                # be read as continuing, even where the draft cannot take the window it names.
+                async for step in self._completed_or_planned(query, was, analysis, None, previous):
+                    yield step
+                return
+            # It named an account and nothing this turn could settle it: read as it always was.
 
         scope_followup = await self._scope_change_followup(query)
         if scope_followup is not None:
@@ -1627,6 +1680,30 @@ class AskFinancialQuestionHandler:
                 yield step
             return
 
+        async for step in self._completed_or_planned(query, was, analysis, continuation, previous):
+            yield step
+
+    async def _completed_or_planned(
+        self,
+        query: AskFinancialQuestionQuery,
+        was: Conversation,
+        analysis: TurnAnalysis,
+        continuation: ContinuationBase | None,
+        previous: PlannedQuery | None,
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        """The end of `_steps`: the guard, the open question completed, and the planner.
+
+        Every turn no reader claimed arrives here, and so does a reply to the question left open
+        (ANSWER_PENDING), which comes straight from the top of `_steps` past every reader of the
+        query in view — they used to claim it first, so «este año» answering a new question's
+        «¿De qué periodo?» completed the previous answer instead. Moved out of `_steps` whole and
+        unchanged, so both arrivals meet the same guard, the same completion and the same planner:
+        a reply that the closed vocabularies complete runs without a model, and one they cannot —
+        «este año, pero cuéntalas» — reaches the planner with the open draft as its forced base.
+
+        `previous` is the last answered plan, for the window log line; `continuation` is the base
+        `_steps` chose, which an open clarification's completed draft replaces below.
+        """
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
         # The guard's own verdict, both ways, from the one place it is acted on. `AGREED` is here
         # rather than left implicit because an override rate with no agreements in the denominator
@@ -4172,7 +4249,7 @@ class AskFinancialQuestionHandler:
     ) -> AskFinancialQuestionResult | None:
         """Resolve an account choice against the live directory and run the pending plan."""
         candidate_names = tuple(candidate.display_name for candidate in pending.candidates)
-        all_accounts = _all_accounts_reply(query.sentence)
+        all_accounts = account_words.all_accounts_as_a_reply(query.sentence)
         if (
             _starts_new_financial_scope(query.sentence, today=query.today)
             and not all_accounts
@@ -4299,6 +4376,111 @@ class AskFinancialQuestionHandler:
             # balance-shaped NEW_OPERATION for «Todas mis cuentas» — says nothing about the
             # question being asked again.
             arbitration=None,
+        )
+
+    def _with_the_window_it_names(
+        self, query: AskFinancialQuestionQuery, waiting: AccountScopeClarification
+    ) -> AccountScopeClarification | None:
+        """The account question again, its plan's window replaced by the one the reply names — or
+        None when it names none this vocabulary is sure of, or one the plan cannot take.
+
+        The plan waiting for an account is complete, so its window is a value somebody already chose
+        — the model's reading of the question, or a default — and the reply is the holder choosing
+        again. Replaced as a pair, like every window here, and checked against the reply by the
+        verifier, as `_finish_pending` checks a completed draft: a window the plan would then
+        misanswer stays out, and the account question stands as it was.
+        """
+        window = window_words.window_in(query.sentence, today=query.today)
+        if window is None:
+            return None
+        try:
+            patched = replace(
+                waiting.pending,
+                period=window if isinstance(window, RelativePeriod) else None,
+                date_range=window if isinstance(window, AbsoluteRange) else None,
+            )
+        except InvalidValueError:
+            return None
+        if plan_verifier.disagreement(query.sentence, patched, self._policy) is not None:
+            return None
+        return replace(waiting, pending=patched)
+
+    async def _with_the_account_it_names(
+        self,
+        query: AskFinancialQuestionQuery,
+        open_question: FinancialClarification,
+        fills: frozenset[Slot],
+    ) -> tuple[AskFinancialQuestionQuery, AskFinancialQuestionResult | None]:
+        """The reply's account absorbed into the open draft — and, when that is all the reply said,
+        the window question asked again over it.
+
+        «En todas mis cuentas» to «¿De qué periodo?» was read as a sentence of its own and answered
+        with the balance; the account it chose is a slot of the same question (spec §3.2), so it
+        goes into the draft (`FinancialPlanDraft.with_accounts`) and the period is asked for again.
+        Remembered as the conversation's `account_selection` as well, exactly as `_answer` remembers
+        a scope the holder said out loud: the reply that brings the window names no account, and
+        `_scoped` reads the choice from there — a draft scoped to every account with no choice
+        behind it would ask «¿En qué cuenta…?» for an account already given.
+
+        Returned unchanged when the reply names no account, or one this turn cannot settle — two
+        of them, an exclusion, a directory that did not answer — and the window decides alone.
+        """
+        if Slot.ACCOUNT not in fills:
+            return query, None
+        selection = await self._the_accounts_it_names(query)
+        if selection is None:
+            return query, None
+        try:
+            absorbed = replace(open_question, draft=open_question.draft.with_accounts(selection))
+        except InvalidValueError:
+            return query, None
+        conversation = replace(
+            query.conversation,
+            active=absorbed,
+            # The directory-backed workflow is the one that persists a choice (`_answer` remembers
+            # one only beside a directory), and a legacy handler's draft carries the scope itself.
+            account_selection=(
+                selection
+                if self._account_directory is not None
+                else query.conversation.account_selection
+            ),
+        )
+        if open_question.awaiting in fills:
+            return replace(query, conversation=conversation), None
+        return query, _the_window_question_again(conversation, open_question.awaiting)
+
+    async def _the_accounts_it_names(
+        self, query: AskFinancialQuestionQuery
+    ) -> AccountSelection | None:
+        """The accounts a reply to «¿De qué periodo?» chose, read against the holder's own.
+
+        Every account needs no list. A kind or a name does, and is resolved the way the account
+        question resolves its own replies (`_chosen_account_scope`) with every account the holder
+        has on offer — the question offered none, so none is out of bounds. Anything that does not
+        settle on one choice — two kinds, an exclusion («todas menos el fondo»), an account the
+        holder does not have, a directory that did not answer — chooses nothing, and the account
+        is left to be read when the plan runs, as before.
+        """
+        if account_words.excluded_in(query.sentence):
+            return None
+        if account_words.asks_for_all_accounts(query.sentence):
+            return AccountSelection(AccountSelectionMode.ALL)
+        try:
+            holdings = (
+                await self._account_directory.all_of(query.account_id)
+                if self._account_directory is not None
+                else (
+                    await self._accounts.of(
+                        query.account_id,
+                        today=query.today,
+                        reporting_timezone=query.reporting_timezone,
+                    )
+                ).holdings
+            )
+        except BankingUnavailableError:
+            return None
+        return _chosen_account_scope(
+            query.sentence, holdings, {holding.account_id for holding in holdings}
         )
 
     async def _scoped(
@@ -5591,9 +5773,7 @@ def _from_what_the_sentence_said(
         # teaches somebody the product cannot do something it does.
         return PlanningResult(
             outcome=PlanningOutcome.NEEDS_CLARIFICATION,
-            question=(
-                "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
-            ),
+            question=_WHICH_PERIOD,
             draft=explicit_facts.reshaped(
                 FinancialPlanDraft(
                     direction=facts.direction or _direction_of(named),
@@ -6694,17 +6874,6 @@ def _is_scope_change_followup(sentence: str, *, today: date) -> bool:
     return account_words.asks_for_all_accounts(sentence) or bool(account_words.named_in(sentence))
 
 
-def _all_accounts_reply(sentence: str) -> bool:
-    """Resolve ellipsis only while answering an explicit account-selection question."""
-    folded = spanish.folded(sentence).strip(" \t\r\n¿?¡!.,;:")
-    return account_words.asks_for_all_accounts(sentence) or folded in {
-        "todas",
-        "en todas",
-        "todas ellas",
-        "en todas ellas",
-    }
-
-
 def _answers_account_scope(sentence: str, names: tuple[str, ...]) -> bool:
     """Whether the short sentence is an account-choice chip, not a new financial question.
 
@@ -6717,7 +6886,7 @@ def _answers_account_scope(sentence: str, names: tuple[str, ...]) -> bool:
         word in folded.split() for word in ("cuanto", "cuánta", "saldo", "tengo", "dinero")
     ):
         return False
-    if _all_accounts_reply(sentence):
+    if account_words.all_accounts_as_a_reply(sentence):
         return len(folded.split()) <= 5
     if account_words.custom_chosen_among(sentence, names):
         return len(folded.split()) <= 5
@@ -6736,7 +6905,7 @@ def _chosen_account_scope(
     caller asks again rather than guessing. `holdings` is the live directory, so an account that
     has gone since the question was asked cannot be chosen.
     """
-    if _all_accounts_reply(sentence):
+    if account_words.all_accounts_as_a_reply(sentence):
         return AccountSelection(AccountSelectionMode.ALL)
     names = tuple(holding.display_name for holding in holdings if holding.account_id in candidates)
     custom = account_words.custom_chosen_among(sentence, names)
@@ -6765,6 +6934,44 @@ def _choose_one_of(
         text="Elige una de estas cuentas: " + ", ".join(names) + ", o Todas mis cuentas.",
         suggestions=[*names, "Todas mis cuentas"],
         conversation=conversation,
+    )
+
+
+def _which_account_again(
+    was: Conversation, waiting: AccountScopeClarification
+) -> AskFinancialQuestionResult:
+    """«¿En qué cuenta…?» once more, with `waiting` as the account question left open.
+
+    For a reply that answered part of it — a window, kept in the waiting plan — and not the account.
+    The question `_answer` asks, word for word and with the same chips, because it is the same
+    question: a different wording would read as a different one, and `_choose_one_of`'s «Elige una
+    de estas cuentas» is the answer to a reply that tried to choose and could not.
+    """
+    names = [candidate.display_name for candidate in waiting.candidates]
+    return AskFinancialQuestionResult(
+        outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+        text=f"{_WHICH_ACCOUNT} Puedes elegir " + ", ".join(names) + " o Todas mis cuentas.",
+        question=_WHICH_ACCOUNT,
+        suggestions=[*names, "Todas mis cuentas"],
+        conversation=was.with_active(waiting),
+    )
+
+
+def _the_window_question_again(
+    conversation: Conversation, asked: Slot
+) -> AskFinancialQuestionResult:
+    """«¿De qué periodo?» once more, over a draft that has just absorbed the rest of the reply.
+
+    Not `_decline`, whose repeat rule would answer «Sigo sin tener claro el periodo»: that is for a
+    reply that answered nothing, and this one answered the account. The slot is recorded as a
+    question this turn asked (`asking`), as `_decline` records it, so a reply that again answers
+    nothing *is* the repeat that rule exists for.
+    """
+    return AskFinancialQuestionResult(
+        outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+        text=_WHICH_PERIOD,
+        question=_WHICH_PERIOD,
+        conversation=conversation.asking(asked),
     )
 
 

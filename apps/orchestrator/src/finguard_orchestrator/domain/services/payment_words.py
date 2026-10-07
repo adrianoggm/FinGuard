@@ -271,7 +271,7 @@ def changes_recipient(sentence: str, *, previewed: str) -> bool:
             _BARE_RECIPIENT_CORRECTION.search(folded) is not None
             and amount_in(sentence) is not None
         )
-        or _orders_somebody_else(folded, previewed)
+        or _orders_somebody_else(sentence, previewed)
     )
 
 
@@ -289,9 +289,10 @@ _TO_SOMEBODY: Final = re.compile(r"\ba\s+(?P<name>[a-z]+(?:\s+[a-z]+)*)")
 
 # Where the words after «a» stop being a name: what an order says next («por la cena», «con
 # concepto…», «hoy»), the fillers `_TRAILING_FILLER` strips, and the pronouns that point back at
-# the preview's own person («a ella»). Anything else is kept as part of the name, so a word nobody
-# listed here — «mi madre» — counts as a different person: the cost of that mistake is a question
-# about who, and the cost of the other one is money to the person the holder just named away from.
+# the preview's own person («a ella»). A first word nobody listed here — «mi madre» — counts as a
+# different person: the cost of that mistake is a question about who, and the cost of the other one
+# is money to the person the holder just named away from. What comes after the first word is not
+# decided here at all (ruling R18): see `_orders_somebody_else`.
 _AFTER_THE_NAME: Final = frozenset(
     {
         "por",
@@ -329,27 +330,52 @@ _AFTER_THE_NAME: Final = frozenset(
 )
 
 
-def _orders_somebody_else(folded: str, previewed: str) -> bool:
-    """Whether `folded` orders a payment to a person whose name is not the preview's.
+def _orders_somebody_else(sentence: str, previewed: str) -> bool:
+    """Whether `sentence` orders a payment to a person whose name is not the preview's.
 
-    The name is compared word by word with the preview's recipient, folded: «Marta» and «Marta
-    Solis» are the preview's Marta Solis Vega; «Marta Ruiz» is not, because «Ruiz» is no part of her
-    name. A name with nothing left once the particles are dropped names nobody, and is no change.
+    **The first word of the name decides** (ruling R18). «Javi» is not a word of Marta Solis Vega's
+    name, so «paga 20 € a Javi» is somebody else; «Marta» is, so «mándale 20 € a Marta esta noche»
+    is her — what follows a name is not part of it, and reading «esta noche» as a surname cancelled
+    Marta's own preview for being named. Deciding by rule rather than by listing every word that
+    can follow a name: that list is the open set, and it was already missing «cuando puedas».
+
+    One thing after the first word still counts, because it is written as a name: a capitalised
+    word the preview's name does not have. «Marta Ruiz» is the other Marta, and the first word alone
+    would read her as the preview's — a revision addressed to the wrong person, the failure R14
+    exists to stop. Lower case is read by the first word only, so «marta ruiz» is that failure
+    still; the cost is a preview naming Marta Solis Vega that the holder has to decline.
+
+    The words are compared folded, and the casing is read off the sentence as typed, at the same
+    positions: folding keeps one character per character for Spanish. When it does not, the
+    casing is not read and the first word decides alone.
     """
+    folded = spanish.folded(sentence)
     order = _ORDER_TO_SOMEBODY.search(folded)
     if order is None:
         return False
     target = _TO_SOMEBODY.search(folded, order.end())
     if target is None:
         return False
-    name: list[str] = []
-    for word in target.group("name").split():
-        if word in _AFTER_THE_NAME:
+    name: list[re.Match[str]] = []
+    for word in _WORD.finditer(folded, target.start("name"), target.end("name")):
+        if word.group() in _AFTER_THE_NAME:
             break
-        if word not in _PARTICLES:
+        if word.group() not in _PARTICLES:
             name.append(word)
+    if not name:
+        return False
     previewed_name = set(spanish.folded(previewed).split())
-    return any(word not in previewed_name for word in name)
+    first, *after = name
+    if first.group() not in previewed_name:
+        return True
+    aligned = len(folded) == len(sentence)
+    for word in after:
+        if not (aligned and sentence[word.start()].isupper()):
+            # Not written as a name, so not part of one: the rest of the sentence.
+            break
+        if word.group() not in previewed_name:
+            return True
+    return False
 
 
 def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact, ...]:

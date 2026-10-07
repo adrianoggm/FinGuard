@@ -17,6 +17,8 @@ import pytest
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
+    AccountCandidate,
+    AccountScopeClarification,
     Conversation,
     FinancialClarification,
     PaymentConfirmation,
@@ -180,3 +182,108 @@ def test_an_arbitration_fills_no_slot_unless_it_says_so() -> None:
     """`fills` belongs to a reply that answers the open question; the kinds decided here fill
     nothing."""
     assert Arbitration(TurnType.RESET).fills == frozenset()
+
+
+# --- ANSWER_PENDING: a reply to the question left open, and every slot it fills (Task 5) ---------
+
+WAITING_FOR_AN_ACCOUNT = Conversation(
+    active=AccountScopeClarification(
+        pending=FinancialPlan(
+            direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_MONTH)
+        ),
+        candidates=(
+            AccountCandidate(UUID(int=1), "Cuenta corriente", "CURRENT"),
+            # A name that is no kind of account, so only the question's own offer can read it.
+            AccountCandidate(UUID(int=2), "Viajes", "SAVINGS"),
+        ),
+    )
+)
+
+
+async def arbitration_of(sentence: str, conversation: Conversation) -> Arbitration:
+    return arbitrate(sentence, conversation, await analysis_of(sentence, conversation), today=TODAY)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "fills"),
+    [
+        ("este año", {Slot.WINDOW}),
+        ("el mes pasado", {Slot.WINDOW}),
+        ("en todas mis cuentas", {Slot.ACCOUNT}),
+        ("en la hucha", {Slot.ACCOUNT}),
+        ("en todas mis cuentas este año", {Slot.ACCOUNT, Slot.WINDOW}),
+        ("este año pero en gasolina", {Slot.WINDOW, Slot.CATEGORY}),
+    ],
+)
+async def test_a_reply_to_the_period_question_fills_every_slot_it_names(
+    sentence: str, fills: set[Slot]
+) -> None:
+    """The account is a slot of the window question's draft (spec §3.2), and a new subject said
+    beside the window is the reply's too: both are absorbed, not only the slot that was asked."""
+    assert await arbitration_of(sentence, conversation_waiting_for(Slot.WINDOW)) == Arbitration(
+        TurnType.ANSWER_PENDING, frozenset(fills)
+    )
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # A subject alone fills nothing the question was waiting on: a change of subject.
+        "en gasolina",
+        # A complete question of its own names a window too, and is not this one's period.
+        "¿cuánto gasté en gasolina el mes pasado?",
+        # An order to move money names an account as where it goes, not as the one to read.
+        "pasa 100 a la hucha",
+        # «Todas» means every account only as the answer to «¿En qué cuenta…?».
+        "todas",
+        "¿quién eres?",
+    ],
+)
+async def test_what_is_not_a_reply_to_the_period_question(sentence: str) -> None:
+    assert await kind_of(sentence, conversation_waiting_for(Slot.WINDOW)) is not (
+        TurnType.ANSWER_PENDING
+    )
+
+
+async def test_the_year_question_is_filled_by_the_year_it_asked_for() -> None:
+    """«De este» names nothing on its own and is this year as the answer to «¿de qué año?»."""
+    assert await arbitration_of("de este", conversation_waiting_for(Slot.YEAR)) == Arbitration(
+        TurnType.ANSWER_PENDING, frozenset({Slot.YEAR})
+    )
+
+
+@pytest.mark.parametrize(
+    ("sentence", "fills"),
+    [
+        ("este año", {Slot.WINDOW}),
+        ("todas", {Slot.ACCOUNT}),
+        ("Viajes", {Slot.ACCOUNT}),
+        ("la hucha este año", {Slot.ACCOUNT, Slot.WINDOW}),
+    ],
+)
+async def test_a_reply_to_the_account_question_fills_the_account_or_corrects_the_window(
+    sentence: str, fills: set[Slot]
+) -> None:
+    """«Este año» to «¿En qué cuenta…?» is the plan's window chosen again, kept while the account
+    is asked again; a bare «todas» and an offered account's own name are choices only here."""
+    assert await arbitration_of(sentence, WAITING_FOR_AN_ACCOUNT) == Arbitration(
+        TurnType.ANSWER_PENDING, frozenset(fills)
+    )
+
+
+async def test_the_account_question_still_survives_an_aside_and_a_balance() -> None:
+    """Ruling R17, as the arbitration sees it: neither is a reply, so neither is absorbed."""
+    assert await kind_of("¿quién eres?", WAITING_FOR_AN_ACCOUNT) is TurnType.NEW_QUESTION
+    assert await kind_of("¿cuánto tengo?", WAITING_FOR_AN_ACCOUNT) is TurnType.NEW_OPERATION
+
+
+async def test_a_window_with_nothing_open_is_not_an_answer() -> None:
+    assert await kind_of("este año", ANSWERED) is TurnType.NEW_QUESTION
+
+
+async def test_the_correction_question_is_left_to_the_correction_readers() -> None:
+    """«¿Qué debería cambiar…?» holds no slot here: what a reply to it changes is the last answer,
+    which the correction path patches."""
+    assert await kind_of("este año", conversation_waiting_for(Slot.CORRECTION)) is not (
+        TurnType.ANSWER_PENDING
+    )

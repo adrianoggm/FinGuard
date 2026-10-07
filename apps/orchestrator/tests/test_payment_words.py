@@ -318,6 +318,8 @@ def test_a_conversational_tail_is_not_part_of_the_name(read: str, name: str) -> 
         "quiero mandarle 20 euros a Aitor",
         "manda 20 € a Javi por la cena",
         "mándale 20 € a mi madre",
+        # Ruling R18: the first word of the name decides, and these start with somebody else's.
+        "paga 20 € a Javi",
     ],
 )
 def test_an_order_to_somebody_else_changes_the_recipient(order: str) -> None:
@@ -339,6 +341,11 @@ def test_an_order_to_somebody_else_changes_the_recipient(order: str) -> None:
         "mándale 20 € a ella",
         "mándale 20 €",
         "mejor 30 euros",
+        # Ruling R18: what follows the name is not part of it. Read as part of it, «esta noche»
+        # was a different person, and Marta's own preview was cancelled for being named.
+        "mándale 20 € a Marta esta noche",
+        "mándale 20 € a Marta cuando puedas",
+        "envíale a Marta lo de Javi",
     ],
 )
 def test_an_order_to_the_same_person_is_a_revision(order: str) -> None:

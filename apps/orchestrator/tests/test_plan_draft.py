@@ -16,12 +16,15 @@ there is one to be missing. A second one would turn this into a set, and the cal
 to know which.
 """
 
+from dataclasses import replace
 from datetime import date
+from uuid import UUID
 
 import pytest
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.models.conversation import AccountSelection, AccountSelectionMode
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlanDraft,
@@ -167,3 +170,43 @@ def test_negative_filters_survive_completion_and_cannot_contradict_inclusions() 
             categories=("HOUSING_RENT",),
             excluded_categories=("HOUSING_RENT",),
         )
+
+
+# The account is the second slot a draft can be waiting on (Task 5, spec §3.2): «en todas mis
+# cuentas» to «¿De qué periodo?» is kept in the draft while the window is asked again.
+CURRENT, SAVINGS = UUID(int=1), UUID(int=2)
+
+
+def test_every_account_widens_the_draft_and_drops_any_narrowing() -> None:
+    narrowed = replace(RENT, only_account_id=CURRENT)
+
+    widened = narrowed.with_accounts(AccountSelection(AccountSelectionMode.ALL))
+
+    assert widened.across_accounts is True
+    assert widened.only_account_id is None and widened.only_account_ids == ()
+    assert widened.needs_a_window, "the account is kept; the window is still the question"
+    assert widened.categories == RENT.categories
+
+
+def test_one_chosen_account_narrows_the_draft_to_it() -> None:
+    chosen = RENT.with_accounts(AccountSelection(AccountSelectionMode.SELECTED, (SAVINGS,)))
+
+    assert chosen.only_account_id == SAVINGS
+    assert chosen.only_account_ids == () and chosen.across_accounts is False
+
+
+def test_several_chosen_accounts_narrow_the_draft_to_all_of_them() -> None:
+    both = (CURRENT, SAVINGS)
+
+    chosen = RENT.with_accounts(AccountSelection(AccountSelectionMode.SELECTED, both))
+
+    assert chosen.only_account_ids == both
+    assert chosen.only_account_id is None and chosen.across_accounts is False
+
+
+def test_the_accounts_survive_the_window_that_completes_the_draft() -> None:
+    chosen = RENT.with_accounts(AccountSelection(AccountSelectionMode.SELECTED, (SAVINGS,)))
+
+    plan = chosen.with_window(RelativePeriod(period=Period.THIS_YEAR))
+
+    assert plan.only_account_id == SAVINGS and plan.categories == ("HOUSING_RENT",)

@@ -228,6 +228,24 @@ def asks_for_all_accounts(sentence: str) -> bool:
     return _ALL_ACCOUNTS.search(folded) is not None
 
 
+# Every account, said the short way. Only a reply to «¿En qué cuenta…?» may say it like this: the
+# question supplies the noun, and anywhere else «todas» is about something the sentence never says.
+_EVERY_ONE_OF_THEM: Final = frozenset({"todas", "en todas", "todas ellas", "en todas ellas"})
+
+
+def all_accounts_as_a_reply(sentence: str) -> bool:
+    """Whether a reply to the account question chooses every account — «Todas mis cuentas», or only
+    «todas» / «en todas».
+
+    For the caller that knows the account question is the one being answered, which is the only
+    place the ellipsis can be resolved: the arbitration, deciding the turn fills that slot, and the
+    handler, resolving the choice against the accounts offered. One reading for both, so the two
+    cannot disagree about whether «en todas» chose anything.
+    """
+    folded = spanish.folded(sentence).strip(" \t\r\n¿?¡!.,;:")
+    return asks_for_all_accounts(sentence) or folded in _EVERY_ONE_OF_THEM
+
+
 def destination_in(sentence: str) -> tuple[str, ...]:
     """Which account an instruction moves money *to*, by the preposition in front of it.
 

@@ -110,6 +110,24 @@ class AsksForTheWindow(episodes.AnyPlan):
         )
 
 
+class KeepsTheBase(AsksForTheWindow):
+    """`AsksForTheWindow`, except that a forced base comes back exactly as it was handed over.
+
+    The least helpful model a reply to the open question can meet, and a real one: told to patch
+    the draft it is given, it keeps the draft's subject and changes nothing the reply said. The
+    stub's own reading of every sentence would hide that, because it rebuilds the plan from the
+    reply's words — so a test that a reply is absorbed *without* the model runs on this one, where
+    the model could not have done it.
+    """
+
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
+        continuation = context.continuation
+        if continuation is not None and continuation.force_follow_up:
+            self.asked.append(sentence)
+            return PlanningResult.planned(continuation.plan)
+        return await super().plan(sentence, context=context)
+
+
 def _with_planner(stack: episodes.Stack, planner: episodes.AnyPlan) -> None:
     """Rewire `stack`'s routes to a handler built on `planner`, keeping its ledger and directory.
 
@@ -133,16 +151,21 @@ def _with_planner(stack: episodes.Stack, planner: episodes.AnyPlan) -> None:
     app.dependency_overrides[get_ask_handler] = lambda: handler
 
 
-def asking_for_the_window_stack(*, settled: bool = True) -> PendingStack:
+def asking_for_the_window_stack(
+    *, settled: bool = True, planner: AsksForTheWindow | None = None
+) -> PendingStack:
     """The episodes stack, with a planner that answers a window-less spending question with the
     window clarification and a draft that keeps its subject (`AsksForTheWindow`).
 
     `settled` opens every conversation a test starts without one at `SETTLED`, so the question in
     play is the window and nothing else. `settled=False` opens with nothing chosen: the directory
     holds three accounts, and a plan completed with no account named asks «¿En qué cuenta…?».
+
+    `planner` is for a test about what reaches the model, which needs a model that behaves a
+    particular way there — `KeepsTheBase`, typically. It must still ask for the window the same way.
     """
     stack = episodes.a_stack()
-    planner = AsksForTheWindow()
+    planner = planner or AsksForTheWindow()
     _with_planner(stack, planner)
     return PendingStack(
         stack.client,
