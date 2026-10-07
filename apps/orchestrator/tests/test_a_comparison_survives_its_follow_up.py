@@ -6,9 +6,12 @@ before the planner (`planning_context` passes a continuation only for a single q
 The follow-up now patches the comparison itself: the subject changes on both sides and each side
 keeps its window (spec §3.3, §3.4).
 
-And only the subject. A turn the arbitration claimed, a follow-up that names its own window, a
-question of its own that happens to name a category, and a question left open over the comparison
-are each read where they always were.
+The measure is patched on both sides the same way: «¿y cuántas veces?» is the count of June and of
+July, not a count of last month.
+
+Nothing else. A turn the arbitration claimed, a follow-up that names its own window, a question of
+its own that happens to name a category, and a question left open over the comparison are each
+read where they always were.
 
 Driven over HTTP on the episodes stack.
 """
@@ -24,6 +27,7 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionQuery,
 )
 from finguard_orchestrator.bootstrap.main import app
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
 from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.models.planning_context import ComparisonFocus, focus_of
 from finguard_orchestrator.domain.services.turn_arbiter import Arbitration, TurnType
@@ -132,6 +136,88 @@ def test_the_kind_a_category_names_narrows_both_sides() -> None:
     assert continued and all(
         plan.categories == ("SUBSCRIPTIONS",) and plan.merchant_terms == ("gimnasio",)
         for plan in continued
+    )
+
+
+@pytest.mark.parametrize(
+    ("sentence", "metric"),
+    [("¿y cuántas veces?", Metric.COUNT), ("¿y la media?", Metric.AVERAGE)],
+)
+def test_a_measure_after_a_comparison_is_measured_on_both_sides(
+    sentence: str, metric: Metric
+) -> None:
+    """R26 (I-1). «¿y cuántas veces?» counted every expense of last month, and «¿y la media?»
+    answered June alone: a real figure for a question nobody asked, and half of one."""
+    stack = episodes.a_stack()
+    first = ask(stack, COMPARISON, SETTLED)
+    stack.ledger.ran.clear()
+
+    ask(stack, sentence, first["conversation"])
+
+    continued = _continued(stack.ledger.ran)
+    assert continued and all(
+        plan.categories == ("RESTAURANTS",) and plan.metric is metric for plan in continued
+    )
+
+
+def test_a_count_then_a_category_counts_the_new_category_on_both_sides() -> None:
+    stack = episodes.a_stack()
+    first = ask(stack, COMPARISON, SETTLED)
+    counted = ask(stack, "¿y cuántas veces?", first["conversation"])
+    stack.ledger.ran.clear()
+
+    ask(stack, "¿y en gasolina?", counted["conversation"])
+
+    continued = _continued(stack.ledger.ran)
+    assert continued and all(
+        plan.categories == ("TRANSPORT_FUEL",) and plan.metric is Metric.COUNT for plan in continued
+    )
+
+
+def test_a_measure_that_regroups_is_not_a_both_sides_patch() -> None:
+    """«¿y la media por mes?» is a measure *and* a grouping. A regroup is not this patch's to make
+    — `ComparisonPlan.between` would normalise it away — so the turn stays where it was."""
+    stack = episodes.a_stack()
+    first = ask(stack, COMPARISON, SETTLED)
+    stack.ledger.ran.clear()
+
+    ask(stack, "¿y la media por mes?", first["conversation"])
+
+    assert not _continued(stack.ledger.ran)
+    assert [
+        (plan.metric, plan.group_by) for plan in stack.ledger.ran if isinstance(plan, FinancialPlan)
+    ] == [(Metric.PERIOD_AVERAGE, GroupBy.MONTH)]
+
+
+@pytest.mark.parametrize(
+    ("comparison", "sentence", "category", "direction"),
+    [
+        ("junio vs julio en nómina", "¿y en gasolina?", "TRANSPORT_FUEL", Direction.EXPENSE),
+        (
+            "compara mis ingresos de junio y julio",
+            "¿y en restaurantes?",
+            "RESTAURANTS",
+            Direction.EXPENSE,
+        ),
+        (COMPARISON, "¿y en nómina?", "SALARY", Direction.INCOME),
+        ("junio vs julio", "¿y en gasolina?", "TRANSPORT_FUEL", Direction.ALL),
+    ],
+)
+def test_a_new_category_brings_its_own_direction(
+    comparison: str, sentence: str, category: str, direction: Direction
+) -> None:
+    """R26 (I-2), ruling R24. «¿y en gasolina?» after a payroll comparison ran fuel as *income*: the
+    category replaced the subject and the direction of the old one stayed. A replacing category
+    brings its own; a comparison of every movement, which has none to replace, stays one."""
+    stack = episodes.a_stack()
+    first = ask(stack, comparison, SETTLED)
+    stack.ledger.ran.clear()
+
+    ask(stack, sentence, first["conversation"])
+
+    continued = _continued(stack.ledger.ran)
+    assert continued and all(
+        plan.categories == (category,) and plan.direction is direction for plan in continued
     )
 
 

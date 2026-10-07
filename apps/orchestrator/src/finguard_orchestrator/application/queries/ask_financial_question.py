@@ -5866,12 +5866,17 @@ def _answers_the_transfer(sentence: str, waiting: TransferInProgress) -> bool:
 # question's subject, not a patch on the comparison behind it.
 _A_PATCH_MAY_TAKE: Final = frozenset({TurnType.FOLLOW_UP, TurnType.NEW_QUESTION})
 
-# What a patch on a comparison may change: its subject, on both sides at once. Never a window — the
-# two windows *are* the comparison, and «¿y en agosto?» moves the view to one of them, which the
-# follow-up reader already answers. Nor a regroup or a measure: `ComparisonPlan.between` normalises
-# a presentation grouping away, so a regroup applied here would be dropped without a word, and a
-# measure is what the two sides agreed to compare.
-_A_SUBJECT_PATCH: Final = frozenset({PatchField.EXCLUDED_CATEGORIES, PatchField.EXCLUDED_MERCHANTS})
+# What a grounded patch may change on a comparison, on both sides at once: the subject it leaves out
+# («y sin restaurantes») and the measure («¿y cuántas veces?», «¿y la media?»). A measure is what
+# both sides agree to compare, so it changes on both or the pair would compare a count with a sum;
+# `ComparisonPlan.between` refuses a measure no pair can compare, and `_compare_periods` already
+# says a COUNT or an AVERAGE pair in its own words. Never a window — the two windows *are* the
+# comparison, and «¿y en agosto?» moves the view to one of them, which the follow-up reader already
+# answers. Nor a regroup: `between` normalises a presentation grouping away, so one applied here
+# would be dropped without a word.
+_A_BOTH_SIDES_PATCH: Final = frozenset(
+    {PatchField.EXCLUDED_CATEGORIES, PatchField.EXCLUDED_MERCHANTS, PatchField.METRIC}
+)
 
 # The words an elliptical category turn may carry besides the category itself — the follow-up
 # reader's own list (`read_contextual_follow_up`, `category_ellipsis`), so «¿y en gasolina?» is an
@@ -5908,9 +5913,9 @@ def _the_comparison_continued(query: AskFinancialQuestionQuery) -> ComparisonPla
     the pair is answered by `_compare_periods` like any other.
 
     A patch is what the closed vocabularies ground: a category said on its own after «y»
-    (`_the_category_an_ellipsis_names`), or a grounded exclusion (`continuation_patch.read`,
-    `_A_SUBJECT_PATCH`). Each side keeps its own window. Nothing else is read as one, and every
-    refusal leaves the turn exactly where it was:
+    (`_the_category_an_ellipsis_names`), or a grounded exclusion or measure
+    (`continuation_patch.read`, `_A_BOTH_SIDES_PATCH`). Each side keeps its own window. Nothing
+    else is read as one, and every refusal leaves the turn exactly where it was:
 
     - a question left open is what the turn is about, not the comparison answered before it;
     - a turn that names a window of its own («¿y en gasolina en agosto?») is a new question or the
@@ -5932,7 +5937,7 @@ def _the_comparison_continued(query: AskFinancialQuestionQuery) -> ComparisonPla
     grounded = continuation_patch.read(query.sentence, today=query.today)
     patched: Callable[[FinancialPlan], FinancialPlan]
     if grounded.patch is not None:
-        if not grounded.changed <= _A_SUBJECT_PATCH:
+        if not grounded.changed <= _A_BOTH_SIDES_PATCH:
             return None
         patched = grounded.patch.apply_to
     else:
@@ -5941,19 +5946,27 @@ def _the_comparison_continued(query: AskFinancialQuestionQuery) -> ComparisonPla
             return None
 
         def patched(side: FinancialPlan) -> FinancialPlan:
-            # What the follow-up reader does to one plan for the same sentence: the category
-            # replaces the subject, and the shops that narrowed the old one go with it.
+            # The category replaces the subject, and the shops that narrowed the old one go with
+            # it. So does its direction (ruling R24): «¿y en gasolina?» after a payroll comparison
+            # is fuel *spent*, and keeping the payroll's INCOME ran fuel as money received. A
+            # comparison of every movement (ALL) has no direction of its own to replace, and stays
+            # one.
             return replace(
                 side,
                 categories=(category,),
                 excluded_categories=(),
                 merchants=(),
                 merchant_terms=(),
+                direction=(
+                    side.direction
+                    if side.direction is Direction.ALL
+                    else _direction_of((category,))
+                ),
             )
 
     try:
-        # `enforce` after the patch, as on every other path: the direction a category word states
-        # («¿y en nómina?») and the kind it names («¿y en el gimnasio?») apply to both sides too.
+        # `enforce` after the patch, as on every other path: a direction the turn states still
+        # wins, and the kind a category names («¿y en el gimnasio?») applies to both sides too.
         earlier = explicit_facts.enforce(patched(focus.value.earlier), facts)
         latest = explicit_facts.enforce(patched(focus.value.latest), facts)
     except InvalidValueError:
