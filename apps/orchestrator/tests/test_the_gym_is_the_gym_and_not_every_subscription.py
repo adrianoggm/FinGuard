@@ -823,7 +823,7 @@ class CallsTheShopItsCategory(PlansTheCategory):
 @pytest.mark.parametrize(
     ("sentence", "shop", "figure"),
     [
-        ("¿Cuánto llevo gastado en Spotify?", "Spotify", "10,99 € en Spotify"),
+        ("¿Cuánto gasté en Spotify?", "Spotify", "10,99 € en Spotify"),
         ("¿Cuánto gasté en Altafit?", "Gimnasio Altafit", "29,90 € en Gimnasio Altafit"),
     ],
 )
@@ -883,7 +883,7 @@ async def test_an_older_question_about_the_gym_is_not_the_one_answered(
     conversation = IDLE
     for sentence in before:
         conversation = (await ask(sentence, ledger, conversation, planner=planner)).conversation
-    spotify = await ask("¿Cuánto llevo gastado en Spotify?", ledger, conversation, planner=planner)
+    spotify = await ask("¿Cuánto gasté en Spotify?", ledger, conversation, planner=planner)
     assert spotify.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
 
     answered = await ask("este año", ledger, spotify.conversation, planner=planner)

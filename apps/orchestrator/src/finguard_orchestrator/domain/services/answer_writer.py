@@ -770,6 +770,37 @@ _METRIC_WORDS: Final[dict[Metric, str]] = {
 }
 
 
+# Who the money went to or came from, as the period question names it: «lo que le mandaste a Marta»,
+# «lo que recibiste de Marta». The preposition is `filter_of`'s, so it reads on from here.
+_SENT_OR_RECEIVED: Final[dict[Direction, str]] = {
+    Direction.EXPENSE: "lo que le mandaste",
+    Direction.INCOME: "lo que recibiste",
+}
+
+
+def window_question(plan: FinancialPlan) -> str | None:
+    """The period question, naming what it is about: «¿De qué periodo quieres ver tus gastos en
+    restaurantes?», «¿De qué periodo quieres ver lo que le mandaste a Marta?» (spec §3.5).
+
+    «¿De qué periodo?» alone, after a turn or two about something else, leaves the person to work
+    out which question it belongs to. The subject is said in the answer's own words (`filter_of`,
+    the direction as `plan_in_words` says it), so the question and the figure that answers it name
+    the same thing. Person-facing only: `describe`, the planner's line, never sees it.
+
+    None when there is nothing to name beyond spending, which is what a bare «¿cuánto…?» is about
+    and the plain question already asks.
+    """
+    named = filter_of(plan)
+    if not named and plan.direction is Direction.EXPENSE:
+        return None
+    subject = (
+        _SENT_OR_RECEIVED[plan.direction]
+        if plan.counterparties and plan.direction in _SENT_OR_RECEIVED
+        else f"tus {_DIRECTION_WORDS[plan.direction]}"
+    )
+    return f"¿De qué periodo quieres ver {subject}{named}?"
+
+
 def describe(plan: FinancialPlan | TopMovements) -> str:
     """The plan in one line, in the ledger's own identifiers: the line the planner is shown.
 

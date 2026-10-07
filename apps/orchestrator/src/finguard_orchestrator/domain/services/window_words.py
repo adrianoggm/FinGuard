@@ -9,10 +9,18 @@ the conversation: the reply arrived as a two-word sentence with no context and a
 plan had to be derived from it, which is why "este año" came back asking for the period
 again.
 
-**Precision over coverage.** "Últimamente", "hace un mes" and "en verano" are windows a
-person understands and this does not, and they are left out on purpose: a miss falls through
-to the model and costs one turn, while a wrong guess costs a figure about the wrong month
-presented as an answer.
+**Precision over coverage.** "Hace un mes" and "en verano" are windows a person understands
+and this does not, and they are left out on purpose: a miss falls through to the model and
+costs one turn, while a wrong guess costs a figure about the wrong month presented as an
+answer.
+
+Two readings are product decisions rather than vocabulary (spec §3.5, 2026-10-07): "llevo
+gastado" with no window is the year so far, and "últimamente" about money spent or received is
+the last 30 days. Neither is a fact about Spanish. Each is what the product answers rather than
+asking, and every answer states the window it used — «en lo que va de año», «en los últimos 30
+días» — so the default is said, never guessed silently. Both read last, under every window a
+sentence states more precisely, and both stand aside where a window is named that this cannot
+read.
 
 Years used to be absent, and that was the reasoning: the banking contract has no LAST_YEAR, so
 there was no *period* to translate them into, and answering "el año pasado" as THIS_YEAR would
@@ -35,7 +43,7 @@ from typing import Final
 from finguard_orchestrator.domain.enums import Period
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.conversation import Slot
-from finguard_orchestrator.domain.services import spanish, spanish_numbers
+from finguard_orchestrator.domain.services import explicit_lexicon, spanish, spanish_numbers
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, RelativePeriod
 
 # A window this vocabulary is sure about, whichever of the two shapes it takes.
@@ -368,6 +376,47 @@ _UNIT: Final[dict[str, Period]] = {
 
 # How many months a unit is worth. Only years are not one of themselves.
 _MONTHS_PER: Final[dict[str, int]] = {"ano": 12, "anos": 12}
+
+# «¿Cuánto llevo gastado?» — what has gone so far, and so far is the year (spec §3.5, a product
+# decision on 2026-10-07). It asked «¿De qué periodo?» before, about a question whose own verb says
+# "up to now"; the answer says «en lo que va de año», so the year is stated rather than assumed.
+_SO_FAR: Final = re.compile(r"\bllevo\s+gastad[oa]s?\b")
+
+# Words that name a window, whether or not this file can read the one they name. «Llevo gastado
+# desde Navidad» and «… en la semana en curso» each name a window nothing here reads; the year so
+# far in their place would be a different window presented as the one asked about, so a sentence
+# carrying any of these goes to the model as it always did. A digit is a date or a year. Generous
+# on purpose — a word here that was not a window costs one question back, as before.
+_A_WINDOW_IS_NAMED: Final = re.compile(
+    r"\d|\b(?:desde|hasta|hace|durante|dias?|semanas?|finde|mes|meses|anos?|trimestres?"
+    r"|semestres?|quincenas?|temporada|curso|ejercicio|periodo|epoca|verano|invierno|primavera"
+    r"|otono|navidad(?:es)?|puente|vacaciones|manana|tarde|noche|ultim[oa]s?|ultimamente"
+    r"|lunes|martes|miercoles|jueves|viernes|sabados?|domingos?|" + "|".join(_MONTHS) + r")\b"
+)
+
+# «Últimamente» — the last 30 days (spec §3.5, a product decision on 2026-10-07), which is also the
+# window the period question offers as its example. As an adverb only: after a preposition, a quote
+# or «concepto» it is part of a name — a shop, a payment's concept — and nothing here may read a
+# window out of a name.
+_LATELY: Final = re.compile(
+    r"(?<![«\"'“])(?<!\ben\s)(?<!\bde\s)(?<!\bdel\s)(?<!\ba\s)(?<!concepto\s)\bultimamente\b"
+)
+# The adverb is capitalised only where a sentence starts; «el bar Últimamente» is a name. Read on
+# the sentence as written, because folding is what loses the capital.
+_A_NAME_CALLED_LATELY: Final = re.compile(r"\w[\s«\"'“]+[ÚU]ltimamente\b")
+# And only as the window of money spent or received, in `explicit_facts`' own words for the two
+# directions, so «¿qué tal últimamente?» stays a sentence about nothing this file can date.
+_SPENT: Final = explicit_lexicon.compiled("expense")
+_RECEIVED: Final = explicit_lexicon.compiled("income")
+
+
+def _lately(sentence: str, folded: str) -> bool:
+    """Whether «últimamente» is, in this sentence, the window of money spent or received."""
+    return (
+        _LATELY.search(folded) is not None
+        and _A_NAME_CALLED_LATELY.search(sentence) is None
+        and (_SPENT.search(folded) is not None or _RECEIVED.search(folded) is not None)
+    )
 
 
 def whole_year(year: int) -> AbsoluteRange:
@@ -940,7 +989,38 @@ def window_in(
     for phrase, period in _NAMED:
         if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", folded):
             return RelativePeriod(period=period)
+
+    # The two product defaults, last: every window above is something the sentence states more
+    # precisely, so «¿cuánto llevo gastado este mes?» is this month and «… desde el lunes» this
+    # week.
+    return _a_default(sentence, folded)
+
+
+def _a_default(sentence: str, folded: str) -> Window | None:
+    """«Últimamente» about money, or «llevo gastado» beside no other window: the product's answer
+    to a sentence that states no window (spec §3.5). Not rows of the table, because neither is a
+    phrase that names a window wherever it stands — the first needs a sentence about money, the
+    second a sentence that names no other window at all, read or not."""
+    if _lately(sentence, folded):
+        return RelativePeriod(period=Period.LAST_N_DAYS, n=30)
+    if _SO_FAR.search(folded) and not _A_WINDOW_IS_NAMED.search(folded):
+        return RelativePeriod(period=Period.THIS_YEAR)
     return None
+
+
+def default_window_in(sentence: str, *, today: date | None = None) -> Window | None:
+    """The window `window_in` answers with, when it is one of the two product defaults rather than a
+    window the sentence states; None otherwise.
+
+    For the caller that must tell them apart: a planner asking for the window of «¿cuánto he
+    gastado últimamente?» asks what the product has already decided, and that question is answered
+    from here instead of being put to the person. A window the sentence states is another matter —
+    a model that asked about one saw something this vocabulary did not, and its question stands.
+    """
+    window = window_in(sentence, today=today)
+    if window is None or window != _a_default(sentence, spanish.folded(sentence)):
+        return None
+    return window
 
 
 # "¿Y el año anterior?" after a question about July. It shifts whatever window was just answered

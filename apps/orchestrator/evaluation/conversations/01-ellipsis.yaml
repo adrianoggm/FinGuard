@@ -220,7 +220,7 @@ episodes:
       never finished asking. Precision over coverage, in a conversation.
     metrics: [unnecessary_clarification]
     turns:
-      - say: ¿cuánto llevo gastado?
+      - say: ¿cuánto he gastado?
         route: QUERY
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: pues no sé

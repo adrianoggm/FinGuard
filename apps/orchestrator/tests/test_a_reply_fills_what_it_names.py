@@ -36,7 +36,7 @@ def _restore() -> Iterator[None]:
 
 def test_the_account_given_to_a_period_question_is_kept_and_the_period_asked_again() -> None:
     stack = asking_for_the_window_stack(settled=False)
-    asked = ask(stack, "cuánto he gastado en el gimnasio últimamente")  # «¿De qué periodo?»
+    asked = ask(stack, "cuánto he gastado en el gimnasio")  # «¿De qué periodo?»
     told = ask(stack, "en todas mis cuentas", asked["conversation"])
     assert told["outcome"] == "NEEDS_CLARIFICATION" and told["outcome"] != "BALANCE"
     assert told["conversation"]["account_selection_mode"] == "ALL"
@@ -48,7 +48,7 @@ def test_the_account_given_to_a_period_question_is_kept_and_the_period_asked_aga
 
 def test_the_period_given_to_an_account_question_is_kept() -> None:
     stack = account_question_stack()  # «¿En qué cuenta?»
-    asked = ask(stack, "¿Cuánto llevo gastado en Spotify?")
+    asked = ask(stack, "¿Cuánto gasté en Spotify?")
     told = ask(stack, "este año", asked["conversation"])
     assert told["question"] == "¿En qué cuenta quieres consultarlo?"
     ask(stack, "Todas mis cuentas", told["conversation"])
@@ -96,7 +96,7 @@ def test_a_kind_of_account_given_to_a_period_question_is_kept_for_the_answer() -
 
 def test_the_window_and_the_account_in_one_reply_answer_the_account_question() -> None:
     stack = account_question_stack()
-    asked = ask(stack, "¿Cuánto llevo gastado en Spotify?")
+    asked = ask(stack, "¿Cuánto gasté en Spotify?")
     answered = ask(stack, "la hucha este año", asked["conversation"])
     assert answered["outcome"] == "PLANNED", answered["text"]
     plan = stack.ledger.plans[-1]
@@ -107,7 +107,7 @@ def test_the_kept_window_travels_with_the_account_question() -> None:
     """Kept in the plan that waits, on the wire, and asked about with the question's own chips —
     so the next reply is a chip, and the chip is all it needs to be."""
     stack = account_question_stack()
-    asked = ask(stack, "¿Cuánto llevo gastado en Spotify?")
+    asked = ask(stack, "¿Cuánto gasté en Spotify?")
     told = ask(stack, "este año", asked["conversation"])
     assert told["conversation"]["workflow"] == "ACCOUNT_SCOPE"
     assert told["conversation"]["pending_plan"]["period"] == "THIS_YEAR"

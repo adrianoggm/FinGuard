@@ -518,10 +518,10 @@ def test_the_category_catalogue_is_product_data_and_leaves_the_conversation_alon
 def test_the_catalogue_can_be_consulted_in_the_middle_of_a_clarification() -> None:
     """The realistic reason to ask for it: the assistant asked which category and the user does not
     know the words. Reading the list must not close the question that prompted it."""
-    client, _, _, _ = wired({"llevo gastado": HALF_READ})
+    client, _, _, _ = wired({"he gastado": HALF_READ})
     chat = Chat(client)
 
-    chat.say("¿cuánto llevo gastado?")
+    chat.say("¿cuánto he gastado?")
     listed = chat.say("dime las categorías disponibles")
 
     assert listed["outcome"] == Spoken.CATEGORIES.value
@@ -1141,10 +1141,10 @@ HALF_READ = PlanningResult.needs_clarification(
 def test_a_clarification_is_finished_by_a_bare_window_without_a_model() -> None:
     """Both halves are closed vocabularies — the slot and the window — so there is nothing here to
     infer. Before this, answering the question restarted the conversation."""
-    client, planner, ledger, _ = wired({"llevo gastado": HALF_READ})
+    client, planner, ledger, _ = wired({"he gastado": HALF_READ})
     chat = Chat(client)
 
-    chat.say("¿cuánto llevo gastado?")
+    chat.say("¿cuánto he gastado?")
     asked = len(planner.asked)
     finished = chat.say("el mes pasado")
 
@@ -1161,13 +1161,13 @@ def test_a_clarification_does_not_survive_a_change_of_subject() -> None:
     moved on from."""
     client, _, ledger, _ = wired(
         {
-            "llevo gastado": PlanningResult.needs_clarification("¿De qué periodo?"),
+            "he gastado": PlanningResult.needs_clarification("¿De qué periodo?"),
             "supermercado": PlanningResult.planned(spending()),
         }
     )
     chat = Chat(client)
 
-    chat.say("¿cuánto llevo gastado?")
+    chat.say("¿cuánto he gastado?")
     chat.say("¿cuánto gasté el mes pasado en el supermercado?")
     after = chat.say("¿cuánto dinero tengo?")
 
@@ -1179,10 +1179,10 @@ def test_a_clarification_does_not_survive_a_change_of_subject() -> None:
 def test_the_slot_survives_an_aside_so_the_reply_after_it_still_lands() -> None:
     """The realistic sequence: the assistant asks which period, the user looks up the categories,
     then answers. The aside is not a change of subject and must not close the question."""
-    client, _, ledger, _ = wired({"llevo gastado": HALF_READ})
+    client, _, ledger, _ = wired({"he gastado": HALF_READ})
     chat = Chat(client)
 
-    chat.say("¿cuánto llevo gastado?")
+    chat.say("¿cuánto he gastado?")
     chat.say("dime las categorías disponibles")
     finished = chat.say("el mes pasado")
 
@@ -1195,13 +1195,13 @@ def test_a_reply_that_answers_nothing_goes_to_the_model_rather_than_being_guesse
     window for it would answer a question the user never finished asking."""
     client, planner, _, _ = wired(
         {
-            "llevo gastado": PlanningResult.needs_clarification("¿De qué periodo?"),
+            "he gastado": PlanningResult.needs_clarification("¿De qué periodo?"),
             "pues no sé": PlanningResult.needs_clarification("¿De qué periodo?"),
         }
     )
     chat = Chat(client)
 
-    chat.say("¿cuánto llevo gastado?")
+    chat.say("¿cuánto he gastado?")
     asked = len(planner.asked)
     chat.say("pues no sé")
 

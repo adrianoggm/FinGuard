@@ -193,9 +193,11 @@ def account_question_stack() -> PendingStack:
     (`ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT=ask`).
 
     `AnyPlan` is that planner already: it answers every sentence with a complete plan, last month
-    when the sentence names no window («llevo gastado» is not one yet). With three accounts and
-    none chosen, `_scoped` raises `AccountScopeRequiredError` and the turn is «¿En qué cuenta
-    quieres consultarlo?» with the plan pending behind it.
+    when the sentence names no window. «Llevo gastado» names one since spec §3.5 — the year so far
+    — so a test about the window a reply brings asks «¿Cuánto gasté en Spotify?», whose plan waits
+    over last month. With three accounts and none chosen, `_scoped` raises
+    `AccountScopeRequiredError` and the turn is «¿En qué cuenta quieres consultarlo?» with the plan
+    pending behind it.
     """
     stack = episodes.a_stack(account_scope_default="ask")
     return PendingStack(

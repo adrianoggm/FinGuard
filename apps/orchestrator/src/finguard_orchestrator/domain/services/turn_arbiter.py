@@ -266,8 +266,12 @@ _A_SUBJECT_OF_ITS_OWN: Final = re.compile(
 )
 
 
-def _states_a_subject_of_its_own(sentence: str) -> bool:
+def states_a_subject_of_its_own(sentence: str) -> bool:
     """Whether the sentence says what it is about, not only where or in which category.
+
+    Public because the handler asks it too, of a turn that met the window question with a question
+    of its own: that turn is owed the question about its own subject, not the repeat a reply that
+    answered nothing gets (`ask_financial_question._asks_the_same_thing_again`).
 
     Its own vocabulary above, the self-contained question shape, and the measure or grouping
     `explicit_facts` reads («de media», «¿cuántas veces?», «por mes»). Not the direction
@@ -389,7 +393,7 @@ def _what_it_fills(
     reads as it always did.
 
     **Nor is a turn that leaves the slot asked empty and says what it is about** (ruling R21,
-    `_states_a_subject_of_its_own`). Without a window, «en la hucha» can only be the account of the
+    `states_a_subject_of_its_own`). Without a window, «en la hucha» can only be the account of the
     question waiting for one; «¿cuánto ingresé en la hucha?» is income, its own question, and the
     account it names is that question's. With the slot filled, the rest of the sentence is the
     reply's to change — «este año, pero cuéntalas» — and goes with it.
@@ -415,7 +419,7 @@ def _what_it_fills(
         filled.add(Slot.CATEGORY)
     if filled == {Slot.CATEGORY} and asked is not Slot.CATEGORY:
         return frozenset()
-    if filled and asked not in filled and _states_a_subject_of_its_own(sentence):
+    if filled and asked not in filled and states_a_subject_of_its_own(sentence):
         # Ruling R21: what the question asked is still missing, so the reply is one only while it
         # is elliptical. A turn that says what it is about is asking that instead.
         return frozenset()

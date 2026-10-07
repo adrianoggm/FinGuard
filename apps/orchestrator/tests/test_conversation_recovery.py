@@ -343,7 +343,7 @@ def test_the_periods_offered_after_a_loop_finish_the_turn(choice: str) -> None:
     client, _, ledger = wired({"": asking})
     chat = Chat(client)
 
-    chat.say("¿cuánto llevo gastado?")
+    chat.say("¿cuánto he gastado?")
     chat.say("pues eso")
     answered = chat.say(choice)
 
@@ -357,14 +357,14 @@ def test_the_slot_a_question_asked_does_not_outlive_the_answer_to_it() -> None:
     list of periods instead of asking — a real question, dismissed as a loop."""
     client, _, _ = wired(
         {
-            "llevo gastado": PlanningResult.needs_clarification("¿De qué periodo?"),
+            "he gastado": PlanningResult.needs_clarification("¿De qué periodo?"),
             "el mes pasado": PlanningResult.planned(GROCERIES),
             "y en gasolina": PlanningResult.needs_clarification("¿De qué periodo?"),
         }
     )
     chat = Chat(client)
 
-    asked = chat.say("¿cuánto llevo gastado?")
+    asked = chat.say("¿cuánto he gastado?")
     assert asked["conversation"]["last_asked"] == "WINDOW"
 
     answered = chat.say("el mes pasado")

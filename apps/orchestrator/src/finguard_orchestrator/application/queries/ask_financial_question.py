@@ -234,8 +234,10 @@ _WHICH_ACCOUNT: Final = "¿En qué cuenta quieres consultarlo?"
 
 # The window question as this service asks it when no model wrote one: the planner's own wording
 # (`llm_query_planner.WINDOW_QUESTION`, which this layer may not import), copied once here instead
-# of at each place that asks it.
-_WHICH_PERIOD: Final = "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
+# of at each place that asks it. The examples are phrases `window_words` reads back, and they follow
+# the question that names its subject too (`answer_writer.window_question`).
+_PERIOD_EXAMPLES: Final = "Por ejemplo este mes, el mes pasado o los últimos 30 días."
+_WHICH_PERIOD: Final = f"¿De qué periodo? {_PERIOD_EXAMPLES}"
 
 # The default when a handler is built without one, which is every test that does not care. The
 # deployment's number is `banking_read_attempts` in configuration — this is operational policy, and
@@ -1852,7 +1854,7 @@ class AskFinancialQuestionHandler:
                 # A question rather than a plan: the sentence named a category and no period, or
                 # the model asked one of its own.
                 asking, note = await self._waiting_for_the_window(rescued or planned, query)
-                declined = _decline(asking, was, said)
+                declined = _decline(asking, was, said, query.sentence)
                 yield replace(declined, text=f"{declined.text}\n({note})") if note else declined
                 return
             planned = rescued
@@ -5829,6 +5831,14 @@ def _from_what_the_sentence_said(
     with no category would total everything under a question about one thing. `None` when it does
     not, and then the decline stands: this rescues a plan the sentence contains, and never guesses
     at one it does not.
+
+    **Nor does a model's window question stand over a window the product has decided.** «¿Cuánto
+    he gastado últimamente?» is the planner's own example of a question to ask about (its prompt is
+    pinned), and «llevo gastado» reads the same way to it; both have a default since spec §3.5
+    (`window_words.default_window_in`), so the draft the model built when it stopped is completed
+    with it, as the reply would have completed it a turn later (`_finish_pending`). Only that draft
+    and only that slot: the subject is still the model's reading, and the verifier still checks it
+    against the sentence.
     """
     if planned.outcome not in {
         PlanningOutcome.UNSUPPORTED,
@@ -5848,9 +5858,10 @@ def _from_what_the_sentence_said(
 
     named = category_words.precisely_named_in(query.sentence)
     if not named:
-        # Nothing certain to build from. The decline stands, and it is honest: what this rescues is
-        # a plan the sentence contains, never one it does not.
-        return None
+        # Nothing certain to build from but the model's own draft, and that only when the window
+        # it stopped for is a default the product has decided. Otherwise the decline stands, and it
+        # is honest: what this rescues is a plan the sentence contains, never one it does not.
+        return _the_draft_with_the_window_it_names(planned, facts, query)
 
     if facts.window is None:
         # Everything but the period. Asking for it is the true answer — "no puedo calcularlo" about
@@ -5887,6 +5898,41 @@ def _from_what_the_sentence_said(
         ",".join(named),
     )
     return PlanningResult(outcome=PlanningOutcome.PLANNED, plan=plan)
+
+
+def _the_draft_with_the_window_it_names(
+    planned: PlanningResult, facts: explicit_facts.ExplicitFacts, query: AskFinancialQuestionQuery
+) -> PlanningResult | None:
+    """The model's window question answered by the product's default, or None when it cannot be.
+
+    Only a question about the window, over a draft that lacks only the window, about a sentence
+    whose window is one of the two defaults (`window_words.default_window_in`): «últimamente»,
+    «llevo gastado». A window the sentence states is not taken here — a model that asked about one
+    saw something the vocabulary did not, so its question stands, as it always did. A draft the
+    window will not build from is left to ask, as the reply's own `with_window` leaves it. And not
+    a comparison of two categories: one window over the draft would answer it with one figure.
+    """
+    draft = planned.draft
+    window = window_words.default_window_in(query.sentence, today=query.today)
+    if (
+        planned.outcome is not PlanningOutcome.NEEDS_CLARIFICATION
+        or planned.awaiting is not Slot.WINDOW
+        or draft is None
+        or not draft.needs_a_window
+        or window is None
+        or facts.compared_categories
+    ):
+        return None
+    try:
+        plan = draft.with_window(window)
+    except InvalidValueError:
+        return None
+    logger.info(
+        "plan.window_from_the_sentence account=%s window=%s",
+        account_ref(query.account_id),
+        _window_of(plan),
+    )
+    return PlanningResult.planned(plan)
 
 
 # Turns that are *about* something else without changing the subject. Each of these already passes
@@ -6225,12 +6271,19 @@ def _narrows_the_balance(
 
 
 def _decline(
-    planned: PlanningResult, was: Conversation, said: explicit_facts.ExplicitFacts
+    planned: PlanningResult,
+    was: Conversation,
+    said: explicit_facts.ExplicitFacts,
+    sentence: str,
 ) -> AskFinancialQuestionResult:
     """The five outcomes that never reach the ledger.
 
     Each gets its own sentence. Collapsing them into "no he podido" would tell the user
     nothing about whether to rephrase, wait, or give up.
+
+    The window question names what it is about when its draft says (spec §3.5): «¿De qué periodo
+    quieres ver tus gastos en restaurantes?». Only the template this service and the planner share;
+    a question a model wrote is its own, and is asked as written.
 
     `said` is what the declined sentence stated outright. It is carried here rather than re-read
     because only the caller still has the sentence: `_next_state` needs it to keep a stored draft
@@ -6257,12 +6310,15 @@ def _decline(
         case _:
             text = "No he entendido la pregunta. ¿Puedes decirla de otra forma?"
 
-    if _asks_the_same_thing_again(planned, was):
+    question = planned.question
+    if _asks_the_same_thing_again(planned, was, sentence):
         # The reply did not answer the question and the model has asked it again, word for word.
         # A third "¿de qué periodo?" is not a clarification, it is a loop — and the user cannot
         # get out of one by rephrasing, because rephrasing is what already failed twice. Offer
         # the answers this service is certain about instead of asking an open question again.
         text, suggestions = query_recovery.repeated_question(planned.awaiting.value)
+    elif (named := _naming_its_subject(planned)) is not None:
+        question, text = named, f"{named} {_PERIOD_EXAMPLES}"
 
     left_open = _next_state(planned, said)
     conversation = (
@@ -6283,13 +6339,13 @@ def _decline(
     return AskFinancialQuestionResult(
         outcome=planned.outcome.value,
         text=text,
-        question=planned.question,
+        question=question,
         conversation=conversation,
         suggestions=suggestions,
     )
 
 
-def _asks_the_same_thing_again(planned: PlanningResult, was: Conversation) -> bool:
+def _asks_the_same_thing_again(planned: PlanningResult, was: Conversation, sentence: str) -> bool:
     """Whether this turn is the previous question repeated.
 
     The slot rather than the wording, because the wording comes from a model and two phrasings of
@@ -6299,13 +6355,68 @@ def _asks_the_same_thing_again(planned: PlanningResult, was: Conversation) -> bo
     which exists when the clarification carried a draft; `last_asked` is the same slot when it did
     not, and there was nothing else to hang it on. Reading only the first was the hole: a
     draft-less question left no state, so every repeat of it looked like the first.
+
+    Not when the turn was a question of its own that also needs a period
+    (`_about_something_else`): «¿cuánto ingresé en la hucha?» while «¿cuánto gasté en
+    restaurantes?» waited for one was answered «Sigo sin tener claro el periodo», the reply to a
+    turn that answered nothing, about a question the person had only just asked.
     """
     asked_before = was.awaiting or was.last_asked
     return (
         planned.outcome is PlanningOutcome.NEEDS_CLARIFICATION
         and asked_before is not None
         and asked_before is planned.awaiting
+        and not _about_something_else(planned, was, sentence)
     )
+
+
+def _about_something_else(planned: PlanningResult, was: Conversation, sentence: str) -> bool:
+    """Whether the question asked back belongs to a question this turn asked, not to the one open.
+
+    The sentence says what it is about (`turn_arbiter.states_a_subject_of_its_own`, the line ruling
+    R21 drew for the same turn), or the draft the model read from it names a subject the open one
+    does not — «¿y en suscripciones?» while restaurants waited. A turn that names nothing, «pues no
+    sé», is neither, whatever draft a model makes of it: that is the repeat.
+    """
+    if turn_arbiter.states_a_subject_of_its_own(sentence):
+        return True
+    about = _the_window_question_for(planned.draft) if planned.draft is not None else None
+    open_question = was.active
+    asked_about = (
+        _the_window_question_for(open_question.draft)
+        if isinstance(open_question, FinancialClarification)
+        else None
+    )
+    return about is not None and about != asked_about
+
+
+def _naming_its_subject(planned: PlanningResult) -> str | None:
+    """The template window question, asked about the draft's subject — or None to ask as planned.
+
+    Only `_WHICH_PERIOD`, the template the planner and this service share; a question the model
+    wrote is the model's (spec §3.5: the model-written clarification is untouched).
+    """
+    if (
+        planned.outcome is not PlanningOutcome.NEEDS_CLARIFICATION
+        or planned.awaiting is not Slot.WINDOW
+        or planned.question != _WHICH_PERIOD
+        or planned.draft is None
+    ):
+        return None
+    return _the_window_question_for(planned.draft)
+
+
+def _the_window_question_for(draft: FinancialPlanDraft) -> str | None:
+    """`answer_writer.window_question` for a draft, which has no window to be a plan with.
+
+    Any window does, because the question never says it: the writer reads the subject alone. A
+    draft no window builds a plan from is asked about plainly.
+    """
+    try:
+        placeholder = draft.with_window(RelativePeriod(period=Period.THIS_MONTH))
+    except InvalidValueError:
+        return None
+    return answer_writer.window_question(placeholder)
 
 
 def _next_state(
@@ -7355,11 +7466,20 @@ def _the_window_question_again(
     reply that answered nothing, and this one answered the account or the subject. The slot is
     recorded as a question this turn asked (`asking`), as `_decline` records it, so a reply that
     again answers nothing *is* the repeat that rule exists for.
+
+    Naming the draft's subject, as `_decline` does (spec §3.5): the reply has just changed the
+    draft, and «¿De qué periodo quieres ver lo que le mandaste a Marta?» says what was kept.
     """
+    open_question = conversation.active
+    named = (
+        _the_window_question_for(open_question.draft)
+        if asked is Slot.WINDOW and isinstance(open_question, FinancialClarification)
+        else None
+    )
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-        text=_WHICH_PERIOD,
-        question=_WHICH_PERIOD,
+        text=f"{named} {_PERIOD_EXAMPLES}" if named else _WHICH_PERIOD,
+        question=named or _WHICH_PERIOD,
         conversation=conversation.asking(asked),
     )
 

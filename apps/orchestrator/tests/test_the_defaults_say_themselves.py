@@ -15,10 +15,28 @@ from pathlib import Path
 
 import pytest
 from support import episodes
-from support.pending import ask
+from support.pending import AsksForTheWindow, ask, asking_for_the_window_stack
 
+from finguard_orchestrator.application import AskFinancialQuestionQuery
+from finguard_orchestrator.application.queries.ask_financial_question import (
+    _the_draft_with_the_window_it_names,
+)
 from finguard_orchestrator.bootstrap.config import Settings, get_settings
 from finguard_orchestrator.bootstrap.main import app, create_app
+from finguard_orchestrator.domain.enums import Direction, Period
+from finguard_orchestrator.domain.models.conversation import Slot
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
+from finguard_orchestrator.domain.models.planning_result import PlanningResult
+from finguard_orchestrator.domain.services import answer_writer, category_words, explicit_facts
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    FinancialPlanDraft,
+    RelativePeriod,
+)
+from finguard_orchestrator.infrastructure.planning.llm_query_planner import WINDOW_QUESTION
+
+# A window for a plan whose window the test does not read.
+_ANY = RelativePeriod(Period.THIS_MONTH)
 
 
 @pytest.fixture(autouse=True)
@@ -124,3 +142,219 @@ def test_every_account_is_what_ships() -> None:
     assert Settings.model_fields["account_scope_default"].default == "all"
     shipped = (Path(__file__).resolve().parents[1] / ".env.defaults").read_text(encoding="utf-8")
     assert "\nORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT=all\n" in shipped
+
+
+# --- the window --------------------------------------------------------------------------------
+
+
+def test_llevo_gastado_is_the_year_so_far_and_says_so() -> None:
+    stack = episodes.a_stack()
+    answered = ask(stack, "¿Cuánto llevo gastado en Spotify?")
+    assert stack.ledger.plans[-1].period.period is Period.THIS_YEAR
+    assert "en lo que va de año" in answered["text"]
+
+
+def test_ultimamente_is_the_last_thirty_days_and_says_so() -> None:
+    stack = episodes.a_stack()
+    answered = ask(stack, "¿Cuánto he gastado últimamente en restaurantes?")
+    assert stack.ledger.plans[-1].period == RelativePeriod(Period.LAST_N_DAYS, n=30)
+    assert "últimos 30 días" in answered["text"]
+
+
+def test_llevo_gastado_with_a_window_keeps_that_window() -> None:
+    stack = episodes.a_stack()
+    ask(stack, "¿cuánto llevo gastado este mes?")
+    assert stack.ledger.plans[-1].period.period is Period.THIS_MONTH
+    ask(stack, "¿cuánto llevo gastado desde el lunes?")
+    assert stack.ledger.plans[-1].period.period is Period.THIS_WEEK
+
+
+class AsksLikeItsPrompt(AsksForTheWindow):
+    """The planner as its pinned prompt teaches it: «¿Cuánto he gastado últimamente?» is a question
+    to ask about, and so is any sentence it finds no window in — whatever `window_words` reads."""
+
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
+        self.asked.append(sentence)
+        return PlanningResult.needs_clarification(
+            WINDOW_QUESTION,
+            FinancialPlanDraft(
+                direction=Direction.EXPENSE,
+                categories=tuple(category_words.precisely_named_in(sentence)),
+            ),
+            Slot.WINDOW,
+        )
+
+
+@pytest.mark.parametrize(
+    ("sentence", "window"),
+    [
+        ("¿Cuánto he gastado últimamente?", RelativePeriod(Period.LAST_N_DAYS, n=30)),
+        ("¿Cuánto llevo gastado?", RelativePeriod(Period.THIS_YEAR)),
+    ],
+)
+def test_the_model_does_not_ask_for_a_window_the_sentence_names(
+    sentence: str, window: RelativePeriod
+) -> None:
+    """The live path. The planner asks — its prompt says to — and the draft it stopped on is
+    completed with the window the sentence names, as a reply would have completed it a turn later.
+    No category is named, so the rescue that builds a plan from the sentence alone cannot."""
+    stack = asking_for_the_window_stack(planner=AsksLikeItsPrompt())
+    answered = ask(stack, sentence)
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    assert stack.ledger.plans[-1].period == window
+
+
+def test_a_window_nothing_here_reads_is_still_asked_about() -> None:
+    """«Desde Navidad» is a window, and not the year so far: the model's question stands."""
+    stack = asking_for_the_window_stack(planner=AsksLikeItsPrompt())
+    asked = ask(stack, "¿Cuánto llevo gastado desde Navidad?")
+    assert asked["outcome"] == "NEEDS_CLARIFICATION"
+    assert stack.ledger.plans == []
+
+
+def test_a_window_the_sentence_states_is_still_the_models_to_ask_about() -> None:
+    """Only the two defaults answer the model's window question. One the sentence states and the
+    model still asked about is a reading the vocabulary and the model disagree on, and the question
+    stands, as it always did."""
+    stack = asking_for_the_window_stack(planner=AsksLikeItsPrompt())
+    asked = ask(stack, "¿cuánto gasté este mes?")
+    assert asked["outcome"] == "NEEDS_CLARIFICATION"
+    assert stack.ledger.plans == []
+
+
+def test_a_comparison_is_not_answered_with_one_window() -> None:
+    """Two categories compared «últimamente»: the draft completed with one window would be one
+    figure for a question about two."""
+    sentence = "¿Gasté más en restaurantes o en gasolina últimamente?"
+    query = AskFinancialQuestionQuery(sentence, episodes.ACCOUNT, episodes.TODAY)
+    asked = PlanningResult.needs_clarification(
+        WINDOW_QUESTION,
+        FinancialPlanDraft(
+            direction=Direction.EXPENSE, categories=("RESTAURANTS", "TRANSPORT_FUEL")
+        ),
+        Slot.WINDOW,
+    )
+    facts = explicit_facts.read(sentence, today=episodes.TODAY)
+    assert facts.window is not None  # read, so only the comparison stops it
+    assert _the_draft_with_the_window_it_names(asked, facts, query) is None
+
+
+# --- the period question ------------------------------------------------------------------------
+
+
+def test_the_period_question_names_what_it_is_about() -> None:
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    assert asked["question"] == "¿De qué periodo quieres ver tus gastos en restaurantes?"
+    # The examples stay: each is a phrase the reply is read back with.
+    assert asked["text"] == (
+        "¿De qué periodo quieres ver tus gastos en restaurantes? "
+        "Por ejemplo este mes, el mes pasado o los últimos 30 días."
+    )
+
+
+def test_the_period_question_asked_again_names_the_person() -> None:
+    """The reply named an account and no period: the question comes back over the draft that kept
+    the account, and says whose money it is about."""
+    stack = asking_for_the_window_stack(settled=False)
+    asked = ask(stack, "¿cuánto le he mandado a Marta Solis Vega?")
+    told = ask(stack, "en la hucha", asked["conversation"])
+    assert told["question"] == "¿De qué periodo quieres ver lo que le mandaste a Marta Solis Vega?"
+
+
+def test_plain_spending_keeps_the_plain_question() -> None:
+    """Spending is what a bare «¿cuánto…?» is about; there is nothing to name."""
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté?")
+    assert asked["question"] == WINDOW_QUESTION
+    assert WINDOW_QUESTION == (
+        "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
+    ), "the planner's own text is pinned"
+
+
+class AsksInItsOwnWords(AsksForTheWindow):
+    """A model that wrote its own window question."""
+
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
+        self.asked.append(sentence)
+        return PlanningResult.needs_clarification(
+            "¿Qué periodo te interesa?",
+            FinancialPlanDraft(direction=Direction.EXPENSE, categories=("RESTAURANTS",)),
+            Slot.WINDOW,
+        )
+
+
+def test_a_question_the_model_wrote_is_asked_as_written() -> None:
+    """A sentence that names no category, so the question reaching the person is the model's (one
+    that names a category is rebuilt from the sentence, `_from_what_the_sentence_said`)."""
+    stack = asking_for_the_window_stack(planner=AsksInItsOwnWords())
+    asked = ask(stack, "¿cuánto fue aquello?")
+    assert asked["text"] == asked["question"] == "¿Qué periodo te interesa?"
+
+
+@pytest.mark.parametrize(
+    ("question", "asked_back"),
+    [
+        ("¿cuánto ingresé en la hucha?", "¿De qué periodo quieres ver tus ingresos?"),
+        ("¿cuánto gasté en gasolina?", "¿De qué periodo quieres ver tus gastos en gasolina?"),
+        ("¿y en suscripciones?", "¿De qué periodo quieres ver tus gastos en suscripciones?"),
+        ("¿cuánto he gastado en la hucha?", WINDOW_QUESTION),
+        ("dame los gastos de la hucha por categoría", WINDOW_QUESTION),
+    ],
+)
+def test_a_question_of_its_own_gets_its_own_period_question(question: str, asked_back: str) -> None:
+    """Carried from Task 5: a question of its own asked while the period question waited was
+    answered «Sigo sin tener claro el periodo» — the reply to a turn that answered nothing — about a
+    question the person had only just asked. It is asked its own period, about its own subject."""
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    told = ask(stack, question, asked["conversation"])
+    assert told["outcome"] == "NEEDS_CLARIFICATION"
+    assert told["question"] == asked_back
+    assert "Sigo sin tener claro" not in told["text"]
+
+
+def test_a_reply_that_answers_nothing_still_gets_the_choices() -> None:
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    told = ask(stack, "pues no sé", asked["conversation"])
+    assert told["text"].startswith("Sigo sin tener claro el periodo")
+    assert told["suggestions"]
+
+
+@pytest.mark.parametrize(
+    ("plan", "asked"),
+    [
+        (
+            FinancialPlan(direction=Direction.EXPENSE, period=_ANY, categories=("RESTAURANTS",)),
+            "¿De qué periodo quieres ver tus gastos en restaurantes?",
+        ),
+        (
+            FinancialPlan(direction=Direction.EXPENSE, period=_ANY, counterparties=("Marta",)),
+            "¿De qué periodo quieres ver lo que le mandaste a Marta?",
+        ),
+        (
+            FinancialPlan(direction=Direction.INCOME, period=_ANY, counterparties=("Marta",)),
+            "¿De qué periodo quieres ver lo que recibiste de Marta?",
+        ),
+        (
+            FinancialPlan(direction=Direction.EXPENSE, period=_ANY, merchants=("Spotify",)),
+            "¿De qué periodo quieres ver tus gastos en Spotify?",
+        ),
+        (
+            FinancialPlan(
+                direction=Direction.EXPENSE, period=_ANY, excluded_categories=("TRANSPORT_FUEL",)
+            ),
+            "¿De qué periodo quieres ver tus gastos sin gasolina?",
+        ),
+        (
+            FinancialPlan(direction=Direction.INCOME, period=_ANY),
+            "¿De qué periodo quieres ver tus ingresos?",
+        ),
+        (FinancialPlan(direction=Direction.EXPENSE, period=_ANY), None),
+    ],
+)
+def test_the_question_says_the_subject_in_the_answers_words(
+    plan: FinancialPlan, asked: str | None
+) -> None:
+    assert answer_writer.window_question(plan) == asked
