@@ -2044,7 +2044,11 @@ async def ask(
             repeated,
             key=key,
         )
-    if was.recent_payment_rail is not None:
+    # Whether the turn before this one paid somebody, read before the rail that says so is dropped
+    # (ruling R38). The turn log records no payment, so this is the one fact that tells the
+    # arbitration «¿y ella a mí?» no longer points at the answer before the Bizum.
+    just_paid = was.recent_payment_rail is not None
+    if just_paid:
         # The referent is intentionally one turn wide. An unrelated sentence cannot revive a
         # payment several questions later merely because it contains the word "otro".
         was = was.without_recent_payment()
@@ -2071,7 +2075,9 @@ async def ask(
     # handler's steps act on the same arbitration, so they cannot disagree about what kind of turn
     # this was. After the preview and open-payment branches above, which own their turns whatever
     # the words — «olvídalo» to a preview is a refusal the bank must hear, and it does.
-    arbitration = turn_arbiter.arbitrate(request.question, was, analysis, today=today)
+    arbitration = turn_arbiter.arbitrate(
+        request.question, was, analysis, today=today, just_paid=just_paid
+    )
 
     continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:
@@ -2276,7 +2282,9 @@ async def ask_streaming(
             repeated,
             key=key,
         )
-    if was.recent_payment_rail is not None:
+    # The same fact at the same point as the question route (ruling R38).
+    just_paid = was.recent_payment_rail is not None
+    if just_paid:
         was = was.without_recent_payment()
 
     analysis = await turn_analyzer.analyze(
@@ -2296,7 +2304,9 @@ async def ask_streaming(
     read_as = analysis.intent
     # The same arbitration at the same point as the question route, for the reason every branch
     # here is duplicated: the browser types into this endpoint.
-    arbitration = turn_arbiter.arbitrate(request.question, was, analysis, today=today)
+    arbitration = turn_arbiter.arbitrate(
+        request.question, was, analysis, today=today, just_paid=just_paid
+    )
 
     continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:

@@ -293,6 +293,9 @@ _TURNED_ROUND: Final = (
 )
 # «Ella» and «él» (folded, «el») point at one person. Over a base about two, which one is a guess.
 _SHE_OR_HE: Final = frozenset({"ella", "el"})
+# A pause written inside a turn — «vale, mejor por categoría», «mejor, por categoría», «vale, ¿y
+# ella a mí?» — leaves it the whole turn it was (M-4), so the shapes are read over its words alone.
+_PAUSES: Final = re.compile(r"[,;:¿?¡!.]")
 
 
 def grouping_in(sentence: str) -> GroupBy | None:
@@ -339,13 +342,14 @@ def _read_on(
     sentence states outright and the shape contradicts is `AMBIGUOUS` (ruling R24: a direction the
     turn states wins, so a reading that disagrees with it is no reading).
     """
-    regrouped = _A_REGROUPING.fullmatch(folded)
+    spoken = " ".join(_PAUSES.sub(" ", folded).split())
+    regrouped = _A_REGROUPING.fullmatch(spoken)
     if regrouped is not None:
         return GroundedContinuation(
             PatchStatus.APPLIED, PlanPatch(group_by=_GROUPED_BY[regrouped.group("dimension")])
         )
     for direction, shape in _TURNED_ROUND:
-        turned = shape.fullmatch(folded)
+        turned = shape.fullmatch(spoken)
         if turned is None:
             continue
         person = _the_person(turned.group("who"), base.counterparties, answered_last=answered_last)

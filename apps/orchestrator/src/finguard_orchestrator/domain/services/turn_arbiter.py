@@ -97,6 +97,11 @@ class Arbitration:
     # The slots this turn fills in the question left open. Empty for every kind but a reply to it,
     # ANSWER_PENDING, where it is never empty: filling something is what makes a turn one.
     fills: frozenset[Slot] = frozenset()
+    # The patch a FOLLOW_UP makes on the answer in view, as it was read here. The handler applies
+    # this one rather than reading the sentence again, because the reading may rest on what only
+    # the edge knew — a payment since the answer (`just_paid`) — and a second reading without it
+    # would resolve «ella» to a person this one refused. None for every other kind.
+    patch: continuation_patch.GroundedContinuation | None = None
 
 
 # The reset lexicon, folded and split into words. Closed on purpose, like `confirmation._NO` and
@@ -424,7 +429,7 @@ _A_PATCH_IS_READ_AS: Final = frozenset({Intent.FINANCIAL_QUERY, Intent.CORRECTIO
 
 
 def the_patch_on_the_answer(
-    sentence: str, conversation: Conversation, *, today: date
+    sentence: str, conversation: Conversation, *, today: date, just_paid: bool = False
 ) -> continuation_patch.GroundedContinuation | None:
     """The grounded patch this turn makes on the answer in view, or None when it makes none.
 
@@ -433,6 +438,10 @@ def the_patch_on_the_answer(
     §3.1). Only over one plan in view (`focus_of` is a `QueryFocus` holding a `FinancialPlan`): a
     ranking has no direction or grouping to patch, and a comparison, a proportion or a balance is
     continued by its own path, which reads one plan as half an answer.
+
+    `just_paid` is whether a payment went out since that answer (ruling R38), which the turn log
+    cannot say: it never records a payment, so after «sí» its last turn is still the answer before
+    it. A pronoun or a person left unsaid then points at nobody here; a name still says who.
 
     Public because the handler answers what this read, and two readings would let a turn be called
     a follow-up the handler then patched differently.
@@ -448,7 +457,7 @@ def the_patch_on_the_answer(
         sentence,
         today=today,
         base=focus.current,
-        answered_last=_answered_last(conversation, focus.current),
+        answered_last=not just_paid and _answered_last(conversation, focus.current),
     )
     return grounded if grounded.patch is not None else None
 
@@ -469,12 +478,21 @@ def _answered_last(conversation: Conversation, plan: FinancialPlan) -> bool:
 
 
 def arbitrate(
-    sentence: str, conversation: Conversation, analysis: TurnAnalysis, *, today: date
+    sentence: str,
+    conversation: Conversation,
+    analysis: TurnAnalysis,
+    *,
+    today: date,
+    just_paid: bool = False,
 ) -> Arbitration:
     """Which kind of turn `sentence` is, in the order the module docstring argues.
 
     `today` is what a reply's window is read against: «el mes pasado» fills a window only once
     there is a date for it to be the month before.
+
+    `just_paid` is whether the turn before this one paid somebody — the edge reads it off the rail
+    `Conversation.paid` leaves for one turn, before it drops it (ruling R38). A plain fact handed in
+    rather than looked up, so the arbitration stays a function of what it is given.
     """
     if is_a_reset(sentence):
         return Arbitration(TurnType.RESET)
@@ -486,7 +504,7 @@ def arbitrate(
     if fills:
         return Arbitration(TurnType.ANSWER_PENDING, fills)
     patch = (
-        the_patch_on_the_answer(sentence, conversation, today=today)
+        the_patch_on_the_answer(sentence, conversation, today=today, just_paid=just_paid)
         if analysis.intent in _A_PATCH_IS_READ_AS
         else None
     )
@@ -498,5 +516,5 @@ def arbitrate(
     if analysis.relation is TurnRelation.CORRECTION and not regroups:
         return Arbitration(TurnType.CORRECTION)
     if patch is not None:
-        return Arbitration(TurnType.FOLLOW_UP)
+        return Arbitration(TurnType.FOLLOW_UP, patch=patch)
     return Arbitration(TurnType.NEW_QUESTION)

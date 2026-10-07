@@ -392,7 +392,14 @@ def filter_of(plan: FinancialPlan | TopMovements, shops: tuple[str, ...] = ()) -
     counterparties = getattr(plan, "counterparties", ())
     excluded_counterparties = getattr(plan, "excluded_counterparties", ())
     if counterparties:
-        included = f" con {listed(counterparties)}"
+        # Which way the money went between the holder and them (ruling R31): «con Marta» read the
+        # same over what was sent to her and what she sent, so «¿y ella a mí?» was answered with
+        # the sentence before it over the opposite figure. A preposition rather than «enviados» /
+        # «recibidos» because every caller puts this right after a noun of its own — «1
+        # movimiento», «el importe medio», «tu mayor ingreso» — and a participle would have to
+        # agree with each. «A Marta» and «de Marta» are how a bank statement already says it.
+        towards = {Direction.EXPENSE: "a", Direction.INCOME: "de"}.get(plan.direction, "con")
+        included = f" {towards} {listed(counterparties)}"
     elif plan.merchants:
         included = f" en {listed(plan.merchants)}"
     elif isinstance(plan, FinancialPlan) and plan.merchant_terms:

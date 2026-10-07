@@ -1078,8 +1078,10 @@ class AskFinancialQuestionHandler:
             # that answer at once, past every reader below — none of them knows who «ella» is, and
             # a bare «por categoría» was narrowed to a shop called «por categoría» — through the
             # same patch application, facts, verifier and answer as a patch the planner path
-            # grounds (`_completed_or_planned`), with the base it continues.
-            grounded = turn_arbiter.the_patch_on_the_answer(query.sentence, was, today=query.today)
+            # grounds (`_completed_or_planned`), with the base it continues. The patch is the one
+            # the arbitration read, which knew what only the edge knows (a payment since the
+            # answer, ruling R38); read again here, «ella» could be resolved after all.
+            grounded = arbitration.patch
             if grounded is not None and _only_the_patch_reads(grounded):
                 async for step in self._completed_or_planned(
                     query, was, analysis, continuation, previous, following_up=grounded

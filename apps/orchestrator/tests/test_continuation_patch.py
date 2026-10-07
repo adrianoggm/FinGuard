@@ -316,3 +316,20 @@ def test_a_name_needs_no_such_thing() -> None:
     result = read("¿y Marta a mí?", today=TODAY, base=TO_MARTA, answered_last=False)
 
     assert result.patch == PlanPatch(direction=Direction.INCOME)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "patch"),
+    [
+        ("vale, mejor por categoría", PlanPatch(group_by=GroupBy.CATEGORY)),
+        ("mejor, por categoría", PlanPatch(group_by=GroupBy.CATEGORY)),
+        ("y, por comercio", PlanPatch(group_by=GroupBy.COUNTERPARTY)),
+        ("vale, ¿y ella a mí?", PlanPatch(direction=Direction.INCOME)),
+        ("y, lo que me mandó ella", PlanPatch(direction=Direction.INCOME)),
+    ],
+)
+def test_a_comma_inside_the_turn_changes_nothing(sentence: str, patch: PlanPatch) -> None:
+    """M-4. The shapes are the whole turn, and a comma is how people write a pause in one."""
+    result = read(sentence, today=TODAY, base=TO_MARTA, answered_last=True)
+
+    assert result.patch == patch

@@ -571,3 +571,145 @@ async def test_a_breakdown_that_cannot_divide_is_still_refused_with_its_reason(
     assert result.outcome == "INVALID_DOMAIN"
     assert "«por mes»" in result.text
     assert ledger.plans == [] and planner.asked == []
+
+
+def test_the_answer_says_the_money_turned_round() -> None:
+    """Ruling R31: the two answers used to read the same, «465,56 € con Marta …», over opposite
+    figures."""
+    stack = episodes.a_stack()
+    first = ask(stack, MARTA_THIS_MONTH, SETTLED)
+    turned = ask(stack, "¿y ella a mí?", first["conversation"])
+
+    assert first["text"].startswith("465,56 € a Marta en lo que va de mes")
+    assert turned["text"].startswith("465,56 € de Marta en lo que va de mes")
+
+
+@pytest.mark.parametrize("sentence", ["vale, mejor por categoría", "mejor, por categoría"])
+def test_a_breakdown_written_with_a_comma_regroups_too(sentence: str) -> None:
+    stack, _ = _after("cuanto gaste este mes", sentence)
+
+    (plan,) = stack.ledger.plans
+    assert plan.group_by is GroupBy.CATEGORY
+    assert stack.planner.asked == []
+
+
+# --- fix round 1: what a turn-round and a refusal leave behind (M-5) ------------------------------
+
+
+def _committed(answer: dict[str, Any]) -> FinancialPlan:
+    plan = conversation_mapper.to_domain(
+        ConversationPayload.model_validate(answer["conversation"])
+    ).last_plan
+    assert isinstance(plan, FinancialPlan)
+    return plan
+
+
+def test_the_turned_round_answer_is_the_base_the_next_follow_up_continues() -> None:
+    """«¿y ella a mí?» commits Marta's income, so «¿y el mes pasado?» is what Marta sent last
+    month — not what the holder sent her."""
+    stack = episodes.a_stack()
+    first = ask(stack, MARTA_THIS_MONTH, SETTLED)
+    turned = ask(stack, "¿y ella a mí?", first["conversation"])
+    committed = _committed(turned)
+    assert committed.direction is Direction.INCOME and committed.counterparties == ("Marta",)
+    stack.ledger.plans.clear()
+
+    ask(stack, "¿y el mes pasado?", turned["conversation"])
+
+    (plan,) = stack.ledger.plans
+    assert plan.direction is Direction.INCOME and plan.counterparties == ("Marta",)
+    assert plan.period is not None and plan.period.period is Period.LAST_MONTH
+
+
+def test_a_refused_breakdown_leaves_the_answer_it_refused_to_divide() -> None:
+    """The money sent to Marta by shop is one row, refused with its reason; the conversation keeps
+    the answer about Marta, which the next follow-up continues."""
+    stack = episodes.a_stack()
+    first = ask(stack, MARTA_THIS_MONTH, SETTLED)
+    refused = ask(stack, "mejor por comercio", first["conversation"])
+    assert refused["outcome"] == "INVALID_DOMAIN"
+    assert _committed(refused) == _committed(first)
+    stack.ledger.plans.clear()
+
+    ask(stack, "¿y el mes pasado?", refused["conversation"])
+
+    (plan,) = stack.ledger.plans
+    assert plan.direction is Direction.EXPENSE and plan.counterparties == ("Marta",)
+    assert plan.group_by is GroupBy.NONE
+    assert plan.period is not None and plan.period.period is Period.LAST_MONTH
+
+
+# --- fix round 2: a payment since the answer (R38) ------------------------------------------------
+#
+# The turn log never records a payment — the controller answers those turns — so after «sí» the
+# last logged turn is still the answer before it, and «¿y ella a mí?» ran that answer's person.
+# What says a payment went out is the rail `Conversation.paid` leaves for one turn, which the edge
+# drops before reading the next one; it hands the arbitration the fact instead.
+
+JAVI_THIS_MONTH = "cuanto le mande a Javi este mes"
+PAID_TO_MARTA = ("mándale 20 euros a Marta", "Marta Solis Vega", "sí")
+PAID_TO_AITOR = ("mándale 20 euros a Aitor", "sí")
+
+
+def _after_paying(*turns: str) -> tuple[episodes.Stack, dict[str, Any]]:
+    """The answer about Javi, then a Bizum prepared and confirmed: the reviewer's sequences."""
+    stack = episodes.a_stack()
+    answer = ask(stack, JAVI_THIS_MONTH, SETTLED)
+    for turn in turns:
+        answer = ask(stack, turn, answer["conversation"])
+    assert answer["outcome"] == "PAID", answer["text"]
+    stack.ledger.plans.clear()
+    stack.planner.asked.clear()
+    return stack, answer
+
+
+def _javis_income(plans: list[FinancialPlan]) -> bool:
+    return any(
+        plan.counterparties == ("Javi",) and plan.direction is Direction.INCOME for plan in plans
+    )
+
+
+@pytest.mark.parametrize(
+    ("payment", "sentence"),
+    [
+        (PAID_TO_MARTA, "¿y ella a mí?"),
+        (PAID_TO_AITOR, "¿y él a mí?"),
+        (PAID_TO_AITOR, "y lo que me mandó"),
+    ],
+    ids=["ella-after-marta", "el-after-aitor", "unsaid-after-aitor"],
+)
+def test_a_pronoun_after_a_payment_is_not_the_answers_person(
+    payment: tuple[str, ...], sentence: str
+) -> None:
+    """Ruling R38. «Ella» after paying Marta is Marta, not Javi; whoever it is, it is not the
+    answer before the payment, so the turn is read by the model."""
+    stack, paid = _after_paying(*payment)
+
+    ask(stack, sentence, paid["conversation"])
+
+    assert stack.planner.asked == [sentence]
+    assert not _javis_income(stack.ledger.plans)
+
+
+def test_a_name_after_a_payment_still_turns_the_answer_round() -> None:
+    stack, paid = _after_paying(*PAID_TO_AITOR)
+
+    ask(stack, "¿y Javi a mí?", paid["conversation"])
+
+    (plan,) = stack.ledger.plans
+    assert plan.counterparties == ("Javi",) and plan.direction is Direction.INCOME
+    assert stack.planner.asked == []
+
+
+def test_the_stream_knows_about_the_payment_too() -> None:
+    """The browser types into the streaming route, which drops the rail at the same point."""
+    stack, paid = _after_paying(*PAID_TO_MARTA)
+
+    response = stack.client.post(
+        "/v1/questions/stream",
+        json={"question": "¿y ella a mí?", "conversation": paid["conversation"]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert stack.planner.asked == ["¿y ella a mí?"]
+    assert not _javis_income(stack.ledger.plans)

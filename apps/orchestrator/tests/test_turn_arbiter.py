@@ -465,3 +465,28 @@ async def test_with_no_turn_recorded_a_pronoun_points_at_nobody() -> None:
     assert await kind_of("¿y ella a mí?", Conversation(last_plan=SENT_TO_MARTA)) is not (
         TurnType.FOLLOW_UP
     )
+
+
+async def test_a_payment_since_the_answer_ends_what_a_pronoun_points_at() -> None:
+    """Ruling R38. The edge says whether a payment went out since the answer in view; the turn log
+    cannot, because it never records a payment. A name still says who."""
+    ella = await analysis_of("¿y ella a mí?", TO_MARTA)
+    marta = await analysis_of("¿y Marta a mí?", TO_MARTA)
+
+    after_paying = arbitrate("¿y ella a mí?", TO_MARTA, ella, today=TODAY, just_paid=True)
+    named = arbitrate("¿y Marta a mí?", TO_MARTA, marta, today=TODAY, just_paid=True)
+
+    assert after_paying.type is not TurnType.FOLLOW_UP
+    assert named.type is TurnType.FOLLOW_UP
+
+
+async def test_a_follow_up_carries_the_patch_it_was_read_with() -> None:
+    """The handler answers the patch the arbitration read, so a fact only the edge had — a
+    payment — cannot be lost to a second reading."""
+    arbitration = arbitrate(
+        "¿y ella a mí?", TO_MARTA, await analysis_of("¿y ella a mí?", TO_MARTA), today=TODAY
+    )
+
+    assert arbitration.type is TurnType.FOLLOW_UP
+    assert arbitration.patch is not None and arbitration.patch.patch is not None
+    assert arbitration.patch.patch.direction is Direction.INCOME
