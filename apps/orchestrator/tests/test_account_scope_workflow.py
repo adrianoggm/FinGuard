@@ -138,6 +138,9 @@ def service(
         account_directory=directory,  # type: ignore[arg-type]
         contacts=Contacts(),
         cards=Cards(),
+        # This file is about the account question, which a question naming no account meets only
+        # on a deployment that asks it (`ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT=ask`).
+        account_scope_default="ask",
     )
 
 

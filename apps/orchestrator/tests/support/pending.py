@@ -27,7 +27,7 @@ from finguard_orchestrator.application import (
 from finguard_orchestrator.bootstrap.dependencies import get_ask_handler, get_query_bus
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Direction, GroupBy
-from finguard_orchestrator.domain.models.conversation import Slot
+from finguard_orchestrator.domain.models.conversation import AccountScopeDefault, Slot
 from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.services import category_words, explicit_facts, spanish
@@ -143,6 +143,7 @@ def _with_planner(stack: episodes.Stack, planner: episodes.AnyPlan) -> None:
         account_directory=episodes.Directory(),  # type: ignore[arg-type]
         contacts=episodes.Contacts(),
         cards=episodes.NoCards(),  # type: ignore[arg-type]
+        account_scope_default=stack.account_scope_default,
     )
     queries = QueryBus()
     queries.register(AskFinancialQuestionQuery, handler)
@@ -152,19 +153,26 @@ def _with_planner(stack: episodes.Stack, planner: episodes.AnyPlan) -> None:
 
 
 def asking_for_the_window_stack(
-    *, settled: bool = True, planner: AsksForTheWindow | None = None
+    *,
+    settled: bool = True,
+    planner: AsksForTheWindow | None = None,
+    account_scope_default: AccountScopeDefault | None = None,
 ) -> PendingStack:
     """The episodes stack, with a planner that answers a window-less spending question with the
     window clarification and a draft that keeps its subject (`AsksForTheWindow`).
 
     `settled` opens every conversation a test starts without one at `SETTLED`, so the question in
     play is the window and nothing else. `settled=False` opens with nothing chosen: the directory
-    holds three accounts, and a plan completed with no account named asks «¿En qué cuenta…?».
+    holds three accounts, and a plan completed with no account named reads all three — or asks
+    «¿En qué cuenta…?», on a stack built to ask.
 
     `planner` is for a test about what reaches the model, which needs a model that behaves a
     particular way there — `KeepsTheBase`, typically. It must still ask for the window the same way.
+
+    `account_scope_default` is `episodes.a_stack`'s: `ask` for a test about the account question,
+    which a stack with nothing settled asks only on a deployment configured to.
     """
-    stack = episodes.a_stack()
+    stack = episodes.a_stack(account_scope_default=account_scope_default)
     planner = planner or AsksForTheWindow()
     _with_planner(stack, planner)
     return PendingStack(
@@ -173,6 +181,7 @@ def asking_for_the_window_stack(
         stack.ledger,
         stack.bank,
         stack.gyms,
+        stack.account_scope_default,
         opening=dict(SETTLED) if settled else None,
     )
 
@@ -180,12 +189,20 @@ def asking_for_the_window_stack(
 def account_question_stack() -> PendingStack:
     """The episodes stack with a directory and nothing settled, whose planner answers «¿Cuánto llevo
     gastado en Spotify?» with a complete plan, so `_scoped` asks the account — the live path of the
-    2026-10-07 failure.
+    2026-10-07 failure, on a deployment that still asks it
+    (`ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT=ask`).
 
     `AnyPlan` is that planner already: it answers every sentence with a complete plan, last month
     when the sentence names no window («llevo gastado» is not one yet). With three accounts and
     none chosen, `_scoped` raises `AccountScopeRequiredError` and the turn is «¿En qué cuenta
     quieres consultarlo?» with the plan pending behind it.
     """
-    stack = episodes.a_stack()
-    return PendingStack(stack.client, stack.planner, stack.ledger, stack.bank, stack.gyms)
+    stack = episodes.a_stack(account_scope_default="ask")
+    return PendingStack(
+        stack.client,
+        stack.planner,
+        stack.ledger,
+        stack.bank,
+        stack.gyms,
+        stack.account_scope_default,
+    )

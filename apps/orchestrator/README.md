@@ -136,6 +136,7 @@ somebody changes.
 | `ORCHESTRATOR_BANKING_TIMEOUT_SECONDS` | `10` | |
 | `ORCHESTRATOR_SUPPORTING_MOVEMENTS` | `10` | Movements returned as evidence. Enough to show the figure is real, few enough that a chat reply is not a statement |
 | `ORCHESTRATOR_TURN_INTERPRETER` | `router` | `router`, `shadow`, conservative `hybrid`, or model authority. Compose opts into `hybrid` |
+| `ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT` | `all` | A spending or income question that names no account, with none chosen yet: every account (`all`), or «¿En qué cuenta quieres consultarlo?» first (`ask`, the behaviour until 2026-10-07) |
 | `ORCHESTRATOR_DISABLED_GUARDS` | *(none)* | Deterministic rules to switch off, by name. A name this build does not have stops the service |
 | `ORCHESTRATOR_QUESTIONS_ENABLED` | `false` | The financial endpoints. Off until the open risks clear an agreed bar |
 

@@ -21,7 +21,7 @@ that way: same text, same reads.
 import uuid
 from collections.abc import Iterator
 from dataclasses import replace
-from typing import Any
+from typing import Any, Final
 
 import pytest
 from support import episodes
@@ -48,6 +48,10 @@ from finguard_orchestrator.domain.services.visual_planning_policy import VisualP
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
+
+# The account question, as a deployment that asks it is configured. With the shipped `all`, a
+# question naming no account reads every account and none of this file's questions is asked.
+ASKS: Final = "ask"
 
 COMPARISON = "¿Gasté más en gasolina en junio o en julio?"
 SUBSCRIPTIONS = "¿Qué suscripciones tengo?"
@@ -76,7 +80,7 @@ def _restore() -> Iterator[None]:
 
 
 def hybrid_stack() -> episodes.Stack:
-    stack = episodes.a_stack()
+    stack = episodes.a_stack(account_scope_default=ASKS)
     app.dependency_overrides[turn_interpreter] = lambda: Hybrid(CallsItABalance(), Deterministic())
     return stack
 
@@ -203,6 +207,7 @@ async def test_a_payment_reading_is_never_taken_for_the_answer() -> None:
         account_directory=episodes.Directory(),  # type: ignore[arg-type]
         contacts=episodes.Contacts(),
         cards=episodes.NoCards(),  # type: ignore[arg-type]
+        account_scope_default=ASKS,
     )
     question = await handler.handle(
         AskFinancialQuestionQuery(COMPARISON, episodes.ACCOUNT, episodes.TODAY)
@@ -341,6 +346,7 @@ async def test_a_second_question_on_the_reply_does_not_make_the_chip_the_questio
         account_directory=directory,  # type: ignore[arg-type]
         contacts=episodes.Contacts(),
         cards=episodes.NoCards(),  # type: ignore[arg-type]
+        account_scope_default=ASKS,
     )
 
     def turn(sentence: str, conversation: Conversation = IDLE) -> AskFinancialQuestionQuery:
@@ -384,6 +390,7 @@ async def test_the_chart_is_planned_for_the_question_not_the_chip() -> None:
         account_directory=episodes.Directory(),  # type: ignore[arg-type]
         contacts=episodes.Contacts(),
         cards=episodes.NoCards(),  # type: ignore[arg-type]
+        account_scope_default=ASKS,
         visual_policy=VisualPlanningPolicy(
             model=hears,  # type: ignore[arg-type]
             fallback=DeterministicVisualPlanner(),

@@ -217,6 +217,8 @@ async def test_the_question_asked_again_under_the_chosen_account_is_arbitrated_a
         account_directory=episodes.Directory(),  # type: ignore[arg-type]
         contacts=episodes.Contacts(),
         cards=episodes.NoCards(),  # type: ignore[arg-type]
+        # The backstop's question, which only a deployment that asks it puts to a comparison.
+        account_scope_default="ask",
     )
     comparison = "¿Gasté más en gasolina en junio o en julio?"
     asked = await handler.handle(

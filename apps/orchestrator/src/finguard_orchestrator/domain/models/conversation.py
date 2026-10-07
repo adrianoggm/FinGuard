@@ -29,7 +29,7 @@ the sentence is filling, so the reply no longer has to be a self-contained phras
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
@@ -152,6 +152,13 @@ class AccountAlias:
 class AccountSelectionMode(StrEnum):
     ALL = "ALL"
     SELECTED = "SELECTED"
+
+
+# What an analytics question means when it names no account and the conversation has chosen none:
+# `all` reads every account the holder has, `ask` asks «¿En qué cuenta quieres consultarlo?» first.
+# A deployment's choice (`ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT`), never the conversation's: a choice
+# the person made is an `AccountSelection`, and it wins under either value.
+AccountScopeDefault = Literal["all", "ask"]
 
 
 @dataclass(frozen=True)

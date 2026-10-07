@@ -219,6 +219,9 @@ async def ask(  # type: ignore[no-untyped-def]
         account_directory=directory,
         contacts=Contacts(),
         cards=Cards(),
+        # A directory here is `TwoAccounts`, the holder the account question is asked of — which a
+        # deployment does only when configured to ask. Without one the shipped default stands.
+        account_scope_default="ask" if directory is not None else "all",
     ).handle(
         AskFinancialQuestionQuery(
             sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=conversation
@@ -588,9 +591,8 @@ async def test_the_dentist_is_the_health_category_as_before() -> None:
 
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert [(plan.categories, plan.merchants) for plan in ledger.plans] == [(("HEALTH",), ())]
-    assert result.text == (
-        "72,50 € en salud en lo que va de año, en 2 movimientos.\nConsultado en todas tus cuentas."
-    )
+    # Every account, unsaid: the sentence asked nothing about accounts (spec §3.5).
+    assert result.text == "72,50 € en salud en lo que va de año, en 2 movimientos."
 
 
 async def test_a_follow_up_setting_the_gym_apart_is_not_the_gym() -> None:

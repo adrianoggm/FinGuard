@@ -99,6 +99,7 @@ from finguard_orchestrator.domain.models.conversation import (
     AccountAlias,
     AccountCandidate,
     AccountScopeClarification,
+    AccountScopeDefault,
     AccountSelection,
     AccountSelectionMode,
     ActiveWorkflow,
@@ -582,6 +583,7 @@ class AskFinancialQuestionHandler:
         read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
         interpreter: TurnInterpreterPort | None = None,
         visual_policy: VisualPlanningPolicy | None = None,
+        account_scope_default: AccountScopeDefault = "all",
     ) -> None:
         self._planner = planner
         # Wrapped here rather than at the composition root, so a handler built directly — by a
@@ -614,6 +616,12 @@ class AskFinancialQuestionHandler:
             # Unused in deterministic mode; the policy refuses a non-positive budget outright.
             budget_seconds=1.0,
         )
+        # What an analytics question that names no account means while the conversation has chosen
+        # none (`_scoped`): every account, or the account question. Only that case — a choice the
+        # person made, an account the sentence names and a payment's source are decided as before.
+        # The deployment's value is `account_scope_default` in configuration; this default is the
+        # same one, so a handler built without it behaves as the product does.
+        self._account_scope_default = account_scope_default
 
     # `accounts` is keyword-only and has no default on purpose. A balance question that reached a
     # handler without it would fall back to the planner, which is the bug this exists to fix — and
@@ -3164,8 +3172,8 @@ class AskFinancialQuestionHandler:
             text=(
                 answer_writer.ranked(found, ranking)
                 + (
-                    f"\n{_scope_note(ranking, query.sentence)}"
-                    if _scope_note(ranking, query.sentence)
+                    f"\n{self._scope_note(ranking, query.sentence)}"
+                    if self._scope_note(ranking, query.sentence)
                     else ""
                 )
             ),
@@ -3242,8 +3250,8 @@ class AskFinancialQuestionHandler:
             text=(
                 answer_writer.ranked_many(tuple(found), ranking, requested=count)
                 + (
-                    f"\n{_scope_note(ranking, query.sentence)}"
-                    if _scope_note(ranking, query.sentence)
+                    f"\n{self._scope_note(ranking, query.sentence)}"
+                    if self._scope_note(ranking, query.sentence)
                     else ""
                 )
             ),
@@ -3660,6 +3668,7 @@ class AskFinancialQuestionHandler:
             query.sentence,
             reporting_timezone=query.reporting_timezone,
             ran_as=scoped,
+            every_account_by_default=self._every_account_by_default,
         )
         if not difference and len(groups) >= 2:
             # Re-read the typed reference projected by ``_answered``.  In particular, do not
@@ -4712,6 +4721,12 @@ class AskFinancialQuestionHandler:
                     only_account_id=holdings[0].account_id,
                     only_account_ids=(),
                 )
+            if self._every_account_by_default:
+                # Nothing named, nothing chosen: every account (spec §3.5). Asking cost the first
+                # turn of every thread — «¿Cuánto llevo gastado en Spotify?» was asked which account
+                # before anything else, live on 2026-10-07 — for a choice the sentence never raised.
+                # `ask` keeps the question for a deployment that wants it.
+                return _across_every_account(plan)
             candidates = tuple(
                 AccountCandidate(h.account_id, h.display_name, h.kind)
                 for h in holdings
@@ -4961,6 +4976,15 @@ class AskFinancialQuestionHandler:
         named, shop = await self._the_shop_it_names(draft, query)
         note = _only_the_shop(draft, shop) if shop is not None else None
         return replace(planned, draft=_the_kind_still_open(named, query)), note
+
+    @property
+    def _every_account_by_default(self) -> bool:
+        """Whether every account is what a question naming none means here (`all`)."""
+        return self._account_scope_default == "all"
+
+    def _scope_note(self, plan: FinancialPlan | TopMovements, sentence: str) -> str | None:
+        """`_scope_note` under this deployment's account default."""
+        return _scope_note(plan, sentence, every_account_by_default=self._every_account_by_default)
 
     def _scope_question(
         self, required: AccountScopeRequiredError, was: Conversation
@@ -5269,6 +5293,7 @@ class AskFinancialQuestionHandler:
                         query.sentence,
                         reporting_timezone=query.reporting_timezone,
                         ran_as=scoped,
+                        every_account_by_default=self._every_account_by_default,
                     )
                     return replace(
                         answered,
@@ -5310,6 +5335,7 @@ class AskFinancialQuestionHandler:
                         query.sentence,
                         reporting_timezone=query.reporting_timezone,
                         ran_as=scoped,
+                        every_account_by_default=self._every_account_by_default,
                     )
                     covered = f"todos los {kind}" if kind else f"toda la categoría {named}"
                     return replace(
@@ -5357,6 +5383,7 @@ class AskFinancialQuestionHandler:
             query.sentence,
             reporting_timezone=query.reporting_timezone,
             ran_as=scoped,
+            every_account_by_default=self._every_account_by_default,
         )
 
 
@@ -6916,6 +6943,7 @@ def _answered(
     *,
     reporting_timezone: str,
     ran_as: FinancialPlan,
+    every_account_by_default: bool,
 ) -> AskFinancialQuestionResult:
     """Present one answered plan.
 
@@ -6924,6 +6952,10 @@ def _answered(
     figures came from, which the conversation can settle without this sentence naming it. Both are
     required, because the one consumer that wants the second is easy to serve wrongly with the
     first -- and did, for as long as this took one argument.
+
+    `every_account_by_default` is the deployment's account default being `all`, which decides
+    whether an answer across every account says so (`_scope_note`). Required for the same reason:
+    a default here would be the one call site that forgot.
     """
     if plan.metric is Metric.CUMULATIVE:
         answer = cumulative_calculator.accumulate(answer, plan.group_by)
@@ -6952,7 +6984,7 @@ def _answered(
     # ledger is still being read across every account. Read from there, the note vanished from the
     # second such turn onward and a figure covering three accounts was presented as one account's.
     # The two ranking paths already pass the plan they ran; this is the same call.
-    scope_note = _scope_note(ran_as, sentence)
+    scope_note = _scope_note(ran_as, sentence, every_account_by_default=every_account_by_default)
     if scope_note and "Consultado en " not in text:
         text = f"{text}\n{scope_note}"
     referenced_category: str | None = None
@@ -7065,8 +7097,28 @@ def _answered(
     )
 
 
-def _scope_note(plan: FinancialPlan | TopMovements, sentence: str) -> str | None:
+def _scope_note(
+    plan: FinancialPlan | TopMovements, sentence: str, *, every_account_by_default: bool
+) -> str | None:
+    """Which of the holder's accounts the figure came from, when that is worth a line.
+
+    Said under every answer across accounts while the deployment asks which account first (`ask`):
+    there, every account is always something the person chose. Where every account is what a
+    question naming none means (`all`, spec §3.5), the same line under every answer is noise about
+    the one thing the person did not ask, so it is said only when the turn was about accounts —
+    «en todas mis cuentas», the «Todas mis cuentas» chip that answers the account question, «por
+    cuenta», or an account named that the figure could not be narrowed to, which is the case that
+    keeps a figure for three accounts from passing as the hucha's. A narrower scope is said under
+    both, because it is never the default.
+
+    The holder's account count is not read here, and under `all` it need not be: a holder with one
+    account hears this line only after a sentence about accounts, which is a question about them
+    whatever their number. (`_scoped` narrows a lone account to itself, said as the account chosen,
+    as it always was.)
+    """
     if account_words.asks_for_all_accounts(sentence) or plan.across_accounts:
+        if every_account_by_default and not _about_accounts(sentence):
+            return None
         return "Consultado en todas tus cuentas."
     names = account_words.named_in(sentence)
     labels = {"CURRENT": "cuenta corriente", "SAVINGS": "Hucha", "ASSET": "fondo"}
@@ -7075,6 +7127,23 @@ def _scope_note(plan: FinancialPlan | TopMovements, sentence: str) -> str | None
     if plan.only_account_id is not None or plan.only_account_ids:
         return "Consultado en la cuenta seleccionada."
     return None
+
+
+# The word itself, for the sentences no account vocabulary claims: «por cuenta», «en cada cuenta»,
+# «en mis cuentas». A false positive costs one true line under the figure.
+_AN_ACCOUNT: Final = re.compile(r"\bcuentas?\b")
+
+
+def _about_accounts(sentence: str) -> bool:
+    """Whether the sentence said anything about which accounts — every one, one of them, one left
+    out, or the word itself. `all_accounts_as_a_reply` rather than `asks_for_all_accounts`, so the
+    «todas» chip that answers the account question counts as the choice it is."""
+    return (
+        account_words.all_accounts_as_a_reply(sentence)
+        or bool(account_words.named_in(sentence))
+        or bool(account_words.excluded_in(sentence))
+        or _AN_ACCOUNT.search(spanish.folded(sentence)) is not None
+    )
 
 
 def _is_scope_change_followup(sentence: str, *, today: date) -> bool:

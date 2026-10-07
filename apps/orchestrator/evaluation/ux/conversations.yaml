@@ -86,9 +86,12 @@ episodes:
     why: Completar la cuenta solicitada y seguir modificando la consulta.
     scope: unset
     turns:
+      # Answered across every account since 2026-10-07 (spec §3.5): the shipped default no longer
+      # asks «¿En qué cuenta…?» for a question that names none, and this battery measures it.
       - say: cuanto gaste en supermercados el mes pasado
         mechanism: intent
-        route: CLARIFY
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [GROCERIES]}
       - say: en todas
         mechanism: pending_resolution
         route: QUERY

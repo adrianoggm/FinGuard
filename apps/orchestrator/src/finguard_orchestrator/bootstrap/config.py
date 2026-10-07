@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from finguard_orchestrator.domain.models.conversation import AccountScopeDefault
 from finguard_orchestrator.domain.models.visual_plan import VisualMode
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
@@ -411,6 +412,21 @@ class Settings(BaseSettings):
     # read is the operator's call rather than a value shipped in a settings class; and on today's
     # numbers there is no case for flipping it.
     turn_interpreter: Literal["router", "shadow", "hybrid", "model"] = "router"
+
+    # What a spending or income question means when it names no account and the conversation has
+    # chosen none.
+    #
+    #   all   every account the holder has, and the answer does not say so unless the person asked
+    #         about accounts: it is what «¿cuánto gasté?» means to whoever asks it.
+    #   ask   «¿En qué cuenta quieres consultarlo?» first, as every thread began until 2026-10-07.
+    #
+    # `all` since spec §3.5 (conversation state, slice 1). Live that day, «¿Cuánto llevo gastado en
+    # Spotify?» was asked which account and then which period before any figure: two questions
+    # about things the person had an ordinary meaning for. `ask` keeps that question one variable
+    # away for a deployment that wants it. Neither touches an account the sentence names, a choice
+    # the person already made in the conversation, a balance (every account, listed) or a payment
+    # (the credential's own account).
+    account_scope_default: AccountScopeDefault = "all"
 
     # The visual planner's ladder, the same four rungs the turn interpreter climbs. `shadow` runs
     # the model beside the floor and shows the floor, which is how the baseline comparison is

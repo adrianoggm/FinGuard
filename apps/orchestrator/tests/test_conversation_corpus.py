@@ -99,8 +99,13 @@ def test_every_episode_declares_a_scope_the_harness_knows() -> None:
 def test_some_episodes_reach_the_account_clarification() -> None:
     """The floor under the other side of `scope`. `settled` is the default precisely so the
     clarification does not cost 169 preamble turns — which makes it possible for the corpus to end
-    up never reaching it at all, and a corpus that never reached it is where this started."""
-    asking = [e.name for e in CORPUS if e.scope == episodes.UNSET]
+    up never reaching it at all, and a corpus that never reached it is where this started.
+
+    Nothing settled is half of it since the shipped default reads every account (spec §3.5): the
+    other half is a deployment that asks, which the episode declares."""
+    asking = [
+        e.name for e in CORPUS if e.scope == episodes.UNSET and e.account_scope_default == "ask"
+    ]
 
     assert len(asking) >= 4, f"only {len(asking)} episodes open with the account scope unsettled"
 
