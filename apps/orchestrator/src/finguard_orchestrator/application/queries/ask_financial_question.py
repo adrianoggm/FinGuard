@@ -4117,9 +4117,10 @@ class AskFinancialQuestionHandler:
     ) -> AskFinancialQuestionResult | None:
         """Resolve an account choice against the live directory and run the pending plan."""
         candidate_names = tuple(candidate.display_name for candidate in pending.candidates)
+        all_accounts = _all_accounts_reply(query.sentence)
         if (
             _starts_new_financial_scope(query.sentence, today=query.today)
-            and not account_words.asks_for_all_accounts(query.sentence)
+            and not all_accounts
             and not account_words.custom_chosen_among(query.sentence, candidate_names)
             and not account_words.named_in(query.sentence)
         ):
@@ -5646,7 +5647,18 @@ def _a_bare_shop_name(
     plan = was.last_plan
     if not isinstance(plan, FinancialPlan):
         return None
-    said = spanish.folded(query.sentence).strip(" ¿?¡!.,;:")
+    stripped = query.sentence.strip(" ¿?¡!.,;:")
+    original = stripped
+    # Continuation markers qualify the request, not the shop's name. Keeping "Y" in
+    # "Y Spotify?" queries a nonexistent merchant; "Y solo Netflix?" used to miss
+    # this path altogether. Preserve the original spelling of the name after them.
+    stripped = re.sub(
+        r"^(?:y\s+(?:s[oó]lo\s+)?(?:en\s+)?|s[oó]lo\s+(?:en\s+)?|no,\s*)",
+        "",
+        stripped,
+        flags=re.I,
+    )
+    said = spanish.folded(stripped)
     if not said or len(said.split()) > 2 or len(said) < 4 or any(c.isdigit() for c in said):
         # One or two words. Beyond that it is a sentence, and a sentence has a verb this cannot
         # read — the planner is better at those and this must not take them.
@@ -5659,14 +5671,25 @@ def _a_bare_shop_name(
         or facts.group_by is not None
         or facts.metric is not None
         or facts.direction is not None
+        or (
+            stripped != original
+            and (
+                facts.excluded_categories
+                or facts.excluded_merchants
+                or re.match(
+                    r"(?:no|sin|excepto|salvo|lo|la|el|los|las|este|esta|ese|esa|por)\b",
+                    said,
+                )
+                or _THE_WHOLE_LOT.fullmatch(said)
+            )
+        )
         or intent_router.asks_for_something_else(query.sentence)
         or capability_guard.unsupported_reason(query.sentence) is not None
     ):
         # A word another vocabulary already owns. "Gasolina" is a category, "la hucha" an account
         # and "enero" a window, and each of them has a path that answers it properly.
         return None
-    stripped = query.sentence.strip(" ¿?¡!.,;:")
-    if merchant_words.never_a_merchant(query.sentence):
+    if merchant_words.never_a_merchant(stripped):
         # B-2(a) (Wave 3 hardening, R-H1): the closed stop-list -- words this service already
         # knows are a discard, a correction or a pleasantry, never a shop. "Nada" stops being a
         # merchant filter here rather than one query later, at zero cost instead of three.
@@ -6608,6 +6631,17 @@ def _is_scope_change_followup(sentence: str, *, today: date) -> bool:
     return account_words.asks_for_all_accounts(sentence) or bool(account_words.named_in(sentence))
 
 
+def _all_accounts_reply(sentence: str) -> bool:
+    """Resolve ellipsis only while answering an explicit account-selection question."""
+    folded = spanish.folded(sentence).strip(" \t\r\n¿?¡!.,;:")
+    return account_words.asks_for_all_accounts(sentence) or folded in {
+        "todas",
+        "en todas",
+        "todas ellas",
+        "en todas ellas",
+    }
+
+
 def _answers_account_scope(sentence: str, names: tuple[str, ...]) -> bool:
     """Whether the short sentence is an account-choice chip, not a new financial question.
 
@@ -6620,7 +6654,7 @@ def _answers_account_scope(sentence: str, names: tuple[str, ...]) -> bool:
         word in folded.split() for word in ("cuanto", "cuánta", "saldo", "tengo", "dinero")
     ):
         return False
-    if account_words.asks_for_all_accounts(sentence):
+    if _all_accounts_reply(sentence):
         return len(folded.split()) <= 5
     if account_words.custom_chosen_among(sentence, names):
         return len(folded.split()) <= 5
@@ -6632,13 +6666,14 @@ def _chosen_account_scope(
 ) -> AccountSelection | None:
     """The selection a reply to «¿En qué cuenta…?» makes among the accounts it was offered.
 
-    «Todas mis cuentas» is every account. Otherwise exactly one offered account has to be named,
-    by its own display name or, failing that, by its kind; anything else — two of them, none, one
-    the question did not offer — selects nothing, and the caller asks again rather than guessing.
-    `holdings` is the live directory, so an account that has gone since the question was asked
-    cannot be chosen.
+    «Todas mis cuentas» is every account, and so is a bare «todas» / «en todas»: this only reads
+    a reply to that question, where the ellipsis can mean nothing else. Otherwise exactly one
+    offered account has to be named, by its own display name or, failing that, by its kind;
+    anything else — two of them, none, one the question did not offer — selects nothing, and the
+    caller asks again rather than guessing. `holdings` is the live directory, so an account that
+    has gone since the question was asked cannot be chosen.
     """
-    if account_words.asks_for_all_accounts(sentence):
+    if _all_accounts_reply(sentence):
         return AccountSelection(AccountSelectionMode.ALL)
     names = tuple(holding.display_name for holding in holdings if holding.account_id in candidates)
     custom = account_words.custom_chosen_among(sentence, names)

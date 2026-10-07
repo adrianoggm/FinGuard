@@ -168,11 +168,12 @@ async def test_generic_query_asks_for_account_without_touching_ledger_then_hucha
 
 
 @pytest.mark.asyncio
-async def test_all_accounts_choice_executes_pending_plan_across_accounts() -> None:
+@pytest.mark.parametrize("reply", ["Todas mis cuentas", "en todas", "todas", "en todas ellas"])
+async def test_all_accounts_choice_executes_pending_plan_across_accounts(reply: str) -> None:
     ledger = Ledger()
     handler = service(ledger)
     clarification = await ask(handler, "¿Cuánto he gastado este mes?")
-    answered = await ask(handler, "Todas mis cuentas", clarification.conversation)
+    answered = await ask(handler, reply, clarification.conversation)
 
     assert answered.outcome == PlanningOutcome.PLANNED.value
     assert ledger.plans[-1].across_accounts

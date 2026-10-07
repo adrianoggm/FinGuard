@@ -715,14 +715,17 @@ function SaveMetricControl({ token, suggestion }: { token: string; suggestion?: 
   if (state === "saved") {
     return <p className="metric-feedback saved">Guardada en «Mis métricas», en Finanzas.</p>;
   }
-  return <div className="metric-save">
+  return <details className="metric-save-disclosure">
+    <summary>Guardar en Mis métricas</summary>
+    <div className="metric-save">
     <input aria-label="Nombre de la métrica" value={title} maxLength={80}
       onChange={(event) => setTitle(event.target.value)} placeholder="Nombre de la métrica" />
     <button className="chip" disabled={state === "saving" || !title.trim()} onClick={submit}>
       {state === "saving" ? "Guardando…" : "Guardar métrica"}
     </button>
     {state === "error" && <span className="metric-feedback" role="alert">No se ha podido guardar.</span>}
-  </div>;
+    </div>
+  </details>;
 }
 
 /**
@@ -759,7 +762,9 @@ export function AnswerEvidence({ answer }: { answer: Answer }) {
         <details>
           <summary>
             Ver los movimientos
-            {answer.movement_count ? ` (${answer.movement_count})` : ""}
+            {answer.movement_count !== null && answer.movements.length < answer.movement_count
+              ? ` (${answer.movements.length} de ${answer.movement_count})`
+              : ` (${answer.movements.length})`}
           </summary>
           <ul className="evidence">
             {answer.movements.map((movement, index) => (
@@ -785,7 +790,7 @@ export function AnswerEvidence({ answer }: { answer: Answer }) {
           */}
           <p className="caveat">
             {answer.movement_count !== null && answer.movements.length < answer.movement_count
-              ? "Una muestra de los movimientos, no todos los que suman el total."
+              ? `Se muestran ${answer.movements.length} de ${answer.movement_count} movimientos. El resultado incluye los ${answer.movement_count}.`
               : `Se muestran los ${answer.movements.length} movimientos encontrados.`}
           </p>
         </details>
