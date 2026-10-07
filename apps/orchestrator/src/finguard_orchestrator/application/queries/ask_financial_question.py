@@ -1056,7 +1056,8 @@ class AskFinancialQuestionHandler:
             # for again if it is all that is missing.
             asked = was.active.awaiting
             absorbed = await self._with_the_account_it_names(
-                _with_the_category_it_names(query, arbitration.fills), arbitration.fills
+                _with_the_grouping_it_names(_with_the_category_it_names(query, arbitration.fills)),
+                arbitration.fills,
             )
             if asked in arbitration.fills:
                 # No base but the open draft, which `_pending_continuation` hands the planner
@@ -1081,7 +1082,7 @@ class AskFinancialQuestionHandler:
             grounded = turn_arbiter.the_patch_on_the_answer(query.sentence, was, today=query.today)
             if grounded is not None and _only_the_patch_reads(grounded):
                 async for step in self._completed_or_planned(
-                    query, was, analysis, continuation, previous, following_up=True
+                    query, was, analysis, continuation, previous, following_up=grounded
                 ):
                     yield step
                 return
@@ -1725,7 +1726,7 @@ class AskFinancialQuestionHandler:
         continuation: ContinuationBase | None,
         previous: PlannedQuery | None,
         *,
-        following_up: bool = False,
+        following_up: continuation_patch.GroundedContinuation | None = None,
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         """The end of `_steps`: the guard, the open question completed, and the planner.
 
@@ -1740,9 +1741,10 @@ class AskFinancialQuestionHandler:
         `previous` is the last answered plan, for the window log line; `continuation` is the base
         `_steps` chose, which an open clarification's completed draft replaces below.
 
-        `following_up` is a FOLLOW_UP the arbitration named, sent here straight from `_steps` as a
-        reply is: its patch is read against the answer it continues — who «ella» is lives there —
-        and the answer says it continued that one, for the chart's lineage (F-H3).
+        `following_up` is the patch a FOLLOW_UP's arbitration read (`turn_arbiter.
+        the_patch_on_the_answer`), sent here straight from `_steps` as a reply is: it is applied to
+        the answer it continues, and the answer says it continued that one, for the chart's lineage
+        (F-H3).
         """
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
         # The guard's own verdict, both ways, from the one place it is acted on. `AGREED` is here
@@ -1801,17 +1803,12 @@ class AskFinancialQuestionHandler:
         )
 
         yield Stage("planning")
-        grounded = continuation_patch.read(
-            query.sentence,
-            today=context.today,
-            # Only for a follow-up: every other turn reaching here reads what it read before a patch
-            # could need the base, so a reply to an open question is never patched as one.
-            base=(
-                context.continuation.plan
-                if following_up and context.continuation is not None
-                else None
-            ),
-        )
+        # A follow-up's patch is the one the arbitration read, against the answer it continues and
+        # with what the conversation says about it (`turn_arbiter.the_patch_on_the_answer`): read
+        # again here, «ella» could be resolved by a reading that did not know whether the answer
+        # was the last turn. Every other turn reads with no base, as it did before a patch could
+        # need one, so a reply to an open question is never patched as a follow-up.
+        grounded = following_up or continuation_patch.read(query.sentence, today=context.today)
         grounded_plan: FinancialPlan | None = None
         if (
             grounded.status is continuation_patch.PatchStatus.APPLIED
@@ -1901,7 +1898,17 @@ class AskFinancialQuestionHandler:
         correcting = (
             context.continuation is not None and context.continuation.force_follow_up
         ) or facts.corrects
-        if correcting and context.continuation is not None and isinstance(checked, FinancialPlan):
+        if (
+            correcting
+            and grounded_plan is None
+            and context.continuation is not None
+            and isinstance(checked, FinancialPlan)
+        ):
+            # Not for a grounded patch: it keeps every field it does not name by construction
+            # (`PlanPatch.apply_to`), so there is nothing to restore — only what it changed on
+            # purpose. «Mejor por categoría» reads as a correction, and restoring here put back the
+            # one category the breakdown had dropped (`plan_patch.divisible_by`).
+            #
             # A correction patches. The same turn that lost the window also lost the category the
             # correction never mentioned, and an empty list from a model cannot be told apart from
             # a filter it simply did not copy.
@@ -1955,7 +1962,7 @@ class AskFinancialQuestionHandler:
             yield await self._ranked(query, checked)
             return
         answered = await self._answer(query, checked)
-        if following_up and grounded_plan is not None:
+        if following_up is not None and grounded_plan is not None:
             # The answer in view, patched: what `_answering` stamps for the readers that patch it.
             answered = replace(answered, plan_continues_conversation=True)
         yield answered
@@ -5902,15 +5909,18 @@ def _answers_the_transfer(sentence: str, waiting: TransferInProgress) -> bool:
 _A_PATCH_MAY_TAKE: Final = frozenset({TurnType.FOLLOW_UP, TurnType.NEW_QUESTION})
 
 # The follow-ups `_steps` answers from the answer in view as soon as the arbitration names them:
-# which way the money went, and a breakdown by kind — category or shop. No reader below reads either
-# better than the patch, and leaving them to the readers only gave a wrong one the chance.
+# which way the money went (and, over an answer about several people, whose), and a breakdown by
+# kind — category or shop. No reader below reads either better than the patch, and leaving them to
+# the readers only gave a wrong one the chance.
 #
 # Every other patch the arbitration calls a follow-up keeps going past the readers that know more
 # about it than the patch does: «¿y el año anterior?» is a year back from the window in view
 # (`_a_year_earlier`), and the patch reads last calendar year; «¿y por semanas?» over an average is
 # `_average_plan`'s, which turns the average into a per-week one; a calendar regroup of a running
 # total is the follow-up reader's. Those reach the patch at the end of the cascade, as before.
-_ONLY_THE_PATCH_READS: Final = frozenset({PatchField.DIRECTION, PatchField.GROUP_BY})
+_ONLY_THE_PATCH_READS: Final = frozenset(
+    {PatchField.DIRECTION, PatchField.COUNTERPARTIES, PatchField.GROUP_BY}
+)
 _A_BREAKDOWN_BY_KIND: Final = frozenset({GroupBy.CATEGORY, GroupBy.COUNTERPARTY})
 
 
@@ -7206,6 +7216,56 @@ def _with_the_category_it_names(
             excluded_categories=tuple(dict.fromkeys((*still_excluded, *excluded))),
             merchants=() if included else draft.merchants,
             merchant_terms=() if included else draft.merchant_terms,
+        )
+    except InvalidValueError:
+        return query
+    return replace(
+        query,
+        conversation=replace(query.conversation, active=replace(open_question, draft=absorbed)),
+    )
+
+
+# The dimensions a breakdown cannot divide once the draft is filtered to one value of them, read
+# the way `plan_verifier._cannot_discriminate` reads a plan — restaurants by category is one row —
+# and, for a breakdown by shop, a draft about one shop as well (M-2): Mercadona by shop is one row
+# too, though the verifier's table only knows a person there. A question still being completed is
+# not widened (ruling R36), so the breakdown stays out of it instead.
+_ONE_VALUE_OF: Final = {
+    GroupBy.CATEGORY: ("categories",),
+    GroupBy.COUNTERPARTY: ("counterparties", "merchants"),
+}
+
+
+def _with_the_grouping_it_names(query: AskFinancialQuestionQuery) -> AskFinancialQuestionQuery:
+    """`query`, with the breakdown its reply asks for put into the draft its open question holds.
+
+    «Este año por comercio» to «¿De qué periodo?» fills the window and asks for the breakdown, and
+    `_finish_pending` completed the draft with the window alone: the figure came back undivided,
+    for a question that said how to divide it. Read in the words a follow-up asks for one
+    (`continuation_patch.grouping_in`: por categoría, por comercio, por meses, with «mejor» or
+    «agrupado» before them), so a breakdown is the same breakdown whichever turn asks for it.
+
+    Not one the draft cannot divide. `plan_verifier` refuses restaurants by category only when the
+    sentence it checks asks to divide, and the reply that may later complete the draft — «este año»
+    — does not; so it stays out, and the reply completes the question it answered, as it did. Nor
+    one the draft's measure cannot take («gasto medio mensual» already spends its grouping on the
+    months): the draft refuses it, and the reply goes on without it.
+    """
+    open_question = query.conversation.active
+    grouping = continuation_patch.grouping_in(query.sentence)
+    if not isinstance(open_question, FinancialClarification) or grouping is None:
+        return query
+    draft = open_question.draft
+    if grouping is draft.group_by or any(
+        len(getattr(draft, filtered)) == 1 for filtered in _ONE_VALUE_OF.get(grouping, ())
+    ):
+        return query
+    try:
+        absorbed = replace(
+            draft,
+            group_by=grouping,
+            # A row cut belongs to a ranking of kinds; months are all of them or none.
+            group_limit=None if grouping is GroupBy.MONTH else draft.group_limit,
         )
     except InvalidValueError:
         return query

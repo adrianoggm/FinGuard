@@ -24,6 +24,7 @@ from finguard_orchestrator.domain.models.conversation import (
     FinancialClarification,
     PaymentConfirmation,
     Slot,
+    Turn,
 )
 from finguard_orchestrator.domain.models.turn_analysis import (
     TurnAnalysis,
@@ -31,6 +32,7 @@ from finguard_orchestrator.domain.models.turn_analysis import (
     TurnRelation,
 )
 from finguard_orchestrator.domain.services import (
+    answer_writer,
     merchant_words,
     turn_analyzer,
     turn_interpreters,
@@ -349,13 +351,19 @@ async def test_what_a_reply_says_about_the_subject(sentence: str, fills: set[Slo
 
 # --- FOLLOW_UP: a patch on the answer in view (Task 7) -------------------------------------------
 
-TO_MARTA = Conversation(
-    last_plan=FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_MONTH),
-        counterparties=("Marta",),
-    )
+SENT_TO_MARTA = FinancialPlan(
+    direction=Direction.EXPENSE,
+    period=RelativePeriod(period=Period.THIS_MONTH),
+    counterparties=("Marta",),
 )
+# The answer about Marta as the last thing the conversation recorded (rulings R34/R35): a
+# pronoun points at it only from the turn right after it.
+ANSWERED_ABOUT_MARTA = Turn(
+    sentence="cuanto le mande a Marta este mes",
+    outcome="PLANNED",
+    plan=answer_writer.describe(SENT_TO_MARTA),
+)
+TO_MARTA = Conversation(last_plan=SENT_TO_MARTA, turns=(ANSWERED_ABOUT_MARTA,))
 READ_AS_A_CORRECTION = TurnAnalysis(
     intent=Intent.CORRECTION, relation=TurnRelation.CORRECTION, focus=TurnFocus.LAST_ANSWER
 )
@@ -433,3 +441,27 @@ async def test_a_ranking_or_a_comparison_in_view_is_not_patched_as_one_plan() ->
 
     assert await kind_of("mejor por categoría", ranked) is not TurnType.FOLLOW_UP
     assert await kind_of("¿y por categoría?", compared) is not TurnType.FOLLOW_UP
+
+
+@pytest.mark.parametrize(
+    "aside",
+    [
+        Turn(sentence="gracias", outcome="COURTESY"),
+        Turn(sentence="mis contactos", outcome="CONTACTS", plan=ANSWERED_ABOUT_MARTA.plan),
+    ],
+    ids=["courtesy", "contacts"],
+)
+async def test_a_pronoun_after_another_turn_is_no_follow_up_but_a_name_is(aside: Turn) -> None:
+    """Rulings R34/R35. The contact list even carries the answer's plan line, and it is still not
+    the answer: it named four people, and «ella» could be any of them."""
+    later = Conversation(last_plan=SENT_TO_MARTA, turns=(ANSWERED_ABOUT_MARTA, aside))
+
+    assert await kind_of("¿y ella a mí?", later) is not TurnType.FOLLOW_UP
+    assert await kind_of("¿y lo que me mandó?", later) is not TurnType.FOLLOW_UP
+    assert await kind_of("¿y Marta a mí?", later) is TurnType.FOLLOW_UP
+
+
+async def test_with_no_turn_recorded_a_pronoun_points_at_nobody() -> None:
+    assert await kind_of("¿y ella a mí?", Conversation(last_plan=SENT_TO_MARTA)) is not (
+        TurnType.FOLLOW_UP
+    )

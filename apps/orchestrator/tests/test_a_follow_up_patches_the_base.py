@@ -18,6 +18,7 @@ own.
 """
 
 from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -27,12 +28,20 @@ from support.pending import SETTLED, ask, asking_for_the_window_stack
 from finguard_orchestrator.application import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
+    AskFinancialQuestionResult,
 )
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.enums import CounterpartyType, Direction, GroupBy, Period
-from finguard_orchestrator.domain.models.conversation import Conversation, Slot
+from finguard_orchestrator.domain.enums import (
+    CounterpartyType,
+    Direction,
+    GroupBy,
+    Period,
+    TransactionType,
+)
+from finguard_orchestrator.domain.models.conversation import Conversation, Slot, Turn
+from finguard_orchestrator.domain.services import answer_writer
 from finguard_orchestrator.domain.services.turn_arbiter import Arbitration, TurnType
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
@@ -207,16 +216,17 @@ def test_a_breakdown_by_shop_keeps_the_subject() -> None:
     assert plan.group_by is GroupBy.COUNTERPARTY and plan.categories == ("RESTAURANTS",)
 
 
-def test_a_breakdown_by_category_of_one_category_is_refused_with_its_reason() -> None:
-    """Restaurants by category is one row. The patch builds exactly what was asked, and the
-    verifier's own rule (`BREAKDOWN_ANSWERED_AS_ONE_GROUP`) refuses it and says why, offering a
-    breakdown that can divide it — not a total dressed as a breakdown, and no model guessing
-    whether «por categoría» meant to widen the subject."""
+def test_a_breakdown_by_category_of_one_category_shows_every_category() -> None:
+    """Ruling R29. Restaurants by category is one row, which the verifier refuses; the turn asked
+    for the spending divided by category, so the one category goes and the window, the direction
+    and everything else stay."""
     stack, answer = _after("cuanto gaste en restaurantes este mes", "mejor por categoría")
 
-    assert answer["outcome"] == "INVALID_DOMAIN"
-    assert "«por mes»" in answer["text"]
-    assert stack.ledger.plans == [] and stack.planner.asked == []
+    (plan,) = stack.ledger.plans
+    assert plan.group_by is GroupBy.CATEGORY and plan.categories == ()
+    assert plan.direction is Direction.EXPENSE
+    assert plan.period is not None and plan.period.period is Period.THIS_MONTH
+    assert stack.planner.asked == [] and answer["outcome"] == "PLANNED"
 
 
 def test_mejor_por_categoria_is_not_a_correction() -> None:
@@ -355,3 +365,209 @@ async def test_the_follow_up_says_it_continued_the_answer() -> None:
     )
 
     assert result.plan_continues_conversation is True
+
+
+# --- fix round 1: whose money a turn-round is about -----------------------------------------------
+
+
+def _settled_with(plan: FinancialPlan) -> Conversation:
+    """A settled conversation whose last turn answered `plan`, recorded the way `stream` records
+    an answer: its outcome and `describe` line."""
+    settled = conversation_mapper.to_domain(ConversationPayload.model_validate(SETTLED))
+    answered = Turn(sentence="(la respuesta)", outcome="PLANNED", plan=answer_writer.describe(plan))
+    return replace(settled, last_plan=plan, turns=(answered,))
+
+
+async def _handled(
+    conversation: Conversation, sentence: str
+) -> tuple[AskFinancialQuestionResult, episodes.Ledger, episodes.AnyPlan]:
+    """`sentence` through a handler of its own, arbitrated there as a caller with no edge would."""
+    ledger, planner = episodes.Ledger(), episodes.AnyPlan()
+    handler = AskFinancialQuestionHandler(
+        planner,  # type: ignore[arg-type]
+        ledger,  # type: ignore[arg-type]
+        accounts=episodes.Accounts(),  # type: ignore[arg-type]
+        account_directory=episodes.Directory(),  # type: ignore[arg-type]
+        contacts=episodes.Contacts(),
+        cards=episodes.NoCards(),  # type: ignore[arg-type]
+    )
+    result = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence, episodes.ACCOUNT, episodes.TODAY, conversation=conversation
+        )
+    )
+    return result, ledger, planner
+
+
+TO_TWO = FinancialPlan(
+    direction=Direction.EXPENSE,
+    period=RelativePeriod(period=Period.THIS_MONTH),
+    counterparties=("Marta", "Javi"),
+    counterparty_types=(CounterpartyType.PERSON,),
+    transaction_types=(TransactionType.TRANSFER,),
+)
+
+
+@pytest.mark.parametrize(
+    ("people", "sentence", "named"),
+    [
+        (("Marta", "Javi"), "¿y Marta a mí?", "Marta"),
+        (("Marta", "Javi"), "¿y lo que me mandó Javi?", "Javi"),
+        (("Marta Solis Vega", "Javi Nuñez"), "¿y Marta a mí?", "Marta Solis Vega"),
+        (("Marta Solis Vega", "Javi Nuñez"), "¿y Javi a mí?", "Javi Nuñez"),
+    ],
+)
+async def test_a_named_turn_round_narrows_to_the_person_named(
+    people: tuple[str, ...], sentence: str, named: str
+) -> None:
+    """Ruling R33. Over an answer about Marta and Javi, «¿y Marta a mí?» is what Marta sent: run
+    over both, Javi's money was in the figure for a question about Marta."""
+    _, ledger, planner = await _handled(
+        _settled_with(replace(TO_TWO, counterparties=people)), sentence
+    )
+
+    (plan,) = ledger.plans
+    assert plan.counterparties == (named,) and plan.direction is Direction.INCOME
+    assert plan.period is not None and plan.period.period is Period.THIS_MONTH
+    assert planner.asked == []
+
+
+@pytest.mark.parametrize(
+    ("people", "sentence"),
+    [
+        # «Ella» over two people is a guess about which.
+        (("Marta", "Javi"), "¿y ella a mí?"),
+        # So is a name two of them share.
+        (("Marta Solis Vega", "Marta Ruiz Gomez"), "¿y Marta a mí?"),
+    ],
+)
+async def test_a_turn_round_that_cannot_tell_which_person_is_not_a_patch(
+    people: tuple[str, ...], sentence: str
+) -> None:
+    _, ledger, planner = await _handled(
+        _settled_with(replace(TO_TWO, counterparties=people)), sentence
+    )
+
+    assert planner.asked == [sentence]
+    assert all(plan.direction is not Direction.INCOME for plan in ledger.plans)
+
+
+# --- fix round 1: «ella» is the person of the answer just given (R34, R35) ------------------------
+
+
+@pytest.mark.parametrize("aside", ["gracias", "mis contactos"])
+@pytest.mark.parametrize("sentence", ["¿y ella a mí?", "¿y lo que me mandó?"])
+def test_a_pronoun_after_another_turn_is_read_by_the_model(aside: str, sentence: str) -> None:
+    """Rulings R34/R35. After «mis contactos» named four people, «ella» could be any of them; after
+    any turn but the answer itself, the answer's person is not who a pronoun points at."""
+    stack = episodes.a_stack()
+    first = ask(stack, MARTA_THIS_MONTH, SETTLED)
+    between = ask(stack, aside, first["conversation"])
+    stack.ledger.plans.clear()
+    stack.planner.asked.clear()
+
+    ask(stack, sentence, between["conversation"])
+
+    assert stack.planner.asked == [sentence]
+    assert not any(
+        plan.counterparties == ("Marta",) and plan.direction is Direction.INCOME
+        for plan in stack.ledger.plans
+    )
+
+
+def test_a_name_after_another_turn_still_turns_the_answer_round() -> None:
+    stack = episodes.a_stack()
+    first = ask(stack, MARTA_THIS_MONTH, SETTLED)
+    between = ask(stack, "gracias", first["conversation"])
+    stack.ledger.plans.clear()
+
+    ask(stack, "¿y Marta a mí?", between["conversation"])
+
+    (plan,) = stack.ledger.plans
+    assert plan.counterparties == ("Marta",) and plan.direction is Direction.INCOME
+
+
+def test_the_unsaid_person_right_after_the_answer_is_the_answers() -> None:
+    """Ruling R35: Spanish drops the subject, so «¿y lo que me mandó?» right after the answer
+    about Marta is what Marta sent."""
+    stack, _ = _after(MARTA_THIS_MONTH, "¿y lo que me mandó?")
+
+    (plan,) = stack.ledger.plans
+    assert plan.counterparties == ("Marta",) and plan.direction is Direction.INCOME
+
+
+# --- fix round 1: a breakdown that would be one row divides what is around it (R29, R36) ----------
+
+
+def test_the_batterys_regroup_by_category_after_a_shop_breakdown() -> None:
+    """`04-aclaraciones`: groceries by shop this month, then «mejor por categoria» — this month's
+    spending by category (R29). «Mejor» reads as a correction, and the correction path put the
+    groceries filter back (`explicit_facts.restored_filters`): a grounded patch skips it."""
+    stack = episodes.a_stack()
+    first = ask(stack, "cuanto gaste en supermercados este mes", SETTLED)
+    by_shop = ask(stack, "por comercio", first["conversation"])
+    assert stack.ledger.plans[-1].group_by is GroupBy.COUNTERPARTY
+    stack.ledger.plans.clear()
+    stack.planner.asked.clear()
+
+    answer = ask(stack, "mejor por categoria", by_shop["conversation"])
+
+    (plan,) = stack.ledger.plans
+    assert plan.group_by is GroupBy.CATEGORY and plan.categories == ()
+    assert plan.direction is Direction.EXPENSE
+    assert plan.period is not None and plan.period.period is Period.THIS_MONTH
+    assert stack.planner.asked == [] and answer["outcome"] == "PLANNED"
+
+
+async def test_a_breakdown_by_shop_of_one_shop_shows_every_shop() -> None:
+    base = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_MONTH),
+        categories=("GROCERIES",),
+        merchants=("Mercadona",),
+    )
+
+    result, ledger, _ = await _handled(_settled_with(base), "mejor por comercio")
+
+    (plan,) = ledger.plans
+    assert plan.group_by is GroupBy.COUNTERPARTY and plan.merchants == ()
+    assert plan.categories == ("GROCERIES",)
+    assert result.outcome == "PLANNED"
+
+
+@pytest.mark.parametrize(
+    ("base", "sentence"),
+    [
+        # Every movement, in and out: nothing says which side «por categoría» divides.
+        (
+            FinancialPlan(
+                direction=Direction.ALL,
+                period=RelativePeriod(period=Period.THIS_MONTH),
+                categories=("GROCERIES",),
+            ),
+            "mejor por categoría",
+        ),
+        # A shop inside the category is finer than it: dropping the category keeps a filter that
+        # makes every other category empty.
+        (
+            FinancialPlan(
+                direction=Direction.EXPENSE,
+                period=RelativePeriod(period=Period.THIS_MONTH),
+                categories=("GROCERIES",),
+                merchants=("Mercadona",),
+            ),
+            "mejor por categoría",
+        ),
+        # A person is never the shop a breakdown by shop drops.
+        (replace(TO_TWO, counterparties=("Marta",)), "mejor por comercio"),
+    ],
+    ids=["all-directions", "category-and-shop", "a-person"],
+)
+async def test_a_breakdown_that_cannot_divide_is_still_refused_with_its_reason(
+    base: FinancialPlan, sentence: str
+) -> None:
+    result, ledger, planner = await _handled(_settled_with(base), sentence)
+
+    assert result.outcome == "INVALID_DOMAIN"
+    assert "«por mes»" in result.text
+    assert ledger.plans == [] and planner.asked == []

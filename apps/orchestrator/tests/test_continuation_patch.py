@@ -180,7 +180,7 @@ TO_MARTA = FinancialPlan(
     ],
 )
 def test_the_question_turned_round_on_the_bases_person(sentence: str, direction: Direction) -> None:
-    result = read(sentence, today=TODAY, base=TO_MARTA)
+    result = read(sentence, today=TODAY, base=TO_MARTA, answered_last=True)
 
     assert result.status is PatchStatus.APPLIED
     assert result.patch is not None and result.patch.direction is direction
@@ -230,7 +230,9 @@ def test_a_turn_round_that_says_more_is_not_one(sentence: str) -> None:
 def test_a_direction_the_sentence_states_wins_over_the_shape() -> None:
     """Ruling R24. `explicit_facts` reads «ingresé» as income and the shape reads money sent; a
     reading that disagrees with a stated direction is no reading."""
-    assert read("y lo que le ingresé", today=TODAY, base=TO_MARTA).status is (PatchStatus.AMBIGUOUS)
+    assert read("y lo que le ingresé", today=TODAY, base=TO_MARTA, answered_last=True).status is (
+        PatchStatus.AMBIGUOUS
+    )
 
 
 @pytest.mark.parametrize(
@@ -281,3 +283,36 @@ def test_without_a_base_nothing_new_is_read(sentence: str, status: PatchStatus) 
 )
 def test_the_breakdown_a_reply_asks_for(sentence: str, grouping: GroupBy | None) -> None:
     assert grouping_in(sentence) is grouping
+
+
+def test_a_named_turn_round_over_two_people_narrows_to_the_one_named() -> None:
+    """Ruling R33: the patch says whose money it is, so the figure is not both people's."""
+    base = replace(TO_MARTA, counterparties=("Marta Solis Vega", "Javi Nuñez"))
+
+    result = read("¿y Marta a mí?", today=TODAY, base=base)
+
+    assert result.patch == PlanPatch(
+        direction=Direction.INCOME, counterparties=("Marta Solis Vega",)
+    )
+    assert result.changed == frozenset({PatchField.DIRECTION, PatchField.COUNTERPARTIES})
+
+
+def test_a_name_two_of_the_people_share_is_not_a_patch() -> None:
+    base = replace(TO_MARTA, counterparties=("Marta Solis Vega", "Marta Ruiz Gomez"))
+
+    assert read("¿y Marta a mí?", today=TODAY, base=base).status is PatchStatus.NOT_APPLICABLE
+
+
+@pytest.mark.parametrize("sentence", ["¿y ella a mí?", "¿y lo que me mandó?", "¿y yo a ella?"])
+def test_a_pronoun_or_an_unsaid_person_needs_the_answer_to_be_the_last_turn(sentence: str) -> None:
+    """Rulings R34/R35. «Ella» and a person left unsaid point at the answer just given; with
+    another turn after it, the base's person is not who they point at any more."""
+    assert read(sentence, today=TODAY, base=TO_MARTA, answered_last=False).status is (
+        PatchStatus.NOT_APPLICABLE
+    )
+
+
+def test_a_name_needs_no_such_thing() -> None:
+    result = read("¿y Marta a mí?", today=TODAY, base=TO_MARTA, answered_last=False)
+
+    assert result.patch == PlanPatch(direction=Direction.INCOME)

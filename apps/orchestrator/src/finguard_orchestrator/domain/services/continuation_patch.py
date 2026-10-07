@@ -2,7 +2,9 @@
 
 This module deliberately does not try to understand a new financial question.  It only applies
 closed-vocabulary facts when the wording makes continuation (or correction) explicit.  Callers can
-therefore put it in front of an LLM planner without risking an accidental widening of scope.
+therefore put it in front of an LLM planner without risking an accidental widening of scope. The
+one widening a patch makes is deliberate and argued where it happens (`plan_patch.divisible_by`): a
+breakdown asked of a plan filtered to the one value it would divide.
 
 Two readings need the answer the turn continues, and are made only when the caller hands it over
 (`read`'s `base`; spec §3.4): a follow-up that turns the question round on the person it was about
@@ -249,8 +251,8 @@ _A_REGROUPING: Final = re.compile(
 # The question turned round on the person it was about. Each shape is the whole turn, so a sentence
 # that says anything more — a window, another subject, «este año» — is not one of them, and a whole
 # new question («¿cuánto me mandó Javi este año?») never reads as a patch. `who` is checked against
-# the base afterwards (`_is_the_person_of`): the shape says the money turned round, the base says
-# whose money it is.
+# the base afterwards (`_the_person`): the shape says the money turned round, the base says whose
+# money it is.
 #
 # The verbs are the unambiguous ones. «Me hizo» and «me pasó» are also what somebody did to the
 # holder or what happened to them, and with no «bizum» beside them nothing here could tell.
@@ -305,22 +307,29 @@ def grouping_in(sentence: str) -> GroupBy | None:
     return _GROUPED_BY[said.group("dimension")] if said is not None else None
 
 
-def _is_the_person_of(who: str | None, counterparties: tuple[str, ...]) -> bool:
-    """Whether `who` is the person the base is about.
+def _the_person(
+    who: str | None, counterparties: tuple[str, ...], *, answered_last: bool
+) -> str | None:
+    """Which of the base's people `who` is, as the base spells them, or None when it is none.
 
-    Unsaid, «ella» or «él»: only when the base is about exactly one person. A name: when every word
-    of it is a word of one of the base's people — «Marta» is «Marta Solis Vega», and «Marta Ruiz» is
-    not «Marta», because a word the base does not have may be somebody else's surname. Javi is
-    never Marta, whatever the shape around him says.
+    Unsaid, «ella» or «él»: the base's person only when it is about exactly one, and only when the
+    base is the answer the conversation gave last (rulings R34/R35). A pronoun points at what was
+    just said: after a contact list, or a Bizum to somebody else, «ella» is not the person of an
+    answer two turns back, and reading it as her ran the wrong person's money. A name: the one
+    person every word of it is a word of — «Marta» is «Marta Solis Vega», and «Marta Ruiz» is not
+    «Marta», because a word the base does not have may be somebody else's surname. Javi is never
+    Marta, whatever the shape around him says; and a name two of the base's people share is a
+    guess about which, so it is neither.
     """
     if who is None or who in _SHE_OR_HE:
-        return len(counterparties) == 1
+        return counterparties[0] if len(counterparties) == 1 and answered_last else None
     said = set(who.split())
-    return any(said <= set(spanish.folded(person).split()) for person in counterparties)
+    named = [person for person in counterparties if said <= set(spanish.folded(person).split())]
+    return named[0] if len(named) == 1 else None
 
 
 def _read_on(
-    base: FinancialPlan, sentence: str, folded: str, *, today: date | None
+    base: FinancialPlan, sentence: str, folded: str, *, today: date | None, answered_last: bool
 ) -> GroundedContinuation | None:
     """The two readings that need the base (module docstring), or None when the turn is neither.
 
@@ -339,14 +348,18 @@ def _read_on(
         turned = shape.fullmatch(folded)
         if turned is None:
             continue
-        if not base.counterparties or not _is_the_person_of(
-            turned.group("who"), base.counterparties
-        ):
+        person = _the_person(turned.group("who"), base.counterparties, answered_last=answered_last)
+        if person is None:
             return GroundedContinuation.not_applicable()
         stated = explicit_facts.read(sentence, today=today).direction
         if stated is not None and stated is not direction:
             return GroundedContinuation.ambiguous()
-        return GroundedContinuation(PatchStatus.APPLIED, PlanPatch(direction=direction))
+        # Over an answer about several people, the one named is the one the money turned round on
+        # (ruling R33); over one, the base already says who.
+        narrowed = (person,) if len(base.counterparties) > 1 else ()
+        return GroundedContinuation(
+            PatchStatus.APPLIED, PlanPatch(direction=direction, counterparties=narrowed)
+        )
     return None
 
 
@@ -355,6 +368,7 @@ def read(
     *,
     today: date | None = None,
     base: FinancialPlan | None = None,
+    answered_last: bool = False,
 ) -> GroundedContinuation:
     """Read a closed-vocabulary continuation without consulting conversational state.
 
@@ -364,10 +378,14 @@ def read(
     `base` is the answer the turn continues, for the two readings that need it (module docstring).
     Without one, nothing here reads either: `readers/follow_up.py` gates on whether this says
     AMBIGUOUS, and a status it relied on must not move under it.
+
+    `answered_last` is whether `base` is the answer the conversation gave last, which only the
+    caller can know (`turn_arbiter` reads it off the turn log). False unless said: a pronoun or a
+    person left unsaid is resolved only against the answer just given (`_the_person`).
     """
     folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
     if base is not None:
-        on_the_base = _read_on(base, sentence, folded, today=today)
+        on_the_base = _read_on(base, sentence, folded, today=today, answered_last=answered_last)
         if on_the_base is not None:
             return on_the_base
     if not _CONTINUATION.search(folded):
@@ -433,6 +451,7 @@ def apply(
     """Compatibility wrapper around ``read`` and the immutable patch operation."""
     if previous is None:
         return GroundedContinuationPatch(PatchStatus.NOT_APPLICABLE)
-    continuation = read(sentence, today=today, base=previous)
+    # The plan it is handed is the one being patched, so it is the answer just given.
+    continuation = read(sentence, today=today, base=previous, answered_last=True)
     plan = continuation.patch.apply_to(previous) if continuation.patch is not None else None
     return GroundedContinuationPatch(continuation.status, continuation.patch, plan)

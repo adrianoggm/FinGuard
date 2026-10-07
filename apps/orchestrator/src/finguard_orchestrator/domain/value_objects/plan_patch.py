@@ -1,4 +1,9 @@
-"""Immutable, typed changes to an already grounded financial plan."""
+"""Immutable, typed changes to an already grounded financial plan.
+
+Scope-preserving, with one exception that is argued at `divisible_by`: a breakdown asked of a plan
+filtered to exactly one value of that breakdown's own dimension drops that one value, because the
+breakdown it was asked for is one row otherwise.
+"""
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -8,6 +13,7 @@ from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    FinancialPlanDraft,
     RelativePeriod,
 )
 
@@ -19,11 +25,52 @@ class PatchField(StrEnum):
     EXCLUDED_CATEGORIES = "excludedCategories"
     EXCLUDED_MERCHANTS = "excludedMerchants"
     DIRECTION = "direction"
+    COUNTERPARTIES = "counterparties"
+
+
+# A breakdown by shop: `COUNTERPARTY` is what «por comercio» reads as (`explicit_facts`), and
+# `MERCHANT` is the compatibility name for the same dimension.
+_BY_SHOP = frozenset({GroupBy.COUNTERPARTY, GroupBy.MERCHANT})
+
+
+def divisible_by[P: FinancialPlan | FinancialPlanDraft](plan: P, grouping: GroupBy) -> P:
+    """`plan`, with the one value a breakdown by `grouping` would collapse on dropped (rulings
+    R29, R36), or `plan` unchanged when that breakdown divides it already or must not be widened.
+
+    «Mejor por categoría» over the groceries is one row — the groceries — and `plan_verifier`
+    refuses a breakdown it cannot divide (`BREAKDOWN_ANSWERED_AS_ONE_GROUP`). The turn asked for
+    the spending divided by category, so the one category goes: the window, the direction, the
+    accounts, the exclusions and the row cut stay. The same for one shop and a breakdown by shop.
+
+    Only where nothing else is unclear; otherwise the verifier's refusal stands:
+
+    - money one way, EXPENSE or INCOME: over every movement, in and out, there is no saying which
+      side the breakdown was meant to divide;
+    - one value on the breakdown's *own* dimension: one category for a breakdown by category, one
+      entry of `merchants` for a breakdown by shop — never `counterparties`, a person, and never
+      `merchant_terms`, a fragment that already matches several shops;
+    - nothing finer filtered beside it: groceries at Mercadona by category is Mercadona's
+      groceries, and dropping the groceries would leave a shop filter that empties every other
+      category. Nor a person or a fragment of a shop's name, for either breakdown.
+
+    For a plan and for a draft, so that a question still being completed and a patched answer are
+    read by one rule; the handler decides which of them may be widened.
+    """
+    if plan.direction not in {Direction.EXPENSE, Direction.INCOME}:
+        return plan
+    if plan.merchant_terms or plan.counterparties:
+        return plan
+    if grouping is GroupBy.CATEGORY and len(plan.categories) == 1 and not plan.merchants:
+        return replace(plan, categories=())
+    if grouping in _BY_SHOP and len(plan.merchants) == 1:
+        return replace(plan, merchants=())
+    return plan
 
 
 @dataclass(frozen=True)
 class PlanPatch:
-    """A non-empty, scope-preserving patch produced from one follow-up turn."""
+    """A non-empty patch produced from one follow-up turn, scope-preserving but for the one
+    exception `divisible_by` argues: a breakdown that would be one row."""
 
     window: RelativePeriod | AbsoluteRange | None = None
     group_by: GroupBy | None = None
@@ -33,6 +80,9 @@ class PlanPatch:
     # Which way the money went, for a follow-up that turns the question round: «¿y ella a mí?»
     # after «¿cuánto le mandé a Marta?» is the same person, the same window, money coming in.
     direction: Direction | None = None
+    # The one person a turn-round named, when the answer was about several (ruling R33): «¿y Marta
+    # a mí?» over Marta and Javi is what Marta sent, and Javi's money is not in it.
+    counterparties: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.fields:
@@ -56,6 +106,7 @@ class PlanPatch:
                 (PatchField.EXCLUDED_CATEGORIES, bool(self.excluded_categories)),
                 (PatchField.EXCLUDED_MERCHANTS, bool(self.excluded_merchants)),
                 (PatchField.DIRECTION, self.direction is not None),
+                (PatchField.COUNTERPARTIES, bool(self.counterparties)),
             )
             if present
         )
@@ -84,6 +135,7 @@ class PlanPatch:
                     else changed.group_limit
                 ),
             )
+            changed = divisible_by(changed, self.group_by)
         if self.metric is not None:
             changed = replace(changed, metric=self.metric)
         if self.excluded_categories:
@@ -120,4 +172,6 @@ class PlanPatch:
             # Only the direction: the person, the window and every filter are the question that
             # was asked, and the turn asked it the other way round.
             changed = replace(changed, direction=self.direction)
+        if self.counterparties:
+            changed = replace(changed, counterparties=self.counterparties)
         return changed

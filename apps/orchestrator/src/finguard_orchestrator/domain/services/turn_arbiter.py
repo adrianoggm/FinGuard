@@ -52,6 +52,8 @@ from datetime import date
 from enum import StrEnum
 from typing import Final
 
+from finguard_orchestrator.domain.constants import MAX_TURN_NOTE
+from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.models.conversation import (
     AccountScopeClarification,
     BookingConfirmation,
@@ -64,6 +66,7 @@ from finguard_orchestrator.domain.models.planning_context import QueryFocus, foc
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnRelation
 from finguard_orchestrator.domain.services import (
     account_words,
+    answer_writer,
     category_words,
     continuation_patch,
     explicit_facts,
@@ -441,8 +444,28 @@ def the_patch_on_the_answer(
         or not isinstance(focus.current, FinancialPlan)
     ):
         return None
-    grounded = continuation_patch.read(sentence, today=today, base=focus.current)
+    grounded = continuation_patch.read(
+        sentence,
+        today=today,
+        base=focus.current,
+        answered_last=_answered_last(conversation, focus.current),
+    )
     return grounded if grounded.patch is not None else None
+
+
+def _answered_last(conversation: Conversation, plan: FinancialPlan) -> bool:
+    """Whether the last turn the conversation recorded is the answer that ran `plan` (R34).
+
+    Read off the turn log, which records an answer as its outcome and its `describe` line: an aside
+    that kept the plan in view — «gracias», a contact list that even repeats the plan's line — is
+    a later turn, and a pronoun after it no longer points at the answer's person.
+    """
+    last = conversation.turns[-1] if conversation.turns else None
+    return (
+        last is not None
+        and last.outcome == PlanningOutcome.PLANNED.value
+        and last.plan == answer_writer.describe(plan)[:MAX_TURN_NOTE]
+    )
 
 
 def arbitrate(

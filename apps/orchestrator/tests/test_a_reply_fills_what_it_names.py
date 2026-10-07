@@ -24,7 +24,7 @@ from support.pending import (
 )
 
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.enums import Direction, Metric, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 
 
 @pytest.fixture(autouse=True)
@@ -243,3 +243,78 @@ def test_the_window_asked_again_is_recorded_even_where_the_first_ask_left_no_slo
     plan = stack.ledger.plans[-1]
     assert plan.only_account_id == episodes.PIGGY and plan.categories == ("RESTAURANTS",)
     assert plan.metric is Metric.PERIOD_AVERAGE and plan.period.period is Period.THIS_YEAR
+
+
+# --- carried to Task 7: a breakdown said beside the window ----------------------------------------
+#
+# «¿Cuánto gasté en restaurantes?» → «¿De qué periodo?» → «este año por comercio» completed the
+# draft with the window alone, and the breakdown it asked for was never drawn. On `KeepsTheBase`
+# again, so only the handler can have put the grouping there.
+
+
+@pytest.mark.parametrize(
+    ("question", "reply", "grouping"),
+    [
+        ("¿cuánto gasté en restaurantes?", "este año por comercio", GroupBy.COUNTERPARTY),
+        ("¿cuánto gasté?", "este año, mejor por categoría", GroupBy.CATEGORY),
+        ("¿cuánto gasté?", "este año agrupado por categorías", GroupBy.CATEGORY),
+        ("¿cuánto gasté en restaurantes?", "este año por meses", GroupBy.MONTH),
+    ],
+)
+def test_a_breakdown_beside_the_window_is_drawn_without_the_model(
+    question: str, reply: str, grouping: GroupBy
+) -> None:
+    planner = KeepsTheBase()
+    stack = asking_for_the_window_stack(planner=planner)
+    asked = ask(stack, question)
+    answered = ask(stack, reply, asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.group_by is grouping and plan.period.period is Period.THIS_YEAR
+    assert reply not in planner.asked, "the plan was completed in code"
+
+
+def test_the_subject_a_breakdown_replies_with_is_kept_too() -> None:
+    """The breakdown is one more thing the reply says, not instead of the rest of it: the
+    restaurants the question was about stay, and so does the account question it never asked."""
+    stack = asking_for_the_window_stack(planner=KeepsTheBase())
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    ask(stack, "este año por comercio", asked["conversation"])
+    plan = stack.ledger.plans[-1]
+    assert plan.categories == ("RESTAURANTS",) and plan.direction is Direction.EXPENSE
+
+
+def test_a_breakdown_the_draft_cannot_divide_is_not_put_into_it() -> None:
+    """Restaurants by category is one row. The verifier refuses that only when the sentence it
+    checks asks to divide, and the reply that would later complete a draft holding it («este año»)
+    does not — so it stays out, and the reply completes the question it answered, as before."""
+    stack = asking_for_the_window_stack(planner=KeepsTheBase())
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    answered = ask(stack, "este año por categoría", asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.group_by is GroupBy.NONE and plan.categories == ("RESTAURANTS",)
+
+
+def test_a_breakdown_the_drafts_measure_cannot_take_is_left_out() -> None:
+    """A monthly average spends its grouping on the months; by shop as well has no representation,
+    so the draft refuses it and the reply completes the average it answered."""
+    stack = asking_for_the_window_stack(planner=KeepsTheBase())
+    asked = ask(stack, "¿cuál es mi gasto medio mensual en restaurantes?")
+    answered = ask(stack, "este año por comercio", asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.metric is Metric.PERIOD_AVERAGE and plan.group_by is GroupBy.MONTH
+    assert plan.period.period is Period.THIS_YEAR
+
+
+def test_a_breakdown_by_shop_of_a_draft_about_one_shop_is_not_put_into_it() -> None:
+    """M-2. Mercadona by shop is one row, like restaurants by category: a question still being
+    completed is not widened (R36), so the breakdown stays out and the reply completes it."""
+    stack = asking_for_the_window_stack(planner=KeepsTheBase())
+    asked = ask(stack, "¿cuánto gasté en el super Mercadona?")
+    assert asked["conversation"]["draft"]["merchants"] == ["Mercadona"]
+    answered = ask(stack, "este año por comercio", asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.group_by is GroupBy.NONE and plan.merchants == ("Mercadona",)
