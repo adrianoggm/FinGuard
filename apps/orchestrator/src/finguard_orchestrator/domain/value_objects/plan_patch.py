@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
-from finguard_orchestrator.domain.enums import GroupBy, Metric
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -18,6 +18,7 @@ class PatchField(StrEnum):
     METRIC = "metric"
     EXCLUDED_CATEGORIES = "excludedCategories"
     EXCLUDED_MERCHANTS = "excludedMerchants"
+    DIRECTION = "direction"
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,9 @@ class PlanPatch:
     metric: Metric | None = None
     excluded_categories: tuple[str, ...] = ()
     excluded_merchants: tuple[str, ...] = ()
+    # Which way the money went, for a follow-up that turns the question round: «¿y ella a mí?»
+    # after «¿cuánto le mandé a Marta?» is the same person, the same window, money coming in.
+    direction: Direction | None = None
 
     def __post_init__(self) -> None:
         if not self.fields:
@@ -51,6 +55,7 @@ class PlanPatch:
                 (PatchField.METRIC, self.metric is not None),
                 (PatchField.EXCLUDED_CATEGORIES, bool(self.excluded_categories)),
                 (PatchField.EXCLUDED_MERCHANTS, bool(self.excluded_merchants)),
+                (PatchField.DIRECTION, self.direction is not None),
             )
             if present
         )
@@ -111,4 +116,8 @@ class PlanPatch:
                 ),
                 excluded_merchants=tuple(excluded_merchants),
             )
+        if self.direction is not None:
+            # Only the direction: the person, the window and every filter are the question that
+            # was asked, and the turn asked it the other way round.
+            changed = replace(changed, direction=self.direction)
         return changed

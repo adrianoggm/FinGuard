@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 from uuid import UUID
 
@@ -9,6 +10,7 @@ from finguard_orchestrator.domain.services.continuation_patch import (
     GroundedContinuation,
     PatchStatus,
     apply,
+    grouping_in,
     read,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -16,7 +18,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
-from finguard_orchestrator.domain.value_objects.plan_patch import PatchField
+from finguard_orchestrator.domain.value_objects.plan_patch import PatchField, PlanPatch
 
 TODAY = date(2026, 8, 25)
 
@@ -147,3 +149,135 @@ def test_metric_continuation_changes_only_metric() -> None:
     assert result.plan.group_by == previous.group_by
     assert result.plan.categories == previous.categories
     assert result.plan.counterparties == previous.counterparties
+
+
+# --- the readings that need the base (spec §3.4, Task 7) ----------------------------------------
+
+TO_MARTA = FinancialPlan(
+    direction=Direction.EXPENSE,
+    period=RelativePeriod(Period.THIS_MONTH),
+    counterparties=("Marta",),
+)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "direction"),
+    [
+        ("¿y ella a mí?", Direction.INCOME),
+        ("¿y él a mí?", Direction.INCOME),
+        ("¿y Marta a mí?", Direction.INCOME),
+        ("y lo que me mando ella?", Direction.INCOME),
+        ("y lo que ella me mandó", Direction.INCOME),
+        ("¿y lo que me ha pagado ella?", Direction.INCOME),
+        ("¿y lo que me mandó Marta?", Direction.INCOME),
+        ("¿y lo que me mandó?", Direction.INCOME),
+        ("¿y cuánto me ha mandado ella?", Direction.INCOME),
+        ("y lo que recibí de ella", Direction.INCOME),
+        ("¿y yo a ella?", Direction.EXPENSE),
+        ("y lo que le mandé", Direction.EXPENSE),
+        ("y lo que yo le he pagado a ella", Direction.EXPENSE),
+        ("y lo que ella recibió de mí", Direction.EXPENSE),
+    ],
+)
+def test_the_question_turned_round_on_the_bases_person(sentence: str, direction: Direction) -> None:
+    result = read(sentence, today=TODAY, base=TO_MARTA)
+
+    assert result.status is PatchStatus.APPLIED
+    assert result.patch is not None and result.patch.direction is direction
+    assert result.changed == frozenset({PatchField.DIRECTION})
+
+
+@pytest.mark.parametrize(
+    ("sentence", "base"),
+    [
+        # Somebody else, by name: Javi is never Marta, and «Marta Ruiz» has a word Marta lacks.
+        ("¿y lo que me mandó Javi?", TO_MARTA),
+        ("¿y Javi a mí?", TO_MARTA),
+        ("¿y lo que me mandó Marta Ruiz?", TO_MARTA),
+        # Nobody in the base: «ella» has no one to be.
+        ("¿y lo que me mandó ella?", replace(TO_MARTA, counterparties=())),
+        # Two people in the base: which one «ella» is would be a guess.
+        ("¿y ella a mí?", replace(TO_MARTA, counterparties=("Marta", "Javi"))),
+    ],
+)
+def test_a_turn_round_on_anyone_but_the_bases_one_person_is_not_a_patch(
+    sentence: str, base: FinancialPlan
+) -> None:
+    assert read(sentence, today=TODAY, base=base).status is PatchStatus.NOT_APPLICABLE
+
+
+def test_a_name_in_the_base_is_matched_word_by_word() -> None:
+    """«Marta» is «Marta Solis Vega», which is how a contact's full name reaches a plan."""
+    base = replace(TO_MARTA, counterparties=("Marta Solis Vega",))
+
+    assert read("¿y lo que me mandó Marta?", today=TODAY, base=base).status is (PatchStatus.APPLIED)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuánto me mandó Javi este año?",
+        "¿y lo que me mandó ella este mes?",
+        "¿y ella a mí en julio?",
+    ],
+)
+def test_a_turn_round_that_says_more_is_not_one(sentence: str) -> None:
+    """Each shape is the whole turn: a window or a question of its own beside it makes the turn
+    something the patch does not read, and it goes where it went before."""
+    assert read(sentence, today=TODAY, base=TO_MARTA).status is not PatchStatus.APPLIED
+
+
+def test_a_direction_the_sentence_states_wins_over_the_shape() -> None:
+    """Ruling R24. `explicit_facts` reads «ingresé» as income and the shape reads money sent; a
+    reading that disagrees with a stated direction is no reading."""
+    assert read("y lo que le ingresé", today=TODAY, base=TO_MARTA).status is (PatchStatus.AMBIGUOUS)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "grouping"),
+    [
+        ("mejor por categoría", GroupBy.CATEGORY),
+        ("¿y por categoría?", GroupBy.CATEGORY),
+        ("por categorías", GroupBy.CATEGORY),
+        ("agrupado por categoría", GroupBy.CATEGORY),
+        ("mejor agrúpalo por comercio", GroupBy.COUNTERPARTY),
+        ("¿y por comercios?", GroupBy.COUNTERPARTY),
+        ("mejor por meses", GroupBy.MONTH),
+    ],
+)
+def test_a_breakdown_said_as_the_whole_turn(sentence: str, grouping: GroupBy) -> None:
+    result = read(sentence, today=TODAY, base=TO_MARTA)
+
+    assert result.status is PatchStatus.APPLIED
+    assert result.patch == PlanPatch(group_by=grouping)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "status"),
+    [
+        ("¿y ella a mí?", PatchStatus.AMBIGUOUS),
+        ("y lo que recibí de ella", PatchStatus.AMBIGUOUS),
+        ("mejor por categoría", PatchStatus.AMBIGUOUS),
+        ("por categoría", PatchStatus.NOT_APPLICABLE),
+        ("agrupado por categoría", PatchStatus.NOT_APPLICABLE),
+    ],
+)
+def test_without_a_base_nothing_new_is_read(sentence: str, status: PatchStatus) -> None:
+    """The statuses a caller without a base read before Task 7, unchanged: `readers/follow_up.py`
+    gates its window patch on whether this says AMBIGUOUS."""
+    assert read(sentence, today=TODAY).status is status
+
+
+@pytest.mark.parametrize(
+    ("sentence", "grouping"),
+    [
+        ("este año por comercio", GroupBy.COUNTERPARTY),
+        ("este año, mejor por categoría", GroupBy.CATEGORY),
+        ("este año agrupado por meses", GroupBy.MONTH),
+        # The singular is also an average's divisor, which only `explicit_facts` can tell apart.
+        ("este año, de media por mes", None),
+        ("este año", None),
+    ],
+)
+def test_the_breakdown_a_reply_asks_for(sentence: str, grouping: GroupBy | None) -> None:
+    assert grouping_in(sentence) is grouping

@@ -24,6 +24,11 @@ again, so the only way out of an open question was to answer it.
                    them used to claim the reply first: after an answered question, «este año» to a
                    new question's «¿De qué periodo?» completed the *previous* one.
     CORRECTION     the turn corrects the last answer («no era eso, quería decir julio»).
+    FOLLOW_UP      nothing is open, an answer is in view, and the turn is a patch on it that the
+                   closed vocabularies ground (`continuation_patch.read` against that answer): «¿y
+                   ella a mí?» after «¿cuánto le mandé a Marta?», «mejor por categoría» after a
+                   total. A breakdown is never a correction, whatever the reading says: the figure
+                   stood, and the turn asks to see it divided.
     NEW_QUESTION   everything else, which the pipeline and the planner read as they always did.
 
 **Deterministic, and the interpreter's reading is evidence rather than a verdict.** RESET is a
@@ -55,10 +60,12 @@ from finguard_orchestrator.domain.models.conversation import (
     PaymentConfirmation,
     Slot,
 )
+from finguard_orchestrator.domain.models.planning_context import QueryFocus, focus_of
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnRelation
 from finguard_orchestrator.domain.services import (
     account_words,
     category_words,
+    continuation_patch,
     explicit_facts,
     intent_router,
     payment_router,
@@ -67,6 +74,8 @@ from finguard_orchestrator.domain.services import (
 )
 from finguard_orchestrator.domain.services.capability_guard import MOVEMENT_NOUNS
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.plan_patch import PatchField
 
 
 class TurnType(StrEnum):
@@ -405,6 +414,37 @@ def _what_it_fills(
     return frozenset(filled)
 
 
+# What the reading may call a turn that is a patch on the answer in view: a question about money,
+# or a correction of one. An aside, an order or a list of something is its own turn, whatever it
+# says.
+_A_PATCH_IS_READ_AS: Final = frozenset({Intent.FINANCIAL_QUERY, Intent.CORRECTION})
+
+
+def the_patch_on_the_answer(
+    sentence: str, conversation: Conversation, *, today: date
+) -> continuation_patch.GroundedContinuation | None:
+    """The grounded patch this turn makes on the answer in view, or None when it makes none.
+
+    Only with nothing open (`at_rest`): a question waiting for a reply is what a turn is about until
+    it is answered or left, and a reply to it is never patched onto the answer before it (spec
+    §3.1). Only over one plan in view (`focus_of` is a `QueryFocus` holding a `FinancialPlan`): a
+    ranking has no direction or grouping to patch, and a comparison, a proportion or a balance is
+    continued by its own path, which reads one plan as half an answer.
+
+    Public because the handler answers what this read, and two readings would let a turn be called
+    a follow-up the handler then patched differently.
+    """
+    focus = focus_of(conversation)
+    if (
+        not conversation.at_rest
+        or not isinstance(focus, QueryFocus)
+        or not isinstance(focus.current, FinancialPlan)
+    ):
+        return None
+    grounded = continuation_patch.read(sentence, today=today, base=focus.current)
+    return grounded if grounded.patch is not None else None
+
+
 def arbitrate(
     sentence: str, conversation: Conversation, analysis: TurnAnalysis, *, today: date
 ) -> Arbitration:
@@ -422,6 +462,18 @@ def arbitrate(
     fills = _what_it_fills(sentence, conversation, analysis, today=today)
     if fills:
         return Arbitration(TurnType.ANSWER_PENDING, fills)
-    if analysis.relation is TurnRelation.CORRECTION:
+    patch = (
+        the_patch_on_the_answer(sentence, conversation, today=today)
+        if analysis.intent in _A_PATCH_IS_READ_AS
+        else None
+    )
+    # «Mejor por categoría» opens like a correction and is not one: nothing in the answer was
+    # wrong, and the correction path would ask «¿Qué debería cambiar…?» or re-plan a figure that
+    # stood. A reading that calls it one is overruled by the shape; every other correction keeps
+    # its place before the follow-up.
+    regroups = patch is not None and patch.changed == {PatchField.GROUP_BY}
+    if analysis.relation is TurnRelation.CORRECTION and not regroups:
         return Arbitration(TurnType.CORRECTION)
+    if patch is not None:
+        return Arbitration(TurnType.FOLLOW_UP)
     return Arbitration(TurnType.NEW_QUESTION)

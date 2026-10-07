@@ -3,14 +3,22 @@
 This module deliberately does not try to understand a new financial question.  It only applies
 closed-vocabulary facts when the wording makes continuation (or correction) explicit.  Callers can
 therefore put it in front of an LLM planner without risking an accidental widening of scope.
+
+Two readings need the answer the turn continues, and are made only when the caller hands it over
+(`read`'s `base`; spec §3.4): a follow-up that turns the question round on the person it was about
+(«¿cuánto le mandé a Marta?» → «¿y ella a mí?»), because who «ella» is lives in the base; and a
+breakdown said as the whole turn («mejor por categoría»), because a turn that is nothing but a
+grouping is a patch only on something already answered. A caller without a base reads exactly what
+it read before either existed.
 """
 
 import re
 from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
+from typing import Final
 
-from finguard_orchestrator.domain.enums import GroupBy
+from finguard_orchestrator.domain.enums import Direction, GroupBy
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.services import (
     account_words,
@@ -213,17 +221,155 @@ def _has_unclaimed_window_token(
     )
 
 
+# The breakdowns a turn may ask of what is in view, in the words a person uses for them. «Por
+# comercio» is the merchant breakdown `explicit_facts` already gives those words (`COUNTERPARTY`),
+# so the two readings cannot disagree about it; «por categoría» is one `explicit_facts` does not
+# state at all, because in a longer sentence the noun after «por» proves nothing on its own.
+#
+# «Por mes» in the singular is not here: it is also the divisor of an average («de media por mes»),
+# and only `explicit_facts`, which reads the measure beside it, can tell the two apart.
+_GROUPED_BY: Final = {
+    "categoria": GroupBy.CATEGORY,
+    "categorias": GroupBy.CATEGORY,
+    "comercio": GroupBy.COUNTERPARTY,
+    "comercios": GroupBy.COUNTERPARTY,
+    "meses": GroupBy.MONTH,
+}
+_BY: Final = r"por\s+(?P<dimension>categorias?|comercios?|meses)"
+_A_GROUPING: Final = re.compile(rf"\b{_BY}\b")
+
+# A breakdown asked as the whole turn: «mejor por categoría», «¿y por comercio?», «agrupado por
+# meses», a bare «por categoría». The whole turn on purpose — nothing but the grouping is said, so
+# it cannot be a new question that happens to contain one.
+_A_REGROUPING: Final = re.compile(
+    rf"(?:(?:y|e|pero|ahora|mejor|vale|bueno)\s+)*"
+    rf"(?:agrup(?:a|alo|ado|ada|ados|adas)\s+)?(?:lo\s+)?{_BY}"
+)
+
+# The question turned round on the person it was about. Each shape is the whole turn, so a sentence
+# that says anything more — a window, another subject, «este año» — is not one of them, and a whole
+# new question («¿cuánto me mandó Javi este año?») never reads as a patch. `who` is checked against
+# the base afterwards (`_is_the_person_of`): the shape says the money turned round, the base says
+# whose money it is.
+#
+# The verbs are the unambiguous ones. «Me hizo» and «me pasó» are also what somebody did to the
+# holder or what happened to them, and with no «bizum» beside them nothing here could tell.
+_OPENS: Final = r"(?:(?:y|e|pero|ahora|vale|bueno)\s+)*"
+_WHAT: Final = r"(?:(?:lo\s+que|cuanto)\s+)?"
+_WHO: Final = r"(?P<who>[a-z]+(?:\s+[a-z]+){0,2})"
+_PARTICIPLES: Final = r"(?:mandado|enviado|pagado|dado|transferido|devuelto|ingresado)"
+# Money that came from them: «me mandó», «me ha pagado».
+_TO_ME: Final = rf"me\s+(?:ha\s+{_PARTICIPLES}|mando|envio|pago|dio|transfirio|devolvio|ingreso)"
+# Money the holder sent them: «le mandé», «le he pagado».
+_TO_THEM: Final = rf"le\s+(?:he\s+{_PARTICIPLES}|mande|envie|pague|di|transferi|devolvi|ingrese)"
+_TURNED_ROUND: Final = (
+    # «¿y ella a mí?», «¿y Marta a mí?»
+    (Direction.INCOME, re.compile(rf"{_OPENS}{_WHO}\s+a\s+mi")),
+    # «y lo que ella me mandó», and «y lo que me mandó» with the person left unsaid
+    (Direction.INCOME, re.compile(rf"{_OPENS}{_WHAT}(?:{_WHO}\s+)?{_TO_ME}")),
+    # «y lo que me mandó ella», «¿y lo que me ha pagado Marta?»
+    (Direction.INCOME, re.compile(rf"{_OPENS}{_WHAT}{_TO_ME}\s+{_WHO}")),
+    # «y lo que recibí de ella», «lo que me llegó de Marta»
+    (
+        Direction.INCOME,
+        re.compile(
+            rf"{_OPENS}{_WHAT}(?:he\s+recibido|recibi|me\s+(?:ha\s+llegado|llego))\s+de\s+{_WHO}"
+        ),
+    ),
+    # «¿y yo a ella?»
+    (Direction.EXPENSE, re.compile(rf"{_OPENS}yo\s+a\s+{_WHO}")),
+    # «y lo que le mandé», «y lo que yo le he pagado a ella»
+    (
+        Direction.EXPENSE,
+        re.compile(rf"{_OPENS}{_WHAT}(?:yo\s+)?{_TO_THEM}(?:\s+yo)?(?:\s+a\s+{_WHO})?"),
+    ),
+    # «y lo que ella recibió de mí»
+    (
+        Direction.EXPENSE,
+        re.compile(rf"{_OPENS}{_WHAT}{_WHO}\s+(?:ha\s+recibido|recibio)\s+de\s+mi"),
+    ),
+)
+# «Ella» and «él» (folded, «el») point at one person. Over a base about two, which one is a guess.
+_SHE_OR_HE: Final = frozenset({"ella", "el"})
+
+
+def grouping_in(sentence: str) -> GroupBy | None:
+    """The breakdown a sentence asks for in this module's grouping words, wherever it says it.
+
+    For a reply that also does something else — «este año por comercio» answering «¿De qué
+    periodo?» fills the window and asks for the breakdown — where `read` would only ever see a
+    whole turn. Same words as `_A_REGROUPING`, so a breakdown a follow-up asks for and one a reply
+    asks for are the same breakdown.
+    """
+    said = _A_GROUPING.search(spanish.folded(sentence))
+    return _GROUPED_BY[said.group("dimension")] if said is not None else None
+
+
+def _is_the_person_of(who: str | None, counterparties: tuple[str, ...]) -> bool:
+    """Whether `who` is the person the base is about.
+
+    Unsaid, «ella» or «él»: only when the base is about exactly one person. A name: when every word
+    of it is a word of one of the base's people — «Marta» is «Marta Solis Vega», and «Marta Ruiz» is
+    not «Marta», because a word the base does not have may be somebody else's surname. Javi is
+    never Marta, whatever the shape around him says.
+    """
+    if who is None or who in _SHE_OR_HE:
+        return len(counterparties) == 1
+    said = set(who.split())
+    return any(said <= set(spanish.folded(person).split()) for person in counterparties)
+
+
+def _read_on(
+    base: FinancialPlan, sentence: str, folded: str, *, today: date | None
+) -> GroundedContinuation | None:
+    """The two readings that need the base (module docstring), or None when the turn is neither.
+
+    A turn shaped like a turn-round that is not about the base's person is `NOT_APPLICABLE`: it
+    continues nothing here — «¿y lo que me mandó ella?» after a question about nobody in particular
+    has no «ella» to find, and inventing one is the wrong figure this refuses. A direction the
+    sentence states outright and the shape contradicts is `AMBIGUOUS` (ruling R24: a direction the
+    turn states wins, so a reading that disagrees with it is no reading).
+    """
+    regrouped = _A_REGROUPING.fullmatch(folded)
+    if regrouped is not None:
+        return GroundedContinuation(
+            PatchStatus.APPLIED, PlanPatch(group_by=_GROUPED_BY[regrouped.group("dimension")])
+        )
+    for direction, shape in _TURNED_ROUND:
+        turned = shape.fullmatch(folded)
+        if turned is None:
+            continue
+        if not base.counterparties or not _is_the_person_of(
+            turned.group("who"), base.counterparties
+        ):
+            return GroundedContinuation.not_applicable()
+        stated = explicit_facts.read(sentence, today=today).direction
+        if stated is not None and stated is not direction:
+            return GroundedContinuation.ambiguous()
+        return GroundedContinuation(PatchStatus.APPLIED, PlanPatch(direction=direction))
+    return None
+
+
 def read(
     sentence: str,
     *,
     today: date | None = None,
+    base: FinancialPlan | None = None,
 ) -> GroundedContinuation:
     """Read a closed-vocabulary continuation without consulting conversational state.
 
     ``AMBIGUOUS`` is returned for a continuation-shaped sentence whose recognized facts are
     insufficient or mixed with a fresh question. The caller decides whether a base exists.
+
+    `base` is the answer the turn continues, for the two readings that need it (module docstring).
+    Without one, nothing here reads either: `readers/follow_up.py` gates on whether this says
+    AMBIGUOUS, and a status it relied on must not move under it.
     """
     folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
+    if base is not None:
+        on_the_base = _read_on(base, sentence, folded, today=today)
+        if on_the_base is not None:
+            return on_the_base
     if not _CONTINUATION.search(folded):
         return GroundedContinuation.not_applicable()
 
@@ -287,6 +433,6 @@ def apply(
     """Compatibility wrapper around ``read`` and the immutable patch operation."""
     if previous is None:
         return GroundedContinuationPatch(PatchStatus.NOT_APPLICABLE)
-    continuation = read(sentence, today=today)
+    continuation = read(sentence, today=today, base=previous)
     plan = continuation.patch.apply_to(previous) if continuation.patch is not None else None
     return GroundedContinuationPatch(continuation.status, continuation.patch, plan)

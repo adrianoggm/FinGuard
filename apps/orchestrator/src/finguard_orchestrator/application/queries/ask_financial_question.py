@@ -1071,6 +1071,21 @@ class AskFinancialQuestionHandler:
                 return
             # It named an account and nothing this turn could settle it: read as it always was.
 
+        if arbitration.type is TurnType.FOLLOW_UP:
+            # A patch on the answer in view that only the patch reads (spec §3.4): «¿y ella a mí?»
+            # after «¿cuánto le mandé a Marta?», «mejor por categoría» after a total. Answered from
+            # that answer at once, past every reader below — none of them knows who «ella» is, and
+            # a bare «por categoría» was narrowed to a shop called «por categoría» — through the
+            # same patch application, facts, verifier and answer as a patch the planner path
+            # grounds (`_completed_or_planned`), with the base it continues.
+            grounded = turn_arbiter.the_patch_on_the_answer(query.sentence, was, today=query.today)
+            if grounded is not None and _only_the_patch_reads(grounded):
+                async for step in self._completed_or_planned(
+                    query, was, analysis, continuation, previous, following_up=True
+                ):
+                    yield step
+                return
+
         scope_followup = await self._scope_change_followup(query)
         if scope_followup is not None:
             yield scope_followup
@@ -1709,6 +1724,8 @@ class AskFinancialQuestionHandler:
         analysis: TurnAnalysis,
         continuation: ContinuationBase | None,
         previous: PlannedQuery | None,
+        *,
+        following_up: bool = False,
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         """The end of `_steps`: the guard, the open question completed, and the planner.
 
@@ -1722,6 +1739,10 @@ class AskFinancialQuestionHandler:
 
         `previous` is the last answered plan, for the window log line; `continuation` is the base
         `_steps` chose, which an open clarification's completed draft replaces below.
+
+        `following_up` is a FOLLOW_UP the arbitration named, sent here straight from `_steps` as a
+        reply is: its patch is read against the answer it continues — who «ella» is lives there —
+        and the answer says it continued that one, for the chart's lineage (F-H3).
         """
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
         # The guard's own verdict, both ways, from the one place it is acted on. `AGREED` is here
@@ -1780,7 +1801,17 @@ class AskFinancialQuestionHandler:
         )
 
         yield Stage("planning")
-        grounded = continuation_patch.read(query.sentence, today=context.today)
+        grounded = continuation_patch.read(
+            query.sentence,
+            today=context.today,
+            # Only for a follow-up: every other turn reaching here reads what it read before a patch
+            # could need the base, so a reply to an open question is never patched as one.
+            base=(
+                context.continuation.plan
+                if following_up and context.continuation is not None
+                else None
+            ),
+        )
         grounded_plan: FinancialPlan | None = None
         if (
             grounded.status is continuation_patch.PatchStatus.APPLIED
@@ -1923,7 +1954,11 @@ class AskFinancialQuestionHandler:
         if isinstance(checked, TopMovements):
             yield await self._ranked(query, checked)
             return
-        yield await self._answer(query, checked)
+        answered = await self._answer(query, checked)
+        if following_up and grounded_plan is not None:
+            # The answer in view, patched: what `_answering` stamps for the readers that patch it.
+            answered = replace(answered, plan_continues_conversation=True)
+        yield answered
 
     # --- what a claim becomes -------------------------------------------------------------------
     #
@@ -5866,6 +5901,29 @@ def _answers_the_transfer(sentence: str, waiting: TransferInProgress) -> bool:
 # question's subject, not a patch on the comparison behind it.
 _A_PATCH_MAY_TAKE: Final = frozenset({TurnType.FOLLOW_UP, TurnType.NEW_QUESTION})
 
+# The follow-ups `_steps` answers from the answer in view as soon as the arbitration names them:
+# which way the money went, and a breakdown by kind — category or shop. No reader below reads either
+# better than the patch, and leaving them to the readers only gave a wrong one the chance.
+#
+# Every other patch the arbitration calls a follow-up keeps going past the readers that know more
+# about it than the patch does: «¿y el año anterior?» is a year back from the window in view
+# (`_a_year_earlier`), and the patch reads last calendar year; «¿y por semanas?» over an average is
+# `_average_plan`'s, which turns the average into a per-week one; a calendar regroup of a running
+# total is the follow-up reader's. Those reach the patch at the end of the cascade, as before.
+_ONLY_THE_PATCH_READS: Final = frozenset({PatchField.DIRECTION, PatchField.GROUP_BY})
+_A_BREAKDOWN_BY_KIND: Final = frozenset({GroupBy.CATEGORY, GroupBy.COUNTERPARTY})
+
+
+def _only_the_patch_reads(grounded: continuation_patch.GroundedContinuation) -> bool:
+    """Whether a follow-up's patch is one `_ONLY_THE_PATCH_READS` argues no reader reads better."""
+    patch = grounded.patch
+    return (
+        patch is not None
+        and grounded.changed <= _ONLY_THE_PATCH_READS
+        and (patch.group_by is None or patch.group_by in _A_BREAKDOWN_BY_KIND)
+    )
+
+
 # What a grounded patch may change on a comparison, on both sides at once: the subject it leaves out
 # («y sin restaurantes») and the measure («¿y cuántas veces?», «¿y la media?»). A measure is what
 # both sides agree to compare, so it changes on both or the pair would compare a count with a sum;
@@ -5873,32 +5931,46 @@ _A_PATCH_MAY_TAKE: Final = frozenset({TurnType.FOLLOW_UP, TurnType.NEW_QUESTION}
 # says a COUNT or an AVERAGE pair in its own words. Never a window — the two windows *are* the
 # comparison, and «¿y en agosto?» moves the view to one of them, which the follow-up reader already
 # answers. Nor a regroup: `between` normalises a presentation grouping away, so one applied here
-# would be dropped without a word.
+# would be dropped without a word. Nor a direction: turning a question round («¿y ella a mí?») is
+# read against the person of one answer in view, and `_the_comparison_continued` reads with no base,
+# so `continuation_patch` never produces that patch here. Were it to, an unlisted field refuses the
+# patch, and the turn goes on to be read as it was before the comparison could be continued at all.
 _A_BOTH_SIDES_PATCH: Final = frozenset(
     {PatchField.EXCLUDED_CATEGORIES, PatchField.EXCLUDED_MERCHANTS, PatchField.METRIC}
 )
 
-# The words an elliptical category turn may carry besides the category itself — the follow-up
-# reader's own list (`read_contextual_follow_up`, `category_ellipsis`), so «¿y en gasolina?» is an
-# ellipsis to both readers or to neither.
-_ELLIPSIS_WORDS: Final = frozenset({"y", "en", "solo", "el", "la", "los", "las"})
+# How a turn that only names a category opens when it continues what is in view: «¿y en
+# gasolina?», «solo en gasolina», «ahora en gasolina», «en gasolina».
+_AN_ELLIPSIS_OPENS: Final = frozenset({"y", "solo", "ahora", "en"})
+
+# Every word such a turn may carry besides the category: the openers again, and the articles.
+#
+# A narrower reading than the follow-up reader's for one plan, on purpose. That reader takes an
+# ellipsis that opens with «y» (`read_contextual_follow_up`, `category_ellipsis`: these words, less
+# «ahora»), its `_CATEGORY_FILTER_FOLLOW_UP` shapes with whatever follows them, and several
+# categories at once; this one takes those openings only when every other word is the category's
+# own, and only one category.
+# Over two windows a word nobody placed may be a second subject or a window of its own, and reading
+# past it would put two figures on a guess.
+_ELLIPSIS_WORDS: Final = _AN_ELLIPSIS_OPENS | {"el", "la", "los", "las"}
 
 
 def _the_category_an_ellipsis_names(sentence: str) -> str | None:
     """The one category «¿y en gasolina?» says, when saying it is the whole turn.
 
-    The «y» is the evidence the turn continues something; every other word has to be the
-    category's own or one of `_ELLIPSIS_WORDS`. «¿Cuánto gasté en gasolina?» has no «y» and is a
-    question of its own, and «¿y cuánto en gasolina?» says more than a category, so neither is
-    read here. Two categories are refused for `_direct_period_comparison`'s reason: «¿y en
-    gasolina y restaurantes?» over two windows is one combined figure or two, and choosing would
-    be a guess.
+    The opening (`_AN_ELLIPSIS_OPENS`) is the evidence the turn continues something; every other
+    word has to be the category's own or one of `_ELLIPSIS_WORDS`. «¿Cuánto gasté en gasolina?»
+    opens with a question and is one of its own, and «¿y cuánto en gasolina?» or «en gasolina en
+    agosto» say more than a category, so none of them is read here. Two categories are refused for
+    `_direct_period_comparison`'s reason: «¿y en gasolina y restaurantes?» over two windows is one
+    combined figure or two, and choosing would be a guess.
     """
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\s+", "", _clean_turn(sentence))
-    if not folded.startswith("y "):
+    words = folded.split()
+    if not words or words[0] not in _AN_ELLIPSIS_OPENS:
         return None
     named = category_words.precisely_named_in(sentence)
-    said = set(folded.split()) - category_words.words_named_in(sentence) - _ELLIPSIS_WORDS
+    said = set(words) - category_words.words_named_in(sentence) - _ELLIPSIS_WORDS
     return named[0] if len(named) == 1 and not said else None
 
 
@@ -5912,10 +5984,10 @@ def _the_comparison_continued(query: AskFinancialQuestionQuery) -> ComparisonPla
     comparison with a real figure on it; so the patch is read here and applied to both sides, and
     the pair is answered by `_compare_periods` like any other.
 
-    A patch is what the closed vocabularies ground: a category said on its own after «y»
-    (`_the_category_an_ellipsis_names`), or a grounded exclusion or measure
-    (`continuation_patch.read`, `_A_BOTH_SIDES_PATCH`). Each side keeps its own window. Nothing
-    else is read as one, and every refusal leaves the turn exactly where it was:
+    A patch is what the closed vocabularies ground: a category said on its own («¿y en
+    gasolina?», «solo en gasolina»; `_the_category_an_ellipsis_names`), or a grounded exclusion or
+    measure (`continuation_patch.read`, `_A_BOTH_SIDES_PATCH`). Each side keeps its own window.
+    Nothing else is read as one, and every refusal leaves the turn exactly where it was:
 
     - a question left open is what the turn is about, not the comparison answered before it;
     - a turn that names a window of its own («¿y en gasolina en agosto?») is a new question or the

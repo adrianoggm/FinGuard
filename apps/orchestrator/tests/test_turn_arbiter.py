@@ -9,6 +9,7 @@ These are the arbitration's own rules, with the sentences as people type them. W
 *does* is `test_a_pending_question_is_not_a_cage.py`'s business, over HTTP.
 """
 
+from dataclasses import replace
 from datetime import date
 from uuid import UUID
 
@@ -24,23 +25,31 @@ from finguard_orchestrator.domain.models.conversation import (
     PaymentConfirmation,
     Slot,
 )
-from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis
+from finguard_orchestrator.domain.models.turn_analysis import (
+    TurnAnalysis,
+    TurnFocus,
+    TurnRelation,
+)
 from finguard_orchestrator.domain.services import (
     merchant_words,
     turn_analyzer,
     turn_interpreters,
 )
+from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.turn_arbiter import (
     Arbitration,
     TurnType,
     arbitrate,
     is_a_reset,
 )
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
     FinancialPlan,
     FinancialPlanDraft,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 TODAY = date(2026, 8, 5)
 ANSWERED = Conversation(
@@ -336,3 +345,91 @@ async def test_what_a_reply_says_about_the_subject(sentence: str, fills: set[Slo
     assert await arbitration_of(sentence, conversation_waiting_for(Slot.WINDOW)) == Arbitration(
         TurnType.ANSWER_PENDING, frozenset(fills)
     )
+
+
+# --- FOLLOW_UP: a patch on the answer in view (Task 7) -------------------------------------------
+
+TO_MARTA = Conversation(
+    last_plan=FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_MONTH),
+        counterparties=("Marta",),
+    )
+)
+READ_AS_A_CORRECTION = TurnAnalysis(
+    intent=Intent.CORRECTION, relation=TurnRelation.CORRECTION, focus=TurnFocus.LAST_ANSWER
+)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "conversation"),
+    [
+        ("mejor por categoría", ANSWERED),
+        ("por categoría", ANSWERED),
+        ("¿y ella a mí?", TO_MARTA),
+        ("y lo que recibí de ella", TO_MARTA),
+        # Every grounded patch on the answer in view is one, not only the two Task 7 added.
+        ("¿y en julio?", ANSWERED),
+        ("y sin alquiler", ANSWERED),
+    ],
+)
+async def test_a_grounded_patch_on_the_answer_in_view_is_a_follow_up(
+    sentence: str, conversation: Conversation
+) -> None:
+    assert await kind_of(sentence, conversation) is TurnType.FOLLOW_UP
+
+
+async def test_a_breakdown_is_a_follow_up_even_read_as_a_correction() -> None:
+    """«Mejor» opens a correction, and a model may read it as one; nothing in the answer was wrong,
+    so the shape overrules the reading. Never a reset either."""
+    arbitration = arbitrate("mejor por categoría", ANSWERED, READ_AS_A_CORRECTION, today=TODAY)
+
+    assert arbitration.type is TurnType.FOLLOW_UP
+    assert is_a_reset("mejor por categoría") is False
+
+
+async def test_any_other_correction_keeps_its_place_before_the_follow_up() -> None:
+    arbitration = arbitrate("no, en julio", ANSWERED, READ_AS_A_CORRECTION, today=TODAY)
+
+    assert arbitration.type is TurnType.CORRECTION
+
+
+WAITING_AFTER_AN_ANSWER = replace(
+    conversation_waiting_for(Slot.WINDOW), last_plan=ANSWERED.last_plan
+)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "conversation"),
+    [
+        # Nothing answered: nothing to patch.
+        ("mejor por categoría", IDLE),
+        # A question open: it is what the turn is about.
+        ("mejor por categoría", WAITING_AFTER_AN_ANSWER),
+        # Somebody who is not the answer's person, and a whole question of its own.
+        ("¿y lo que me mandó Javi?", TO_MARTA),
+        ("¿cuánto me mandó Javi este año?", TO_MARTA),
+        # No person in the answer: «ella» is nobody.
+        ("¿y lo que me mandó ella?", ANSWERED),
+    ],
+)
+async def test_what_is_not_a_follow_up(sentence: str, conversation: Conversation) -> None:
+    assert await kind_of(sentence, conversation) is not TurnType.FOLLOW_UP
+
+
+async def test_a_ranking_or_a_comparison_in_view_is_not_patched_as_one_plan() -> None:
+    ranked = Conversation(
+        last_plan=TopMovements(
+            direction=Direction.EXPENSE, period=RelativePeriod(period=Period.THIS_MONTH)
+        )
+    )
+    july = FinancialPlan(
+        direction=Direction.EXPENSE,
+        date_range=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31)),
+        categories=("RESTAURANTS",),
+    )
+    june = replace(july, date_range=AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30)))
+    compared = Conversation(last_comparison=ComparisonPlan.between(june, july), last_plan=july)
+
+    assert await kind_of("mejor por categoría", ranked) is not TurnType.FOLLOW_UP
+    assert await kind_of("¿y por categoría?", compared) is not TurnType.FOLLOW_UP

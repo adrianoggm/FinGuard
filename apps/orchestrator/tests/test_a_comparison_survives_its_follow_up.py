@@ -17,6 +17,7 @@ Driven over HTTP on the episodes stack.
 """
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from support import episodes
@@ -58,6 +59,20 @@ def test_comparison_followup() -> None:
     assert second["outcome"] == "PLANNED", second["text"]
 
 
+@pytest.mark.parametrize("sentence", ["solo en gasolina", "ahora en gasolina", "en gasolina"])
+def test_a_category_said_without_the_y_patches_both_sides_too(sentence: str) -> None:
+    """R28 (M-3). «¿y en gasolina?» is not the only way to say it: «solo en gasolina», «ahora en
+    gasolina» and a bare «en gasolina» were planned from scratch as one figure for last month."""
+    stack = episodes.a_stack()
+    first = ask(stack, COMPARISON, SETTLED)
+    stack.ledger.ran.clear()
+
+    ask(stack, sentence, first["conversation"])
+
+    continued = _continued(stack.ledger.ran)
+    assert continued and all(plan.categories == ("TRANSPORT_FUEL",) for plan in continued)
+
+
 @pytest.mark.parametrize(
     "sentence",
     [
@@ -96,6 +111,63 @@ def test_the_patched_comparison_is_the_one_the_next_follow_up_continues() -> Non
 
     continued = _continued(stack.ledger.ran)
     assert continued and all(plan.categories == ("GROCERIES",) for plan in continued)
+
+
+def _comparison_in(answer: dict[str, Any]) -> ComparisonFocus | None:
+    """The comparison the next turn will read back, through the wire's own mapper."""
+    focus = focus_of(
+        conversation_mapper.to_domain(ConversationPayload.model_validate(answer["conversation"]))
+    )
+    return focus if isinstance(focus, ComparisonFocus) else None
+
+
+def test_the_comparison_committed_after_a_patch_is_the_patched_pair() -> None:
+    """R28 (M-2). The state itself, not only the next turn's reading of it: what the conversation
+    keeps is the fuel pair, both windows, and no trace of the restaurants it replaced."""
+    stack = episodes.a_stack()
+    first = ask(stack, COMPARISON, SETTLED)
+
+    patched = ask(stack, "¿y en gasolina?", first["conversation"])
+
+    comparison = _comparison_in(patched)
+    assert comparison is not None
+    pair = (comparison.value.earlier, comparison.value.latest)
+    assert all(side.categories == ("TRANSPORT_FUEL",) for side in pair)
+    assert sorted(side.date_range.start.month for side in pair if side.date_range) == [6, 7]
+
+
+def test_a_newer_single_answer_replaces_the_comparison_as_the_base() -> None:
+    """R28 (M-2). «¿y en agosto?» answers one window, and that answer is the base now: «¿y en
+    gasolina?» after it is August in fuel, one query, not the June/July pair behind it."""
+    stack = episodes.a_stack()
+    first = ask(stack, COMPARISON, SETTLED)
+    august = ask(stack, "¿y en agosto?", first["conversation"])
+    assert _comparison_in(august) is None
+    stack.ledger.ran.clear()
+
+    ask(stack, "¿y en gasolina?", august["conversation"])
+
+    assert len(stack.ledger.ran) == 1
+    (fuel,) = stack.ledger.ran
+    assert isinstance(fuel, FinancialPlan) and fuel.date_range is not None
+    assert fuel.date_range.start.month == 8 and fuel.categories == ("TRANSPORT_FUEL",)
+
+
+@pytest.mark.parametrize("aside", ["¿cuánto tengo?", "gracias"])
+def test_an_aside_keeps_the_comparison_as_the_base(aside: str) -> None:
+    """R28 (M-2). A balance or a «gracias» between the comparison and the ellipsis answers
+    something else and leaves the comparison where it was: «¿y en gasolina?» still patches both
+    sides."""
+    stack = episodes.a_stack()
+    first = ask(stack, COMPARISON, SETTLED)
+    aside_answer = ask(stack, aside, first["conversation"])
+    assert _comparison_in(aside_answer) is not None
+    stack.ledger.ran.clear()
+
+    ask(stack, "¿y en gasolina?", aside_answer["conversation"])
+
+    continued = _continued(stack.ledger.ran)
+    assert continued and all(plan.categories == ("TRANSPORT_FUEL",) for plan in continued)
 
 
 @pytest.mark.parametrize(
@@ -243,6 +315,10 @@ def test_a_follow_up_that_names_a_window_moves_the_view_to_it() -> None:
         "¿cuánto gasté en gasolina en julio?",
         "¿cuánto gasté en gasolina?",
         "¿y en gasolina y restaurantes?",
+        # The same three refusals in the shapes R28 (M-3) widened the reading to.
+        "en gasolina en agosto",
+        "solo en gasolina y restaurantes",
+        "ahora, ¿cuánto gasté en gasolina?",
     ],
 )
 def test_a_question_of_its_own_is_not_a_patch_on_the_comparison(sentence: str) -> None:
