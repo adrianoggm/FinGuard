@@ -287,3 +287,52 @@ async def test_the_correction_question_is_left_to_the_correction_readers() -> No
     assert await kind_of("este año", conversation_waiting_for(Slot.CORRECTION)) is not (
         TurnType.ANSWER_PENDING
     )
+
+
+# Ruling R21: the five new questions the review found taken for the period question's account.
+A_NEW_QUESTION_NAMING_AN_ACCOUNT = (
+    "¿cuánto ingresé en la hucha?",
+    "¿cuánto he gastado en la hucha?",
+    "¿qué movimientos tengo en la hucha?",
+    "muéstrame los movimientos de la cuenta corriente",
+    "dame los gastos de la hucha por categoría",
+)
+
+
+@pytest.mark.parametrize("sentence", A_NEW_QUESTION_NAMING_AN_ACCOUNT)
+async def test_a_new_question_naming_an_account_is_not_the_period_questions_account(
+    sentence: str,
+) -> None:
+    """Ruling R21. A reply that does not fill the slot asked is one only while it is elliptical:
+    each of these states a subject of its own — income, spending, a listing, a breakdown — and the
+    account in it belongs to that question, not to «¿cuánto gasté en restaurantes?»."""
+    assert await kind_of(sentence, conversation_waiting_for(Slot.WINDOW)) is not (
+        TurnType.ANSWER_PENDING
+    )
+
+
+@pytest.mark.parametrize(
+    "sentence", ["en todas mis cuentas", "en la hucha", "¿y en la hucha?", "la cuenta corriente"]
+)
+async def test_an_account_said_on_its_own_is_still_the_period_questions(sentence: str) -> None:
+    assert await arbitration_of(sentence, conversation_waiting_for(Slot.WINDOW)) == Arbitration(
+        TurnType.ANSWER_PENDING, frozenset({Slot.ACCOUNT})
+    )
+
+
+@pytest.mark.parametrize(
+    ("sentence", "fills"),
+    [
+        # An excluded category is the reply's subject as much as an included one (ruling R22).
+        ("este año sin gasolina", {Slot.WINDOW, Slot.CATEGORY}),
+        ("en todas mis cuentas pero en gasolina", {Slot.ACCOUNT, Slot.CATEGORY}),
+        # «Nómina» beside «cuenta» is the account, as `_scoped` reads it — not the payroll.
+        ("la cuenta nómina", {Slot.ACCOUNT}),
+        # And without «cuenta» it is the payroll, as `_scoped` reads it — not the current account.
+        ("este año, la nómina", {Slot.WINDOW, Slot.CATEGORY}),
+    ],
+)
+async def test_what_a_reply_says_about_the_subject(sentence: str, fills: set[Slot]) -> None:
+    assert await arbitration_of(sentence, conversation_waiting_for(Slot.WINDOW)) == Arbitration(
+        TurnType.ANSWER_PENDING, frozenset(fills)
+    )

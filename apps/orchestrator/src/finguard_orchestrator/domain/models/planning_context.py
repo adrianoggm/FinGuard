@@ -105,6 +105,11 @@ def planning_context(
 ) -> PlanningContext:
     """Project only the typed facts planning needs; never expose mutable wire state."""
     focus = focus_of(conversation)
+    # A comparison is a base too, and deliberately not one the planner continues: it is handed one
+    # plan, and either operand alone would answer half the comparison with a real figure on it.
+    # «¿Y en gasolina?» after one is patched on both sides before the planner is reached
+    # (`AskFinancialQuestionHandler._steps`, `_the_comparison_continued`); a turn that patch cannot
+    # read reaches the planner with no base, as a question of its own.
     can_continue = continuation is not None and (
         continuation.source is ContinuationSource.ACTIVE_CLARIFICATION
         or (isinstance(focus, QueryFocus) and focus.current is continuation.plan)

@@ -59,6 +59,7 @@ from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, Turn
 from finguard_orchestrator.domain.services import (
     account_words,
     category_words,
+    explicit_facts,
     intent_router,
     payment_router,
     spanish,
@@ -230,6 +231,41 @@ _A_TURN_OF_ITS_OWN: Final = frozenset(
 
 _WINDOW_SLOTS: Final = frozenset({Slot.WINDOW, Slot.YEAR})
 
+# What a sentence says it is about, beyond which account or which category (ruling R21): money that
+# went or came, a listing of movements, money held, a breakdown. A reply to «¿De qué periodo?» that
+# brings no window and says one of these is a question of its own that happens to name an account —
+# «¿cuánto ingresé en la hucha?», «dame los gastos de la hucha por categoría» — and folding that
+# account into the open draft ran restaurant spending in the hucha for a question about income.
+#
+# Stems and whole nouns, read folded, beside `_SELF_CONTAINED_FINANCIAL_QUESTION` rather than in it:
+# that one needs a question word and decides follow-ups for the readers too, and widening it would
+# move every reader's line between an ellipsis and a new question at once. «Dame», «lista» and the
+# other imperatives are not here on purpose — what they ask for is the noun after them.
+_A_SUBJECT_OF_ITS_OWN: Final = re.compile(
+    r"\b(?:gast\w*|ingres\w*|cobr\w*|pagu\w*|pagad\w*|compr\w*|recib\w*"
+    r"|entr(?:o|aron|ado|ada)|saldo|dinero|desglos\w*)\b"
+    rf"|\b(?:{MOVEMENT_NOUNS})(?:s|es)?\b|\b(?:operacion|transaccion)\w*"
+    r"|\bpor\s+(?:categorias?|comercios?|tiendas?|meses|mes|semanas?|dias?|cuentas?|personas?)\b"
+)
+
+
+def _states_a_subject_of_its_own(sentence: str) -> bool:
+    """Whether the sentence says what it is about, not only where or in which category.
+
+    Its own vocabulary above, the self-contained question shape, and the measure or grouping
+    `explicit_facts` reads («de media», «¿cuántas veces?», «por mes»). Not the direction
+    `explicit_facts` reads: it takes «la cuenta nómina» for income because of the noun, and that
+    is an account, the most ordinary of the replies this has to leave alone.
+    """
+    folded = spanish.folded(sentence)
+    if (
+        _SELF_CONTAINED_FINANCIAL_QUESTION.search(folded) is not None
+        or _A_SUBJECT_OF_ITS_OWN.search(folded) is not None
+    ):
+        return True
+    facts = explicit_facts.read(sentence)
+    return facts.metric is not None or facts.group_by is not None
+
 
 def _what_the_question_holds(conversation: Conversation) -> frozenset[Slot]:
     """The slots the open question can take a value for, whichever of them it asked.
@@ -258,6 +294,41 @@ def _what_the_question_holds(conversation: Conversation) -> frozenset[Slot]:
     return frozenset()
 
 
+# «Nómina» is two things: the payroll (SALARY) and, beside «cuenta», the account it is paid into —
+# `account_words` lists «la nómina» and «la cuenta nómina» among the current account's names. Read
+# here the way `_scoped` reads it when a plan runs: «la cuenta nómina» is the account; a «nómina»
+# without it is the payroll, and the current account is not named by it.
+_THE_PAYROLL_ACCOUNT: Final = re.compile(r"\bcuenta\s+nomina\b")
+_THE_PAYROLL: Final = re.compile(r"\bnomina\b")
+
+
+def _kinds_of_account_named(sentence: str) -> tuple[str, ...]:
+    """`account_words.named_in`, with a «nómina» that names the payroll left out of it."""
+    folded = spanish.folded(sentence)
+    if _THE_PAYROLL_ACCOUNT.search(folded):
+        return account_words.named_in(folded)
+    return account_words.named_in(_THE_PAYROLL.sub(" ", folded))
+
+
+def categories_a_reply_names(sentence: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The categories a reply puts in its subject, and the ones it leaves out of it.
+
+    Read with the vocabulary the plan verifier checks a plan against (`_category_misread` takes
+    named minus excluded the same way), so a draft completed with these is one the verifier agrees
+    with. «Sin gasolina» names the fuel too, and is only an exclusion. A «nómina» that is the
+    account («la cuenta nómina») is no category at all.
+
+    Public because the handler absorbs exactly what the arbitration said the reply fills: two
+    readings would let a reply count as filling a category the handler then could not find.
+    """
+    named = category_words.precisely_named_in(sentence)
+    excluded = category_words.precisely_excluded_in(sentence)
+    if _THE_PAYROLL_ACCOUNT.search(spanish.folded(sentence)):
+        named = tuple(category for category in named if category != "SALARY")
+        excluded = tuple(category for category in excluded if category != "SALARY")
+    return tuple(category for category in named if category not in excluded), excluded
+
+
 def _names_an_account(sentence: str, conversation: Conversation) -> bool:
     """Whether the sentence chooses among the holder's accounts, in words that need no directory.
 
@@ -268,7 +339,7 @@ def _names_an_account(sentence: str, conversation: Conversation) -> bool:
     matched against the names that question offered — the conversation carries them, so this needs
     no directory either.
     """
-    if account_words.asks_for_all_accounts(sentence) or account_words.named_in(sentence):
+    if account_words.asks_for_all_accounts(sentence) or _kinds_of_account_named(sentence):
         return True
     asked = conversation.awaiting or conversation.last_asked
     if asked is Slot.ACCOUNT and account_words.all_accounts_as_a_reply(sentence):
@@ -287,7 +358,7 @@ def _what_it_fills(
     """The slots of the open question this sentence fills, or none when it is not a reply to it.
 
     Read with the vocabularies the handler completes the question with — `window_words.window_in`
-    against the slot asked, `category_words.precisely_named_in`, `account_words` — so the
+    against the slot asked, `categories_a_reply_names`, `account_words` — so the
     arbitration cannot call a turn a reply the handler then has nothing to absorb from.
 
     Not a reply, whatever it names: a turn the analysis reads as an aside or an order
@@ -299,6 +370,12 @@ def _what_it_fills(
     fills the window and names a new subject, and both are the reply's; «en gasolina» to «¿De qué
     periodo?» fills nothing the question was waiting on, and is a change of subject the pipeline
     reads as it always did.
+
+    **Nor is a turn that leaves the slot asked empty and says what it is about** (ruling R21,
+    `_states_a_subject_of_its_own`). Without a window, «en la hucha» can only be the account of the
+    question waiting for one; «¿cuánto ingresé en la hucha?» is income, its own question, and the
+    account it names is that question's. With the slot filled, the rest of the sentence is the
+    reply's to change — «este año, pero cuéntalas» — and goes with it.
     """
     holds = _what_the_question_holds(conversation)
     if (
@@ -317,9 +394,13 @@ def _what_it_fills(
         filled.add(window_slot)
     if Slot.ACCOUNT in holds and _names_an_account(sentence, conversation):
         filled.add(Slot.ACCOUNT)
-    if Slot.CATEGORY in holds and category_words.precisely_named_in(sentence):
+    if Slot.CATEGORY in holds and any(categories_a_reply_names(sentence)):
         filled.add(Slot.CATEGORY)
     if filled == {Slot.CATEGORY} and asked is not Slot.CATEGORY:
+        return frozenset()
+    if filled and asked not in filled and _states_a_subject_of_its_own(sentence):
+        # Ruling R21: what the question asked is still missing, so the reply is one only while it
+        # is elliptical. A turn that says what it is about is asking that instead.
         return frozenset()
     return frozenset(filled)
 

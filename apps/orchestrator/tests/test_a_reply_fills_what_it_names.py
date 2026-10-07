@@ -15,10 +15,16 @@ from collections.abc import Iterator
 
 import pytest
 from support import episodes
-from support.pending import SETTLED, account_question_stack, ask, asking_for_the_window_stack
+from support.pending import (
+    SETTLED,
+    KeepsTheBase,
+    account_question_stack,
+    ask,
+    asking_for_the_window_stack,
+)
 
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.enums import Period
+from finguard_orchestrator.domain.enums import Direction, Metric, Period
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +40,8 @@ def test_the_account_given_to_a_period_question_is_kept_and_the_period_asked_aga
     told = ask(stack, "en todas mis cuentas", asked["conversation"])
     assert told["outcome"] == "NEEDS_CLARIFICATION" and told["outcome"] != "BALANCE"
     assert told["conversation"]["account_selection_mode"] == "ALL"
+    # Recorded as asked (ruling R23), so a reply that again answers nothing is the repeat.
+    assert told["conversation"]["last_asked"] == "WINDOW"
     answered = ask(stack, "este año", told["conversation"])
     assert answered["outcome"] == "PLANNED" and stack.ledger.plans[-1].across_accounts
 
@@ -76,6 +84,8 @@ def test_a_kind_of_account_given_to_a_period_question_is_kept_for_the_answer() -
     assert told["outcome"] == "NEEDS_CLARIFICATION", told["text"]
     assert told["conversation"]["workflow"] == "FINANCIAL_CLARIFICATION"
     assert told["conversation"]["account_selection_mode"] == "SELECTED"
+    # Recorded as asked (ruling R23), so a reply that again answers nothing is the repeat.
+    assert told["conversation"]["last_asked"] == "WINDOW"
     assert told["conversation"]["draft"]["only_account_id"] == str(episodes.PIGGY)
     answered = ask(stack, "este año", told["conversation"])
     assert answered["outcome"] == "PLANNED", answered["text"]
@@ -118,3 +128,118 @@ def test_a_question_of_its_own_is_not_the_period_the_open_one_was_missing() -> N
     ask(stack, "¿cuánto gasté en gasolina el mes pasado?", asked["conversation"])
     plan = stack.ledger.plans[-1]
     assert plan.categories == ("TRANSPORT_FUEL",) and plan.period.period is Period.LAST_MONTH
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "¿cuánto ingresé en la hucha?",
+        "¿cuánto he gastado en la hucha?",
+        "¿qué movimientos tengo en la hucha?",
+        "muéstrame los movimientos de la cuenta corriente",
+        "dame los gastos de la hucha por categoría",
+    ],
+)
+def test_a_new_question_naming_an_account_never_runs_the_question_left_open(reply: str) -> None:
+    """Ruling R21, the wrong figure the review found: «¿cuánto ingresé en la hucha?» while
+    «¿cuánto gasté en restaurantes?» waited for its period had its account folded into the
+    restaurants draft, and «este año» then ran restaurant *spending* in the hucha for a question
+    about income. A question of its own is answered as itself, whatever account it names."""
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    told = ask(stack, reply, asked["conversation"])
+    if told["outcome"] == "NEEDS_CLARIFICATION":
+        ask(stack, "este año", told["conversation"])
+    assert all(plan.categories != ("RESTAURANTS",) for plan in stack.ledger.plans), [
+        (plan.direction, plan.categories) for plan in stack.ledger.plans
+    ]
+
+
+# --- ruling R22: the category a reply names is absorbed, without the model -----------------------
+#
+# On `KeepsTheBase`, a planner that hands a forced base back untouched: the stub planner rebuilds
+# every plan from the reply's own words, so on it a category reached the figure whether or not the
+# handler absorbed it. Here only the handler can have put it there.
+
+
+def test_the_category_beside_the_window_replaces_the_subject_without_the_model() -> None:
+    planner = KeepsTheBase()
+    stack = asking_for_the_window_stack(planner=planner)
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    answered = ask(stack, "este año pero en gasolina", asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.categories == ("TRANSPORT_FUEL",) and plan.period.period is Period.THIS_YEAR
+    assert "este año pero en gasolina" not in planner.asked, "the plan was completed in code"
+
+
+def test_the_category_beside_the_account_is_kept_for_the_window() -> None:
+    """«En todas mis cuentas pero en gasolina» lost the fuel: the account was kept and the subject
+    it named was not. Both go into the draft, and the window is all that is asked again."""
+    planner = KeepsTheBase()
+    stack = asking_for_the_window_stack(settled=False, planner=planner)
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    told = ask(stack, "en todas mis cuentas pero en gasolina", asked["conversation"])
+    assert told["outcome"] == "NEEDS_CLARIFICATION", told["text"]
+    assert told["conversation"]["draft"]["categories"] == ["TRANSPORT_FUEL"]
+    assert told["conversation"]["account_selection_mode"] == "ALL"
+    # Recorded as asked (ruling R23), so a reply that again answers nothing is the repeat.
+    assert told["conversation"]["last_asked"] == "WINDOW"
+    answered = ask(stack, "este año", told["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.categories == ("TRANSPORT_FUEL",) and plan.across_accounts
+    assert plan.period.period is Period.THIS_YEAR
+
+
+def test_a_category_the_reply_excludes_is_excluded() -> None:
+    """«Sin gasolina» names the fuel too, and including it would answer the opposite question."""
+    planner = KeepsTheBase()
+    stack = asking_for_the_window_stack(planner=planner)
+    asked = ask(stack, "¿cuánto gasté?")
+    answered = ask(stack, "este año sin gasolina", asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.excluded_categories == ("TRANSPORT_FUEL",) and plan.categories == ()
+    assert plan.period.period is Period.THIS_YEAR
+    assert "este año sin gasolina" not in planner.asked
+
+
+def test_a_shop_gives_way_to_the_category_that_replaces_the_subject() -> None:
+    """The draft held Mercadona; the reply's subject is fuel, and Mercadona's fuel is nothing."""
+    stack = asking_for_the_window_stack(planner=KeepsTheBase())
+    asked = ask(stack, "¿cuánto gasté en el super Mercadona?")
+    assert asked["conversation"]["draft"]["merchants"] == ["Mercadona"]
+    ask(stack, "este año pero en gasolina", asked["conversation"])
+    plan = stack.ledger.plans[-1]
+    assert plan.categories == ("TRANSPORT_FUEL",)
+    assert plan.merchants == () and plan.merchant_terms == ()
+
+
+def test_a_subject_that_is_income_answers_as_income() -> None:
+    """The payroll put in place of the restaurants is money that came in: run as spending, it was
+    a figure about nothing anyone asked."""
+    planner = KeepsTheBase()
+    stack = asking_for_the_window_stack(planner=planner)
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    answered = ask(stack, "este año, la nómina", asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.categories == ("SALARY",) and plan.direction is Direction.INCOME
+    assert "este año, la nómina" not in planner.asked
+
+
+def test_the_window_asked_again_is_recorded_even_where_the_first_ask_left_no_slot() -> None:
+    """Ruling R23. A reader's own window question opens its draft with `with_active`, which records
+    no `last_asked`; the re-ask records it itself, so the turn after it knows what was asked."""
+    stack = asking_for_the_window_stack(settled=False, planner=KeepsTheBase())
+    asked = ask(stack, "¿cuál es mi gasto medio mensual en restaurantes?")
+    assert asked["conversation"]["workflow"] == "FINANCIAL_CLARIFICATION"
+    assert asked["conversation"].get("last_asked") is None
+    told = ask(stack, "en la hucha", asked["conversation"])
+    assert told["outcome"] == "NEEDS_CLARIFICATION", told["text"]
+    assert told["conversation"]["last_asked"] == "WINDOW"
+    ask(stack, "este año", told["conversation"])
+    plan = stack.ledger.plans[-1]
+    assert plan.only_account_id == episodes.PIGGY and plan.categories == ("RESTAURANTS",)
+    assert plan.metric is Metric.PERIOD_AVERAGE and plan.period.period is Period.THIS_YEAR
