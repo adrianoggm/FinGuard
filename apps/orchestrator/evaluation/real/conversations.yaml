@@ -1,0 +1,255 @@
+# The person's own conversations with FinGuard, 2026-10-06/07, replayed turn by turn against the
+# running stack by scripts/real_conversation.py (see README.md beside this file).
+#
+# `say` is what was typed, exactly: typos, missing accents and the chips that were tapped
+# («Todas mis cuentas», «Ampliar a tres meses», «Mostrar categorías») included. Correcting them
+# would replay a conversation nobody had.
+#
+# `expect` is the intended behaviour once conversation state slice 1 lands (spec
+# docs/superpowers/specs/2026-10-07-conversation-state-slice-1-design.md), not what the service
+# does today: `mechanism` names what the turn exercises (the battery's tags), `route` the kind of
+# answer when it is not in doubt, `want` what a right answer does, for the judge. An expectation is
+# never edited to make a turn pass; a failure found by an improvised conversation is appended here
+# as a new conversation instead.
+conversations:
+  - name: gimnasio-ultimamente
+    goal: Saber cuánto se ha gastado en el gimnasio últimamente, en todas sus cuentas.
+    turns:
+      - say: "Me podrías decir cuánto he gastado en el gimnasio últimamente?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Gimnasio en los últimos 30 días («últimamente»), en todas las cuentas, diciendo la
+            ventana; sin preguntar ni el periodo ni la cuenta.
+      - say: "en todas mis cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Gimnasio, la misma ventana, todas las cuentas. Si quedaba una pregunta abierta, la
+            respuesta la completa y solo se pregunta lo que falte, nombrando el gimnasio. Nunca el
+            saldo.
+      - say: "Ampliar a tres meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: Gimnasio en los últimos tres meses, en todas las cuentas.
+
+  - name: gimnasio-meses
+    goal: Saber lo gastado en el gimnasio estos meses y luego qué clases tiene su gimnasio.
+    turns:
+      - say: "Oye perdona cuanto he gastado en gimansio en los ultimos meses ?"
+        expect:
+          mechanism: intent
+          want: >-
+            Gimnasio pese a «gimansio». «Los últimos meses» no dice cuántos: vale preguntarlo
+            nombrando el gimnasio, o asumir una ventana y decirla. Nunca pregunta la cuenta.
+      - say: "Todas mis cuentas"
+        expect:
+          mechanism: pending_resolution
+          want: >-
+            Conserva el gimnasio y la ventana (o la pregunta de cuántos meses) y lo extiende a
+            todas las cuentas. Nunca el saldo.
+      - say: "perdona gimnasios !!"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Gimnasio (corrige el tema si se había leído otra cosa), con la misma ventana y
+            cuentas, y la cifra.
+      - say: "Mostrar categorías"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El gasto de la misma ventana por categoría; la ventana y las cuentas no se pierden.
+      - say: "y de ocio ?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: Ocio, con la misma ventana y cuentas.
+      - say: "Perdona puedes decirme que gimansio tengo vinculado ?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            El gimnasio que aparece en sus movimientos (el comercio, p. ej. Altafit), sacado de
+            los datos y sin inventar.
+      - say: "perdona el gimansio altafit que clases tiene ?"
+        expect:
+          mechanism: intent
+          route: ACTIVITIES
+          want: >-
+            Las clases de Altafit por el agente de actividades, o una negativa clara si no está
+            disponible. Nunca una cifra de gasto.
+      - say: "boxeo"
+        expect:
+          mechanism: follow_up
+          route: ACTIVITIES
+          want: >-
+            Las clases de boxeo de Altafit (filtra la oferta anterior); no lo lee como comercio
+            ni como categoría.
+
+  - name: spotify-llevo
+    goal: Saber cuánto lleva gastado en Spotify, en todas sus cuentas.
+    turns:
+      - say: "¿Cuánto llevo gastado en Spotify?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Spotify en lo que va de año («llevo gastado»), en todas las cuentas, diciendo la
+            ventana; sin preguntar ni el periodo ni la cuenta.
+      - say: "este año"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Spotify este año. Si quedaba abierta la pregunta de la cuenta, conserva el año y
+            pregunta solo la cuenta: no repite la misma pregunta perdiendo el periodo.
+      - say: "Todas mis cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: Spotify este año en todas las cuentas. Nunca el saldo.
+
+  - name: transfer-then-compare
+    goal: Empezar un traspaso a la hucha, cambiar de idea y comparar la gasolina de dos meses.
+    turns:
+      - say: "quiero traspasar dinero a la hucha"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: Traspaso a la hucha que pregunta cuánto; no mueve dinero.
+      - say: "¿Gasté más en gasolina en junio o en julio?"
+        expect:
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Deja el traspaso y compara la gasolina de junio con la de julio (las dos cifras y la
+            diferencia); no lo lee como importe ni como concepto del traspaso.
+      - say: "Todas mis cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: La comparación de gasolina en todas las cuentas. Nunca el saldo ni el traspaso.
+
+  - name: marta-ella-pago
+    goal: Ver lo que se han mandado con Marta este mes y luego mandarle 20 €, y echarse atrás.
+    turns:
+      - say: "cuanto le mande a Marta este mes"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: Lo enviado a Marta este mes.
+      - say: "y lo que me mando ella?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Marta este mes: la misma persona y ventana con la dirección invertida;
+            sin preguntar el periodo.
+      - say: "ahora quiero mandarle 20 euros a Marta Solis Vega"
+        expect:
+          mechanism: interruption
+          route: PAYMENT
+          want: >-
+            Vista previa de un pago de 20,00 € a Marta Solís Vega que pide confirmación; no
+            ejecuta nada.
+      - say: "no"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: Cancela el pago y lo dice; no se mueve dinero.
+
+  - name: comparacion-gasolina
+    goal: Comparar junio y julio, primero en restaurantes y luego en gasolina.
+    turns:
+      - say: "junio vs julio en restaurantes"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: Restaurantes en junio frente a julio, con las dos cifras y la diferencia.
+      - say: "y en gasolina?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: Gasolina en junio frente a julio (mantiene los dos meses, cambia la categoría).
+      - say: "en porcentaje"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: La misma comparación de gasolina expresada en porcentaje.
+      - say: "ahora solo julio"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: Gasolina en julio, una sola cifra.
+
+  - name: olvidalo
+    goal: Preguntar por el súper, corregirse, abandonar y acabar preguntando el saldo.
+    turns:
+      - say: "cuanto gaste en el super el mes pasao"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: Supermercado el mes pasado pese a «pasao», en todas las cuentas.
+      - say: "no era eso"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior (o pregunta qué quería decir); sin cifra y sin
+            buscar un comercio.
+      - say: "gasolina"
+        expect:
+          mechanism: intent
+          want: >-
+            Gasolina: o el mes pasado (corrigiendo el tema) o la pregunta del periodo nombrando la
+            gasolina. Nunca el súper ni «gasolina» como comercio desconocido.
+      - say: "olvidalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo pendiente y lo dice en una frase; no busca un comercio llamado «olvidalo».
+      - say: "cuánto tengo?"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: El saldo de todas las cuentas, sin ventana heredada.
+
+  # The battery's first episode (evaluation/ux/conversations.yaml, 01-suscripciones), word for word:
+  # the subscriptions conversation of spec §4.1, here against the real ledger and today's date.
+  - name: suscripciones
+    goal: Ver lo gastado en suscripciones y acotarlo a un servicio y a otro mes sin perder el resto.
+    turns:
+      - say: "q llevo gastado en suscripciones estos ultimos 9 meses"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: Suscripciones en los últimos 9 meses, en todas las cuentas, sin preguntar la cuenta.
+      - say: "solo Netflix"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: Netflix en los mismos 9 meses.
+      - say: "y este mes?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: Netflix este mes.
+      - say: "no, Spotify"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: Spotify este mes (corrige el servicio y conserva el mes).
+      - say: "y el mes pasado?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: Spotify el mes pasado.
+      - say: "gracias"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: Una respuesta de cortesía breve, sin cifra ni pregunta.

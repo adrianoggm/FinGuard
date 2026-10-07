@@ -111,12 +111,14 @@ travel, through the mapper, with their round-trip tests.
 
 ### 3.3 Post-turn commit — a base after every answer
 
-One function, called where `stream()` records the turn (AFQ, where `Turn(...)` is built), commits
-the continuation base from the **answered result**, for every path: `last_plan` (and `prior_plan`),
-`last_comparison` when the answer was a comparison, `answered_the_balance` when it was a balance;
-it clears `last_asked` and the answered workflow. Readers stop setting these fields themselves.
-`planning_context` passes the committed base to the planner as the continuation (today it does only
-when `focus.current is continuation.plan`; `planning_context.py:108-111`).
+The code map (2026-10-07) shows the base is already committed through shared helpers on every
+answered path (`Conversation.answered`, `answered_comparison`, `answered_ratio`,
+`answering_the_balance`, called from `_answered` and the comparison, ratio and balance paths).
+This slice therefore does not rewrite them into one function; it **pins** the property with a
+test -- every answered turn leaves a base `focus_of` can find -- and closes the one gap: a
+comparison's base is dropped before any follow-up can use it (`planning_context.py:108-111`
+accepts only a `QueryFocus`), so a comparison follow-up is handled on the comparison itself
+(§3.4).
 
 Required by name: the person-payment reader's answer («¿cuánto le mandé a Marta este mes?»)
 already commits a plan with the counterparty, direction and window (AFQ `_person_payment_plan`);
