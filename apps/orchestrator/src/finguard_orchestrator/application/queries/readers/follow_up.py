@@ -447,7 +447,12 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
         )
 
     named = category_words.precisely_named_in(query.sentence)
-    if named and _CATEGORY_FILTER_FOLLOW_UP.search(folded):
+    category_ellipsis = folded.startswith("y ") and not (
+        set(re.findall(r"[a-z0-9]+", folded))
+        - category_words.words_named_in(query.sentence)
+        - {"y", "en", "solo", "el", "la", "los", "las"}
+    )
+    if named and (_CATEGORY_FILTER_FOLLOW_UP.search(folded) or category_ellipsis):
         group_by = (
             GroupBy.NONE
             if previous.group_by is GroupBy.CATEGORY and len(named) == 1
