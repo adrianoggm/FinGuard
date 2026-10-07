@@ -195,7 +195,11 @@ EVALUATION = Path(__file__).resolve().parents[1] / "evaluation"
 # normaliser evaluation reads. Exact paths rather than a pattern, so a new file is swept until
 # somebody names it here -- and `test_only_the_agent_episodes_are_exempt` holds the corpus entry to
 # the episodes that declare agents.
-MEANT_FOR_AGENTS = frozenset({"conversations/35-expert-agents.yaml", "a2a/cases.yaml"})
+# `real/conversations.yaml` replays real conversations, which mix topics on purpose (a gym question
+# among the financial ones); their expectations are judged on the live stack.
+MEANT_FOR_AGENTS = frozenset(
+    {"conversations/35-expert-agents.yaml", "a2a/cases.yaml", "real/conversations.yaml"}
+)
 
 
 def _swept() -> list[Path]:

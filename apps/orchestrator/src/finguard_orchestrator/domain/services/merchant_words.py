@@ -98,6 +98,9 @@ _NEVER_A_MERCHANT_PHRASES: Final = frozenset(
         "pues eso",
         # F-2 (fix wave, Important 3): C-3's own named words -- folded, so "sin límite" hits.
         "sin limite",
+        # A reset, like «olvídalo» below. `turn_arbiter` answers the whole-turn reset before any
+        # reader looks; this keeps the bare-shop guess from ever being the one that reads it.
+        "no importa",
     }
 )
 
@@ -131,6 +134,11 @@ _NEVER_A_MERCHANT_WORDS: Final = frozenset(
         "listo",
         "queria",
         "dejalo",
+        # Measured 2026-10-07: «olvidalo» after an answer ran the last question again with
+        # `merchants: ['olvidalo']`, the defect «nada» and «déjalo» were added here for. One entry
+        # covers «olvídalo» too: the sentence is folded before it is looked up, so an accented
+        # spelling in this set could never match anything.
+        "olvidalo",
         "confirmo",
         # F-2 (fix wave, Important 3): C-3's own named words -- a bare "todos"/"todas"/"todo" or
         # "límite" ran the merchant guess (three ledger calls, a confident total) for a word that

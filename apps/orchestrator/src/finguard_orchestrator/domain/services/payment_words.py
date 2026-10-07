@@ -255,12 +255,101 @@ def clears_concept(sentence: str) -> bool:
     return _CLEAR_CONCEPT.search(spanish.folded(sentence)) is not None
 
 
-def changes_recipient(sentence: str) -> bool:
-    """Whether a reply to a preview explicitly replaces who receives the payment."""
+def changes_recipient(sentence: str, *, previewed: str) -> bool:
+    """Whether a reply to a preview explicitly replaces who receives the payment.
+
+    `previewed` is the recipient on the preview being answered. The correction forms above need no
+    name to compare with — they say outright that the person changes — but an order does:
+    «mándale 20 € a Marta» to Marta's preview revises the amount, and «mándale 20 € a Javi Nuñez»
+    is a payment to somebody else. Read as a revision, the second one became «Vas a enviar 20,00 €
+    a Marta Solis Vega», and a «sí» would have paid Marta for an order that named Javi.
+    """
     folded = spanish.folded(sentence)
-    return _RECIPIENT_CORRECTION.search(folded) is not None or (
-        _BARE_RECIPIENT_CORRECTION.search(folded) is not None and amount_in(sentence) is not None
+    return (
+        _RECIPIENT_CORRECTION.search(folded) is not None
+        or (
+            _BARE_RECIPIENT_CORRECTION.search(folded) is not None
+            and amount_in(sentence) is not None
+        )
+        or _orders_somebody_else(folded, previewed)
     )
+
+
+# An order with somebody to give it to: the imperative («mándale», «envía», «hazle», «dale»), the
+# infinitive after a volitional verb («quiero mandarle») and the subjunctive («que le mandes»). The
+# person is the «a <name>» that follows; the verb alone names nobody, so «mándale 20 €» to an open
+# preview stays the revision it always was.
+_ORDER_TO_SOMEBODY: Final = re.compile(
+    r"\b(?:(?:manda|envia|paga|pasa|transfiere|ingresa|devuelve)(?:le|les)?"
+    r"|(?:da|haz)(?:le|les)"
+    r"|(?:mandar|enviar|pagar|pasar|dar|hacer|transferir|devolver)(?:le|les)"
+    r"|mandes|envies|pagues|pases|hagas|transfieras|devuelvas)\b"
+)
+_TO_SOMEBODY: Final = re.compile(r"\ba\s+(?P<name>[a-z]+(?:\s+[a-z]+)*)")
+
+# Where the words after «a» stop being a name: what an order says next («por la cena», «con
+# concepto…», «hoy»), the fillers `_TRAILING_FILLER` strips, and the pronouns that point back at
+# the preview's own person («a ella»). Anything else is kept as part of the name, so a word nobody
+# listed here — «mi madre» — counts as a different person: the cost of that mistake is a question
+# about who, and the cost of the other one is money to the person the holder just named away from.
+_AFTER_THE_NAME: Final = frozenset(
+    {
+        "por",
+        "con",
+        "de",
+        "para",
+        "que",
+        "y",
+        "el",
+        "la",
+        "los",
+        "las",
+        "un",
+        "una",
+        "al",
+        "en",
+        "hoy",
+        "manana",
+        "ahora",
+        "ya",
+        "concepto",
+        "anda",
+        "venga",
+        "va",
+        "vale",
+        "porfa",
+        "gracias",
+        "pues",
+        "eh",
+        "oye",
+        "ella",
+        "ellos",
+        "ellas",
+    }
+)
+
+
+def _orders_somebody_else(folded: str, previewed: str) -> bool:
+    """Whether `folded` orders a payment to a person whose name is not the preview's.
+
+    The name is compared word by word with the preview's recipient, folded: «Marta» and «Marta
+    Solis» are the preview's Marta Solis Vega; «Marta Ruiz» is not, because «Ruiz» is no part of her
+    name. A name with nothing left once the particles are dropped names nobody, and is no change.
+    """
+    order = _ORDER_TO_SOMEBODY.search(folded)
+    if order is None:
+        return False
+    target = _TO_SOMEBODY.search(folded, order.end())
+    if target is None:
+        return False
+    name: list[str] = []
+    for word in target.group("name").split():
+        if word in _AFTER_THE_NAME:
+            break
+        if word not in _PARTICLES:
+            name.append(word)
+    previewed_name = set(spanish.folded(previewed).split())
+    return any(word not in previewed_name for word in name)
 
 
 def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact, ...]:

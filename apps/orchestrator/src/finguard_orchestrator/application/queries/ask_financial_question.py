@@ -166,6 +166,7 @@ from finguard_orchestrator.domain.services import (
     spanish,
     spanish_numbers,
     turn_analyzer,
+    turn_arbiter,
     window_words,
 )
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
@@ -174,6 +175,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.plan_digest import plan_digest
+from finguard_orchestrator.domain.services.turn_arbiter import TurnType
 from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
@@ -324,6 +326,48 @@ def _legacy_turn_analysis(intent: Intent, conversation: Conversation) -> TurnAna
         relation = TurnRelation.NEW_REQUEST
         focus = TurnFocus.NEW_REQUEST
     return TurnAnalysis(intent=intent, relation=relation, focus=focus)
+
+
+def _resets(query: AskFinancialQuestionQuery) -> bool:
+    """Whether this turn is a reset, on the edge's arbitration or, without one, on the sentence.
+
+    The fallback is not a second arbitration: RESET is the first rule `turn_arbiter.arbitrate`
+    applies and the only one that reads nothing but the sentence, so a caller that brought no
+    arbitration — every test that builds the query itself, a compound turn's clauses — gets the
+    same answer for it the edge would have given, and every other kind is left to the steps below as
+    before.
+    """
+    if query.arbitration is not None:
+        return query.arbitration.type is TurnType.RESET
+    return turn_arbiter.is_a_reset(query.sentence)
+
+
+def _forgotten(was: Conversation) -> Conversation:
+    """The conversation a reset leaves: nothing open, and nothing an ellipsis could continue.
+
+    The open question goes — the workflow, the slot asked, a half-built proportion, a failed read
+    waiting for «reintenta» — and so does every base a follow-up reads (`focus_of`'s referents:
+    the last plan and the one before it, the comparison, the ratio, the balance flag), because
+    «olvídalo» after an answer is about that answer. `result_reference` goes with `last_plan`, which
+    it must point at.
+
+    What the holder *chose* stays: the account selection and the aliases they taught are choices,
+    not questions, and asking for them again after «déjalo» would be punishing the reset. The charts
+    on screen and the turn log stay too — they describe what happened, not what is open.
+    """
+    return replace(
+        was,
+        active=None,
+        last_asked=None,
+        retry_plan=None,
+        pending_ratio=None,
+        last_plan=None,
+        prior_plan=None,
+        last_comparison=None,
+        last_ratio=None,
+        answered_the_balance=False,
+        result_reference=None,
+    )
 
 
 @dataclass(frozen=True)
@@ -743,6 +787,17 @@ class AskFinancialQuestionHandler:
         answering: list[str],
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         was = query.conversation
+        if _resets(query):
+            # Before everything, the retry and the season question included: a reset is the one turn
+            # *about* whatever is open, so no reader of the open thing may see it first. Read as an
+            # answer, «olvídalo» to «¿De qué periodo?» was asked about again, and after an answer
+            # it became the name of a shop the last question was run again for.
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text="Vale, lo dejamos. ¿Qué quieres consultar?",
+                conversation=_forgotten(was),
+            )
+            return
         asked_again = query_recovery.retry_action(query.sentence)
         if asked_again is query_recovery.RetryAction.RETRY and was.retry_plan is None:
             # A whole turn asking to repeat something, and nothing saved to repeat. Said plainly

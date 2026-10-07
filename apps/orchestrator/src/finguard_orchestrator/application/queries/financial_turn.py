@@ -58,6 +58,7 @@ from finguard_orchestrator.domain.services import (
 from finguard_orchestrator.domain.services.capability_guard import MOVEMENT_NOUNS
 from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.turn_arbiter import Arbitration
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -359,6 +360,12 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     # without letting a second reading exist on the path a user is actually on.
     intent: Intent | None = None
     analysis: TurnAnalysis | None = None
+    # What kind of turn this is — `turn_arbiter.arbitrate`, decided once at the edge from the
+    # analysis above, for the same reason the analysis travels: the edge already acted on it (an
+    # order to pay never reaches here), and a second arbitration in here is a second opinion that
+    # could disagree with the first. Not a client field either. Left out, the handler reads the one
+    # kind that needs no analysis — a reset is the sentence alone — and everything else as before.
+    arbitration: Arbitration | None = None
     # How this answer will be consumed. It belongs to the execution request rather than to the
     # dataset profile. Kept last so adding it does not shift established positional callers.
     presentation: PresentationContext = DEFAULT_PRESENTATION

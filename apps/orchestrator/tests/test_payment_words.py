@@ -305,6 +305,48 @@ def test_a_conversational_tail_is_not_part_of_the_name(read: str, name: str) -> 
     assert payment_words.without_trailing_filler(read) == name
 
 
+# --- an order said to an open preview ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        "mándale 20 € a Javi Nuñez",
+        "envíale 30 euros a Javi",
+        "hazle un bizum a Javi Nuñez",
+        "hazle un bizum de 20 € a Marta Ruiz",
+        "quiero mandarle 20 euros a Aitor",
+        "manda 20 € a Javi por la cena",
+        "mándale 20 € a mi madre",
+    ],
+)
+def test_an_order_to_somebody_else_changes_the_recipient(order: str) -> None:
+    """Reported by review, 2026-10-07: with Marta's preview open, «mándale 20 € a Javi Nuñez» was
+    read as a revision of the *amount*, and the replacement preview — «Vas a enviar 20,00 € a Marta
+    Solis Vega» — would have paid Marta on the next «sí». An order naming somebody the preview does
+    not is a different recipient, and a name the directory may not know («mi madre») still is: the
+    cost of being wrong that way is a question about who, never money to the old person."""
+    assert payment_words.changes_recipient(order, previewed="Marta Solis Vega") is True
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        "mándale 20 € a Marta",
+        "mándale 20 € a Marta Solis Vega",
+        "envíale 30 euros a marta solis",
+        "hazle un bizum de 20 € a Marta por la cena",
+        "mándale 20 € a ella",
+        "mándale 20 €",
+        "mejor 30 euros",
+    ],
+)
+def test_an_order_to_the_same_person_is_a_revision(order: str) -> None:
+    """The same person, named in part or not at all, keeps the preview's recipient: the order only
+    revises what else it states — the amount here."""
+    assert payment_words.changes_recipient(order, previewed="Marta Solis Vega") is False
+
+
 # --- which turn belongs to the open question --------------------------------------------------
 
 

@@ -110,10 +110,14 @@ episodes:
       - say: quiero traspasar del fondo a hucha
         route: TRANSFER
         awaiting: AMOUNT
+      # Conversation-state slice 1: «déjalo» said alone is a reset, so it ends the transfer by
+      # saying so -- «Vale, lo dejamos» -- instead of reaching the planner, which read it as a
+      # question about last month's spending and ran one.
       - say: déjalo
-        route: QUERY
+        route: GUIDANCE
+        says: Vale, lo dejamos
         ends: true
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        banking_calls: 0
       - say: 500
         not_says: Hucha
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
@@ -210,10 +214,12 @@ episodes:
       - say: "no"
         not_says: Hecho
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
-      # B-2(a) (Wave 3 hardening, R-H1): "déjalo" is on the closed stop-list -- the honest ask now,
-      # not a shop called "déjalo".
+      # B-2(a) (Wave 3 hardening, R-H1): "déjalo" is on the closed stop-list -- never a shop called
+      # "déjalo". Since the conversation-state slice the whole turn is a reset before the stop-list
+      # is consulted: «Vale, lo dejamos», still at zero cost.
       - say: déjalo
-        route: CLARIFY
+        route: GUIDANCE
+        says: Vale, lo dejamos
         banking_calls: 0
       - say: ¿cuánto tengo?
         route: BALANCE
@@ -232,10 +238,13 @@ episodes:
         not_says: Confirmas
       - say: quiero traspasar del fondo a hucha
         route: TRANSFER
+      # A reset, as in `a_transfer_dropped_by_saying_something_else`: the transfer ends and nothing
+      # is planned for the word.
       - say: déjalo
-        route: QUERY
+        route: GUIDANCE
+        says: Vale, lo dejamos
         ends: true
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        banking_calls: 0
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}

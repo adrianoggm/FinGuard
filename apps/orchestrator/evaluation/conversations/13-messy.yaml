@@ -196,9 +196,12 @@ episodes:
       - say: pues eso
         route: CLARIFY
         banking_calls: 0
-      # The audit's own named example: "nada" used to run with `merchants: ['nada']`.
+      # The audit's own named example: "nada" used to run with `merchants: ['nada']`. Since the
+      # conversation-state slice it is a reset rather than the stop-list's ask: the turn is only
+      # reset words, so it drops what was open and asks what to look at -- still at zero cost.
       - say: nada
-        route: CLARIFY
+        route: GUIDANCE
+        says: Vale, lo dejamos
         banking_calls: 0
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY

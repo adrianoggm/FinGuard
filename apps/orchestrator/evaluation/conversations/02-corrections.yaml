@@ -84,8 +84,14 @@ episodes:
       - say: el mes pasado
         route: QUERY
         ran: {window: LAST_MONTH, excluded_categories: [], excluded_merchants: []}
+      # Conversation-state slice 1 (ruling R11): «no era eso» said alone is a reset, not the
+      # correction «no es eso» opens -- it drops the last answer and asks what to look at, at zero
+      # ledger calls. So «en gasolina» below starts afresh: LAST_MONTH is the stub planner's default
+      # here, not a window carried over.
       - say: no era eso
-        route: CLARIFY
+        route: GUIDANCE
+        says: Vale, lo dejamos
+        banking_calls: 0
       - say: en gasolina
         route: QUERY
         ran: {window: LAST_MONTH, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
@@ -159,8 +165,11 @@ episodes:
       - say: sí
         route: PAYMENT
         says: Hecho
+      # Ruling R11: a bare «no era eso» is a reset -- the same turn the episode above records.
       - say: no era eso
-        route: CLARIFY
+        route: GUIDANCE
+        says: Vale, lo dejamos
+        banking_calls: 0
       - say: en gasolina
         route: QUERY
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
