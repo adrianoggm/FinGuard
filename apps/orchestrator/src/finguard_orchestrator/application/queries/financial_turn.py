@@ -197,12 +197,20 @@ class AskFinancialQuestionResult:
     cannot inspect is a number to be believed, and this pipeline has a language model in
     it — showing the question it actually asked is the difference between a tool and an
     oracle.
+
+    Two audiences read that line, so it is held twice. `plan` is the ledger's identifiers
+    (`answer_writer.describe`): `stream()` records it on the turn, and the turn interpreter's prompt
+    quotes the log back to a model whose measurements were taken against exactly that text.
+    `plan_in_words` is the same line for the person (`answer_writer.plan_in_words`), and it is what
+    the edge sends as the wire's `plan`. A result carrying only `plan` — a line already written in
+    Spanish — is shown as it is.
     """
 
     outcome: str
     text: str
     question: str | None = None
     plan: str | None = None
+    plan_in_words: str | None = None
     plan_context: SpokenPlan | None = None
     # Where the conversation is after this turn: at most one active workflow, plus the memory of
     # the last answered question. The client stores it and sends it back without reading it.

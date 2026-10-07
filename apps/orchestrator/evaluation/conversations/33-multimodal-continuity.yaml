@@ -155,7 +155,7 @@ episodes:
         route: BALANCE
         no_model: true
         spoken: false
-        says: 2.270,42
+        says: 2.156,48
       - say: Gracias.
         route: COURTESY
         no_model: true

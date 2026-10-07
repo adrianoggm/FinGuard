@@ -112,14 +112,15 @@
     period: {period: THIS_WEEK, reference: 2026-07-15}
   expected: {totalMinor: 0, movementCount: 0}
 
-# The dataset has a PENDING leisure purchase on 31 July: it must not count.
-- id: leisure_july_excluding_pending
-  question: ¿Cuánto he gastado en ocio este mes?
+# The dataset has a PENDING leisure purchase on 5 October (the generator dates it on its end date):
+# the range reaches it and it must not count, or 67,98 EUR would be added to what July booked.
+- id: leisure_since_july_excluding_pending
+  question: ¿Cuánto he gastado en ocio desde julio?
   account: ES-0001
   plan:
     direction: EXPENSE
     categories: [LEISURE]
-    dateRange: {from: 2026-07-01, to: 2026-07-31}
+    dateRange: {from: 2026-07-01, to: 2026-10-05}
   expected: {totalMinor: 4459, movementCount: 2}
 
 - id: spending_june_third_account
@@ -128,4 +129,4 @@
   plan:
     direction: EXPENSE
     dateRange: {from: 2026-06-01, to: 2026-06-30}
-  expected: {totalMinor: 243979, movementCount: 30}
+  expected: {totalMinor: 224368, movementCount: 23}

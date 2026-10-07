@@ -272,7 +272,8 @@ _A_NAMED_YEAR: Final = re.compile(
 _THIS_ONE: Final = re.compile(r"(de\s+)?(este|esta|el\s+actual|la\s+actual|actual)")
 
 # "los últimos 30 días", "últimos 3 meses", "el último año", and the singular "el último mes"
-# which is n=1. Years are counted in months, because that is the unit the contract has: "el último
+# which is n=1 — while the plural with no number, "los últimos meses", is a few (`_UNSTATED`
+# below). Years are counted in months, because that is the unit the contract has: "el último
 # año" is twelve months back, and leaving it out is what sent the phrase to the model and started
 # the loop.
 #
@@ -291,11 +292,24 @@ _COUNTED: Final = re.compile(
 )
 
 
-def _how_many(counted: re.Match[str]) -> int:
-    """The count either side of "último", or one when neither side names a number.
+# What a counted phrase means when nobody says the number, by its unit. The singular is one — "el
+# último mes" is a month back — and the plural is a few: "los últimos meses" is three months, "los
+# últimos días" a week, "los últimos años" three years. The plural read as one for as long as the
+# singular did, and that was wrong in the way that costs most: the live log showed this rule's
+# LAST_N_MONTHS:1 overriding the model's LAST_N_MONTHS:3, a real figure for one month answering a
+# question about several. "A few" is a convention rather than a fact: three months is what the
+# model read in that log and the period chip this service already offers («Los últimos 3 meses»),
+# and a week and three years are the same reading in the other two units. Three years is past
+# MAX_PERIOD_MONTHS, so that one is declined below like any count the domain refuses, and the
+# model reads it.
+_UNSTATED: Final[dict[str, int]] = {"dias": 7, "meses": 3, "anos": 3}
+
+
+def _stated(counted: re.Match[str]) -> int | None:
+    """The count either side of "último", or None when neither side names a number.
 
     A word that is not a number — the article in "el último mes", the preposition in "de los últimos
-    días" — reads as no count and therefore as one, which is what those phrases mean.
+    días" — is no count at all.
     """
     for group in ("before", "after"):
         written = counted.group(group)
@@ -306,7 +320,15 @@ def _how_many(counted: re.Match[str]) -> int:
         value = spanish_numbers.integer(written)
         if value is not None and value > 0:
             return value
-    return 1
+    return None
+
+
+def _how_many(counted: re.Match[str]) -> int:
+    """The count stated, or what the phrase means without one: one, or a few for a plural."""
+    stated = _stated(counted)
+    if stated is not None:
+        return stated
+    return _UNSTATED.get(counted.group("unit"), 1)
 
 
 def has_invalid_counted_window(sentence: str) -> bool:
@@ -316,11 +338,17 @@ def has_invalid_counted_window(sentence: str) -> bool:
     caller whether there was no recognised window or a recognised, impossible one. Keeping this
     distinction prevents the model from accepting "5000 days" under one paraphrase after asking
     for a correction under another.
+
+    Only a *stated* count can be impossible. «Los últimos años» names none, and the three years
+    `_UNSTATED` reads into it are past the bound — which is this vocabulary declining to guess, not
+    the holder asking for something impossible, so the model still gets the sentence.
     """
     counted = _COUNTED.search(spanish.folded(sentence))
     if counted is None:
         return False
-    count = _how_many(counted)
+    count = _stated(counted)
+    if count is None:
+        return False
     unit = counted.group("unit")
     try:
         RelativePeriod(period=_UNIT[unit], n=count * _MONTHS_PER.get(unit, 1))
@@ -890,7 +918,10 @@ def window_in(
 
     counted = _COUNTED.search(folded)
     if counted:
-        # No number means one: "el último mes" is a month back, not an unbounded period.
+        # No number means what the phrase means without one, never an unbounded period: the
+        # singular is one ("el último mes" is a month back) and the plural is a few ("los últimos
+        # meses" is three). Reading the plural as one is what let this rule's one month override
+        # the model's three in the live log; `_UNSTATED` holds the few and says why.
         count = _how_many(counted)
         unit = counted.group("unit")
         try:

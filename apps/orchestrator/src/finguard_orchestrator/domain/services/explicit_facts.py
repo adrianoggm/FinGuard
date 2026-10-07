@@ -62,7 +62,10 @@ by a reader that saw the whole sentence, and «el gasto acumulado por gasolina»
 a figure returned as a month-by-month series.
 
 What is left is the window, which nothing checked at all, and the shape of the answer to a
-question about people.
+question about people -- and one filter, the kind of thing a category was named by: «el gimnasio» is
+the category's shops whose name says so, not the whole category (`of_its_kind`). It is the one
+positive filter here, and it is not the category itself: the model's category stands, and the
+kind only narrows it to what the sentence said.
 """
 
 import re
@@ -326,6 +329,15 @@ class ExplicitFacts:
     asks_account_breakdown: bool = False
     asks_comparison_reference: bool = False
     asks_direct_debits: bool = False
+    # The kinds of thing the sentence named inside a category, by category: «el gimnasio» is
+    # `(("SUBSCRIPTIONS", ("gimnasio",)),)`. Read by `category_words.kinds_named_in`, which is where
+    # «suscripciones, gimnasio incluido», «sin el gimnasio» and «metro y tren» are told apart from
+    # a question about the kind; `of_its_kind` is what a plan does with it.
+    kinds: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+    def kinds_of(self, category: str) -> tuple[str, ...]:
+        """The kinds this sentence named inside `category`, or () when it named none."""
+        return next((kinds for named, kinds in self.kinds if named == category), ())
 
 
 def _direction(folded: str, *, says_income: bool, says_expense: bool) -> Direction | None:
@@ -508,6 +520,11 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         asks_account_breakdown=asks_account_breakdown,
         asks_comparison_reference=bool(_COMPARISON_REFERENCE.search(folded)),
         asks_direct_debits=asks_direct_debits(sentence),
+        kinds=tuple(
+            (category, kinds)
+            for category in category_words.categories_with_kinds()
+            if (kinds := category_words.kinds_named_in(sentence, category))
+        ),
     )
 
 
@@ -553,7 +570,9 @@ def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
     inherited from.
 
     A ranking takes the window and not the grouping: `TopMovements` has none, and "a qué personas"
-    is not a question about one movement.
+    is not a question about one movement. Nor the kind (`of_its_kind`): a ranking that found no shop
+    of the kind has no category figure to fall back to, and saying so is the handler's work for an
+    aggregate alone.
 
     **This is total: it returns a plan for every sentence, and never raises.** It used to raise,
     and «gasto medio mensual por comercio» is the sentence that showed it. The reader takes both
@@ -592,6 +611,10 @@ def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
                     if category not in plan.excluded_categories
                 ),
             )
+        # After the exclusions and the categories, because both decide whether a kind may narrow:
+        # «el gimnasio sin Altafit» leaves a shop out, and a category the sentence replaced takes
+        # its kind with it.
+        plan = of_its_kind(plan, facts)
     if (facts.group_by is not None or facts.metric is not None) and isinstance(
         plan, FinancialPlan | FinancialPlanDraft
     ):
@@ -660,6 +683,91 @@ def enforce_exclusions[T: FinancialPlan | FinancialPlanDraft | TopMovements](
             ),
         )
     return plan
+
+
+def of_its_kind[P: FinancialPlan | FinancialPlanDraft | TopMovements](
+    plan: P, facts: ExplicitFacts
+) -> P:
+    """The plan narrowed to the kind of thing the sentence named inside its category.
+
+    Reported from a live session: «¿cuánto gasté en el gimnasio este año?» answered "421,79 € en
+    suscripciones, en 23 movimientos" -- Netflix, Spotify and Steam with the gym, which alone is
+    29,90 € a month. «Gimnasio» is a word of the SUBSCRIPTIONS vocabulary, so the planner, the gate
+    and every reader agreed the sentence named the category, and every one of them was right about
+    the category and wrong about the question (`category_words._KINDS`).
+
+    **The kind is carried by the plan, as a merchant term beside the category.** A term is how a
+    plan already says "the shops whose name contains this" -- «un nombre que contenga bet» is
+    Bet365 and Betfair -- and a gym is exactly such a family: every shop of the holder's in the
+    category whose name says «gimnasio», however many there are. Decided here, once, from the
+    sentence that asks, when its plan is built; and from then on it travels wherever the plan
+    does -- the draft a window question keeps, the plan the account question keeps, the plan a
+    retry keeps, the plan a follow-up inherits. Four review rounds of the alternative, which read
+    the asking sentence back out of the turn log on each of those paths after the bank had
+    answered, kept finding a path where it read the wrong sentence.
+
+    A plan with no shop of the kind is the handler's to answer (`_answer`): the bank finds
+    nothing, and the category's figure is given with a line saying why.
+
+    Left alone, each for a reason already decided:
+
+    - more or fewer than one category: a plan cannot hold "these gyms, or else that pharmacy";
+    - a shop named exactly, or a shop left out -- «el gimnasio McFit» is McFit, and which of the
+      shops left out the kind should still cover is the holder's to say;
+    - a family term of its own («apuest», «bet»), which this would replace;
+    - a person, an own-account transfer or a list of movements picked by pronoun: none of them is
+      a question about a kind of shop.
+
+    And what `category_words.kinds_named_in` refuses: the category's own name or another word of
+    it said beside the kind, the kind behind «sin», «aparte de» or «que no sea».
+
+    **A kind this rule put on a plan leaves with its category.** «¿Y en salud?» after the gym is
+    every health shop, but the merge that builds it from the gym's plan changes the category and
+    keeps the terms, because to the model they are one field it did not say it changed -- and a
+    question about health would then have asked the bank for health shops called «gimnasio». A
+    term that is a kind of a category the plan no longer holds is dropped first, and the sentence
+    may then name a kind of the new one. A kind already on the plan of its own category stays, so
+    «¿y el año pasado?» is still the gym, and a kind the sentence names replaces it there: «la
+    óptica» after «la farmacia» is the optician. The plan's own family terms are never touched.
+
+    A ranking is returned as it came: see `enforce`.
+    """
+    if isinstance(plan, TopMovements):
+        return plan
+    kept = tuple(
+        term
+        for term in plan.merchant_terms
+        if (kind_of := category_words.category_of_kind(term)) is None
+        or not plan.categories
+        or kind_of in plan.categories
+    )
+    if kept != plan.merchant_terms:
+        plan = replace(plan, merchant_terms=kept)
+    if (
+        len(plan.categories) != 1
+        or plan.merchants
+        or plan.excluded_merchants
+        or any(category_words.category_of_kind(term) is None for term in plan.merchant_terms)
+        or plan.counterparties
+        or plan.excluded_counterparties
+        or plan.counterparty_types
+        or plan.internal_only
+        or plan.transaction_ids
+    ):
+        return plan
+    # Each kind as the vocabulary spells it and without its accents, as alternatives: the bank
+    # lowers a name but does not fold it, so «óptica» alone is not "Optica Roca", and the note
+    # under an empty answer would then say no shop carries a word one plainly does.
+    kinds = tuple(
+        dict.fromkeys(
+            spelling
+            for kind in facts.kinds_of(plan.categories[0])
+            for spelling in (kind, spanish.folded(kind))
+        )
+    )
+    if not kinds or kinds == plan.merchant_terms:
+        return plan
+    return replace(plan, merchant_terms=kinds)
 
 
 def without_the_inherited_category(

@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from typing import Final
 
 from finguard_orchestrator.domain.enums import (
+    CounterpartyType,
     Direction,
     GroupBy,
     Metric,
@@ -32,6 +33,7 @@ from finguard_orchestrator.domain.services import (
     category_words,
     frequency_analyzer,
     recurrence_analyzer,
+    spanish,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -360,7 +362,7 @@ def cards(wallet: Wallet) -> str:
 _KINDS: Final[dict[str, str]] = {"DEBIT": "débito", "CREDIT": "crédito", "PREPAID": "prepago"}
 
 
-def filter_of(plan: FinancialPlan | TopMovements) -> str:
+def filter_of(plan: FinancialPlan | TopMovements, shops: tuple[str, ...] = ()) -> str:
     """What the figure is a figure *of*, in words, or "" when the question named no filter.
 
     Two answers in a row that differ only in a number nobody can attribute is what made the
@@ -381,6 +383,9 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     supermarket ranking produced ", sin alquiler" above three identical rows. What the plan is
     still carrying is said by `inert_exclusion_note` instead, as the truth about the figure rather
     than as a filter on it.
+
+    `shops` are the shops a merchant-term figure turned out to be about (`_shops_shown`), named in
+    place of the term when the answer can name every one of them.
     """
     transaction_types = getattr(plan, "transaction_types", ())
     direct_debits_only = transaction_types == (TransactionType.DIRECT_DEBIT,)
@@ -391,7 +396,7 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     elif plan.merchants:
         included = f" en {listed(plan.merchants)}"
     elif isinstance(plan, FinancialPlan) and plan.merchant_terms:
-        included = f" en comercios cuyo nombre contiene {listed(plan.merchant_terms)}"
+        included = f" en {listed(shops)}" if shops else f" en {carrying(plan.merchant_terms)}"
     elif plan.categories:
         included = f" en {listed(tuple(category_words.name_of(c) for c in plan.categories))}"
     elif direct_debits_only:
@@ -468,6 +473,51 @@ def _inert_note(plan: FinancialPlan | TopMovements) -> str:
     """
     note = inert_exclusion_note(plan)
     return f"\n{note}" if note else ""
+
+
+def carrying(terms: tuple[str, ...]) -> str:
+    """The shops a merchant term stands for, as a person says it: «comercios con «gimnasio» en el
+    nombre».
+
+    "Comercios cuyo nombre contiene gimnasio" was the line, and it read as a query nobody had typed.
+    """
+    return f"comercios con {terms_said(terms)} en el nombre"
+
+
+def terms_said(terms: tuple[str, ...]) -> str:
+    """Merchant terms as a person reads them: «gimnasio», «apuest» o «bet».
+
+    Joined with «o»: the terms are alternatives, and a shop that carries either one is counted --
+    «apuest» or «bet», not a shop that carries both. One spelling of a word is said once: the plan
+    carries «óptica» and «optica» because the bank does not fold accents and a shop may write
+    either, and the person asked about one word.
+    """
+    spelled: dict[str, str] = {}
+    for term in terms:
+        spelled.setdefault(spanish.folded(term), term)
+    said = [f"«{term}»" for term in spelled.values()]
+    return said[0] if len(said) == 1 else f"{', '.join(said[:-1])} o {said[-1]}"
+
+
+def _shops_shown(answer: QueryAnswer, plan: FinancialPlan) -> tuple[str, ...]:
+    """The shops a merchant-term answer is about, by name -- when its evidence shows all of them.
+
+    «29,90 € en Gimnasio Altafit» rather than «en comercios con «gimnasio» en el nombre»: the
+    holder asked about their gym, and the answer knows which one it is. Only when the movements
+    beside the figure are every movement behind it, though. A year of gym is twelve charges against
+    the ten the deployment sends, and naming the shops among the ten would leave out a second gym
+    that only appears in the other two -- a list that reads complete and is not.
+    """
+    if (
+        not plan.merchant_terms
+        or plan.merchants
+        or answer.movement_count == 0
+        or len(answer.movements) < answer.movement_count
+        # A movement with no shop's name is one the list cannot name, and would leave out.
+        or any(not movement.merchant_name for movement in answer.movements)
+    ):
+        return ()
+    return tuple(dict.fromkeys(movement.merchant_name or "" for movement in answer.movements))
 
 
 def listed(names: tuple[str, ...]) -> str:
@@ -676,15 +726,81 @@ def _conversational_window_of(plan: FinancialPlan | TopMovements) -> str:
     return window_of(plan)
 
 
+# What a counterparty type is called in a sentence. Here rather than beside the alias answers that
+# used it first, because the query line says the same thing and a second vocabulary for one fact
+# is how two screens come to disagree.
+COUNTERPARTY_LABELS: Final[dict[CounterpartyType, str]] = {
+    CounterpartyType.MERCHANT: "comercio",
+    CounterpartyType.PERSON: "persona",
+    CounterpartyType.EMPLOYER: "empresa pagadora",
+    CounterpartyType.BILLER: "emisor de recibos",
+    CounterpartyType.ACCOUNT: "cuenta contraparte",
+    CounterpartyType.BANK: "banco",
+    CounterpartyType.UNKNOWN: "contraparte",
+}
+
+# The rest of the line's identifiers, in the words already on screen: the direction and the
+# calendar buckets as the chart titles name them ("Gastos por mes"), the other dimensions as the
+# answer sentences do ("tus 3 comercios con…"), and the two measures `describe` left raw as the
+# answers state them — a count of movements, and an average amount per movement.
+_DIRECTION_WORDS: Final[dict[Direction, str]] = {
+    Direction.EXPENSE: "gastos",
+    Direction.INCOME: "ingresos",
+    Direction.ALL: "movimientos",
+}
+_GROUPING_WORDS: Final[dict[GroupBy, str]] = {
+    GroupBy.DAY: "día",
+    GroupBy.WEEK: "semana",
+    GroupBy.MONTH: "mes",
+    GroupBy.CATEGORY: "categoría",
+    GroupBy.MERCHANT: "comercio",
+    GroupBy.COUNTERPARTY: "contraparte",
+    GroupBy.ACCOUNT: "cuenta",
+}
+_METRIC_WORDS: Final[dict[Metric, str]] = {
+    Metric.COUNT: "número de movimientos",
+    Metric.AVERAGE: "importe medio por movimiento",
+}
+
+
 def describe(plan: FinancialPlan | TopMovements) -> str:
-    """The plan in one readable line.
+    """The plan in one line, in the ledger's own identifiers: the line the planner is shown.
+
+    `prompt.py` quotes this into the planner's prompt as the previous question, and counts on
+    every token in it coming from a closed set — enum values, ISO dates, category identifiers.
+    The planner's evaluations were measured against that prompt, so this line stays exactly what
+    it was. It used to be the person's line too, and that is how «Ver la consulta» came to read
+    "en el último mes, expense, subscriptions": a person reads `plan_in_words` now.
+    """
+    return _one_line(plan, in_words=False)
+
+
+def plan_in_words(plan: FinancialPlan | TopMovements) -> str:
+    """The plan in one readable line, for the person who asked: «Ver la consulta».
 
     Shown with every answer on purpose. A figure whose derivation the user cannot
     inspect is a number to be believed, and there is a language model in this pipeline —
     showing the question it actually asked is the difference between a tool and an
     oracle.
+
+    Field for field the same line as `describe`, with every identifier said the way the answers
+    already say it — "suscripciones" from `category_words`, "por comercio", "gastos" — rather
+    than in a second vocabulary written for this line. An answer that says «suscripciones» above
+    a query line saying «subscriptions» reads as two different questions.
     """
-    parts = [window_of(plan), plan.direction.value.lower()]
+    return _one_line(plan, in_words=True)
+
+
+def _one_line(plan: FinancialPlan | TopMovements, *, in_words: bool) -> str:
+    """Both lines, from one walk over the plan, so they cannot disagree about which fields exist.
+
+    `in_words` decides only how an identifier is said. Everything already Spanish — the window,
+    "solo traspasos", "media por periodo" — is the same text in both.
+    """
+    parts = [
+        window_of(plan),
+        _DIRECTION_WORDS[plan.direction] if in_words else plan.direction.value.lower(),
+    ]
     if isinstance(plan, FinancialPlan) and plan.internal_only:
         parts.append("solo traspasos entre cuentas")
     if isinstance(plan, FinancialPlan) and plan.transaction_types == (
@@ -696,7 +812,11 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         # line for "el más caro" and "el segundo más caro".
         parts.append(f"nº {plan.rank} por importe")
     if plan.categories:
-        parts.append("/".join(plan.categories).lower())
+        parts.append(
+            "/".join(category_words.name_of(category) for category in plan.categories)
+            if in_words
+            else "/".join(plan.categories).lower()
+        )
     if plan.excluded_categories:
         parts.append(
             "sin "
@@ -708,7 +828,13 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         # nothing there".
         parts.append("/".join(plan.merchants))
     if isinstance(plan, FinancialPlan) and plan.merchant_terms:
-        parts.append("comercio contiene " + "/".join(plan.merchant_terms))
+        # The identifier line keeps the words the planner and the turn interpreter were measured
+        # on; the person reads the shops the terms stand for, as the answer above says them.
+        parts.append(
+            carrying(plan.merchant_terms)
+            if in_words
+            else "comercio contiene " + "/".join(plan.merchant_terms)
+        )
     if plan.excluded_merchants:
         parts.append("sin " + "/".join(plan.excluded_merchants))
     if isinstance(plan, FinancialPlan):
@@ -717,11 +843,18 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         if plan.excluded_counterparties:
             parts.append("sin " + "/".join(plan.excluded_counterparties))
         if plan.counterparty_types:
-            parts.append("tipo " + "/".join(item.value.lower() for item in plan.counterparty_types))
+            parts.append(
+                "tipo "
+                + "/".join(
+                    COUNTERPARTY_LABELS[item] if in_words else item.value.lower()
+                    for item in plan.counterparty_types
+                )
+            )
         # The grouping and the metric belong to an aggregate. A ranking has neither, and its rank is
         # appended above — where the reader is looking for what makes the two lines different.
         if plan.group_by.value != "NONE":
-            parts.append(f"por {plan.group_by.value.lower()}")
+            grouping = _GROUPING_WORDS[plan.group_by] if in_words else plan.group_by.value.lower()
+            parts.append(f"por {grouping}")
         if plan.group_limit is not None:
             parts.append(f"top {plan.group_limit}")
         if plan.metric is Metric.PERIOD_AVERAGE:
@@ -733,7 +866,11 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         elif plan.metric is Metric.RECURRENCE:
             parts.append("gastos recurrentes")
         elif plan.metric.value != "SUM":
-            parts.append(plan.metric.value.lower())
+            parts.append(
+                _METRIC_WORDS.get(plan.metric, plan.metric.value.lower())
+                if in_words
+                else plan.metric.value.lower()
+            )
     return ", ".join(parts)
 
 
@@ -789,7 +926,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     averaging_periods = plan.metric is Metric.PERIOD_AVERAGE
     accumulating = plan.metric is Metric.CUMULATIVE
     # What the figure is of. Empty for a question that named no filter, which is most of them.
-    about = filter_of(plan)
+    about = filter_of(plan, _shops_shown(answer, plan))
     # Why the figure is the same as the one above it, when a follow-up excluded something the
     # category filter was never counting. Empty for every other answer, which is most of them.
     inert_note = _inert_note(plan)
@@ -1060,7 +1197,7 @@ def when(
     every interval, never a sample or a model estimate.
     """
     window = window_of(plan)
-    about = filter_of(plan)
+    about = filter_of(plan, _shops_shown(answer, plan))
     note = _inert_note(plan)
     if answer.is_empty:
         return f"No he encontrado movimientos{about} {window}."
@@ -1112,7 +1249,7 @@ def recurring_expenses(
 ) -> str:
     """Describe only periodic patterns supported by the complete bounded movement set."""
     window = window_of(plan)
-    about = filter_of(plan)
+    about = filter_of(plan, _shops_shown(answer, plan))
     note = _inert_note(plan)
     if answer.is_empty:
         return f"No he encontrado movimientos{about} {window} con los que buscar recurrencias."

@@ -115,7 +115,7 @@ episodes:
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: eso es
         route: COURTESY
       - say: gracias

@@ -24,7 +24,7 @@ episodes:
     turns:
       - say: Cuanto dinero tengo en mi cuenta de ahorros ?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: Caunto he gastado este mes ?
         route: QUERY
         ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
@@ -112,7 +112,7 @@ episodes:
         no_model: true
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: gracias
         route: COURTESY
 

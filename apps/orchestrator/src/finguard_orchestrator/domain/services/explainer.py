@@ -61,7 +61,7 @@ def explain(sentence: str, plan: FinancialPlan | None) -> str:
         # query that does not exist.
         return "Todavía no te he contestado nada, así que no hay ninguna consulta que explicar."
 
-    said = f"La consulta que hice fue: {answer_writer.describe(plan)}."
+    said = f"La consulta que hice fue: {answer_writer.plan_in_words(plan)}."
     mentioned = category_words.named_in(sentence)
     if not mentioned:
         return said

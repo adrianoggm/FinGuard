@@ -30,6 +30,7 @@ service just stopped being the last to see it.
 """
 
 import difflib
+import re
 from typing import Final
 
 from finguard_orchestrator.domain.services import category_words, spanish
@@ -253,7 +254,7 @@ def almost_named_in(sentence: str, merchants: tuple[str, ...], limit: int = 3) -
     go looking for a shop whose name is one letter from a word the holder used to mean the
     category, and that guess is worse than the silence it replaces.
     """
-    said = _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
+    said = _shop_words(sentence)
     if not said or not merchants:
         return ()
     found: dict[str, None] = {}
@@ -280,8 +281,10 @@ def named_in(sentence: str, merchants: tuple[str, ...]) -> str | None:
     come back first. Both are the failure this exists to stop, pointing the other way.
 
     A word the category vocabulary already explains is never a merchant here, however well it
-    matches. "Gimnasio Altafit" is a merchant and "gimnasio" is how somebody says SUBSCRIPTIONS,
-    so a question about the gym is about the category and this must not narrow it to one shop.
+    matches. "Gimnasio Altafit" is a merchant and "gimnasio" is a kind of subscription, and this
+    returns one shop -- the first that matches -- where the holder may pay two gyms. The gym is a
+    merchant term on the plan instead (`explicit_facts.of_its_kind`), which the bank answers with
+    every shop whose name contains the word.
 
     **Those words are dropped, not the sentence.** Until 2026-09-14 a sentence that named any
     category at all was refused here outright, which is a different and much wider rule: it also
@@ -297,10 +300,335 @@ def named_in(sentence: str, merchants: tuple[str, ...]) -> str | None:
     """
     if not merchants:
         return None
-    said = _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)
+    said = _shop_words(sentence)
     if not said:
         return None
     for merchant in merchants:
         if _tokens(merchant) & said:
             return merchant
     return None
+
+
+# The words a question about money is built from, and never what it is about. Not a vocabulary of
+# Spanish: the words `_tokens` leaves standing in the planning datasets' questions once the
+# categories and `_NOT_A_NAME` are gone -- «cuánto», «gasté», «llevo», «me gustaría saber», the
+# months -- counted there and read here. For `could_name_a_shop` and `shop_words_in` alone: they
+# decide whether a sentence is worth a list of shops, or a word is worth carrying to a later turn,
+# where `named_in` decides nothing until the ledger's own names are in hand, and a word missing
+# from this list costs that one query and nothing else.
+_QUESTION_WORDS: Final = frozenset(
+    {
+        # Asking.
+        "cuanto",
+        "cuanta",
+        "cuantos",
+        "cuantas",
+        "cual",
+        "cuales",
+        "donde",
+        "como",
+        "cuando",
+        "quien",
+        "quienes",
+        "porque",
+        # Spending, paying, having.
+        "gaste",
+        "gastado",
+        "gastar",
+        "gastando",
+        "gastamos",
+        "gastaste",
+        "gastaron",
+        "gastas",
+        "llevo",
+        "llevas",
+        "lleva",
+        "llevamos",
+        "pague",
+        "pagado",
+        "pagar",
+        "pagando",
+        "pagamos",
+        "pagaste",
+        "pagas",
+        "cuesta",
+        "cuestan",
+        "costado",
+        "coste",
+        "costo",
+        "sale",
+        "salido",
+        "consumi",
+        "consumido",
+        "consumo",
+        "desembolso",
+        "desembolsos",
+        "desembolsado",
+        "compre",
+        "comprado",
+        "destine",
+        "tuve",
+        "tenido",
+        "tengo",
+        "tienes",
+        "hecho",
+        "hice",
+        "realice",
+        "realizado",
+        "realizados",
+        "sido",
+        "hubo",
+        "invertido",
+        # Wanting to know.
+        "quiero",
+        "quieras",
+        "quiera",
+        "quisiera",
+        "querria",
+        "gustaria",
+        "podria",
+        "podrias",
+        "puedes",
+        "puede",
+        "dime",
+        "dame",
+        "darme",
+        "decirme",
+        "saber",
+        "conocer",
+        "necesito",
+        "interesa",
+        "interesado",
+        "informarme",
+        "obtener",
+        "ensename",
+        "muestrame",
+        "favor",
+        "bueno",
+        "pues",
+        "sabes",
+        "mira",
+        # What the answer is.
+        "importe",
+        "monto",
+        "cantidad",
+        "cifra",
+        "suma",
+        "resumen",
+        "detalle",
+        "detalles",
+        "informacion",
+        "movimiento",
+        "movimientos",
+        "transacciones",
+        "operaciones",
+        # When, and how much of it.
+        "para",
+        "durante",
+        "sobre",
+        "entre",
+        "hasta",
+        "desde",
+        "hace",
+        "ahora",
+        "todo",
+        "toda",
+        "todos",
+        "todas",
+        "estos",
+        "estas",
+        "ultimos",
+        "ultimas",
+        "anterior",
+        "pasados",
+        "pasadas",
+        "actual",
+        "mismo",
+        "misma",
+        "ayer",
+        "manana",
+        "semanas",
+        "dias",
+        "periodo",
+        "trimestre",
+        "semestre",
+        "quincena",
+        "verano",
+        "invierno",
+        "primavera",
+        "otono",
+        "semanal",
+        "mensual",
+        "mensuales",
+        "anual",
+        "diario",
+        "diaria",
+        "medio",
+        "media",
+        "promedio",
+        "solo",
+        "sola",
+        "tambien",
+        "ademas",
+        "aparte",
+        "menos",
+        "mucho",
+        "mucha",
+        "muchos",
+        "algo",
+        "veces",
+        "siempre",
+        "ultimamente",
+        "aproximadamente",
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "setiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+        # The holder's own accounts, which a reply to «¿En qué cuenta?» names.
+        "cuentas",
+        "hucha",
+        "corriente",
+        "ahorro",
+        "ahorros",
+        "fondo",
+        # Being paid, and asking politely -- what the corpus's own questions still left standing.
+        "cobrado",
+        "cobre",
+        "cobro",
+        "cobrar",
+        "recibido",
+        "recibi",
+        "recibir",
+        "ingresado",
+        "ingreso",
+        "ingresos",
+        "entrado",
+        "entro",
+        "llego",
+        "viene",
+        "sabrias",
+        "sabria",
+        "decir",
+        "indicarme",
+        "indiqueme",
+        "proporcionarme",
+        "utilice",
+        "utilizado",
+        "deseo",
+        "queria",
+        "quedaria",
+        "estoy",
+        "puedo",
+        "hacer",
+        "gracias",
+        "hola",
+        "vale",
+        "perdona",
+        "cada",
+        "tanto",
+        "tiempo",
+        "fecha",
+        "lunes",
+        "martes",
+        "miercoles",
+        "jueves",
+        "viernes",
+        "sabado",
+        "domingo",
+        "recientes",
+        "recientemente",
+        "anteriores",
+        "normalmente",
+        "habitual",
+        "exactamente",
+        "otra",
+        "otro",
+        "otros",
+        "pero",
+        "entonces",
+        "antes",
+        "desglose",
+        "acumulado",
+        "categoria",
+        "categorias",
+        "comercio",
+        "comercios",
+        "tiendas",
+        "saldo",
+        "consulta",
+    }
+)
+
+
+def could_name_a_shop(sentence: str) -> bool:
+    """Whether the sentence says any word that could be a shop's name.
+
+    For a caller about to spend a query on the list of shops to match against: «¿suscripciones?»
+    says nothing but a category, «¿cuánto gasté en el gimnasio?» nothing but a kind and the words
+    every question is made of, and no list could find a shop in either.
+    """
+    return bool(shop_words_in(sentence))
+
+
+def shop_words_in(sentence: str) -> tuple[str, ...]:
+    """The words of the sentence that could be a shop's name, folded, in the order it says them.
+
+    What is left of `named_in`'s candidates once the words every question is built from are gone
+    (`_QUESTION_WORDS`): «¿Cuánto llevo gastado en Spotify?» is ("spotify",). A guess about which
+    words are names, and so never a filter by itself -- a caller that carries these to a later turn
+    gives them to the ledger, which keeps only the shops whose names contain one.
+    """
+    words = _shop_words(sentence) - _QUESTION_WORDS
+    order = spanish.folded(sentence)
+    return tuple(sorted(words, key=order.find))
+
+
+def named_beside_a_kind(
+    sentence: str, merchants: tuple[str, ...], kinds: tuple[str, ...]
+) -> str | None:
+    """The shop a sentence names beside a kind of thing -- «el gimnasio McFit» -- out of these.
+
+    Among the shops that carry the kind, a word of the name is enough, as for `named_in`: «el
+    gimnasio Altafit» is "Gimnasio Altafit", «el metro de Madrid» "Metro de Madrid". A shop that
+    does not carry it has to be named whole -- every word of its name in the sentence: "McFit",
+    "Kinepolis", "Uber". One shared word is not a name there, because the kind's shops are what the
+    sentence asked about and a place is the word they most often share with somebody else's: «el
+    gimnasio de Madrid» is not "Netflix Madrid", nor «el taxi de Madrid» "EMT Madrid".
+    """
+    carrying = tuple(
+        merchant
+        for merchant in merchants
+        if any(spanish.folded(kind) in spanish.folded(merchant) for kind in kinds)
+    )
+    shop = named_in(sentence, carrying)
+    if shop is not None:
+        return shop
+    said = set(_WHOLE_WORDS.findall(spanish.folded(sentence)))
+    return next(
+        (
+            merchant
+            for merchant in merchants
+            if merchant not in carrying
+            and (name := set(_WHOLE_WORDS.findall(spanish.folded(merchant))) - _NOT_A_NAME)
+            and name <= said
+        ),
+        None,
+    )
+
+
+_WHOLE_WORDS: Final = re.compile(r"[a-z0-9]+")
+
+
+def _shop_words(sentence: str) -> set[str]:
+    """The sentence's words a shop's name could carry: long enough, not a word that is never a
+    name, and not a word the category vocabulary already explains."""
+    return _tokens(sentence) - _NOT_A_NAME - category_words.words_named_in(sentence)

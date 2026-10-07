@@ -733,7 +733,9 @@ def question_to_dto(
         outcome=result.outcome,
         text=result.text,
         question=result.question,
-        plan=result.plan,
+        # «Ver la consulta» is the person's line. `result.plan` is the identifier line the turn log
+        # keeps for the turn interpreter; a result with no Spanish line wrote `plan` in Spanish.
+        plan=result.plan_in_words if result.plan_in_words is not None else result.plan,
         conversation=conversation_mapper.to_payload(result.conversation),
         contacts=[
             SpokenContactResponse(

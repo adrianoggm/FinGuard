@@ -17,7 +17,7 @@ episodes:
     turns:
       - say: ¿podrías decirme cuánto dinero tengo en mis cuentas?
         route: BALANCE
-        total: 775592
+        total: 857198
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿de cuánto dispongo?
@@ -31,26 +31,26 @@ episodes:
 
   - name: the_investment_is_never_inside_the_figure
     why: >
-      2.700,00 € is what was paid, not what it is worth, and there is no price source. Adding it in
+      3.150,00 € is what was paid, not what it is worth, and there is no price source. Adding it in
       would report a purchase price as somebody's money.
     metrics: [wrong_tool]
     turns:
       - say: ¿cuánto dinero tengo?
         route: BALANCE
-        total: 775592
+        total: 857198
         says: no lo que vale hoy
       - say: ¿y en el fondo?
         route: BALANCE
-        says: "2.700,00"
+        says: "3.150,00"
       - say: ¿y en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿y en la corriente?
         route: BALANCE
-        says: "2.270,42"
+        says: "2.156,48"
       - say: ¿y en total?
         route: BALANCE
-        total: 775592
+        total: 857198
       - say: vale
         route: COURTESY
 
@@ -143,13 +143,13 @@ episodes:
     turns:
       - say: ¿cuál es el estado actual de mi hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿cómo va mi cuenta corriente?
         route: BALANCE
-        says: "2.270,42"
+        says: "2.156,48"
       - say: ¿cómo está el fondo?
         route: BALANCE
-        says: "2.700,00"
+        says: "3.150,00"
       - say: ¿y en total?
         route: BALANCE
       - say: perfecto
@@ -206,12 +206,12 @@ episodes:
     turns:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: mueve 200 € a la hucha
         route: PAYMENT
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿y en la corriente?
         route: BALANCE
       - say: vale
@@ -229,7 +229,7 @@ episodes:
         route: BALANCE
       - say: ¿y en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿y en el fondo?
         route: BALANCE
       - say: ¿y en la corriente?
@@ -238,14 +238,14 @@ episodes:
         route: BALANCE
       - say: ¿y en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿y en los ahorros?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: ¿y todo junto?
         route: BALANCE
       - say: ¿y en la hucha?
         route: BALANCE
-        says: "5.485,50"
+        says: "6.415,50"
       - say: gracias
         route: COURTESY

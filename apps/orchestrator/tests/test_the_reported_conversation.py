@@ -9,15 +9,15 @@ that conversation, transcribed, with what each turn is supposed to answer.
     ¿qué cuentas tengo?                            → "eso no puedo calcularlo"    ✗ it can
     ¿cuánto tengo en mi cuenta de ahorros?         → all three, with a breakdown  ✗ it named one
     ¿en mi hucha?                                  → "¿de qué periodo?"           ✗
-    ¿cuánto dinero tengo en mi Hucha?              → 5.485,50 € en Hucha          ✓
+    ¿cuánto dinero tengo en mi Hucha?              → 6.415,50 € en Hucha          ✓
     ¿y en el fondo?                                → "sigo sin tener claro…"      ✗
     …traspasar el total de fondo indexado
       a la cuenta de ahorros                       → "¿a cuál lo muevo?"          ✗ it said which
     a Hucha                                        → "¿de qué periodo?"           ✗
 
 The figures are the demo dataset's, so the amounts here are the amounts on screen. They are what
-makes this a transcript rather than an illustration: 7.755,92 € is what the holder has where the
-answer says "entre tus cuentas", and 2.700,00 € is a cost basis and says so.
+makes this a transcript rather than an illustration: 8.571,98 € is what the holder has where the
+answer says "entre tus cuentas", and 3.150,00 € is a cost basis and says so.
 
 "Movimientos entre mis cuentas" now has its own narrow contract. It asks for the missing period and
 then sends `internal_only`, rather than widening an ordinary query to every movement. That
@@ -80,12 +80,12 @@ FUND = uuid.UUID("33333333-3333-3333-3333-333333333333")
 TODAY = date(2026, 8, 5)
 
 # Laura's three accounts, with the figures the demo dataset actually holds.
-CURRENT_ACCOUNT = Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042)
-SAVINGS = Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 548_550)
-INVESTMENT = Holding(FUND, "ASSET", "Fondo indexado", "EUR", 270_000)
+CURRENT_ACCOUNT = Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 215_648)
+SAVINGS = Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 641_550)
+INVESTMENT = Holding(FUND, "ASSET", "Fondo indexado", "EUR", 315_000)
 
 # What the two spendable accounts add up to. The fund is not in it, and the answer says why.
-SPENDABLE = "7.755,92 €"
+SPENDABLE = "8.571,98 €"
 
 THIS_YEAR = RelativePeriod(period=Period.THIS_YEAR)
 EVERYTHING_THIS_YEAR = FinancialPlan(direction=Direction.ALL, period=THIS_YEAR)
@@ -140,8 +140,8 @@ class Accounts:
     async def of(self, *_: object, **__: object) -> AccountSummary:
         return AccountSummary(
             currency="EUR",
-            booked_minor=227_042,
-            available_minor=227_042,
+            booked_minor=215_648,
+            available_minor=215_648,
             as_of=datetime(2026, 8, 5, 9, 30, tzinfo=UTC),
             holdings=self._holdings,
         )
@@ -251,7 +251,7 @@ def test_an_account_named_with_a_possessive_is_an_account_named(said: str) -> No
     """Turn four. The vocabulary carried its article — "la cuenta de ahorros" was a phrase and "mi
     cuenta de ahorros" was not — so a sentence naming one account got the total of all three:
 
-        "Tienes 7.755,92 € entre tus cuentas: 2.270,42 € en Cuenta corriente y 5.485,50 € en Hucha…"
+        "Tienes 8.571,98 € entre tus cuentas: 2.156,48 € en Cuenta corriente y 6.415,50 € en Hucha…"
 
     Every figure in it is correct, and none of them is the answer. Possessives are how people talk
     about their own money, and this is a vocabulary about somebody's own accounts.
@@ -260,8 +260,8 @@ def test_an_account_named_with_a_possessive_is_an_account_named(said: str) -> No
 
     answer = Chat(client).say(said)
 
-    assert answer["text"] == "Tienes 5.485,50 € en Hucha."
-    assert answer["total_minor"] == 548_550
+    assert answer["text"] == "Tienes 6.415,50 € en Hucha."
+    assert answer["total_minor"] == 641_550
 
 
 def test_naming_none_still_answers_with_all_of_them() -> None:
@@ -273,8 +273,8 @@ def test_naming_none_still_answers_with_all_of_them() -> None:
     answer = Chat(client).say("¿cuánto dinero tengo?")
 
     assert answer["text"].startswith(f"Tienes {SPENDABLE} entre tus cuentas")
-    assert answer["total_minor"] == 775_592
-    assert "2.700,00 €" in answer["text"]
+    assert answer["total_minor"] == 857_198
+    assert "3.150,00 €" in answer["text"]
     assert "no lo que vale hoy" in answer["text"], "a cost basis was printed as a valuation"
 
 
@@ -295,7 +295,7 @@ def test_a_bare_account_after_a_balance_is_a_balance_about_that_account() -> Non
     narrowed = chat.say("En mi Hucha ?")
 
     assert narrowed["outcome"] == Spoken.BALANCE.value
-    assert narrowed["text"] == "Tienes 5.485,50 € en Hucha."
+    assert narrowed["text"] == "Tienes 6.415,50 € en Hucha."
     assert planner.asked == [], "a balance follow-up reached the model"
 
 
@@ -309,7 +309,7 @@ def test_the_fund_answers_with_what_it_cost_and_says_that_is_what_it_is() -> Non
     fund = chat.say("Y en EL FONDO")
 
     assert fund["outcome"] == Spoken.BALANCE.value
-    assert "2.700,00 €" in fund["text"]
+    assert "3.150,00 €" in fund["text"]
     assert "no lo que vale hoy" in fund["text"]
 
 
@@ -443,7 +443,7 @@ def test_a_transfer_that_names_no_account_asks_which_rather_than_refusing() -> N
     ],
 )
 def test_an_instruction_to_move_money_is_not_answered_with_a_balance(said: str) -> None:
-    """Both were answered with a figure — "Tienes 2.270,42 € en Cuenta corriente" — because neither
+    """Both were answered with a figure — "Tienes 2.156,48 € en Cuenta corriente" — because neither
     verb was in the moving vocabulary. `enviar` and `mandar` are deliberately absent, since they are
     what a person says about paying somebody else; the *reflexive* is the opposite and has exactly
     one possible destination, which is the holder's own account.
@@ -466,7 +466,7 @@ def test_the_state_of_my_savings_is_a_balance_question() -> None:
     answer = Chat(client).say("Oye cual es el estado actual de mi hucha de ahorros")
 
     assert answer["outcome"] == Spoken.BALANCE.value
-    assert answer["text"] == "Tienes 5.485,50 € en Hucha."
+    assert answer["text"] == "Tienes 6.415,50 € en Hucha."
     assert planner.asked == []
 
 
@@ -492,10 +492,10 @@ def test_the_transcript_from_the_third_turn_on() -> None:
     moved = chat.say("me gustaria traspasar el total de fondo indexado a la cuenta de ahorros")
 
     assert accounts["outcome"] == Spoken.BALANCE.value
-    assert savings["text"] == "Tienes 5.485,50 € en Hucha."
-    assert narrowed["text"] == "Tienes 5.485,50 € en Hucha."
-    assert again["text"] == "Tienes 5.485,50 € en Hucha."
-    assert "2.700,00 €" in fund["text"]
+    assert savings["text"] == "Tienes 6.415,50 € en Hucha."
+    assert narrowed["text"] == "Tienes 6.415,50 € en Hucha."
+    assert again["text"] == "Tienes 6.415,50 € en Hucha."
+    assert "3.150,00 €" in fund["text"]
     assert "más de una cuenta" not in moved["text"]
     # Six turns and the model was never needed once. Every one of them is a closed vocabulary — the
     # accounts, the balance, the destination — and a model in any of them is a different answer on
@@ -529,7 +529,7 @@ def test_the_same_words_about_a_balance_are_still_a_balance() -> None:
     answer = Chat(client).say("¿cuánto tengo entre mis cuentas?")
 
     assert answer["outcome"] == Spoken.BALANCE.value
-    assert answer["total_minor"] == 775_592
+    assert answer["total_minor"] == 857_198
 
 
 # =========================================================================================
@@ -690,7 +690,7 @@ def test_and_the_question_it_points_at_answers() -> None:
 
     answer = Chat(client).say("¿cuánto tengo en el fondo?")
 
-    assert "2.700,00 €" in answer["text"]
+    assert "3.150,00 €" in answer["text"]
     assert "no lo que vale hoy" in answer["text"]
 
 
@@ -719,8 +719,8 @@ def test_the_third_transcript_end_to_end() -> None:
     fund = chat.say("quiero traspasar del fondo a hucha")
     done = chat.say("1000 pavos")
 
-    assert state["text"] == "Tienes 5.485,50 € en Hucha."
-    assert saldo["text"] == "Tienes 5.485,50 € en Hucha."
+    assert state["text"] == "Tienes 6.415,50 € en Hucha."
+    assert saldo["text"] == "Tienes 6.415,50 € en Hucha."
     assert sending["conversation"]["awaiting"] == "AMOUNT"
     assert amount["outcome"] == Spoken.TRANSFER_READY.value
     assert amount["total_minor"] == 300_00
