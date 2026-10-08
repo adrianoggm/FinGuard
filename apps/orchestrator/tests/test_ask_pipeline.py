@@ -732,8 +732,30 @@ async def test_a_closed_stop_list_word_is_asked_about_never_guessed_as_a_merchan
     correction or a pleasantry never becomes a merchant filter — it is the honest ask, and it costs
     no ledger call at all, unlike the guess-then-retract above.
 
-    The audit's own named example: "¿cuánto gasté el mes pasado?" used to run a second time with
-    `merchants: ['nada']`. It must not run at all."""
+    "Quería" rather than the audit's own «nada» since the conversation-state slice: «nada» alone
+    is a reset now, answered before the stop-list is consulted (the test below), and this test is
+    about the stop-list's ask."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
+    previous = plan(categories=("GROCERIES",))
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="quería",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "quería" in (result.text or "")
+    assert ledger.plans == []
+
+
+async def test_nada_is_a_reset_and_still_never_a_merchant() -> None:
+    """The audit's own named example: "¿cuánto gasté el mes pasado?" used to run a second time with
+    `merchants: ['nada']`. It must not run at all — and since the conversation-state slice a bare
+    «nada» drops the answer it followed instead of asking about the word."""
     ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
     previous = plan(categories=("GROCERIES",))
 
@@ -746,8 +768,9 @@ async def test_a_closed_stop_list_word_is_asked_about_never_guessed_as_a_merchan
         )
     )
 
-    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
-    assert "nada" in (result.text or "")
+    assert result.outcome == Spoken.GUIDANCE.value
+    assert result.text == "Vale, lo dejamos. ¿Qué quieres consultar?"
+    assert result.conversation.last_plan is None
     assert ledger.plans == []
 
 

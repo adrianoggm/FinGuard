@@ -28,6 +28,7 @@ from typing import Final
 
 from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionQuery,
+    _direction_of,
     _query_for_reader,
     _starts_new_financial_scope,
     _window_of,
@@ -64,6 +65,7 @@ from finguard_orchestrator.domain.services import (
     continuation_patch,
     explicit_facts,
     spanish,
+    turn_arbiter,
     window_words,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -132,11 +134,16 @@ _ACCOUNT_SELECTION_FOLLOW_UP: Final = re.compile(
 )
 
 
+# A leading «no,» before «solo», and «digo» among the corrections (validation fix 3, G3): «no, solo
+# el gimnasio» and «no, digo gasolina» narrow or replace the subject of the answer in view exactly
+# as «solo el gimnasio» and «quería decir gasolina» do. Not read here, both reached the model, which
+# asked the period of a question whose period was on screen (impro-gimnasio-marta 2). The comma is
+# required before «solo» (fix round 1, M-1): «no solo el gym, también Spotify» widens.
 _CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
     r"^(?:(?:y|ahora)\s+)?(?:solo\s+)?en\s+"
-    r"|^(?:ahora\s+)?(?:solo|solamente)\b"
+    r"|^(?:no\s*,\s*)?(?:ahora\s+)?(?:solo|solamente)\b"
     r"|^perdona\b.{0,35}\b(?:queria|refiero|referia)\b"
-    r"|^(?:no[\s,]+)?(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
+    r"|^(?:no[\s,]+)?(?:digo|me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
     r"|^volvamos?\s+a\b"
     r"|^(?:quedate|dejame|deja)\s+solo\s+con\b"
     # Item 4 (Wave 3 hardening, T8b): "ponme solo restaurantes" -- the same category-only filter
@@ -149,6 +156,14 @@ _CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
 
 
 _CATEGORY_REFERENCE: Final = re.compile(r"\b(?:esa|esta|aquella|la\s+misma)\s+categoria\b")
+
+# A second subject added to the first: «no solo restaurantes, también gasolina», «solo el gym,
+# también Spotify» (fix round 1, M-1; fix round 2). It widens the answer to every category it names,
+# so it is read only when it names two or more — never as «solo X», which narrows. A kind beside a
+# shop («el gym, también Spotify») is not that: one plan cannot hold «these gyms or that shop», and
+# it is left to the model.
+_AND_ALSO: Final = re.compile(r"\b(?:tambien|sino)\b")
+_NOT_ONLY: Final = re.compile(r"^no\s+solo\b")
 
 
 # "Separa transporte público y gasolina" — a verb that asks the plan in view to be broken apart,
@@ -265,6 +280,10 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
     cascade already writes. `contextual_follow_up_plan` below is the cascade's own name for this
     same body, wrapped once in the seam that call site needs.
     """
+    if turn_arbiter.asks_what_there_is_in_total(query.sentence):
+        # «¿Qué tengo en total en recibos este mes?» is a question of its own about what there is
+        # (validation fix 3, fix round 2), never «este mes» patched onto the restaurants in view.
+        return None
     focus = focus_of(query.conversation)
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
@@ -406,6 +425,15 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
 
     # A turn containing only a new window patches the query already on screen. Replanning
     # "en lo que llevamos de año" from scratch discarded both categories in a comparison.
+    #
+    # Not a question about another person's money that happens to name a window (validation fix
+    # 3, G6, P-7): after an answer about Marta, «¿cuánto me mandó Javi este año?» ran Marta's
+    # sending this year. Only that, though (fix round 1, I-4): «¿cuánto le mandé este año?» after
+    # Marta is still Marta this year, and was answered here deterministically before G6 sent every
+    # question of its own to the model. `continuation_patch.asks_about_another_person` reads the
+    # person and the direction as the turn-round shapes do; `_starts_new_financial_scope` alone
+    # cannot say it, its verbs are spending ones, and widening them would move every reader's line
+    # at once (R51).
     if (
         facts.window is not None
         and not facts.names_a_category
@@ -415,6 +443,7 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
         and facts.direction is None
         and len(folded.split()) <= 8
         and not _starts_new_financial_scope(query.sentence, today=query.today)
+        and not continuation_patch.asks_about_another_person(query.sentence, previous)
         and not (_group_dimension_in(folded) and _GROUP_RANKING_SIGNAL.search(folded))
         and not _A_UNIT_BACK_ANYWHERE.search(folded)
         and capability_guard.unsupported_reason(query.sentence) is None
@@ -452,15 +481,33 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
         - category_words.words_named_in(query.sentence)
         - {"y", "en", "solo", "el", "la", "los", "las"}
     )
-    if named and (_CATEGORY_FILTER_FOLLOW_UP.search(folded) or category_ellipsis):
+    # A split («sepáralo en transporte público y también en gasolina») says «también» too, and is
+    # the split branch's below: the categories apart, not added into one figure.
+    widens = (
+        _NOT_ONLY.match(folded) is not None or _AND_ALSO.search(folded) is not None
+    ) and _SPLIT_BY_NAMES.search(folded) is None
+    if named and (
+        (widens and len(named) >= 2)
+        or (not widens and (_CATEGORY_FILTER_FOLLOW_UP.search(folded) or category_ellipsis))
+    ):
         group_by = (
             GroupBy.NONE
             if previous.group_by is GroupBy.CATEGORY and len(named) == 1
             else previous.group_by
         )
+        # The category replaces the subject and brings its own direction (ruling R24; validation
+        # fix 3, G6, P-5): «¿y en gasolina?» after «¿cuánto cobré de nómina en julio?» is fuel
+        # spent, and keeping the payroll's INCOME ran it as fuel received. A base over every
+        # movement (ALL) has no direction to replace. A direction the turn states still wins, in
+        # `enforce`. The comparison's both-sides patch has said the same since Task 6.
         return explicit_facts.enforce(
             replace(
                 previous,
+                direction=(
+                    previous.direction
+                    if previous.direction is Direction.ALL
+                    else _direction_of(named)
+                ),
                 categories=named,
                 excluded_categories=(),
                 merchants=(),

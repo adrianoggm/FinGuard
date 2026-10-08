@@ -37,6 +37,7 @@ from finguard_orchestrator.application.queries.readers.seam import _recogniser
 from finguard_orchestrator.application.queries.readers.windows import (
     _calendar_month_window,
     _previous_calendar_window,
+    _the_earlier_first,
 )
 from finguard_orchestrator.domain.enums import (
     Direction,
@@ -52,6 +53,7 @@ from finguard_orchestrator.domain.models.planning_context import (
 from finguard_orchestrator.domain.services import (
     category_words,
     explicit_facts,
+    merchant_words,
     spanish,
     window_words,
 )
@@ -105,6 +107,24 @@ _DIRECT_PERIOD_COMPARISON: Final = re.compile(
     r"|(?:cual|que|donde)\b.{0,50}\b(?:mas|menos|mayor|menor)"
     r"|mayor|menor)\b"
 )
+
+
+# Where a comparison says the shop it is about: after «en» or «de» — «junio vs julio en Mercadona»,
+# «mis gastos de Spotify» — with an article or a possessive between. Only the words
+# `merchant_words.shop_words_in` already takes for a shop's name count, so «en junio», «de este
+# mes» and «en la hucha» say none; and a name starts with a letter, so «de 2025» is a year.
+_A_PLACE_SAID: Final = re.compile(
+    r"\b(?:en|de|del)\s+(?:(?:el|la|los|las|mis?|tus?)\s+)?([a-z][a-z0-9]*)"
+)
+
+
+def _shops_said(sentence: str) -> tuple[str, ...]:
+    """The words the sentence says a shop with, folded: «junio vs julio en Mercadona» is
+    ("mercadona",)."""
+    candidates = frozenset(merchant_words.shop_words_in(sentence))
+    return tuple(
+        word for word in _A_PLACE_SAID.findall(spanish.folded(sentence)) if word in candidates
+    )
 
 
 _SALARY_HISTORY_COMPARISON: Final = re.compile(
@@ -197,7 +217,10 @@ def _period_comparison_plans(
         return None
     if latest.metric is Metric.PERIOD_AVERAGE and latest.group_by is not earlier.group_by:
         return None
-    return ComparisonPlan.between(earlier, latest)
+    # The two answers in the order they happened, not the order they were asked in (validation fix
+    # 2, I-3): «¿y en junio?» after July, then «compáralos», made July the reference and «en
+    # porcentaje» said «disminuyó» about June to July, which went up 55 %.
+    return ComparisonPlan.between(*_the_earlier_first(earlier, latest, query.today))
 
 
 @_recogniser
@@ -297,9 +320,11 @@ def _comparison_with_a_named_window(
       with a real figure on it. The same predicate `average`, `natural_period` and
       `deterministic_breakdown` ask, so "this sentence compares two periods" keeps one definition.
 
-    The plan in view is `latest`: the pronoun is the subject of the sentence, so it is the side
-    whose change is reported, and the window the sentence names is the reference it is measured
-    against. `_comparison_with_previous_period` reads the pair the same way round.
+    The pair runs from the window that came first (validation fix 2, I-3), as every comparison
+    reader's does now: the plan in view was always `latest`, the side whose change is reported,
+    and after a question about June «compáralo con julio» then reported June's change from July
+    — «disminuyó» about a month that went up. `_comparison_with_previous_period`'s window named
+    is always the earlier one, so it was right by construction.
 
     **Two shapes it refuses**, and neither refusal is spelled out below. Nothing in view is caught
     by the `isinstance` — one operand of two is stated and the other would have to be invented,
@@ -346,7 +371,11 @@ def _comparison_with_a_named_window(
     # *that* query and not two bare months. It is also what leaves the same-window refusal where it
     # belongs — «compáralo con julio» about July builds two identical windows and `between` returns
     # None, which is `ComparisonPlan`'s invariant and does not want a second copy here.
-    return ComparisonPlan.between(earlier, latest)
+    #
+    # And in the order the two windows happened (I-3): the reference is the earlier one, whichever
+    # the pronoun and the name are. «Compáralo con julio» after June made June the side that
+    # changed, and «en porcentaje» said «disminuyó» about a month that went up.
+    return ComparisonPlan.between(*_the_earlier_first(earlier, latest, query.today))
 
 
 @_recogniser
@@ -362,20 +391,22 @@ def _direct_period_comparison(
     if _DIRECT_PERIOD_COMPARISON.search(folded) is None:
         return None
     windows: tuple[window_words.Window, window_words.Window] | None = None
-    named_ranges = window_words.compared_date_ranges(query.sentence, today=query.today)
-    named_months = window_words.compared_calendar_months(query.sentence, today=query.today)
-    named_years = window_words.compared_calendar_years(query.sentence, today=query.today)
-    natural_periods = window_words.compared_natural_periods(query.sentence, today=query.today)
-    if named_ranges is not None:
-        windows = (named_ranges[1], named_ranges[0])
-    elif named_months is not None:
-        # `_compare_periods` writes its `latest` argument first. Reverse mention order here so the
-        # answer follows the user's order: "julio con junio" reads July before June.
-        windows = (named_months[1], named_months[0])
-    elif named_years is not None:
-        windows = (named_years[1], named_years[0])
-    elif natural_periods is not None:
-        windows = (natural_periods[1], natural_periods[0])
+    named = (
+        window_words.compared_date_ranges(query.sentence, today=query.today)
+        or window_words.compared_calendar_months(query.sentence, today=query.today)
+        or window_words.compared_calendar_years(query.sentence, today=query.today)
+        or window_words.compared_natural_periods(query.sentence, today=query.today)
+    )
+    if named is not None:
+        # The window that came first is the reference, whichever was said first (validation fix
+        # 1, F3; P-1). This used to reverse the order they were said in, so that `_compare_periods`
+        # — which writes `latest` first — would follow the person's words; «junio vs julio» then
+        # had July as the reference and June as the side whose change is reported, and «en
+        # porcentaje» said «disminuyó» about a month that went up 55 %. The change is a fact about
+        # time, so the pair is ordered by time — as the other two readers that build a pair order
+        # theirs since round 2 (I-3); before it, they did not either. Two windows this cannot place
+        # keep the order they always had here.
+        windows = _the_earlier_first(named[1], named[0], query.today)
     elif re.search(r"\beste\s+mes\b", folded) and re.search(
         r"\b(?:(?:el\s+)?mes\s+(?:pasado|anterior)|el\s+(?:pasado|anterior))\b",
         folded,
@@ -481,6 +512,12 @@ def _direct_period_comparison(
         ),
         facts,
     )
+    carried = tuple(spanish.folded(merchant) for merchant in base.merchants)
+    if any(not any(word in shop for shop in carried) for word in _shops_said(query.sentence)):
+        # A shop this reader does not carry (final review, I-5). It reads no shop from the sentence
+        # — it has no list of them to match a name against — and the pair without it compared
+        # every movement for «junio vs julio en Mercadona». The planner reads the shop.
+        return None
     earlier = replace(
         base,
         period=windows[0] if isinstance(windows[0], RelativePeriod) else None,

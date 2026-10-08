@@ -469,7 +469,7 @@ def test_the_same_question_twice_becomes_a_choice_instead_of_a_third_ask() -> No
     client, _, _ = wired({"": asking})
     chat = Chat(client)
 
-    first = chat.say("¿cuánto llevo gastado?")
+    first = chat.say("¿cuánto he gastado?")
     second = chat.say("pues eso")
 
     assert first["suggestions"] == []

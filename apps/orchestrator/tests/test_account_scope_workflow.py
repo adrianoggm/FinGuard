@@ -138,6 +138,9 @@ def service(
         account_directory=directory,  # type: ignore[arg-type]
         contacts=Contacts(),
         cards=Cards(),
+        # This file is about the account question, which a question naming no account meets only
+        # on a deployment that asks it (`ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT=ask`).
+        account_scope_default="ask",
     )
 
 
@@ -369,7 +372,7 @@ def special_focus_conversation(kind: str, mirrored: FinancialPlan) -> Conversati
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["ratio", "pending_ratio", "comparison"])
+@pytest.mark.parametrize("kind", ["ratio", "pending_ratio"])
 async def test_scope_change_does_not_retarget_a_special_focus_query_mirror(kind: str) -> None:
     ledger = Ledger()
     handler = service(ledger)
@@ -390,6 +393,34 @@ async def test_scope_change_does_not_retarget_a_special_focus_query_mirror(kind:
     assert len(ledger.plans) == 1
     assert ledger.plans[0].period == RelativePeriod(Period.THIS_MONTH)
     assert ledger.plans[0].categories == ()
+
+
+@pytest.mark.asyncio
+async def test_scope_change_over_a_comparison_runs_the_comparison_across_every_account() -> None:
+    """Validation fix 1, F1: the mirror is still not the base — the comparison is. «Ahora en todas
+    mis cuentas» used to run one plan of the planner's over this month; it is both windows of the
+    pair now, across every account, never one operand alone."""
+    ledger = Ledger()
+    handler = service(ledger)
+    mirrored = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=12),
+        categories=("FOOD",),
+        only_account_id=SAVINGS,
+    )
+
+    result = await ask(
+        handler,
+        "Ahora en todas mis cuentas",
+        special_focus_conversation("comparison", mirrored),
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert [plan.date_range for plan in ledger.plans] == [
+        AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30)),
+        AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31)),
+    ]
+    assert all(plan.across_accounts and plan.categories == () for plan in ledger.plans)
 
 
 @pytest.mark.asyncio

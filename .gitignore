@@ -36,6 +36,9 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .claude/*
+# Except the project's own skills: finguard-real-conversation is how a change to the conversation
+# is validated, so it belongs to the repository and not to one agent's local setup.
+!.claude/skills/
 
 # LaTeX build products. The source of the memoir is versioned; what latexmk derives from it is not,
 # and the PDF least of all — a binary that changes on every compile makes every diff of the text

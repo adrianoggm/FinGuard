@@ -802,6 +802,9 @@ cases:
 
   # --- ambiguity --------------------------------------------------------------------
 
+  # Product decision 2026-10-07: resolved by window_words (last 30 days), not by the planner.
+  # The handler completes this window question from the sentence (spec §3.5); the expectation
+  # stays because this file measures the planner alone, whose pinned prompt asks (ruling R32).
   - id: ambiguous_ultimamente
     group: ambiguity
     question: ¿Cuánto he gastado últimamente?

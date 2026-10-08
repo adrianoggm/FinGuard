@@ -8,10 +8,12 @@ This is what makes a clarification finishable. Before it, answering the question
 whole conversation: the reply "este año" arrived as a two-word sentence with no context, and
 the planner had to derive a complete plan from it.
 
-Precision over coverage, and the exclusions are deliberate. "Últimamente" and "hace un mes"
+Precision over coverage, and the exclusions are deliberate. "Hace un mes" and "en verano"
 are windows a person understands and this does not, so they fall through to the model rather
 than being guessed at — the cost of a miss is one more turn, and the cost of a wrong guess is
-a figure about the wrong month.
+a figure about the wrong month. "Llevo gastado" and "últimamente" are read since 2026-10-07 as
+product decisions (spec §3.5), each pinned at the end of this file against the windows and the
+names they must not take the place of.
 """
 
 from datetime import date
@@ -85,6 +87,8 @@ def test_a_window_this_vocabulary_knows_is_read(
         "de gasolina",
         # Windows a person understands and this does not. They fall through to the model rather than
         # being guessed: a miss costs one turn, a wrong guess costs a figure about the wrong month.
+        # «Últimamente» alone is about nothing this can date; about money it is the last 30 days
+        # (see `test_lately_is_the_last_thirty_days_of_money_spent_or_received`).
         "últimamente",
         "hace un mes",
         "desde que empecé a trabajar",
@@ -699,3 +703,175 @@ def test_a_winter_range_crosses_the_year_boundary() -> None:
     anchor `_season_months` already uses for winter (the printed year is the first month's)."""
     window = window_words.window_in("de diciembre a febrero de 2026", today=date(2027, 3, 1))
     assert window == AbsoluteRange(start=date(2026, 12, 1), end=date(2027, 2, 28))
+
+
+# --- two product defaults (spec §3.5, 2026-10-07) ----------------------------------------------
+#
+# Not vocabulary: decisions about what the product answers instead of asking, each stated in the
+# answer («en lo que va de año», «en los últimos 30 días»). What they must never do is take the
+# place of a window the sentence names, read or not, or read one out of a name.
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿Cuánto llevo gastado?",
+        "¿Cuánto llevo gastado en Spotify?",
+        "¿cuánta pasta llevo gastada?",
+        "llevo gastados un montón en restaurantes, ¿cuánto?",
+    ],
+)
+def test_llevo_gastado_with_no_window_is_the_year_so_far(sentence: str) -> None:
+    assert window_words.window_in(sentence, today=REFERENCE) == RelativePeriod(Period.THIS_YEAR)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "window"),
+    [
+        ("¿cuánto llevo gastado este mes?", RelativePeriod(Period.THIS_MONTH)),
+        ("¿cuánto llevo gastado hoy?", RelativePeriod(Period.TODAY)),
+        ("¿Cuánto llevo gastado desde el lunes?", RelativePeriod(Period.THIS_WEEK)),
+        (
+            "¿Cuánto llevo gastado en los últimos seis meses?",
+            RelativePeriod(Period.LAST_N_MONTHS, 6),
+        ),
+        ("¿cuánto llevo gastado en julio?", AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31))),
+    ],
+)
+def test_llevo_gastado_with_a_window_is_that_window(sentence: str, window: object) -> None:
+    assert window_words.window_in(sentence, today=REFERENCE) == window
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿Cuánto llevo gastado desde Navidad?",
+        "¿Qué llevo gastado en la semana en curso?",
+        "¿Cuánto llevo gastado desde enero?",
+        "¿cuánto llevo gastado este verano?",
+        "¿cuánto llevo gastado esta mañana?",
+        "¿cuánto llevo gastado desde el martes?",
+    ],
+)
+def test_llevo_gastado_beside_a_window_nothing_here_reads_is_not_the_year(sentence: str) -> None:
+    """A window was named and this file cannot read it. The year so far in its place would be a
+    different window presented as the one asked about, so the sentence goes to the model."""
+    assert window_words.window_in(sentence, today=REFERENCE) is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿Cuánto he gastado últimamente en restaurantes?",
+        "cuánto he gastado en el gimnasio últimamente",
+        "¿qué he ingresado últimamente?",
+        "¿cuánto me ha entrado últimamente?",
+        "Últimamente he gastado mucho, ¿cuánto?",
+    ],
+)
+def test_lately_is_the_last_thirty_days_of_money_spent_or_received(sentence: str) -> None:
+    assert window_words.window_in(sentence, today=REFERENCE) == RelativePeriod(
+        Period.LAST_N_DAYS, n=30
+    )
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # Nothing about money: no question this could be the window of.
+        "¿qué tal últimamente?",
+        # A name, after a preposition, a quote or «concepto», or capitalised after another word.
+        "¿cuánto gasté en Últimamente?",
+        "¿cuánto gasté en «Últimamente»?",
+        "¿cuánto gasté en el bar Últimamente?",
+        "hazle un bizum a Marta con concepto últimamente",
+    ],
+)
+def test_lately_inside_a_name_or_about_nothing_is_not_a_window(sentence: str) -> None:
+    assert window_words.window_in(sentence, today=REFERENCE) is None
+
+
+def test_a_window_the_sentence_states_wins_over_lately() -> None:
+    assert window_words.window_in(
+        "¿cuánto he gastado últimamente este mes?", today=REFERENCE
+    ) == RelativePeriod(Period.THIS_MONTH)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "window"),
+    [
+        ("¿Cuánto llevo gastado?", RelativePeriod(Period.THIS_YEAR)),
+        ("¿Cuánto he gastado últimamente?", RelativePeriod(Period.LAST_N_DAYS, n=30)),
+        # Stated, not a default: a window the sentence names is never the product's decision.
+        ("¿cuánto llevo gastado este mes?", None),
+        ("¿cuánto he gastado últimamente este mes?", None),
+        ("¿cuánto gasté el mes pasado?", None),
+        ("¿qué tal últimamente?", None),
+    ],
+)
+def test_a_default_is_told_apart_from_a_window_the_sentence_states(
+    sentence: str, window: RelativePeriod | None
+) -> None:
+    assert window_words.default_window_in(sentence, today=REFERENCE) == window
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuánto he gastado últimamente desde Navidad?",
+        "¿cuánto he gastado últimamente hace un mes?",
+        "¿cuánto he gastado últimamente en la semana en curso?",
+        "¿cuánto he gastado últimamente, desde que empecé a trabajar?",
+        "¿cuánto he gastado últimamente los fines de semana?",
+        "¿cuánto he gastado últimamente en verano?",
+        "¿cuánto he gastado últimamente por las mañanas?",
+    ],
+)
+def test_lately_stands_aside_for_a_window_it_cannot_read(sentence: str) -> None:
+    """Ruling R46 (I-2): beside a window the sentence names and this file does not read, the last
+    30 days would be a different window presented as the one asked about — the rule «llevo
+    gastado» already keeps."""
+    assert window_words.window_in(sentence, today=REFERENCE) != RelativePeriod(
+        Period.LAST_N_DAYS, n=30
+    )
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuánto llevo gastado hasta ahora?",
+        "¿cuánto llevo gastado hasta la fecha?",
+        "¿cuánto llevo gastado hasta hoy?",
+    ],
+)
+def test_llevo_gastado_up_to_now_is_still_the_year_so_far(sentence: str) -> None:
+    """Ruling R46: «hasta ahora», «hasta la fecha», «hasta hoy» say what «llevo» already says — up
+    to now — and name no window of their own. «Hasta hoy» was read as today."""
+    assert window_words.window_in(sentence, today=REFERENCE) == RelativePeriod(Period.THIS_YEAR)
+    assert window_words.default_window_in(sentence, today=REFERENCE) == RelativePeriod(
+        Period.THIS_YEAR
+    )
+
+
+def test_today_on_its_own_is_still_today() -> None:
+    assert window_words.window_in("¿cuánto llevo gastado hoy?", today=REFERENCE) == (
+        RelativePeriod(Period.TODAY)
+    )
+
+
+@pytest.mark.parametrize(
+    ("reply", "window"),
+    [
+        ("últimamente", RelativePeriod(Period.LAST_N_DAYS, n=30)),
+        ("pues últimamente", RelativePeriod(Period.LAST_N_DAYS, n=30)),
+        ("lo que llevo gastado", RelativePeriod(Period.THIS_YEAR)),
+        # A reply that says anything more is not only a period.
+        ("últimamente en gasolina", None),
+        ("lo que llevo gastado en la hucha", None),
+        ("lo que llevo gastado este mes", None),
+        ("hoy", None),
+        ("pues no sé", None),
+    ],
+)
+def test_a_default_is_a_whole_reply_or_nothing(reply: str, window: RelativePeriod | None) -> None:
+    assert window_words.default_reply_window(reply) == window

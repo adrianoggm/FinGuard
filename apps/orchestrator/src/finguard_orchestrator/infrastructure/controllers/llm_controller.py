@@ -111,10 +111,12 @@ from finguard_orchestrator.domain.services import (
     payment_words,
     payment_writer,
     turn_analyzer,
+    turn_arbiter,
     window_words,
 )
 from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.turn_arbiter import Arbitration, TurnType
 from finguard_orchestrator.domain.services.visual_explanation import (
     WhyAsked,
     asks_why,
@@ -824,8 +826,10 @@ async def reset_policy(commands: Commands) -> CatalogueResponse:
     return llm_mapper.catalogue_to_dto(await commands.dispatch(ResetLlmPolicyCommand()))
 
 
-def _is_an_order_to_pay(read_as: Intent, sentence: str, was: Conversation) -> bool:
-    """Whether this sentence starts a payment, given how the turn was read.
+def _is_an_order_to_pay(
+    read_as: Intent, sentence: str, was: Conversation, arbitration: Arbitration
+) -> bool:
+    """Whether this sentence starts a payment, given how the turn was read and arbitrated.
 
     It used to ask `payment_router.is_payment` directly, which is the *narrower* question: is there
     a payment order in these words. The interpreter adds the one case where the answer is no anyway
@@ -840,14 +844,20 @@ def _is_an_order_to_pay(read_as: Intent, sentence: str, was: Conversation) -> bo
     payment" is how the first one came to be incomplete — and because it costs a model call once
     the interpreter is a model.
 
-    An open question takes precedence over a payment word, unless the sentence carries an amount
-    **or instructs**. "Pues bizum", answering "¿de qué comercio o categoría?", started a payment and
-    asked who to send it to — a word offered as the answer to a question, read as an order. But the
-    amount alone was too narrow an escape: reported, a holder wrote "que le hagas el puto bizum" and
-    then "quiero que hagas un bizum" with a clarification open, and both reached the planner and
-    came back "¿de qué periodo?". A bare noun has no verb; those two are instructions. This stays
-    here rather than moving into the interpreter: it is not about what the sentence means, it is
-    about which of two open subjects owns the turn.
+    **Which of two open subjects owns the turn is the arbitration's now**, not a rule kept here.
+    `turn_arbiter` ranks an order to move money (NEW_OPERATION) above whatever question was left
+    open, so «¿De qué periodo?» → «ahora quiero mandarle 20 euros a Marta» is the payment and the
+    period question is dropped. A FINANCIAL_QUERY reading is a payment only when the arbitration
+    says so: NEW_OPERATION, and the operation is the payment rather than the balance.
+
+    One exception survives, and it is about what the words are rather than about precedence: a bare
+    rail word with an article or a particle around it. "Pues bizum", answering "¿de qué comercio o
+    categoría?", started a payment and asked who to send it to — a word offered as the answer to a
+    question, read as an order. `is_payment` accepts a bare «bizum», so the arbitration calls it an
+    operation; it is not one while a financial question is waiting for exactly that kind of word.
+    The set is closed on purpose — an instruction nobody thought of ("que le hagas el puto bizum",
+    "quiero que hagas un bizum", both reported reaching «¿de qué periodo?») falls on the side of an
+    order, where the holder gets a preview they can decline rather than a question they did not ask.
 
     **A reading of FINANCIAL_QUERY does not settle it.** That intent is the catch-all — the prompt
     tells the model to answer it whenever unsure — so a deterministic reader requiring a payment
@@ -856,24 +866,20 @@ def _is_an_order_to_pay(read_as: Intent, sentence: str, was: Conversation) -> bo
     is a positive choice and is left alone. LIST_CONTACTS for "¿a quién puedo hacerle un bizum?" is
     the case this function was written to protect, and overriding that would undo it.
     """
-    if read_as is not Intent.PAYMENT and not (
-        read_as is Intent.FINANCIAL_QUERY and payment_router.is_payment(sentence)
-    ):
+    ordered = arbitration.type is TurnType.NEW_OPERATION and payment_router.is_payment(sentence)
+    if read_as is not Intent.PAYMENT and not (read_as is Intent.FINANCIAL_QUERY and ordered):
+        # `is_payment` beside NEW_OPERATION because the arbitration's operations are two — paying
+        # and asking the balance — and only one of them is this path's.
         return False
     asked = was.awaiting or was.last_asked
-    if asked not in _FINANCIAL_SLOTS:
-        return True
-    # An open question keeps only the turn that could be its answer, and that set is closed: a rail
-    # noun with an article or a particle around it. Everything else instructs.
-    #
-    # This used to enumerate the instructions instead, which is the open set — every form missed
-    # ("que le hagas", "hagamos") became a turn the question swallowed. Inverting it means a form
-    # nobody thought of now falls on the side of being an order, which is the side where the holder
-    # gets a preview they can decline rather than a question they did not ask.
-    return not payment_words.is_only_a_rail_word(sentence)
+    # The rail-word exception above. Everything else that reads as a payment is one, whatever is
+    # open: NEW_OPERATION outranks the open question, and a PAYMENT reading the arbitration did not
+    # confirm is the interpreter's positive choice, which this function has always left alone.
+    return not (asked in _FINANCIAL_SLOTS and payment_words.is_only_a_rail_word(sentence))
 
 
-# The slots a financial question leaves open. A reply while one of these is waiting belongs to it.
+# The slots a financial question leaves open: while one waits, a bare rail word is offered as its
+# answer rather than as an order (`_is_an_order_to_pay`).
 _FINANCIAL_SLOTS: frozenset[Slot | None] = frozenset(
     {Slot.WINDOW, Slot.YEAR, Slot.CATEGORY, Slot.CORRECTION, Slot.ACCOUNT}
 )
@@ -1128,7 +1134,7 @@ async def _as_confirmation(
     revises_concept = payment_words.concept_in(reply) is not None or payment_words.clears_concept(
         reply
     )
-    revises_recipient = payment_words.changes_recipient(reply)
+    revises_recipient = payment_words.changes_recipient(reply, previewed=active.recipient)
     if revises_amount or revises_concept or revises_recipient:
         # A correction is not a confirmation and never mutates an intent already held by banking.
         # Cancel that offer, rebuild a draft from the facts the user kept and prepare a new preview.
@@ -1631,6 +1637,15 @@ async def _continues_a_payment(
         for row in directory.contacts
     )
     if payment_router.continues(question, drafted, contacts):
+        if drafted.recipient_name and payment_words.changes_recipient(
+            question, previewed=drafted.recipient_name
+        ):
+            # An order to somebody else (final review, I-1; R14 before there is a preview). It
+            # continues the payment — the amount it says fills the slot asked — but the draft's
+            # person is not its person: kept, «mándale 20 € a Javi» to a Bizum to Marta waiting
+            # for its amount was previewed as 20 € to Marta. The recipient is reopened, so the
+            # prepare handler reads the one this sentence names.
+            return replace(drafted, recipient_name=None, recipient_contact_id=None)
         return drafted
     return None
 
@@ -2038,7 +2053,11 @@ async def ask(
             repeated,
             key=key,
         )
-    if was.recent_payment_rail is not None:
+    # Whether the turn before this one paid somebody, read before the rail that says so is dropped
+    # (ruling R38). The turn log records no payment, so this is the one fact that tells the
+    # arbitration «¿y ella a mí?» no longer points at the answer before the Bizum.
+    just_paid = was.recent_payment_rail is not None
+    if just_paid:
         # The referent is intentionally one turn wide. An unrelated sentence cannot revive a
         # payment several questions later merely because it contains the word "otro".
         was = was.without_recent_payment()
@@ -2061,6 +2080,13 @@ async def ask(
         )
         return compound or _compound_reply(analysis.clauses, was)
     read_as = analysis.intent
+    # Once, from the reading just made, and handed down with it: the payment decision below and the
+    # handler's steps act on the same arbitration, so they cannot disagree about what kind of turn
+    # this was. After the preview and open-payment branches above, which own their turns whatever
+    # the words — «olvídalo» to a preview is a refusal the bank must hear, and it does.
+    arbitration = turn_arbiter.arbitrate(
+        request.question, was, analysis, today=today, just_paid=just_paid
+    )
 
     continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:
@@ -2070,7 +2096,7 @@ async def ask(
             request.question, who, commands, payments_on, was, continuing, key=key
         )
 
-    if _is_an_order_to_pay(read_as, request.question, was):
+    if _is_an_order_to_pay(read_as, request.question, was, arbitration):
         # One chat box, two paths, and the decision is deterministic — a client cannot make it,
         # because making it is what this router is for.
         return await _as_payment(request.question, who, commands, payments_on, was, key=key)
@@ -2091,6 +2117,7 @@ async def ask(
             # field. Everything above decided *not* to pay on the strength of it, and the handler
             # deciding otherwise from a second reading is the disagreement this removes.
             analysis=analysis,
+            arbitration=arbitration,
         )
     )
     if result.outcome == Spoken.TRANSFER_READY.value:
@@ -2264,7 +2291,9 @@ async def ask_streaming(
             repeated,
             key=key,
         )
-    if was.recent_payment_rail is not None:
+    # The same fact at the same point as the question route (ruling R38).
+    just_paid = was.recent_payment_rail is not None
+    if just_paid:
         was = was.without_recent_payment()
 
     analysis = await turn_analyzer.analyze(
@@ -2282,6 +2311,11 @@ async def ask_streaming(
         )
         return _open_payment_events(compound or _compound_reply(analysis.clauses, was))
     read_as = analysis.intent
+    # The same arbitration at the same point as the question route, for the reason every branch
+    # here is duplicated: the browser types into this endpoint.
+    arbitration = turn_arbiter.arbitrate(
+        request.question, was, analysis, today=today, just_paid=just_paid
+    )
 
     continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:
@@ -2293,7 +2327,7 @@ async def ask_streaming(
             request.question, who, commands, payments_on, was, continuing, key=key
         )
 
-    if _is_an_order_to_pay(read_as, request.question, was):
+    if _is_an_order_to_pay(read_as, request.question, was, arbitration):
         # Routed here too, and not only on the other route. A demo that shows stages on screen uses
         # the stream, so leaving this out made the endpoint the user actually types into the one
         # that could not pay — the same sentence answering differently depending on which endpoint
@@ -2311,6 +2345,7 @@ async def ask_streaming(
         presentation=presentation,
         conversation=was,
         analysis=analysis,
+        arbitration=arbitration,
     )
 
     async def events() -> AsyncIterator[str]:

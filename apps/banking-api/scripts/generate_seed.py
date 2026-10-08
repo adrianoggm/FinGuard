@@ -27,7 +27,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 SEED = 20260730
-END_DATE = date(2026, 10, 5)
+END_DATE = date(2026, 10, 8)
 MONTHS = 21
 BATCH = 500
 
@@ -306,8 +306,10 @@ def month_starts(end: date, months: int) -> list[date]:
 def day_in_month(rng: random.Random, month: date, low: int, high: int, end: date) -> date:
     following = (month + timedelta(days=31)).replace(day=1)
     last = (following - timedelta(days=1)).day
-    day = month.replace(day=min(rng.randrange(low, high + 1), last))
-    return min(day, end)
+    # Not clamped to `end`: a day of the current month that has not come yet is dropped in
+    # `generate`, after it has been drawn. Clamping piled the rest of the month — the payroll, most
+    # card purchases — onto the last day, so «¿cuánto gasté hoy?» read a month of spending.
+    return month.replace(day=min(rng.randrange(low, high + 1), last))
 
 
 def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[str, uuid.UUID]]:
@@ -425,6 +427,9 @@ def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[st
             )
         )
 
+    # Dropped only now, after every draw, so the stream — and every amount, date and identifier
+    # before `end` — is the same whatever day the dataset ends on.
+    movements = [m for m in movements if m.occurred_at.date() <= end]
     movements.sort(key=lambda m: (m.occurred_at, str(m.account)))
     return movements, accounts
 

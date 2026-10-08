@@ -50,7 +50,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -86,6 +86,7 @@ from finguard_orchestrator.application.queries.readers import (
     subjects,
 )
 from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
+from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.bootstrap.dependencies import (
     authenticated_caller,
     get_ask_handler,
@@ -109,7 +110,7 @@ from finguard_orchestrator.domain.errors import (
 )
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.conversation import AccountScopeDefault, Conversation
 from finguard_orchestrator.domain.models.expert_agents import (
     ActivityQuery,
     ActivitySlot,
@@ -641,11 +642,15 @@ class Bank:
 
     def __init__(self) -> None:
         self.prepared: list[PaymentRequest] = []
+        # The account each payment was prepared from, beside it: the credential's, which no
+        # setting about what an analytics question means may move.
+        self.sources: list[uuid.UUID] = []
         self.confirmed: list[uuid.UUID] = []
         self.cancelled: list[uuid.UUID] = []
 
     async def prepare(self, request: PaymentRequest, *, account_id: uuid.UUID, key: str):  # type: ignore[no-untyped-def]
         self.prepared.append(request)
+        self.sources.append(account_id)
         if request.rail is Rail.INTERNAL:
             # An internal transfer names an account and nobody at all, so there is no recipient to
             # resolve. Banking snapshots the holder's own label for it onto the intent, which is why
@@ -1012,9 +1017,17 @@ class Stack:
     bank: Bank
     # The gateway double, when the episode declared `agents:`; `None` is no gateway at all.
     gyms: Gyms | None = None
+    # How the handler was wired to read a question naming no account, so a test that rewires the
+    # handler (`support.pending`) keeps the setting the stack was built with.
+    account_scope_default: AccountScopeDefault = "ask"
 
 
-def a_stack(*, directory: bool = True, agents: tuple[str, ...] = ()) -> Stack:
+def a_stack(
+    *,
+    directory: bool = True,
+    agents: tuple[str, ...] = (),
+    account_scope_default: AccountScopeDefault | None = None,
+) -> Stack:
     """The service, wired as a deployment wires it.
 
     `directory=False` is the shape every episode used to run in, and it is now only reached by the
@@ -1024,8 +1037,13 @@ def a_stack(*, directory: bool = True, agents: tuple[str, ...] = ()) -> Stack:
     none is a deployment with no gateway configured, where the capability does not exist (§3.2).
     Set on every stack, because `app.state` outlives it: an episode without agents must not find
     the last one's gateway still wired.
+
+    `account_scope_default` is `ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT`: what a question naming no
+    account means while nothing is chosen — every account, or «¿En qué cuenta…?» first. None is the
+    configured value, so the corpus and the battery replay the product a deployment runs.
     """
     planner, ledger, bank = AnyPlan(), Ledger(), Bank()
+    account_scope_default = account_scope_default or get_settings().account_scope_default
     handler = AskFinancialQuestionHandler(
         planner,  # type: ignore[arg-type]
         ledger,  # type: ignore[arg-type]
@@ -1033,6 +1051,7 @@ def a_stack(*, directory: bool = True, agents: tuple[str, ...] = ()) -> Stack:
         account_directory=Directory() if directory else None,  # type: ignore[arg-type]
         contacts=Contacts(),
         cards=NoCards(),  # type: ignore[arg-type]
+        account_scope_default=account_scope_default,
     )
     queries = QueryBus()
     queries.register(AskFinancialQuestionQuery, handler)
@@ -1086,12 +1105,12 @@ def a_stack(*, directory: bool = True, agents: tuple[str, ...] = ()) -> Stack:
     )
     app.state.questions_enabled = True
     app.state.payments_enabled = True
-    return Stack(TestClient(app), planner, ledger, bank, gyms)
+    return Stack(TestClient(app), planner, ledger, bank, gyms, account_scope_default)
 
 
 # --- which accounts a conversation is about ------------------------------------------------
 #
-# Production holds three accounts and asks which one an unqualified spending question means. That
+# Production holds three accounts and may ask which one an unqualified spending question means. That
 # is a real turn — «¿En qué cuenta quieres consultarlo?» — and it costs a thread its first
 # exchange. A corpus that opened every conversation with nothing settled would spend its first turn
 # answering that question 169 times over: the same preamble copied into every episode, proving
@@ -1107,6 +1126,11 @@ def a_stack(*, directory: bool = True, agents: tuple[str, ...] = ()) -> Stack:
 #             of its own rather than a mention in 169 preambles.
 #   legacy    no directory at all. Debt, not a choice — see `LEGACY_SCOPE` in
 #             `tests/test_conversation_corpus.py` for the defect these six are waiting on.
+#
+# Since 2026-10-07 the clarification is asked only by a deployment configured to ask
+# (`ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT=ask`); the shipped one reads every account. So `unset` alone
+# is a thread with nothing chosen on the shipped product, and an episode about the question also
+# declares `account_scope_default: ask` — which `31-account-scope.yaml` does.
 
 SETTLED = "settled"
 UNSET = "unset"
@@ -1120,6 +1144,10 @@ SCOPES = (SETTLED, UNSET, LEGACY)
 @dataclass(frozen=True)
 class Turn:
     say: str
+    # Which conversation mechanism this turn exercises, as the evaluation battery's report names it
+    # (`scripts/real_conversation.py` MECHANISMS). Reporting only: no assertion reads it, so the
+    # corpus, which leaves it unset, is unaffected.
+    mechanism: str | None = None
     route: str | None = None
     # One phrase, or several that must all appear: a search answered by two gyms names both.
     says: str | list[str] | None = None
@@ -1237,6 +1265,9 @@ class Episode:
     metrics: tuple[str, ...] = ()
     # Which of the holder's accounts this conversation is already about, once, for the episode.
     scope: str = SETTLED
+    # `ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT` for this episode's deployment, when it is not the stack's
+    # own: an episode about the account question needs a deployment that asks it.
+    account_scope_default: AccountScopeDefault | None = None
     # The gyms the A2A gateway lists, from `CANNED_GYMS`. None is a deployment with no gateway,
     # which is every episode written before the expert agents existed.
     agents: tuple[str, ...] = ()
@@ -1261,9 +1292,14 @@ def opening(episode: Episode) -> dict[str, Any] | None:
 
 
 def a_stack_for(episode: Episode) -> Stack:
-    """The stack this episode replays in. Only `scope: legacy` gets one without a directory, and
-    only an episode declaring `agents:` gets a gateway."""
-    return a_stack(directory=_scope_of(episode) != LEGACY, agents=episode.agents)
+    """The stack this episode replays in. Only `scope: legacy` gets one without a directory, only
+    an episode declaring `agents:` gets a gateway, and only one declaring `account_scope_default:`
+    gets a setting other than the stack's own."""
+    return a_stack(
+        directory=_scope_of(episode) != LEGACY,
+        agents=episode.agents,
+        account_scope_default=_account_scope_default_of(episode),
+    )
 
 
 def _scope_of(episode: Episode) -> str:
@@ -1271,6 +1307,15 @@ def _scope_of(episode: Episode) -> str:
     if episode.scope not in SCOPES:
         raise ValueError(f"{episode.name}: scope {episode.scope!r} is not one of {SCOPES}")
     return episode.scope
+
+
+def _account_scope_default_of(episode: Episode) -> AccountScopeDefault | None:
+    """The declared setting, refusing a typo for the reason `_scope_of` does: a misspelt `ask`
+    would replay an episode about the account question on a deployment that never asks it."""
+    declared = episode.account_scope_default
+    if declared is not None and declared not in get_args(AccountScopeDefault):
+        raise ValueError(f"{episode.name}: account_scope_default {declared!r} is not all or ask")
+    return declared
 
 
 @dataclass
@@ -1334,6 +1379,7 @@ def load() -> list[Episode]:
                     why=raw.get("why", ""),
                     metrics=tuple(raw.get("metrics", ())),
                     scope=raw.get("scope", SETTLED),
+                    account_scope_default=raw.get("account_scope_default"),
                     agents=tuple(raw.get("agents", ())),
                     turns=tuple(Turn(**{**turn, "say": str(turn["say"])}) for turn in raw["turns"]),
                 )

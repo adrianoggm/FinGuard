@@ -82,6 +82,7 @@ from finguard_orchestrator.domain.enums import (
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.services import (
+    account_words,
     category_words,
     explicit_lexicon,
     merchant_words,
@@ -212,6 +213,12 @@ def _excluded_merchants(sentence: str, excluded_categories: tuple[str, ...]) -> 
     if set(tail.split()) <= _NOT_A_MERCHANT:
         return ()
     if _VAGUE_TAIL.match(tail):
+        return ()
+    if account_words.named_in(tail) or account_words.explicitly_names_a_custom_account(tail):
+        # An account, not a shop (ruling R48): «sin contar la hucha» left the hucha out as a shop
+        # called «la hucha», which filters nothing, and the answer then said «sin la hucha» over a
+        # figure that held it. Which accounts a figure covers is `_scoped`'s to decide, where the
+        # holder's own account names and aliases are known too.
         return ()
     if merchant_words.never_a_merchant(tail):
         # N-H1 (Wave 3 hardening, round 2): the closed stop-list guarded the *inclusion* reader

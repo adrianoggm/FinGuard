@@ -113,6 +113,36 @@ PHRASINGS: Final[dict[str, tuple[Phrasing, ...]]] = {
             "whole edit: one substitution from «cuanto» is «cuando», and reading «¿cuándo cobro "
             "la nómina?» as a balance would be a real figure about a different question",
         ),
+        # «¿Qué tengo en total?», «q tengo entre todo», «¿y qué tengo en total entre todas?»: the
+        # same question with «qué» for «cuánto» (validation fix 3, G2). Said as «bueno da igual. q
+        # tengo en total entre todo?» on 2026-10-08, it was the reply to an open question once and
+        # the net of the month's movements the next time — neither of them money held.
+        #
+        # Anchored at the end of the turn (fix round 1, I-2), with only the words for every account
+        # after it: «en total» followed by a subject is that subject's total. «¿Qué tengo en total
+        # en suscripciones?» and «que tengo en total de deuda» were answered with the balance.
+        Phrasing(
+            r"\b(?:que|q)\s+(dinero\s+)?tengo\s+(en\s+total|entre\s+tod[oa]s?)"
+            r"(\s+entre\s+tod[oa]s?)?(\s+mis\s+cuentas)?[^a-z0-9]*$",
+            like=(
+                "bueno da igual. q tengo en total entre todo?",
+                "¿Qué tengo en total?",
+                "¿Qué tengo en total entre todas mis cuentas?",
+            ),
+            unlike=(
+                "¿Qué tengo que pagar este mes?",
+                "¿Qué gastos tengo en total este mes?",
+                "q tengo en total de nómina este año",
+                "¿Qué tengo en total en suscripciones?",
+                "Qué tengo en total pendiente de pagar",
+                "Que tengo en total de deuda",
+                "¿Qué tengo en total en recibos este mes?",
+                "Que tengo en total entre todos los bizums",
+            ),
+            why="«qué tengo» alone is also what is owed or what is pending, so the whole of it is "
+            "required: «en total» or «entre todo», the words that ask for every account, and "
+            "nothing after them but those words",
+        ),
         Phrasing(r"\b(?:<how_much>)\s+dinero\s+dispongo\b", like=("¿De cuánto dinero dispongo?",)),
         Phrasing(
             r"\b(?:<how_much>)\s+(tengo\s+)?disponible\b",

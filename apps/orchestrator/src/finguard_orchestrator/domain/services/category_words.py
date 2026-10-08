@@ -171,6 +171,9 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
         "subscripciones",
         "subscripción",
         "gimnasio",
+        # The gym as people write it (validation fix 3, G3). A spelling of the kind «gimnasio»
+        # (`_KIND_SPELLINGS`), never a kind of its own: no shop of the ledger says «gym».
+        "gym",
         "streaming",
     ),
     "HOUSING_RENT": ("alquiler",),
@@ -224,6 +227,14 @@ _KINDS: Final[dict[str, tuple[str, ...]]] = {
     "LEISURE": ("cine",),
 }
 
+# Other ways a kind is said, each read as the kind itself (validation fix 3, G3). «¿Q me cuesta el
+# gym al mes?» was every subscription on 2026-10-08, 54,88 € in three, because «gym» was no word
+# of the kind. The plan still carries the kind as `_KINDS` spells it, because the term is matched
+# against the shop's name and that is the word the name carries: "Gimnasio Altafit" says no «gym».
+# A spelling is a precise word of the kind's category, like the kind, so the gate and this rule
+# read the sentence alike.
+_KIND_SPELLINGS: Final[dict[str, tuple[str, ...]]] = {"gimnasio": ("gym",)}
+
 # B-1 (Wave 3 hardening): the gerund ("quitando") was here; the imperative a holder actually
 # types was not. "Quita restaurantes", "elimina restaurantes", "borra restaurantes", "saca
 # restaurantes", "fuera restaurantes" and "excluye restaurantes" all named the category and
@@ -232,8 +243,10 @@ _KINDS: Final[dict[str, tuple[str, ...]]] = {
 # "en restaurantes" for a request to drop restaurants, the worst failure mode this vocabulary can
 # produce because it is wrong with full confidence. `ya no` (`"ya no cuentes"`) already matched
 # through the existing `no\s+cuentes` branch and is not repeated here.
+# «Sin» is a whole word (validation fix 3, fix round 2): «no solo restaurantes sino también
+# gasolina» read «sino» as «sin» and left the fuel out of the very answer it asked to add it to.
 _EXCLUSION_PREFIX: Final = re.compile(
-    r"(?:\bsin(?:\s+contar|\s+incluir)?|\bquitando|\bquita(?:r)?|\belimina(?:r)?|\bborra(?:r)?"
+    r"(?:\bsin\b(?:\s+contar|\s+incluir)?|\bquitando|\bquita(?:r)?|\belimina(?:r)?|\bborra(?:r)?"
     r"|\bsaca(?:r)?|\bexcluye(?:ndo)?|\bexcepto|\bsalvo|\bmenos|\bfuera(?:\s+de)?"
     r"|\bno\s+(?:contamos|cuentes|incluimos|incluyas|metas))"
     r"(?:\s+(?:el|la|los|las|de|gastos?|movimientos?|categorias?|y|ni))*"
@@ -423,12 +436,17 @@ def kinds_named_in(sentence: str, category: str) -> tuple[str, ...]:
         if any(
             not _EXCLUSION_PREFIX.search(haystack[max(0, start - 100) : start])
             and not _SET_APART.search(haystack[max(0, start - 100) : start])
-            for start in _said_at(kind, haystack)
+            for spelling in (kind, *_KIND_SPELLINGS.get(kind, ()))
+            for start in _said_at(spelling, haystack)
         )
     )
     if not said:
         return ()
-    folded_kinds = {spanish.folded(kind) for kind in kinds}
+    folded_kinds = {
+        spanish.folded(spelling)
+        for kind in kinds
+        for spelling in (kind, *_KIND_SPELLINGS.get(kind, ()))
+    }
     others = {*_PRECISE.get(category, ()), *_GLOSS.get(category, ())}
     if any(_said_at(word, haystack) for word in others if spanish.folded(word) not in folded_kinds):
         return ()
@@ -463,8 +481,12 @@ def category_of_kind(term: str) -> str | None:
 # had set apart. Not in `_EXCLUSION_PREFIX`, which builds negative category filters for the gate and
 # the readers, and whose reach is measured; here the cost of reading one too many is only the
 # category's figure, which is the answer the holder had before the kinds rule.
+#
+# «No solo» too (validation fix 3, fix round 1, M-1): «no solo el gym, también Spotify» asks about
+# more than the gym, and the kind put on the model's plan narrowed it to the gym all the same. «No,
+# solo el gym», with its comma, is the narrowing, and is not read here.
 _SET_APART: Final = re.compile(
-    r"(?:\ba\s*parte\s+de|\bademas\s+de|\bque\s+no\s+sean?)"
+    r"(?:\ba\s*parte\s+de|\bademas\s+de|\bque\s+no\s+sean?|\bno\s+solo)"
     r"(?:\s+(?:el|la|los|las|de|gastos?|movimientos?|y|ni))*"
     r"[a-z0-9\s,/-]{0,60}$"
 )

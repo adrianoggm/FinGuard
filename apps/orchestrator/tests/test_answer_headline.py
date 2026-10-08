@@ -16,6 +16,7 @@ The filter is named in Spanish, from the same vocabulary the planner's prompt us
 `GROCERIES` is an identifier and "supermercado" is what the user said.
 """
 
+from dataclasses import replace
 from datetime import date, datetime
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
@@ -487,6 +488,7 @@ def test_the_inert_exclusion_is_still_applied_to_the_plan() -> None:
         "sin contar el alquiler",
         plan(categories=("GROCERIES",)),
         today=date(2026, 8, 25),
+        answered_last=True,
     )
 
     assert patched.plan is not None
@@ -494,4 +496,46 @@ def test_the_inert_exclusion_is_still_applied_to_the_plan() -> None:
     assert patched.plan.categories == ("GROCERIES",)
     assert answer_writer.write(answer(), patched.plan).endswith(
         "No hay alquiler en supermercado, así que la cifra no cambia."
+    )
+
+
+# Ruling R31. «Con Marta» said nothing about which way the money went, so «¿y ella a mí?» was
+# answered with a sentence identical to the one before it, over the opposite figure.
+
+
+def test_money_sent_to_a_person_says_to_whom() -> None:
+    said = answer_writer.write(answer(), plan(counterparties=("Marta",)))
+    assert said == "449,62 € a Marta el mes pasado, en 8 movimientos."
+
+
+def test_money_received_from_a_person_says_from_whom() -> None:
+    said = answer_writer.write(
+        answer(), plan(direction=Direction.INCOME, counterparties=("Marta",))
+    )
+    assert said == "449,62 € de Marta el mes pasado, en 8 movimientos."
+
+
+def test_money_both_ways_with_a_person_is_still_with_them() -> None:
+    said = answer_writer.write(answer(), plan(direction=Direction.ALL, counterparties=("Marta",)))
+    assert said == "449,62 € con Marta el mes pasado, en 8 movimientos."
+
+
+def test_the_direction_reads_in_every_headline_that_names_the_person() -> None:
+    """Every caller puts the filter right after its own noun, so a preposition is what reads in
+    all of them; a participle would have to agree with «1 movimiento» and «importe medio». (A
+    ranking carries no person, so it has no such line.)"""
+    received = plan(direction=Direction.INCOME, counterparties=("Marta",))
+    counted = answer_writer.write(answer(count=1), replace(received, metric=Metric.COUNT))
+    empty = answer_writer.write(answer(total=0, count=0), received)
+    averaged = answer_writer.write(answer(), replace(received, metric=Metric.AVERAGE))
+    assert counted == "1 movimiento de Marta el mes pasado."
+    assert empty.startswith("No he encontrado movimientos de Marta el mes pasado.")
+    assert averaged.startswith("El importe medio por movimiento de Marta el mes pasado fue de")
+
+
+def test_the_planners_line_is_unchanged() -> None:
+    """`describe` is the line the planner reads (`prompt.py`); the person's line changed, it did
+    not."""
+    assert answer_writer.describe(plan(direction=Direction.INCOME, counterparties=("Marta",))) == (
+        "el mes pasado, income, Marta"
     )

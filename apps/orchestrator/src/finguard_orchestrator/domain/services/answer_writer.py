@@ -392,7 +392,14 @@ def filter_of(plan: FinancialPlan | TopMovements, shops: tuple[str, ...] = ()) -
     counterparties = getattr(plan, "counterparties", ())
     excluded_counterparties = getattr(plan, "excluded_counterparties", ())
     if counterparties:
-        included = f" con {listed(counterparties)}"
+        # Which way the money went between the holder and them (ruling R31): «con Marta» read the
+        # same over what was sent to her and what she sent, so «¿y ella a mí?» was answered with
+        # the sentence before it over the opposite figure. A preposition rather than «enviados» /
+        # «recibidos» because every caller puts this right after a noun of its own — «1
+        # movimiento», «el importe medio», «tu mayor ingreso» — and a participle would have to
+        # agree with each. «A Marta» and «de Marta» are how a bank statement already says it.
+        towards = {Direction.EXPENSE: "a", Direction.INCOME: "de"}.get(plan.direction, "con")
+        included = f" {towards} {listed(counterparties)}"
     elif plan.merchants:
         included = f" en {listed(plan.merchants)}"
     elif isinstance(plan, FinancialPlan) and plan.merchant_terms:
@@ -711,6 +718,28 @@ def window_of(plan: FinancialPlan | TopMovements) -> str:
     return f"en los últimos {count} {'días' if day else 'meses'}"
 
 
+def compared_window(plan: FinancialPlan) -> str:
+    """One side of a comparison in words: «en julio de 2026», «en 2025», or the window as every
+    answer names it («el mes pasado», «en lo que va de mes»).
+
+    The comparison's own text has always said its sides this way. The percentage between the same
+    two sides said them as the plan line does, dates and all — «de del 2026-07-01 al 2026-07-31» —
+    so both read this now (validation fix 3, item 3). Person-facing only: `describe`, the line the
+    planner reads, does not call it.
+    """
+    if plan.date_range is not None:
+        start, end = plan.date_range.start, plan.date_range.end
+        if (
+            start.day == 1
+            and (end + timedelta(days=1)).day == 1
+            and (start.year, start.month) == (end.year, end.month)
+        ):
+            return f"en {month_name(start.year, start.month)}"
+        if start == start.replace(month=1, day=1) and end == start.replace(month=12, day=31):
+            return f"en {start.year}"
+    return window_of(plan)
+
+
 def _conversational_window_of(plan: FinancialPlan | TopMovements) -> str:
     """Use a natural month label only in concrete movement-ranking answers."""
     if plan.date_range is not None:
@@ -761,6 +790,44 @@ _METRIC_WORDS: Final[dict[Metric, str]] = {
     Metric.COUNT: "número de movimientos",
     Metric.AVERAGE: "importe medio por movimiento",
 }
+
+
+# Who the money went to or came from, as the period question names it: «lo que le mandaste a Marta»,
+# «lo que recibiste de Marta». The preposition is `filter_of`'s, so it reads on from here.
+_SENT_OR_RECEIVED: Final[dict[Direction, str]] = {
+    Direction.EXPENSE: "lo que le mandaste",
+    Direction.INCOME: "lo que recibiste",
+}
+# «Les», to more than one person: «lo que les mandaste a Marta y Javi» (ruling R46).
+_SENT_TO_SEVERAL: Final = "lo que les mandaste"
+
+
+def window_question(plan: FinancialPlan) -> str | None:
+    """The period question, naming what it is about: «¿De qué periodo quieres ver tus gastos en
+    restaurantes?», «¿De qué periodo quieres ver lo que le mandaste a Marta?» (spec §3.5).
+
+    «¿De qué periodo?» alone, after a turn or two about something else, leaves the person to work
+    out which question it belongs to. The subject is said in the answer's own words (`filter_of`,
+    the direction as `plan_in_words` says it), so the question and the figure that answers it name
+    the same thing. Person-facing only: `describe`, the planner's line, never sees it.
+
+    None when there is nothing to name beyond spending, which is what a bare «¿cuánto…?» is about
+    and the plain question already asks.
+
+    The payroll alone is «tu nómina»: «tus ingresos en nómina» read the category's name as a place
+    the income was in (ruling R46).
+    """
+    named = filter_of(plan)
+    if not named and plan.direction is Direction.EXPENSE:
+        return None
+    if named == f" en {category_words.name_of('SALARY')}" and plan.categories == ("SALARY",):
+        return f"¿De qué periodo quieres ver tu {category_words.name_of('SALARY')}?"
+    if plan.counterparties and plan.direction in _SENT_OR_RECEIVED:
+        several = plan.direction is Direction.EXPENSE and len(plan.counterparties) > 1
+        subject = _SENT_TO_SEVERAL if several else _SENT_OR_RECEIVED[plan.direction]
+    else:
+        subject = f"tus {_DIRECTION_WORDS[plan.direction]}"
+    return f"¿De qué periodo quieres ver {subject}{named}?"
 
 
 def describe(plan: FinancialPlan | TopMovements) -> str:
@@ -1106,9 +1173,11 @@ def grouped_period_comparison(
                 difference, latest_answer.currency, latest_plan.metric
             )
             change = f"{sign}{difference_figure}"
+        # Each account's two periods in the order they happened, as the comparison's own text
+        # says them (validation fix 3, G7); the change is from the earlier to the later.
         lines.append(
-            f"  · {key}: {latest_window}, {latest_figure}; "
-            f"{earlier_window}, {earlier_figure}; {change}."
+            f"  · {key}: {earlier_window}, {earlier_figure}; "
+            f"{latest_window}, {latest_figure}; {change}."
         )
 
     concept = comparison_concept(latest_plan)
@@ -1399,6 +1468,20 @@ def comparison_concept(plan: FinancialPlan) -> str:
         Direction.INCOME: "ingreso",
         Direction.ALL: "importe",
     }[plan.direction]
+
+
+def compared_subject(plan: FinancialPlan) -> str:
+    """What both sides of a comparison are about, to follow its concept, or "" when nothing narrows
+    them: «El gasto *en ocio* fue…», «Hubo 3 movimientos más *a Marta*…» (final review, I-6).
+
+    One side's `filter_of`, because a comparison's two sides share every filter
+    (`ComparisonPlan.between` refuses a pair that does not). Without it «¿y en apuestas?» after a
+    comparison was answered over leisure with nothing to say that was the category read. A filter
+    with an exclusion in it closes with a comma, so the verb after it still reads: «el gasto en
+    restaurantes, sin Mercadona, fue…». For the person only; `describe` does not call it.
+    """
+    about = filter_of(plan)
+    return f"{about}," if "," in about else about
 
 
 def _period_count(answer: QueryAnswer, plan: FinancialPlan) -> int:

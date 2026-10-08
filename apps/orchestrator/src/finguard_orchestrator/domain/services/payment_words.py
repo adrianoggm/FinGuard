@@ -255,12 +255,127 @@ def clears_concept(sentence: str) -> bool:
     return _CLEAR_CONCEPT.search(spanish.folded(sentence)) is not None
 
 
-def changes_recipient(sentence: str) -> bool:
-    """Whether a reply to a preview explicitly replaces who receives the payment."""
+def changes_recipient(sentence: str, *, previewed: str) -> bool:
+    """Whether a reply to a preview explicitly replaces who receives the payment.
+
+    `previewed` is the recipient on the preview being answered. The correction forms above need no
+    name to compare with — they say outright that the person changes — but an order does:
+    «mándale 20 € a Marta» to Marta's preview revises the amount, and «mándale 20 € a Javi Nuñez»
+    is a payment to somebody else. Read as a revision, the second one became «Vas a enviar 20,00 €
+    a Marta Solis Vega», and a «sí» would have paid Marta for an order that named Javi.
+    """
     folded = spanish.folded(sentence)
-    return _RECIPIENT_CORRECTION.search(folded) is not None or (
-        _BARE_RECIPIENT_CORRECTION.search(folded) is not None and amount_in(sentence) is not None
+    return (
+        _RECIPIENT_CORRECTION.search(folded) is not None
+        or (
+            _BARE_RECIPIENT_CORRECTION.search(folded) is not None
+            and amount_in(sentence) is not None
+        )
+        or _orders_somebody_else(sentence, previewed)
     )
+
+
+# An order with somebody to give it to: the imperative («mándale», «envía», «hazle», «dale»), the
+# infinitive after a volitional verb («quiero mandarle») and the subjunctive («que le mandes»). The
+# person is the «a <name>» that follows; the verb alone names nobody, so «mándale 20 €» to an open
+# preview stays the revision it always was.
+_ORDER_TO_SOMEBODY: Final = re.compile(
+    r"\b(?:(?:manda|envia|paga|pasa|transfiere|ingresa|devuelve)(?:le|les)?"
+    r"|(?:da|haz)(?:le|les)"
+    r"|(?:mandar|enviar|pagar|pasar|dar|hacer|transferir|devolver)(?:le|les)"
+    r"|mandes|envies|pagues|pases|hagas|transfieras|devuelvas)\b"
+)
+_TO_SOMEBODY: Final = re.compile(r"\ba\s+(?P<name>[a-z]+(?:\s+[a-z]+)*)")
+
+# Where the words after «a» stop being a name: what an order says next («por la cena», «con
+# concepto…», «hoy»), the fillers `_TRAILING_FILLER` strips, and the pronouns that point back at
+# the preview's own person («a ella»). A first word nobody listed here — «mi madre» — counts as a
+# different person: the cost of that mistake is a question about who, and the cost of the other one
+# is money to the person the holder just named away from. What comes after the first word is not
+# decided here at all (ruling R18): see `_orders_somebody_else`.
+_AFTER_THE_NAME: Final = frozenset(
+    {
+        "por",
+        "con",
+        "de",
+        "para",
+        "que",
+        "y",
+        "el",
+        "la",
+        "los",
+        "las",
+        "un",
+        "una",
+        "al",
+        "en",
+        "hoy",
+        "manana",
+        "ahora",
+        "ya",
+        "concepto",
+        "anda",
+        "venga",
+        "va",
+        "vale",
+        "porfa",
+        "gracias",
+        "pues",
+        "eh",
+        "oye",
+        "ella",
+        "ellos",
+        "ellas",
+    }
+)
+
+
+def _orders_somebody_else(sentence: str, previewed: str) -> bool:
+    """Whether `sentence` orders a payment to a person whose name is not the preview's.
+
+    **The first word of the name decides** (ruling R18). «Javi» is not a word of Marta Solis Vega's
+    name, so «paga 20 € a Javi» is somebody else; «Marta» is, so «mándale 20 € a Marta esta noche»
+    is her — what follows a name is not part of it, and reading «esta noche» as a surname cancelled
+    Marta's own preview for being named. Deciding by rule rather than by listing every word that
+    can follow a name: that list is the open set, and it was already missing «cuando puedas».
+
+    One thing after the first word still counts, because it is written as a name: a capitalised
+    word the preview's name does not have. «Marta Ruiz» is the other Marta, and the first word alone
+    would read her as the preview's — a revision addressed to the wrong person, the failure R14
+    exists to stop. Lower case is read by the first word only, so «marta ruiz» is that failure
+    still; the cost is a preview naming Marta Solis Vega that the holder has to decline.
+
+    The words are compared folded, and the casing is read off the sentence as typed, at the same
+    positions: folding keeps one character per character for Spanish. When it does not, the
+    casing is not read and the first word decides alone.
+    """
+    folded = spanish.folded(sentence)
+    order = _ORDER_TO_SOMEBODY.search(folded)
+    if order is None:
+        return False
+    target = _TO_SOMEBODY.search(folded, order.end())
+    if target is None:
+        return False
+    name: list[re.Match[str]] = []
+    for word in _WORD.finditer(folded, target.start("name"), target.end("name")):
+        if word.group() in _AFTER_THE_NAME:
+            break
+        if word.group() not in _PARTICLES:
+            name.append(word)
+    if not name:
+        return False
+    previewed_name = set(spanish.folded(previewed).split())
+    first, *after = name
+    if first.group() not in previewed_name:
+        return True
+    aligned = len(folded) == len(sentence)
+    for word in after:
+        if not (aligned and sentence[word.start()].isupper()):
+            # Not written as a name, so not part of one: the rest of the sentence.
+            break
+        if word.group() not in previewed_name:
+            return True
+    return False
 
 
 def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact, ...]:

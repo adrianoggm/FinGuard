@@ -1,7 +1,7 @@
 # Which of the holder's accounts a question is about, as conversations.
 #
-# Production wires an account directory and therefore asks «¿En qué cuenta quieres consultarlo?»
-# before answering any unqualified spending question. Until this file existed, no turn in the
+# Production wires an account directory, and a deployment that asks (below) asks «¿En qué cuenta
+# quieres consultarlo?» before answering any unqualified spending question. Until this file existed, no turn in the
 # corpus had ever seen that question: the harness wired no directory, so 1143 turns ran through
 # three branches of `_scoped` that no deployment reaches, and the corpus reported 0 % lost context
 # while the account scope was untested end to end.
@@ -9,10 +9,16 @@
 # These episodes declare `scope: unset`, which is the only way to reach it — every other episode
 # opens with the scope already settled, because it is about something else and a preamble turn
 # copied into 169 conversations proves nothing after the first.
+#
+# And `account_scope_default: ask`, since 2026-10-07 (spec §3.5): the shipped default reads every
+# account for a question that names none, so the question is asked only by a deployment configured
+# with `ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT=ask`. These conversations are about that question, and
+# they replay on such a deployment rather than being rewritten into conversations without it.
 
 episodes:
   - name: the_account_question_is_asked_once_and_then_settled
     scope: unset
+    account_scope_default: ask
     why: >
       The turn every unqualified spending question costs in production, and what it buys: asked
       once, answered with a chip, and then never asked again for the rest of the thread. Both
@@ -54,6 +60,7 @@ episodes:
 
   - name: todas_mis_cuentas_settles_the_thread
     scope: unset
+    account_scope_default: ask
     why: >
       The other chip, and the one that is the default everywhere else. Answering "todas mis
       cuentas" has to widen the pending question rather than pick the first account, and it has to
@@ -94,6 +101,7 @@ episodes:
 
   - name: the_account_question_survives_an_aside_and_a_balance
     scope: unset
+    account_scope_default: ask
     why: >
       An open question is a thing the user can walk away from and come back to. "¿Quién eres?" and
       "¿cuánto tengo?" are not accounts, so neither may be swallowed by the chip parser and neither
@@ -131,6 +139,7 @@ episodes:
 
   - name: an_account_named_in_the_question_is_never_asked_about
     scope: unset
+    account_scope_default: ask
     why: >
       The clarification is for questions that do not say which account, and a question that says
       one must never pay for it. This is also where the persisted scope is *meant* to carry: the

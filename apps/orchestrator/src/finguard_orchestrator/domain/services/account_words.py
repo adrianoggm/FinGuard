@@ -189,12 +189,27 @@ def named_in(sentence: str) -> tuple[str, ...]:
     return tuple(sorted(found, key=lambda kind: found[kind]))
 
 
+# What leaves an account out when it stands right before one: «menos la hucha», «sin contar el
+# fondo», «quitando la cuenta Viajes». One pattern for the kinds and for the names, so an account
+# cannot be left out by one reading and chosen by the other.
+_LEAVES_OUT: Final = re.compile(
+    r"\b(?:no|menos|excepto|salvo|sin(?:\s+(?:contar|incluir))?|quitando)\s*$"
+)
+# What may stand between the marker and a name: a determiner, the word «cuenta».
+_BEFORE_A_NAME: Final = re.compile(r"(?:(?:el|la|los|las|mi|mis|tu|tus)\s+)?(?:cuentas?\s+)?$")
+
+
 def excluded_in(sentence: str) -> tuple[str, ...]:
-    """Account kinds explicitly removed with «no», «menos», «excepto» or «salvo».
+    """Account kinds explicitly removed with «no», «menos», «excepto», «salvo», «sin (contar /
+    incluir)» or «quitando».
 
     `named_in` deliberately reports every mention. Scope selection needs the second half too:
     «corriente y hucha, no el fondo» names three accounts but selects two. Treating every noun as
     positive silently widens the query to precisely the account the user excluded.
+
+    «Sin contar la hucha» was the other way round and worse: unrecognised as an exclusion, it was
+    read as naming the hucha, and the figure was the hucha's alone — the one account the person had
+    left out (ruling R46).
     """
     haystack = spanish.folded(sentence)
     excluded: dict[str, int] = {}
@@ -204,10 +219,31 @@ def excluded_in(sentence: str) -> tuple[str, ...]:
             if match is None:
                 continue
             prefix = haystack[max(0, match.start() - 24) : match.start()]
-            if re.search(r"\b(?:no|menos|excepto|salvo)\s*$", prefix):
+            if _LEAVES_OUT.search(prefix):
                 excluded.setdefault(kind, match.start())
                 break
     return tuple(sorted(excluded, key=lambda kind: excluded[kind]))
+
+
+def left_out_among(sentence: str, names: tuple[str, ...]) -> tuple[str, ...]:
+    """The names — the holder's own account names, learned aliases — the sentence leaves out.
+
+    «sin la cuenta Viajes», «menos viajes»: the same markers `excluded_in` reads before a kind,
+    read before a name (ruling R48). A name that is also chosen elsewhere in the sentence is still
+    left out where the marker stands before it, and the caller treats it as left out.
+    """
+    haystack = spanish.folded(sentence)
+    left_out: list[str] = []
+    for name in names:
+        folded = spanish.folded(name).strip()
+        if not folded:
+            continue
+        for match in re.finditer(rf"(?<![a-z0-9]){re.escape(folded)}(?![a-z0-9])", haystack):
+            prefix = haystack[max(0, match.start() - 40) : match.start()]
+            if _LEAVES_OUT.search(_BEFORE_A_NAME.sub("", prefix, count=1)):
+                left_out.append(name)
+                break
+    return tuple(left_out)
 
 
 def asks_for_other_accounts(sentence: str) -> bool:
@@ -226,6 +262,24 @@ def asks_for_all_accounts(sentence: str) -> bool:
     if "entre mis cuentas" in folded or "entre nuestras cuentas" in folded:
         return False
     return _ALL_ACCOUNTS.search(folded) is not None
+
+
+# Every account, said the short way. Only a reply to «¿En qué cuenta…?» may say it like this: the
+# question supplies the noun, and anywhere else «todas» is about something the sentence never says.
+_EVERY_ONE_OF_THEM: Final = frozenset({"todas", "en todas", "todas ellas", "en todas ellas"})
+
+
+def all_accounts_as_a_reply(sentence: str) -> bool:
+    """Whether a reply to the account question chooses every account — «Todas mis cuentas», or only
+    «todas» / «en todas».
+
+    For the caller that knows the account question is the one being answered, which is the only
+    place the ellipsis can be resolved: the arbitration, deciding the turn fills that slot, and the
+    handler, resolving the choice against the accounts offered. One reading for both, so the two
+    cannot disagree about whether «en todas» chose anything.
+    """
+    folded = spanish.folded(sentence).strip(" \t\r\n¿?¡!.,;:")
+    return asks_for_all_accounts(sentence) or folded in _EVERY_ONE_OF_THEM
 
 
 def destination_in(sentence: str) -> tuple[str, ...]:

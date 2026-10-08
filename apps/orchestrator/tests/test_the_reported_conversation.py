@@ -659,10 +659,10 @@ def test_a_real_instruction_still_interrupts_an_open_question() -> None:
     """The other half, and what keeps the rule narrow: a figure is what tells a change of subject
     from a one-word reply. Losing a payment to a clarification nobody remembers is the failure in
     the opposite direction."""
-    client, _, _ = wired({"llevo gastado": PlanningResult.needs_clarification("¿De qué periodo?")})
+    client, _, _ = wired({"he gastado": PlanningResult.needs_clarification("¿De qué periodo?")})
     chat = Chat(client)
 
-    chat.say("¿cuánto llevo gastado?")
+    chat.say("¿cuánto he gastado?")
     paid = chat.say("hazle un bizum de 20 € a Marta")
 
     # Payments are off in this harness, so the honest answer is that it cannot make one — which is

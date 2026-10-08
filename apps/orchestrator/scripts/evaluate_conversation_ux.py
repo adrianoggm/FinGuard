@@ -33,6 +33,33 @@ from finguard_orchestrator.infrastructure.planning.llm_query_planner import (  #
 )
 
 
+def summarise(turns: list[dict]) -> dict:
+    """Per-mechanism counts and the recovery rate, defined as in `real_conversation.summarise`.
+
+    Recovery is the next turn of the same conversation after a failed one: did it come back?
+    A failure on a conversation's last turn has no next turn and counts on neither side. A turn
+    with no tag is reported as `untagged` rather than dropped, so a gap in the YAML shows.
+    """
+    by_mechanism: dict[str, dict[str, int]] = {}
+    for record in turns:
+        counts = by_mechanism.setdefault(
+            record.get("mechanism") or "untagged", {"turns": 0, "failed": 0}
+        )
+        counts["turns"] += 1
+        counts["failed"] += bool(record["failures"])
+    ordered = sorted(turns, key=lambda record: (record["episode"], record["turn"]))
+    opportunities = recovered = 0
+    for before, after in zip(ordered, ordered[1:], strict=False):
+        if before["episode"] != after["episode"] or not before["failures"]:
+            continue
+        opportunities += 1
+        recovered += not after["failures"]
+    return {
+        "by_mechanism": dict(sorted(by_mechanism.items())),
+        "recovery_rate": recovered / opportunities if opportunities else None,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="qwen2.5-coder:7b")
@@ -113,6 +140,7 @@ def main() -> int:
                     {
                         "episode": episode.name,
                         "turn": number,
+                        "mechanism": turn.mechanism,
                         "user": turn.say,
                         "answer": answer["text"] if answer else None,
                         "outcome": answer["outcome"] if answer else None,
@@ -130,6 +158,12 @@ def main() -> int:
                     flush=True,
                 )
                 started = time.perf_counter()
+    report.update(summarise(report["turns"]))
+    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    for mechanism, counts in report["by_mechanism"].items():
+        print(f"{mechanism}: {counts['failed']} failed of {counts['turns']}")
+    rate = report["recovery_rate"]
+    print(f"recovery rate: {'n/a' if rate is None else f'{rate:.0%}'}")
     print(f"{len(report['turns'])} turns; {failures} failed; {args.output}")
     return int(failures > 0)
 

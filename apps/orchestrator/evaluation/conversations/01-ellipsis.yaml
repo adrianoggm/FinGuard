@@ -206,13 +206,15 @@ episodes:
       - say: en 2025
         route: QUERY
         ran: {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      # June of the year in view, 2025, since validation fix 1 (F2): a month named with no year
+      # takes the year of the answer it follows. It was June of this year.
       - say: ¿y en junio?
         route: QUERY
-        ran: {window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: '2025-06-01..2025-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿y el año anterior?
         route: QUERY
         no_model: true
-        ran: {window: '2025-06-01..2025-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: '2024-06-01..2024-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
 
   - name: a_reply_that_answers_nothing
     why: >
@@ -220,7 +222,7 @@ episodes:
       never finished asking. Precision over coverage, in a conversation.
     metrics: [unnecessary_clarification]
     turns:
-      - say: ¿cuánto llevo gastado?
+      - say: ¿cuánto he gastado?
         route: QUERY
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: pues no sé

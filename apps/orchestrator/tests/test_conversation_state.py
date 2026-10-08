@@ -278,7 +278,14 @@ _TRANSITIONS: tuple[tuple[str, Callable[[Conversation], Conversation], set[str]]
     ("without_recent_payment", lambda c: c.without_recent_payment(), {"recent_payment_rail"}),
     ("asking", lambda c: c.asking(Slot.AMOUNT), {"last_asked"}),
     ("refused", lambda c: c.refused("FORECAST"), {"active", "last_asked"}),
-    ("answering_the_balance", lambda c: c.answering_the_balance(), {"answered_the_balance"}),
+    # A balance answers a clear new intent, so the question left open goes with it (ruling R12):
+    # the slot asked and a half-built proportion. `active` only when it is a financial question;
+    # FULL's half-built Bizum survives, and the test below says so by name.
+    (
+        "answering_the_balance",
+        lambda c: c.answering_the_balance(),
+        {"answered_the_balance", "active", "last_asked", "pending_ratio"},
+    ),
     ("awaiting_retry", lambda c: c.awaiting_retry(THIS_MONTH), {"retry_plan"}),
     ("without_retry", lambda c: c.without_retry(), {"retry_plan"}),
     (
@@ -317,6 +324,29 @@ def test_a_transition_changes_only_what_it_names(
         assert getattr(after, field.name) == getattr(FULL, field.name), (
             f"{name} silently dropped {field.name}"
         )
+
+
+def test_an_answered_balance_drops_the_question_left_open() -> None:
+    """Ruling R12: «¿cuánto tengo?» while «¿De qué periodo?» waits is a new intent, and the period
+    question does not outlive it — or «en julio» on the next turn completes a question the holder
+    walked away from. The analysis behind it stays (a balance is not a reset), and so does a
+    half-built Bizum, which a balance never abandoned."""
+    waiting = replace(
+        FULL,
+        active=FinancialClarification(draft=RENT, awaiting=Slot.WINDOW),
+    )
+
+    after = waiting.answering_the_balance()
+
+    assert after.active is None
+    assert after.last_asked is None
+    assert after.pending_ratio is None
+    assert after.answered_the_balance is True
+    assert after.last_plan == FULL.last_plan, "the analysis behind it stays"
+    assert FULL.answering_the_balance().active == FULL.active, "a half-built Bizum stays"
+    # The account question is the one kept on purpose (`31-account-scope.yaml`), in both forms.
+    asked_which_account = replace(IDLE, last_asked=Slot.ACCOUNT)
+    assert asked_which_account.answering_the_balance().last_asked is Slot.ACCOUNT
 
 
 def test_a_clarification_does_not_cost_the_balance_thread() -> None:

@@ -29,7 +29,7 @@ the sentence is filling, so the reply no longer has to be a self-contained phras
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
@@ -152,6 +152,13 @@ class AccountAlias:
 class AccountSelectionMode(StrEnum):
     ALL = "ALL"
     SELECTED = "SELECTED"
+
+
+# What an analytics question means when it names no account and the conversation has chosen none:
+# `all` reads every account the holder has, `ask` asks «¿En qué cuenta quieres consultarlo?» first.
+# A deployment's choice (`ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT`), never the conversation's: a choice
+# the person made is an `AccountSelection`, and it wins under either value.
+AccountScopeDefault = Literal["all", "ask"]
 
 
 @dataclass(frozen=True)
@@ -656,10 +663,29 @@ class Conversation:
     def answering_the_balance(self) -> "Conversation":
         """This turn said how much money there is, so a bare account name is about that.
 
-        Everything else about the conversation survives: a balance is a turn and not a reset, and
-        asking it in the middle of an analysis of last month must not cost the window.
+        The analysis behind it survives: a balance is a turn and not a reset, and asking it in the
+        middle of an analysis of last month must not cost the window. So does a half-built Bizum,
+        which steps aside for the balance rather than ending.
+
+        **The question left open about the plan does not** (ruling R12). «¿cuánto tengo?» while
+        «¿De qué periodo?» waits is a clear new intent, and with the clarification still open behind
+        the answer, «en julio» on the next turn ran the restaurants question the holder had walked
+        away from — the cage `suspend` already refuses to build for a clarification. The slot asked
+        and a half-built proportion go with it, as they do when any other answer supersedes them.
+
+        The account question stays, and that is pinned rather than overlooked: «¿En qué cuenta…?»
+        holds a question already complete and owed an answer, and `31-account-scope.yaml` walks away
+        from it to a balance and back on purpose. Whether it should go too is a product decision,
+        not this rule's.
         """
-        return replace(self, answered_the_balance=True)
+        keeps_the_account_question = self.last_asked is Slot.ACCOUNT
+        return replace(
+            self,
+            answered_the_balance=True,
+            active=None if isinstance(self.active, FinancialClarification) else self.active,
+            last_asked=self.last_asked if keeps_the_account_question else None,
+            pending_ratio=None,
+        )
 
     def awaiting_retry(self, plan: PlannedQuery) -> "Conversation":
         """Remember the exact validated read that banking could not execute."""

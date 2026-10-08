@@ -153,10 +153,14 @@ async def test_a_period_comparison_does_not_offer_its_difference_as_the_leading_
     result = await ask("¿He gastado más este mes que el anterior?", ledger)
 
     assert result.outcome == PlanningOutcome.PLANNED.value
-    # The sentence measured over HTTP, unchanged: this fix moves a field, not an answer.
+    # The sentence measured over HTTP, unchanged: this fix moves a field, not an answer. The
+    # accounts it was read from are said under it since the final review (I-6), as under every
+    # other answer read across them; and the two periods in the order they happened, last month
+    # first, since validation fix 3 (G7).
     assert result.text == (
-        "En lo que va de mes: 0,00 €; el mes pasado: 1.895,97 €. "
-        "El gasto fue 1.895,97 € mayor el mes pasado."
+        "El mes pasado: 1.895,97 €; en lo que va de mes: 0,00 €. "
+        "El gasto fue 1.895,97 € mayor el mes pasado.\n"
+        "Consultado en todas tus cuentas."
     )
     assert leading_figure_the_answer_never_says(result) is None
     # And it is absent rather than rewritten: a comparison states two figures and the change
@@ -171,9 +175,10 @@ async def test_a_period_comparison_still_carries_both_operands_and_their_counts(
 
     result = await ask("¿He gastado más este mes que el anterior?", ledger)
 
+    # The earlier window first, as the text says them (validation fix 3, fix round 1, M-4).
     assert [(group.key, group.total_minor, group.movement_count) for group in result.groups] == [
-        ("en lo que va de mes", 0, 0),
         ("el mes pasado", 189_597, 28),
+        ("en lo que va de mes", 0, 0),
     ]
     assert result.movement_count == 28
     assert sum(group.movement_count for group in result.groups) == result.movement_count

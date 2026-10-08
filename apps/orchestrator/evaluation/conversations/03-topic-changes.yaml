@@ -139,7 +139,7 @@ episodes:
       moved on from.
     metrics: [context_retention]
     turns:
-      - say: ¿cuánto llevo gastado?
+      - say: ¿cuánto he gastado?
         route: QUERY
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo en la hucha?

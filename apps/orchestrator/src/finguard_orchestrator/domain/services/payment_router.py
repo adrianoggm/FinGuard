@@ -36,7 +36,12 @@ import re
 from typing import Final
 
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.services import account_words, payment_words, spanish
+from finguard_orchestrator.domain.services import (
+    account_words,
+    payment_words,
+    spanish,
+    window_words,
+)
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 
 # Questions about facts. Spanish marks these, and the mark is the signal — unlike the question mark,
@@ -107,6 +112,28 @@ _ALREADY: Final = re.compile(
     rf"|\b(?:{_MADE})\b"
 )
 
+# «Pasar» moves money only when it is pointed at somebody (validation fix 3, G1): «¿cuánto le he
+# pasado a Aitor?», «le pasé 20 a Javi», «lo que he pasado a Marta». Asked on 2026-10-08 it was
+# nobody's: Aitor became a shop, and the window the sentence said was asked for. So not in
+# `_PAYMENT_VERBS`, whose every form counts anywhere: «el mes pasado» is in every other sentence,
+# and «¿qué le ha pasado a Aitor?» is something that happened to him. The holder has to be the one
+# passing — a clitic and «pasé», or «he»/«hemos» and the participle — and nothing may come between
+# the verb and «a» but «ya» or an amount: «le he pasado el informe a Aitor» passed a report.
+# «Pasao» is how the participle is said aloud, in this verb only.
+#
+# Not in `_ALREADY` (fix round 1, I-1), which `is_payment` reads as "never an order": «he pasado a
+# ver a Javi, mándale 20 euros» is an order with a visit in front of it, and it stopped paying. Who
+# the money was passed to is read with the directory, right after the «a» (`the_person_paid`).
+_PASSED_TO: Final = re.compile(
+    r"\b(?:(?:le|les)\s+pase|(?:he|hemos)\s+(?:pasado|pasao))"
+    r"(?:\s+(?:ya|tambien|\d+(?:[.,]\d{1,2})?\s*(?:€|euros?|pavos)?))*"
+    r"\s+a\s+(?P<after>[a-z].*)$"
+)
+# What may follow the person and makes what was passed a thing, not money: «le he pasado ya a Aitor
+# lo del regalo». A window there is still the period of the money: «… a Aitor el mes pasado».
+_A_THING_AFTER_THE_PERSON: Final = frozenset("lo la las los el un una unos unas eso esto".split())
+_A_WORD: Final = re.compile(r"[a-z0-9]+")
+
 # Money arriving, which is never an order to send any.
 #
 # Its own signal rather than another entry in `_ALREADY`, because it is not about tense. "¿He
@@ -148,8 +175,42 @@ _PAYING: Final = re.compile(
     # 20 euros". These are payment verbs and nothing else — unlike "hagas", which is deliberately
     # absent because "que hagas el desglose" is not a payment.
     r"|mandes|envies|pagues|transfieras"
-    r"|devuelve|devuelvele)\b"
+    r"|devuelve|devuelvele"
+    # The infinitive with its clitic, which is how the order is given after a volitional verb:
+    # "quiero mandarle 20 euros a Marta". `mandar\b` above stops short of the `l`, so the form
+    # people actually say was a different word to it, and the sentence was refused as a calculation.
+    # `pasar` and `dar` are not here: they are payment verbs only when an amount follows them
+    # (`_HANDING_OVER`), and nothing about "pasarle el informe" says money.
+    r"|(?:mandar|enviar|pagar)(?:le|les))\b"
 )
+
+# «pásale 20 a Marta», «dale 8 a Laura», «quiero pasarle 15 euros a Aitor»: the verbs that hand
+# something over are payment verbs only when what they hand over is an amount, so the number is
+# part of the match and not left to `_MONEY`, which accepts any digit anywhere. The recipient is
+# required as well ("a <name>"): «pásale 20 minutos» is not a payment, and «pásale el informe de
+# 2024 a Marta» has no amount straight behind the verb. Imperative and infinitive-with-clitic only:
+# «le pasé 20 a Javi» is `_ALREADY`'s, and a bare «pasa» is also «qué pasa», so it needs the amount
+# right behind it to count.
+_AN_AMOUNT_TO_SOMEBODY: Final = r"\s+\d+(?:[.,]\d{1,2})?\s*(?:€|euros?\b)?\s+a\s+[a-z]"
+_HANDING_OVER: Final = re.compile(
+    r"\b(?:pasale|pasales|pasarle|pasarles|dale|dales)" + _AN_AMOUNT_TO_SOMEBODY
+)
+
+# The bare «pasa» is also the third person (final review, M-1): «mi ex me pasa 300 a la cuenta cada
+# mes» and «¿y Javi le pasa 20 a Marta cada mes?» say what somebody else does, and each started a
+# Bizum. A clitic in front points it at another person, and an order is not asked, so the bare form
+# counts only with neither (`_hands_over`) — the imperative «pasa 20 a Javi» still does.
+_A_BARE_PASA: Final = re.compile(
+    r"(?<!\bme\s)(?<!\bte\s)(?<!\ble\s)(?<!\bles\s)(?<!\bnos\s)\bpasa" + _AN_AMOUNT_TO_SOMEBODY
+)
+
+
+def _hands_over(folded: str) -> bool:
+    """`_HANDING_OVER`, or the bare «pasa» said as an order rather than asked about."""
+    return _HANDING_OVER.search(folded) is not None or (
+        "?" not in folded and "¿" not in folded and _A_BARE_PASA.search(folded) is not None
+    )
+
 
 # A fully stated instruction remains an instruction when the user appends ``¿cómo lo hago?`` or
 # ``¿verdad?``. The volitional prefix is required; without it, ``¿cómo puedo enviar dinero?`` is a
@@ -157,7 +218,8 @@ _PAYING: Final = re.compile(
 _EXPLICIT_ORDER: Final = re.compile(
     r"\b(?:quiero|necesito|voy\s+a|vamos\s+a|tengo\s+que)\s+"
     r"(?:hacer\s+(?:una?\s+)?|dar(?:le|les|me)?\s+(?:el\s+|un\s+|una\s+)?)?"
-    r"(?:bi[xz]um|transferencia|tra[nm]sferir|enviar|mandar|mandrle|pagar)\b"
+    r"(?:bi[xz]um|transferencia|tra[nm]sferir|enviar|mandar|mandrle|pagar"
+    r"|(?:enviar|mandar|pasar|pagar)(?:le|les))\b"
 )
 
 # The same instruction in the subjunctive, which is how Spanish actually gives one: "que le hagas el
@@ -261,7 +323,50 @@ def describes_a_past_payment(sentence: str) -> bool:
     bizum" is equally past and is somebody else's payment.
     """
     folded = spanish.folded(sentence)
-    return bool(_ALREADY.search(folded)) and _RECEIVED.search(folded) is None
+    if _RECEIVED.search(folded) is not None:
+        return False
+    return bool(_ALREADY.search(folded)) or _passes_money(sentence, folded)
+
+
+def _passes_money(sentence: str, folded: str) -> bool:
+    """Whether the sentence says the holder passed money to somebody (`_PASSED_TO`) and orders
+    nothing beside it: «hazle un bizum a Javi como el que le pasé a Aitor» is an order."""
+    return _PASSED_TO.search(folded) is not None and not is_explicit_order(sentence)
+
+
+def the_person_paid(sentence: str, directory: tuple[Contact, ...]) -> str | None:
+    """Whom the holder says they paid, as much of the name as the sentence writes, in the
+    directory's casing; None when it names nobody the directory has.
+
+    With a payment verb in the past — «le mandé 20 a Marta» — anybody in the directory the sentence
+    names, as it has always been read (`payment_words.name_as_written`). With «pasar», only the
+    person right after its «a» (fix round 1, I-1): «hemos pasado a casa de Aitor» went somewhere,
+    and «hazle un bizum de 20 a Javi como el que le pasé a Aitor» was read as one person called
+    «Javi Aitor». A thing named after the person — «… a Aitor lo del regalo» — is what was passed,
+    and it is not money.
+    """
+    folded = spanish.folded(sentence)
+    if _ALREADY.search(folded) is not None:
+        return payment_words.name_as_written(sentence, directory)
+    passed = _PASSED_TO.search(folded)
+    if passed is None or not _passes_money(sentence, folded):
+        return None
+    after = passed.group("after")
+    person = payment_words.name_as_written(after, directory)
+    if person is None:
+        return None
+    words = _A_WORD.findall(after)
+    named = _A_WORD.findall(spanish.folded(person))
+    if words[: len(named)] != named:
+        return None
+    rest = words[len(named) :]
+    if (
+        rest
+        and rest[0] in _A_THING_AFTER_THE_PERSON
+        and window_words.window_in(" ".join(rest)) is None
+    ):
+        return None
+    return person
 
 
 def is_uncertain(sentence: str) -> bool:
@@ -326,6 +431,7 @@ def is_explicit_order(sentence: str) -> bool:
         or _SUBJUNCTIVE_ORDER.search(folded)
         or _IMPERATIVE_ORDER.search(folded)
         or _MAKING.search(folded)
+        or _hands_over(folded)
     )
 
 
@@ -365,4 +471,6 @@ def is_payment(sentence: str) -> bool:
     # `_MONEY` already said about "bizum" — said here as well so a misspelling keeps that property
     # instead of losing it in two places at once.
     rail = payment_words.names_a_rail(sentence)
+    if _hands_over(folded):
+        return True
     return (bool(_PAYING.search(folded)) or rail) and (bool(_MONEY.search(folded)) or rail)

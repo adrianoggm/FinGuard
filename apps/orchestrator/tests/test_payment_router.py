@@ -39,6 +39,15 @@ from finguard_orchestrator.domain.services import payment_router
         "quiero hacerle un bizum a Marta",
         "Tengo que enviar 20 euros a Marta, puedo hacerlo por bizum, ¿verdad?",
         "Quiero mandrle 20 euros a Marta por bizum, ¿cómo lo hago?",
+        # The infinitive with a clitic, and a bare amount to a person: measured in a real
+        # conversation, where «ahora quiero mandarle 20 euros a Marta» was refused as a calculation.
+        "ahora quiero mandarle 20 euros a Marta",
+        "quiero mandarle 20 euros a Marta",
+        "quiero enviarle 30 € a Javi",
+        "tengo que pasarle 15 euros a Aitor",
+        "quiero hacerle un bizum de 20 a Marta",
+        "pásale 20 a Marta",
+        "mándale 20 a Javi",
     ],
 )
 def test_an_instruction_to_pay_is_recognised(sentence: str) -> None:
@@ -67,6 +76,13 @@ def test_an_instruction_to_pay_is_recognised(sentence: str) -> None:
         "Quiero transferir dinero de una de mis cuentas a otra",
         "Estoy intentando hacer una transferencia entre mis cuentas, ¿cómo lo hago?",
         "Eso fue nomina o un bizum?",
+        # The new verbs are not payments by themselves: a bare number is money only as the amount
+        # handed to a person, and the past stays a question.
+        "¿cuánto le mandé a Marta este mes?",
+        "¿cuánto le pasé a Javi en julio?",
+        "quiero saber cuánto le mandé a Marta",
+        "pásale el informe a Marta",
+        "pásale el informe de 2024 a Marta",
     ],
 )
 def test_everything_else_is_not_a_payment(sentence: str) -> None:
@@ -350,4 +366,27 @@ def test_a_past_form_is_a_question_however_it_is_conjugated(sentence: str) -> No
 def test_a_wider_past_does_not_swallow_an_order(sentence: str) -> None:
     """What a stem (``mand\\w*``) would have cost. Completeness has to come from conjugating the
     verb, not from widening the match until it reaches the imperative too."""
+    assert payment_router.is_payment(sentence) is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "mi ex me pasa 300 a la cuenta cada mes",
+        "¿y Javi le pasa 20 a Marta cada mes?",
+        "mi madre nos pasa 50 a todos",
+        "¿pasa 20 a Marta cada mes?",
+    ],
+)
+def test_somebody_else_handing_money_over_is_not_an_order(sentence: str) -> None:
+    """Final review, M-1. «Pasa» with an amount and a person behind it is the imperative only when
+    nothing points it at somebody else: «me pasa», «le pasa» are what another person does, and a
+    question asks about it. Read as an order, «mi ex me pasa 300 a la cuenta» started a Bizum."""
+    assert payment_router.is_payment(sentence) is False
+
+
+@pytest.mark.parametrize(
+    "sentence", ["pásale 20 a Javi", "pasa 20 a Javi", "dale 8 a Laura", "¿pásale 20 a Javi?"]
+)
+def test_handing_money_over_is_still_an_order(sentence: str) -> None:
     assert payment_router.is_payment(sentence) is True

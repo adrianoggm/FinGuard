@@ -336,6 +336,9 @@ def create_app() -> FastAPI:
         # reading a sentence two different ways when somebody adds a third caller.
         interpreter=interpreter,
         visual_policy=visual_policy,
+        # Every account, or the account question first, for a question that names none while the
+        # conversation has chosen none. A deployment's choice; see `Settings.account_scope_default`.
+        account_scope_default=settings.account_scope_default,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.

@@ -44,7 +44,9 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.planning_context import (
     BalanceFocus,
+    ComparisonFocus,
     QueryFocus,
+    RatioFocus,
     focus_of,
 )
 from finguard_orchestrator.domain.models.turn_analysis import (
@@ -53,32 +55,16 @@ from finguard_orchestrator.domain.models.turn_analysis import (
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.services import (
     spanish,
-    window_words,
+    turn_arbiter,
 )
-from finguard_orchestrator.domain.services.capability_guard import MOVEMENT_NOUNS
 from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.turn_arbiter import Arbitration
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
 )
-from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
-
-# What makes a turn stand on its own, together with a window (see `_starts_new_financial_scope`).
-#
-# The noun alternation is shared with the superlative recogniser rather than spelled again. It used
-# to hold only conjugated verbs and plural nouns, so "¿cuál fue mi mayor gasto de junio?" matched
-# nothing here, stayed an ellipsis, and became a *window patch* on the previous aggregate: the month
-# was applied and the superlative was dropped. "mis movimientos más altos de junio" worked, because
-# `movimientos` happened to be in the list. One word was the whole difference between a ranking and
-# somebody else's total.
-_SELF_CONTAINED_FINANCIAL_QUESTION: Final = re.compile(
-    r"\b(?:cuanto|cuantos|cual|cuales|que)\b.{0,70}"
-    r"\b(?:gaste|gastado|pague|pagado|compre|comprado|ingrese|ingresado|cobre|cobrado"
-    rf"|movimientos|operaciones|categoria|{MOVEMENT_NOUNS})\b"
-    r"|\b(?:muestrame|ensename|quiero\s+ver)\b.{0,55}"
-    r"\b(?:movimientos|operaciones|gastos|ingresos)\b"
-)
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
 
 
 def _clean_turn(sentence: str) -> str:
@@ -103,17 +89,12 @@ def _across_every_account(plan: FinancialPlan) -> FinancialPlan:
 def _starts_new_financial_scope(sentence: str, *, today: date) -> bool:
     """Whether this turn states a complete new question rather than an ellipsis.
 
-    A concrete window plus a financial question is enough to stand on its own. Inheriting an old
-    category there is how "cuánto gasté en la cuenta principal este mes" remained filtered by
-    restaurants. Short turns without a window ("y cuánto gasté?") remain follow-ups.
+    `turn_arbiter.states_a_question_of_its_own`, under the name every reader already imports. The
+    rule moved down a layer because the arbitration needs it too — a question of its own is not a
+    reply to the one left open — and a domain service cannot read the application; one rule in two
+    places is how a reader and the arbitration would come to disagree about the same sentence.
     """
-    folded = spanish.folded(sentence)
-    if re.search(r"\b(?:esa|ese|esas|esos)\b|\blo\s+mismo\b", folded):
-        return False
-    return (
-        window_words.window_in(sentence, today=today) is not None
-        and _SELF_CONTAINED_FINANCIAL_QUESTION.search(folded) is not None
-    )
+    return turn_arbiter.states_a_question_of_its_own(sentence, today=today)
 
 
 @dataclass(frozen=True)
@@ -359,6 +340,14 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     # without letting a second reading exist on the path a user is actually on.
     intent: Intent | None = None
     analysis: TurnAnalysis | None = None
+    # What kind of turn this is — `turn_arbiter.arbitrate`, decided once at the edge from the
+    # analysis above, for the same reason the analysis travels: the edge already acted on it (an
+    # order to pay never reaches here), and a second arbitration in here is a second opinion that
+    # could disagree with the first. Not a client field either. Left out, the handler reads the one
+    # kind that needs no analysis — a reset is the sentence alone — first, and arbitrates the rest
+    # itself once it has the analysis, with the same function: a reply to the question left open is
+    # one whoever built the query.
+    arbitration: Arbitration | None = None
     # How this answer will be consumed. It belongs to the execution request rather than to the
     # dataset profile. Kept last so adding it does not shift established positional callers.
     presentation: PresentationContext = DEFAULT_PRESENTATION
@@ -440,3 +429,20 @@ def _window_of(plan: PlannedQuery | None) -> str | None:
 
 def _a_plan_is_in_view(query: AskFinancialQuestionQuery) -> bool:
     return isinstance(query.conversation.last_plan, FinancialPlan)
+
+
+def _the_pair_in_view(conversation: Conversation) -> ComparisonPlan | None:
+    """The two periods on screen: a comparison's pair, or the pair a percentage change was taken
+    over (validation fix 3, G4).
+
+    A percentage change is the same two reads with arithmetic on top (`RatioPlan` checks its
+    operands as a `ComparisonPlan` does), so after «y eso en %?» the comparison is still what the
+    holder is looking at. Read as no comparison, «¿y de ocio?» after it asked the period and lost
+    June and July both (impro-comparar-meses 4). `whole` is the earlier side, `part` the later.
+    """
+    focus = focus_of(conversation)
+    if isinstance(focus, ComparisonFocus):
+        return focus.value
+    if isinstance(focus, RatioFocus) and focus.value.kind is RatioKind.PERCENT_CHANGE:
+        return ComparisonPlan.between(focus.value.whole, focus.value.part)
+    return None

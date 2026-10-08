@@ -879,9 +879,12 @@ async def test_two_periods_can_be_compared_in_one_natural_sentence(
             "junio de 2026",
         ),
         (
+            # The earlier year first since validation fix 1 (F3): it is the reference the change is
+            # read from. It was 2026 first, the reverse of the order the years were said in. And
+            # the text says it first since validation fix 3 (G7), so it opens the sentence.
             "Compara mis ingresos de 2025 con 2026",
-            [date(2026, 1, 1), date(2025, 1, 1)],
-            "en 2025",
+            [date(2025, 1, 1), date(2026, 1, 1)],
+            "En 2025",
             "en 2026",
         ),
     ],
@@ -1161,8 +1164,8 @@ async def test_a_direct_period_comparison_counts_movements_instead_of_money() ->
     assert planner.asked == 0
     assert len(ledger.plans) == 2
     assert all(plan.metric is Metric.COUNT for plan in ledger.plans)
-    assert "En julio de 2026: 12 movimientos" in answer.text
-    assert "junio de 2026: 9 movimientos" in answer.text
+    # The earlier month first in the text since validation fix 3 (G7).
+    assert "En junio de 2026: 9 movimientos; en julio de 2026: 12 movimientos." in answer.text
     assert "3 movimientos más en julio de 2026" in answer.text
     assert answer.total_minor is None
     assert isinstance(answer.conversation.last_plan, FinancialPlan)
@@ -1193,8 +1196,8 @@ async def test_a_direct_period_comparison_uses_the_mean_not_the_total() -> None:
 
     assert planner.asked == 0
     assert all(plan.metric is Metric.AVERAGE for plan in ledger.plans)
-    assert "En julio de 2026: 30,00 €" in answer.text
-    assert "junio de 2026: 20,00 €" in answer.text
+    # The earlier month first in the text since validation fix 3 (G7).
+    assert "En junio de 2026: 20,00 €; en julio de 2026: 30,00 €." in answer.text
     assert "importe medio por movimiento fue 10,00 € mayor" in answer.text
 
 
@@ -1228,8 +1231,10 @@ async def test_a_direct_period_comparison_preserves_the_calendar_average() -> No
     assert planner.asked == 0
     assert all(plan.metric is Metric.PERIOD_AVERAGE for plan in ledger.plans)
     assert all(plan.group_by is GroupBy.MONTH for plan in ledger.plans)
-    assert "En 2025: 1.000,00 €" in answer.text
-    assert "en 2026: 500,00 €" in answer.text
+    # 2025 is the reference since validation fix 1 (F3), where the reverse of the order said made
+    # it 2026; and the text says it first since validation fix 3 (G7), the earlier year opening
+    # the sentence as it opens the calendar.
+    assert "En 2025: 1.000,00 €; en 2026: 500,00 €." in answer.text
     assert "gasto medio mensual fue 500,00 € mayor en 2025" in answer.text
 
 
@@ -1370,15 +1375,22 @@ GROCERIES_IN_JULY = FinancialPlan(
 
 
 @pytest.mark.parametrize(
-    ("sentence", "earlier", "names"),
+    ("sentence", "named", "names", "ran_first"),
     [
-        ("Compáralo con junio", window_words.whole_month(2026, 6), "junio de 2026"),
-        ("Compáralo con julio de 2025", window_words.whole_month(2025, 7), "julio de 2025"),
-        ("Compáralo con la semana pasada", RelativePeriod(Period.LAST_WEEK), "la semana pasada"),
+        ("Compáralo con junio", window_words.whole_month(2026, 6), "junio de 2026", True),
+        ("Compáralo con julio de 2025", window_words.whole_month(2025, 7), "julio de 2025", True),
+        # The week starts after July does, so July is the reference since validation fix 2 (I-3):
+        # the pair runs in the order the windows happened. The week ran first before it.
+        (
+            "Compáralo con la semana pasada",
+            RelativePeriod(Period.LAST_WEEK),
+            "la semana pasada",
+            False,
+        ),
     ],
 )
 async def test_one_named_window_is_compared_against_the_plan_in_view(
-    sentence: str, earlier: AbsoluteRange | RelativePeriod, names: str
+    sentence: str, named: AbsoluteRange | RelativePeriod, names: str, ran_first: bool
 ) -> None:
     """A pronoun and one window is a comparison, and it was the one comparison shape with no reader.
 
@@ -1401,7 +1413,8 @@ async def test_one_named_window_is_compared_against_the_plan_in_view(
 
     assert planner.asked == 0, "a complete comparison is intercepted before the model"
     assert answer.outcome == PlanningOutcome.PLANNED.value
-    assert ledger.windows == [earlier, window_words.whole_month(2026, 7)]
+    july = window_words.whole_month(2026, 7)
+    assert ledger.windows == ([named, july] if ran_first else [july, named])
     assert all(plan.categories == ("GROCERIES",) for plan in ledger.plans)
     assert "julio de 2026" in answer.text
     assert names in answer.text

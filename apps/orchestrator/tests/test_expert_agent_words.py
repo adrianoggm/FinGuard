@@ -195,7 +195,11 @@ EVALUATION = Path(__file__).resolve().parents[1] / "evaluation"
 # normaliser evaluation reads. Exact paths rather than a pattern, so a new file is swept until
 # somebody names it here -- and `test_only_the_agent_episodes_are_exempt` holds the corpus entry to
 # the episodes that declare agents.
-MEANT_FOR_AGENTS = frozenset({"conversations/35-expert-agents.yaml", "a2a/cases.yaml"})
+# `real/conversations.yaml` replays real conversations, which mix topics on purpose (a gym question
+# among the financial ones); their expectations are judged on the live stack.
+MEANT_FOR_AGENTS = frozenset(
+    {"conversations/35-expert-agents.yaml", "a2a/cases.yaml", "real/conversations.yaml"}
+)
 
 
 def _swept() -> list[Path]:
@@ -384,6 +388,21 @@ def test_an_agent_is_named_by_its_shown_name_as_well_as_by_its_card() -> None:
     assert named_in("la de las 19:00 en el gimnasio", names) == ()
     agents = (agent("gym-norte", "Gimnasio Norte"), agent("gym-sur", "Gimnasio Sur"))
     assert named_agents("la del Sur", agents) == named_in("la del Sur", names) == ("gym-sur",)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "pásale 15 a Diego por el pádel de mañana",
+        "dale 8 a Laura por la clase de yoga de mañana",
+    ],
+)
+def test_r36_a_payment_named_with_an_activity_is_a_payment_not_a_search(sentence: str) -> None:
+    """Ruling R36, narrowed rather than closed (R10, ADR-012): the imperative without a currency
+    word is still an order to pay. «Pásame 10 por el pádel del sábado», which asks to be handed
+    money, is left open and stays with the gym search."""
+    assert payment_router.is_payment(sentence)
+    assert not asks_an_expert_agent(sentence)
 
 
 @pytest.mark.parametrize(

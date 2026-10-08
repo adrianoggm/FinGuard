@@ -249,3 +249,29 @@ episodes:
         says: "6.415,50"
       - say: gracias
         route: COURTESY
+
+  - name: what_there_is_in_total_said_in_passing
+    why: >
+      Validation fix 3, G2. «Bueno da igual. q tengo en total entre todo?» is how much money there
+      is across every account. On 2026-10-08 it was read as the reply to an open question once,
+      and as the net of the month's movements the next time; «bueno da igual» in front of it is
+      courtesy, so the turn is no reset either.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿Cuánto gasté en bares y restaurantes el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [RESTAURANTS], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: bueno da igual. q tengo en total entre todo?
+        route: BALANCE
+        total: 857198
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "6.415,50"
+      - say: ¿qué tengo en total?
+        route: BALANCE
+        total: 857198
+      - say: q tengo entre todo
+        route: BALANCE
+        total: 857198
+      - say: gracias
+        route: COURTESY
