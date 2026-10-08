@@ -239,6 +239,28 @@ def test_olvidalo_after_an_answer_drops_the_base_an_ellipsis_would_continue() ->
     assert forgotten["conversation"]["account_selection_mode"] == "ALL"
 
 
+@pytest.mark.parametrize("reset", ["olvídate", "déjalo estar", "cancela", "cancélalo"])
+def test_the_new_reset_words_drop_the_question_left_open(reset: str) -> None:
+    """Final review, M-3: each was read as a period nobody could parse, and asked about again."""
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    forgotten = ask(stack, reset, asked["conversation"])
+    assert forgotten["text"] == RESET_TEXT
+    assert forgotten["conversation"]["last_asked"] is None
+    assert forgotten["conversation"].get("workflow") in (None, "IDLE")
+
+
+@pytest.mark.parametrize("reset", ["olvídate", "déjalo estar", "cancélalo"])
+def test_the_new_reset_words_after_an_answer_are_not_a_shop(reset: str) -> None:
+    """After an answer they were the name of a shop, and the last question ran again filtered by
+    «olvídate»."""
+    stack = episodes.a_stack()
+    first = ask(stack, "cuanto gaste en el super el mes pasado", SETTLED)
+    forgotten = ask(stack, reset, first["conversation"])
+    assert forgotten["text"] == RESET_TEXT
+    assert len(stack.ledger.ran) == 1, "no second query"
+
+
 def test_a_reset_reaches_the_stream_too() -> None:
     """The browser types into the streaming route, so a rule only the other route had would be a
     rule the conversation never got."""

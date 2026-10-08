@@ -102,6 +102,31 @@ async def test_only_the_reset_words_are_a_reset(sentence: str) -> None:
 
 @pytest.mark.parametrize(
     "sentence",
+    ["olvídate", "déjalo estar", "cancela", "cancélalo", "no, cancélalo", "Olvídate, gracias"],
+)
+async def test_more_of_the_ways_people_drop_a_question_are_a_reset(sentence: str) -> None:
+    """Final review, M-3: «olvídate», «déjalo estar», «cancela» and «cancélalo» were read as the
+    name of a shop after an answer, and as a period nobody could parse while one was asked for."""
+    assert await kind_of(sentence, conversation_waiting_for(Slot.WINDOW)) is TurnType.RESET
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cancela?",
+        "¿olvídate?",
+        "cancela el bizum de ayer y mándale 20 a Marta",
+        "déjalo estar en restaurantes",
+        # «Da igual» answers «¿En qué cuenta?» as any of them; it drops nothing.
+        "da igual",
+    ],
+)
+def test_a_new_reset_word_asked_or_inside_a_request_is_not_a_reset(sentence: str) -> None:
+    assert is_a_reset(sentence) is False
+
+
+@pytest.mark.parametrize(
+    "sentence",
     ["no, déjalo en restaurantes", "nada más que gasolina", "no era eso, quería decir julio"],
 )
 async def test_a_reset_word_inside_a_request_is_not_a_reset(sentence: str) -> None:

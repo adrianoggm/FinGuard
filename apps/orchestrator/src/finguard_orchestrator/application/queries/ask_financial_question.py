@@ -22,7 +22,7 @@ sites; see the comment above `_BEFORE_THE_ASIDES` for why it is five and not one
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Any, Final, Literal
@@ -3225,11 +3225,7 @@ class AskFinancialQuestionHandler:
             outcome=PlanningOutcome.PLANNED.value,
             text=(
                 answer_writer.ranked(found, ranking)
-                + (
-                    f"\n{self._scope_note(ranking, query.sentence)}"
-                    if self._scope_note(ranking, query.sentence)
-                    else ""
-                )
+                + (f"\n{note}" if (note := await self._scope_note(ranking, query)) else "")
             ),
             plan=answer_writer.describe(ranking),
             plan_in_words=answer_writer.plan_in_words(ranking),
@@ -3303,11 +3299,7 @@ class AskFinancialQuestionHandler:
             outcome=PlanningOutcome.PLANNED.value,
             text=(
                 answer_writer.ranked_many(tuple(found), ranking, requested=count)
-                + (
-                    f"\n{self._scope_note(ranking, query.sentence)}"
-                    if self._scope_note(ranking, query.sentence)
-                    else ""
-                )
+                + (f"\n{note}" if (note := await self._scope_note(ranking, query)) else "")
             ),
             plan=f"{answer_writer.describe(ranking)}, top {count}",
             plan_in_words=f"{answer_writer.plan_in_words(ranking)}, top {count}",
@@ -3723,6 +3715,7 @@ class AskFinancialQuestionHandler:
             reporting_timezone=query.reporting_timezone,
             ran_as=scoped,
             every_account_by_default=self._every_account_by_default,
+            account_names=await self._names_of_the_accounts(scoped, query),
         )
         if not difference and len(groups) >= 2:
             # Re-read the typed reference projected by ``_answered``.  In particular, do not
@@ -3831,7 +3824,7 @@ class AskFinancialQuestionHandler:
                 else f"El {concept}{about} fue {difference_figure} mayor {higher_window}."
             )
         # And where: the accounts both sides were read from, as every other answer says them.
-        scope_note = self._scope_note(scoped_latest, query.sentence)
+        scope_note = await self._scope_note(scoped_latest, query)
 
         movements = (*latest_answer.movements, *earlier_answer.movements)
         remembered_earlier = scoped_earlier
@@ -5220,9 +5213,37 @@ class AskFinancialQuestionHandler:
         """Whether every account is what a question naming none means here (`all`)."""
         return self._account_scope_default == "all"
 
-    def _scope_note(self, plan: FinancialPlan | TopMovements, sentence: str) -> str | None:
-        """`_scope_note` under this deployment's account default."""
-        return _scope_note(plan, sentence, every_account_by_default=self._every_account_by_default)
+    async def _scope_note(
+        self, plan: FinancialPlan | TopMovements, query: AskFinancialQuestionQuery
+    ) -> str | None:
+        """`_scope_note` under this deployment's account default, naming the accounts it read."""
+        return _scope_note(
+            plan,
+            query.sentence,
+            every_account_by_default=self._every_account_by_default,
+            account_names=await self._names_of_the_accounts(plan, query),
+        )
+
+    async def _names_of_the_accounts(
+        self, plan: FinancialPlan | TopMovements, query: AskFinancialQuestionQuery
+    ) -> Mapping[UUID, str]:
+        """The holder's names for the accounts a narrowed plan reads, for the line that says them.
+
+        Final review, M-2. Asked only of a plan narrowed to some accounts, the one case the line
+        names them in; nothing when there is no directory to ask or it does not answer, and the
+        line then says the accounts were chosen without naming them, as it did before.
+        """
+        if self._account_directory is None or not (
+            plan.only_account_id is not None or plan.only_account_ids
+        ):
+            return {}
+        try:
+            holdings = await self._account_directory.all_of(query.account_id)
+        except BankingUnavailableError:
+            return {}
+        return {
+            holding.account_id: holding.display_name for holding in holdings if holding.display_name
+        }
 
     def _scope_question(
         self, required: AccountScopeRequiredError, was: Conversation
@@ -5532,6 +5553,7 @@ class AskFinancialQuestionHandler:
                         reporting_timezone=query.reporting_timezone,
                         ran_as=scoped,
                         every_account_by_default=self._every_account_by_default,
+                        account_names=await self._names_of_the_accounts(scoped, query),
                     )
                     return replace(
                         answered,
@@ -5574,6 +5596,7 @@ class AskFinancialQuestionHandler:
                         reporting_timezone=query.reporting_timezone,
                         ran_as=scoped,
                         every_account_by_default=self._every_account_by_default,
+                        account_names=await self._names_of_the_accounts(scoped, query),
                     )
                     covered = f"todos los {kind}" if kind else f"toda la categoría {named}"
                     return replace(
@@ -5622,6 +5645,7 @@ class AskFinancialQuestionHandler:
             reporting_timezone=query.reporting_timezone,
             ran_as=scoped,
             every_account_by_default=self._every_account_by_default,
+            account_names=await self._names_of_the_accounts(scoped, query),
         )
 
 
@@ -7311,6 +7335,7 @@ def _answered(
     reporting_timezone: str,
     ran_as: FinancialPlan,
     every_account_by_default: bool,
+    account_names: Mapping[UUID, str],
 ) -> AskFinancialQuestionResult:
     """Present one answered plan.
 
@@ -7322,7 +7347,8 @@ def _answered(
 
     `every_account_by_default` is the deployment's account default being `all`, which decides
     whether an answer across every account says so (`_scope_note`). Required for the same reason:
-    a default here would be the one call site that forgot.
+    a default here would be the one call site that forgot. So are `account_names`, the holder's
+    names for the accounts `ran_as` reads (`_names_of_the_accounts`), which the line says them by.
     """
     if plan.metric is Metric.CUMULATIVE:
         answer = cumulative_calculator.accumulate(answer, plan.group_by)
@@ -7351,7 +7377,12 @@ def _answered(
     # ledger is still being read across every account. Read from there, the note vanished from the
     # second such turn onward and a figure covering three accounts was presented as one account's.
     # The two ranking paths already pass the plan they ran; this is the same call.
-    scope_note = _scope_note(ran_as, sentence, every_account_by_default=every_account_by_default)
+    scope_note = _scope_note(
+        ran_as,
+        sentence,
+        every_account_by_default=every_account_by_default,
+        account_names=account_names,
+    )
     if scope_note and "Consultado en " not in text:
         text = f"{text}\n{scope_note}"
     referenced_category: str | None = None
@@ -7465,7 +7496,11 @@ def _answered(
 
 
 def _scope_note(
-    plan: FinancialPlan | TopMovements, sentence: str, *, every_account_by_default: bool
+    plan: FinancialPlan | TopMovements,
+    sentence: str,
+    *,
+    every_account_by_default: bool,
+    account_names: Mapping[UUID, str],
 ) -> str | None:
     """Which of the holder's accounts the figure came from, when that is worth a line.
 
@@ -7483,6 +7518,12 @@ def _scope_note(
     A narrower scope is said under both, because it is never the default. The holder's account
     count is not read here: `_scoped` narrows a lone account to itself, said as the account chosen,
     so an answer across accounts is one over more than one, or over accounts it could not count.
+
+    **And said by name** (final review, M-2): `account_names` are the holder's names for the
+    accounts the plan reads (`_names_of_the_accounts`). An account chosen earlier in the thread, or
+    every account but one left out, was «la cuenta seleccionada» — singular over two accounts, and
+    naming none of them. Without the names — no directory, or one that did not answer — the line
+    still says that the accounts were chosen, in the number they are.
     """
     if every_account_by_default:
         if plan.across_accounts:
@@ -7498,9 +7539,16 @@ def _scope_note(
     labels = {"CURRENT": "cuenta corriente", "SAVINGS": "Hucha", "ASSET": "fondo"}
     if len(names) == 1 and names[0] in labels:
         return f"Consultado en {labels[names[0]]}."
-    if plan.only_account_id is not None or plan.only_account_ids:
-        return "Consultado en la cuenta seleccionada."
-    return None
+    read = (plan.only_account_id,) if plan.only_account_id is not None else plan.only_account_ids
+    if not read:
+        return None
+    if all(account_id in account_names for account_id in read):
+        return f"Consultado en {answer_writer.listed(tuple(account_names[i] for i in read))}."
+    return (
+        "Consultado en la cuenta seleccionada."
+        if len(read) == 1
+        else "Consultado en las cuentas seleccionadas."
+    )
 
 
 def _chosen_and_not_left_out(sentence: str, names: tuple[str, ...]) -> tuple[str, ...]:

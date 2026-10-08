@@ -482,5 +482,5 @@ def test_a_comparison_over_a_chosen_account_says_so() -> None:
     chosen = {"account_selection_mode": "SELECTED", "account_selection_ids": [str(episodes.PIGGY)]}
     answered = ask(stack, COMPARISON, chosen)
     assert all(plan.only_account_id == episodes.PIGGY for plan in stack.ledger.ran)
-    assert "\nConsultado en " in answered["text"], answered["text"]
-    assert "todas tus cuentas" not in answered["text"]
+    # By its name since M-2, as every answer over a chosen account says it.
+    assert answered["text"].endswith("\nConsultado en Hucha."), answered["text"]

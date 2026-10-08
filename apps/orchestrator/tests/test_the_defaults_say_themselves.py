@@ -114,6 +114,23 @@ def test_an_account_chosen_earlier_in_the_conversation_still_wins() -> None:
     assert not ran.across_accounts and ran.only_account_id == episodes.PIGGY
 
 
+def test_an_account_chosen_earlier_is_said_by_its_name() -> None:
+    """Final review, M-2: «Consultado en la cuenta seleccionada.» named nothing — the question did
+    not name the hucha, and the line under its figure should."""
+    stack = episodes.a_stack()
+    first = ask(stack, "¿Cuánto gasté en la hucha en julio?")
+    answered = ask(stack, "¿Cuánto gasté en restaurantes en junio?", first["conversation"])
+    assert answered["text"].endswith("\nConsultado en Hucha."), answered["text"]
+
+
+def test_a_ranking_over_an_account_chosen_earlier_says_its_name() -> None:
+    stack = episodes.a_stack()
+    chosen = {"account_selection_mode": "SELECTED", "account_selection_ids": [str(episodes.FUND)]}
+    answered = ask(stack, "¿cuál fue mi mayor gasto el mes pasado?", chosen)
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    assert answered["text"].endswith("\nConsultado en Fondo indexado."), answered["text"]
+
+
 def test_every_account_asked_for_in_words_is_not_said_back() -> None:
     """Ruling R44: the turn said it, so the answer does not repeat it."""
     stack = episodes.a_stack()
@@ -664,8 +681,9 @@ def test_an_account_left_out_leaves_every_other_one_under_the_default(question: 
     assert ran.only_account_ids == _ALL_BUT_THE_HUCHA and not ran.across_accounts
     assert ran.excluded_merchants == ()
     assert "sin la hucha" not in answered["text"]
-    # A subset, said as `_scope_note` says every subset — never as the account left out.
-    assert "Consultado en la cuenta seleccionada." in answered["text"]
+    # A subset, said by naming each account in it (final review, M-2) — never as the account left
+    # out, and no longer as «la cuenta seleccionada», singular, over two accounts that said none.
+    assert "Consultado en Cuenta corriente y Fondo indexado." in answered["text"]
     assert "Consultado en Hucha" not in answered["text"]
 
 

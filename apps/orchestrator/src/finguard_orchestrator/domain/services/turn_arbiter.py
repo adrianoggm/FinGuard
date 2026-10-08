@@ -113,11 +113,21 @@ class Arbitration:
 # the present is the correction the corpus has always opened the «¿Qué debería cambiar…?» question
 # for, and stays one. With anything after it — «no era eso, quería decir julio» — it is not this
 # list's at all: the turn is no longer *only* reset words.
+#
+# «Olvídate», «déjalo estar», «cancela» and «cancélalo» are here since the final review (M-3): each
+# was read as the name of a shop after an answer, and as a period nobody could parse while one was
+# asked for. «Déjalo estar» before «déjalo», because the first match wins and «estar» alone is no
+# word of this list. «Da igual» is not here, and must not be: to «¿En qué cuenta…?» it answers
+# «any of them», which is a reply and drops nothing.
 _RESET: Final = (
     ("no", "era", "eso"),
     ("no", "importa"),
     ("olvidalo",),
+    ("olvidate",),
+    ("dejalo", "estar"),
     ("dejalo",),
+    ("cancelalo",),
+    ("cancela",),
     ("nada",),
 )
 
