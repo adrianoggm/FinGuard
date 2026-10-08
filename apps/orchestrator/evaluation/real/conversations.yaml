@@ -777,3 +777,63 @@ conversations:
           want: >-
             La misma frase, reenviada tras un error: deja lo anterior y da el saldo de todas las
             cuentas.
+
+  - name: restaurantes-porcentaje-ocio
+    goal: Comparar dos meses y después cambiar la categoría de la comparación.
+    turns:
+      - say: "en q gaste mas en restaurantes, junio o julio?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Restaurantes en junio frente a julio de 2026, con las dos cifras y la diferencia, en
+            todas las cuentas; sin preguntar.
+      - say: "y eso en %?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La misma comparación de restaurantes en porcentaje, de junio a julio de 2026 y con la
+            palabra que corresponde; nunca que no puede identificar las dos cifras que acaba de
+            mostrar.
+      - say: "en porcentaje"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La comparación de restaurantes en porcentaje, de junio a julio de 2026 y con la palabra
+            que corresponde.
+      - say: "y de ocio?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Ocio en junio frente a julio de 2026: mantiene los dos meses de la comparación que el
+            porcentaje expresaba y cambia la categoría; sin preguntar el periodo.
+      - say: "junio y julio, como antes"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Ocio en junio frente a julio de 2026: completa la pregunta del periodo si quedaba
+            abierta, o repite la misma comparación; no pregunta el año, que «como antes» ya dice.
+      - say: "2026"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Ocio en junio frente a julio de 2026: «2026» completa la pregunta del año si quedaba
+            abierta, o deja la misma comparación. Nunca todo el año ni «Sigo sin tener claro el
+            periodo».
+      - say: "no, queria decir gasolina"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en junio frente a julio de 2026: corrige la categoría y conserva la
+            comparación. Nunca un solo mes.
+      - say: "vale y solo junio?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: Gasolina en junio de 2026, una sola cifra.
