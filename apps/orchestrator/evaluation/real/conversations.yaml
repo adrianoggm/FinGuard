@@ -253,3 +253,205 @@ conversations:
           mechanism: intent
           route: COURTESY
           want: Una respuesta de cortesía breve, sin cifra ni pregunta.
+
+  # Found improvising on 2026-10-08 against 2731f641 (the baseline run 2026-10-08-2731f641), each
+  # with a failed turn, word for word as sent. Some turns only answered a question that code asked
+  # then («Todas mis cuentas», «2026»); they stay, and their `want` holds whether or not the
+  # question is asked: every account read, nothing lost.
+  - name: gimnasio-marta
+    goal: >-
+      Saber cuánto cuesta el gimnasio y después pagar 20 € a Marta; parar en una vista previa
+      correcta y decir «no».
+    turns:
+      - say: "cuanto me cuesta el gimnasio al mes?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Lo que cuesta el gimnasio al mes (el cargo mensual, p. ej. Altafit), en todas las
+            cuentas, diciendo la ventana; sin preguntar la cuenta.
+      - say: "Todas mis cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            El gimnasio en todas las cuentas: completa la pregunta de la cuenta si quedaba abierta,
+            o mantiene la misma consulta si ya era en todas. Nunca el saldo.
+      - say: "mandale 20€ a marta"
+        expect:
+          mechanism: intent
+          route: PAYMENT
+          want: >-
+            Un pago de 20,00 € a Marta: hay dos contactos con ese nombre, así que pregunta cuál
+            nombrando los dos (Marta Ruiz Gómez y Marta Solís Vega). No ejecuta nada.
+      - say: "la ruiz"
+        expect:
+          mechanism: pending_resolution
+          route: PAYMENT
+          want: >-
+            Elige a Marta Ruiz Gómez y muestra la vista previa de 20,00 € que pide confirmación;
+            no ejecuta nada.
+      - say: "no"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: Cancela el pago y lo dice; no se mueve dinero.
+
+  - name: comparar-meses
+    goal: Comparar dos meses y después cambiar la categoría de la comparación.
+    turns:
+      - say: "compara lo q gaste en restaurantes en agosto y en septiembre"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Restaurantes en agosto frente a septiembre de 2026, con las dos cifras y la
+            diferencia, en todas las cuentas y diciéndolo; sin preguntar la cuenta.
+      - say: "Todas mis cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            La misma comparación de restaurantes en todas las cuentas: completa la pregunta de la
+            cuenta si quedaba abierta, o la deja igual. Nunca el saldo ni pierde un mes.
+      - say: "y en el super?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Supermercado en agosto frente a septiembre de 2026 (mantiene los dos meses y cambia la
+            categoría), con las dos cifras y la diferencia; sin preguntar el periodo.
+      - say: "los mismos meses, agosto y septiembre"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Supermercado en agosto frente a septiembre de 2026: completa una pregunta abierta o
+            repite la misma comparación. No pregunta el año, que ya era 2026.
+      - say: "2026"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Supermercado en agosto frente a septiembre de 2026: «2026» completa una pregunta del
+            año si quedaba, y si no, deja la misma comparación. Nunca «Sigo sin tener claro el
+            periodo».
+      - say: "supermercado agosto 2026 vs septiembre 2026"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado en agosto frente a septiembre de 2026, con las dos cifras y la
+            diferencia, en todas las cuentas.
+      - say: "y ocio?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Ocio en agosto frente a septiembre de 2026 (mantiene los dos meses y cambia la
+            categoría); sin preguntar el periodo.
+      - say: "agosto y septiembre de 2026"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Ocio en agosto frente a septiembre de 2026: completa la pregunta del periodo si
+            quedaba, o repite la misma comparación. Nunca vuelve al supermercado ni a un solo mes.
+
+  - name: mandado-recibido
+    goal: >-
+      Saber cuánto le he enviado a alguien este mes, después cuánto me ha enviado esa persona a
+      mí, y luego algo totalmente distinto.
+    turns:
+      - say: "cuanto le e mandado a marta ruiz este mes?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Lo enviado a Marta Ruiz este mes pese a «e mandado», en todas las cuentas; sin
+            preguntar la cuenta. Si no hay nada, lo dice.
+      - say: "Todas mis cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo enviado a Marta Ruiz este mes en todas las cuentas: completa la pregunta de la
+            cuenta si quedaba abierta, o mantiene la misma consulta. Nunca el saldo.
+      - say: "Ampliar a tres meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: Lo enviado a Marta Ruiz en los últimos tres meses, en todas las cuentas.
+      - say: "y ella a mi?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Marta Ruiz en los últimos tres meses: la misma persona y ventana con la
+            dirección invertida; sin preguntar el periodo.
+      - say: "los ultimos 3 meses"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo recibido de Marta Ruiz en los últimos 3 meses: completa la pregunta del periodo si
+            quedaba, o confirma la misma ventana. Nunca vuelve a lo enviado.
+      - say: "no, lo que ella me ha pasado a mi"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Marta Ruiz (la dirección invertida) en la misma ventana de 3 meses; sin
+            preguntar el periodo.
+      - say: "bueno da igual. cuanto tengo en la hucha?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: Deja lo que estuviera pendiente y da el saldo de la Hucha.
+      - say: "y en la corriente?"
+        expect:
+          mechanism: slot_carryover
+          route: BALANCE
+          want: >-
+            El saldo de la Cuenta corriente (sigue siendo una pregunta de saldo); no reabre la
+            consulta de Marta.
+
+  - name: suscripciones-olvidalo
+    goal: Preguntar por las suscripciones, corregirse y después abandonar («olvídalo»).
+    turns:
+      - say: "cuanto pago en suscripciones?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Suscripciones en lo que va de mes (o la ventana que asuma, diciéndola), en todas las
+            cuentas; sin preguntar la cuenta.
+      - say: "Todas mis cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Suscripciones en la misma ventana en todas las cuentas: completa la pregunta de la
+            cuenta si quedaba abierta, o mantiene la misma consulta. Nunca el saldo.
+      - say: "no perdona, queria decir el mes pasado"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Suscripciones el mes pasado, en todas las cuentas (corrige la ventana y conserva el
+            tema).
+      - say: "bah olvidalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior; no repite la consulta ni da una cifra.
+      - say: "que no, dejalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo anterior en una frase; no lo lee como una petición de cálculo ni repite la
+            cifra.
+      - say: "olvídalo"
+        expect:
+          mechanism: reset
+          want: Deja lo pendiente y lo dice en una frase; ni repite la consulta ni da una cifra.
