@@ -7,6 +7,7 @@
     {
       "episode": "01-suscripciones",
       "turn": 1,
+      "mechanism": "intent",
       "user": "q llevo gastado en suscripciones estos ultimos 9 meses",
       "answer": "465,56 € en suscripciones en los últimos 9 meses, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -30,12 +31,13 @@
         }
       ],
       "model_called": true,
-      "seconds": 17.21,
+      "seconds": 4.33,
       "failures": []
     },
     {
       "episode": "01-suscripciones",
       "turn": 2,
+      "mechanism": "slot_carryover",
       "user": "solo Netflix",
       "answer": "465,56 € en Netflix en los últimos 9 meses, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -61,12 +63,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.12,
+      "seconds": 0.03,
       "failures": []
     },
     {
       "episode": "01-suscripciones",
       "turn": 3,
+      "mechanism": "follow_up",
       "user": "y este mes?",
       "answer": "465,56 € en Netflix en lo que va de mes, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -92,12 +95,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.07,
+      "seconds": 0.04,
       "failures": []
     },
     {
       "episode": "01-suscripciones",
       "turn": 4,
+      "mechanism": "slot_carryover",
       "user": "no, Spotify",
       "answer": "465,56 € en Spotify en lo que va de mes, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -123,12 +127,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.09,
+      "seconds": 0.03,
       "failures": []
     },
     {
       "episode": "01-suscripciones",
       "turn": 5,
+      "mechanism": "follow_up",
       "user": "y el mes pasado?",
       "answer": "465,56 € en Spotify el mes pasado, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -154,23 +159,25 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.09,
+      "seconds": 0.04,
       "failures": []
     },
     {
       "episode": "01-suscripciones",
       "turn": 6,
+      "mechanism": "intent",
       "user": "gracias",
       "answer": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
       "outcome": "COURTESY",
       "plans": [],
       "model_called": false,
-      "seconds": 0.04,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "02-cambio-de-tema",
       "turn": 1,
+      "mechanism": "intent",
       "user": "cuanto gaste en el super en julio de 2026",
       "answer": "465,56 € en supermercado del 2026-07-01 al 2026-07-31, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -194,34 +201,37 @@
         }
       ],
       "model_called": true,
-      "seconds": 3.2,
+      "seconds": 3.15,
       "failures": []
     },
     {
       "episode": "02-cambio-de-tema",
       "turn": 2,
+      "mechanism": "intent",
       "user": "cuanto tengo en la hucha",
-      "answer": "Tienes 5.485,50 € en Hucha.",
+      "answer": "Tienes 6.415,50 € en Hucha.",
       "outcome": "BALANCE",
       "plans": [],
       "model_called": false,
-      "seconds": 0.06,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "02-cambio-de-tema",
       "turn": 3,
+      "mechanism": "intent",
       "user": "quienes son mis contactos",
       "answer": "Tienes estos contactos para enviar dinero: Marta Solis Vega, Marta Ruiz Gomez, Javi Nuñez, Aitor Beltran Diaz.",
       "outcome": "CONTACTS",
       "plans": [],
       "model_called": false,
-      "seconds": 0.18,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "02-cambio-de-tema",
       "turn": 4,
+      "mechanism": "interruption",
       "user": "volviendo al super, y en junio de 2026?",
       "answer": "465,56 € en supermercado del 2026-06-01 al 2026-06-30, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -245,12 +255,13 @@
         }
       ],
       "model_called": true,
-      "seconds": 3.42,
+      "seconds": 3.14,
       "failures": []
     },
     {
       "episode": "02-cambio-de-tema",
       "turn": 5,
+      "mechanism": "slot_carryover",
       "user": "solo Mercadona",
       "answer": "465,56 € en Mercadona del 2026-06-01 al 2026-06-30, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -276,12 +287,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.17,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "02-cambio-de-tema",
       "turn": 6,
+      "mechanism": "follow_up",
       "user": "y en julio de 2026?",
       "answer": "465,56 € en Mercadona del 2026-07-01 al 2026-07-31, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -307,12 +319,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.13,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "03-correcciones",
       "turn": 1,
+      "mechanism": "intent",
       "user": "gastos de julio de 2026",
       "answer": "465,56 € del 2026-07-01 al 2026-07-31, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -334,12 +347,13 @@
         }
       ],
       "model_called": true,
-      "seconds": 3.04,
+      "seconds": 3.05,
       "failures": []
     },
     {
       "episode": "03-correcciones",
       "turn": 2,
+      "mechanism": "slot_carryover",
       "user": "perdon junio de 2026",
       "answer": "465,56 € del 2026-06-01 al 2026-06-30, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -367,6 +381,7 @@
     {
       "episode": "03-correcciones",
       "turn": 3,
+      "mechanism": "slot_carryover",
       "user": "solo gasolina",
       "answer": "465,56 € en gasolina del 2026-06-01 al 2026-06-30, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -390,12 +405,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.02,
+      "seconds": 0.03,
       "failures": []
     },
     {
       "episode": "03-correcciones",
       "turn": 4,
+      "mechanism": "slot_carryover",
       "user": "mejor restaurantes",
       "answer": "465,56 € en restaurantes del 2026-06-01 al 2026-06-30, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -419,12 +435,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.02,
+      "seconds": 0.03,
       "failures": []
     },
     {
       "episode": "03-correcciones",
       "turn": 5,
+      "mechanism": "reset",
       "user": "quita el filtro, todos los gastos de junio de 2026",
       "answer": "465,56 € del 2026-06-01 al 2026-06-30, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -446,12 +463,13 @@
         }
       ],
       "model_called": true,
-      "seconds": 4.38,
+      "seconds": 3.35,
       "failures": []
     },
     {
       "episode": "03-correcciones",
       "turn": 6,
+      "mechanism": "follow_up",
       "user": "cuantos movimientos son?",
       "answer": "3 movimientos del 2026-06-01 al 2026-06-30.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -473,24 +491,14 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.04,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "04-aclaraciones",
       "turn": 1,
+      "mechanism": "intent",
       "user": "cuanto gaste en supermercados el mes pasado",
-      "answer": "¿En qué cuenta quieres consultarlo? Puedes elegir Cuenta corriente, Hucha, Fondo indexado o Todas mis cuentas.",
-      "outcome": "NEEDS_CLARIFICATION",
-      "plans": [],
-      "model_called": true,
-      "seconds": 2.95,
-      "failures": []
-    },
-    {
-      "episode": "04-aclaraciones",
-      "turn": 2,
-      "user": "en todas",
       "answer": "465,56 € en supermercado el mes pasado, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
       "plans": [
@@ -512,13 +520,112 @@
           "metric": "SUM"
         }
       ],
+      "model_called": true,
+      "seconds": 2.6,
+      "failures": []
+    },
+    {
+      "episode": "04-aclaraciones",
+      "turn": 2,
+      "mechanism": "pending_resolution",
+      "user": "en todas",
+      "answer": "465,56 € en supermercado el mes pasado, en 3 movimientos.",
+      "outcome": "PLANNED",
+      "plans": [
+        {
+          "window": "LAST_MONTH",
+          "direction": "EXPENSE",
+          "categories": [
+            "GROCERIES"
+          ],
+          "merchants": [
+            "en todas"
+          ],
+          "excluded_categories": [],
+          "excluded_merchants": [],
+          "accounts": [],
+          "counterparties": [],
+          "internal_only": false,
+          "include_internal": false,
+          "transaction_ids": 0,
+          "group_by": "NONE",
+          "metric": "SUM"
+        },
+        {
+          "window": "LAST_MONTH",
+          "direction": "EXPENSE",
+          "categories": [],
+          "merchants": [
+            "en todas"
+          ],
+          "excluded_categories": [],
+          "excluded_merchants": [],
+          "accounts": [],
+          "counterparties": [],
+          "internal_only": false,
+          "include_internal": false,
+          "transaction_ids": 0,
+          "group_by": "NONE",
+          "metric": "SUM"
+        },
+        {
+          "window": "LAST_MONTH",
+          "direction": "EXPENSE",
+          "categories": [],
+          "merchants": [],
+          "excluded_categories": [],
+          "excluded_merchants": [],
+          "accounts": [],
+          "counterparties": [],
+          "internal_only": false,
+          "include_internal": false,
+          "transaction_ids": 0,
+          "group_by": "MERCHANT",
+          "metric": "SUM"
+        },
+        {
+          "window": "LAST_MONTH",
+          "direction": "EXPENSE",
+          "categories": [
+            "GROCERIES"
+          ],
+          "merchants": [],
+          "excluded_categories": [],
+          "excluded_merchants": [],
+          "accounts": [],
+          "counterparties": [],
+          "internal_only": false,
+          "include_internal": false,
+          "transaction_ids": 0,
+          "group_by": "MERCHANT",
+          "metric": "SUM"
+        },
+        {
+          "window": "LAST_MONTH",
+          "direction": "EXPENSE",
+          "categories": [
+            "GROCERIES"
+          ],
+          "merchants": [],
+          "excluded_categories": [],
+          "excluded_merchants": [],
+          "accounts": [],
+          "counterparties": [],
+          "internal_only": false,
+          "include_internal": false,
+          "transaction_ids": 0,
+          "group_by": "NONE",
+          "metric": "SUM"
+        }
+      ],
       "model_called": false,
-      "seconds": 0.07,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "04-aclaraciones",
       "turn": 3,
+      "mechanism": "follow_up",
       "user": "por comercio",
       "answer": "465,56 € en supermercado el mes pasado, en 3 movimientos.\n  · Mercadona: 465,56 € (3)\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -542,12 +649,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.14,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "04-aclaraciones",
       "turn": 4,
+      "mechanism": "follow_up",
       "user": "y este mes",
       "answer": "465,56 € en supermercado en lo que va de mes, en 3 movimientos.\n  · Mercadona: 465,56 € (3)\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -571,37 +679,53 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.26,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "04-aclaraciones",
       "turn": 5,
+      "mechanism": "slot_carryover",
       "user": "mejor por categoria",
-      "answer": "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días.",
-      "outcome": "NEEDS_CLARIFICATION",
-      "plans": [],
-      "model_called": true,
-      "seconds": 6.09,
-      "failures": [
-        "QUERY was the right place, CLARIFY answered",
-        "the query ran nothing, and the turn expects {'window': 'THIS_MONTH', 'group_by': 'CATEGORY'}"
-      ]
+      "answer": "465,56 € en lo que va de mes, en 3 movimientos.\n  · supermercado: 465,56 € (3)\nConsultado en todas tus cuentas.",
+      "outcome": "PLANNED",
+      "plans": [
+        {
+          "window": "THIS_MONTH",
+          "direction": "EXPENSE",
+          "categories": [],
+          "merchants": [],
+          "excluded_categories": [],
+          "excluded_merchants": [],
+          "accounts": [],
+          "counterparties": [],
+          "internal_only": false,
+          "include_internal": false,
+          "transaction_ids": 0,
+          "group_by": "CATEGORY",
+          "metric": "SUM"
+        }
+      ],
+      "model_called": false,
+      "seconds": 0.02,
+      "failures": []
     },
     {
       "episode": "04-aclaraciones",
       "turn": 6,
+      "mechanism": "intent",
       "user": "cuanto tengo?",
-      "answer": "Tienes 7.755,92 € entre tus cuentas: 2.270,42 € en Cuenta corriente y 5.485,50 € en Hucha. Aparte, tienes 2.700,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "answer": "Tienes 8.571,98 € entre tus cuentas: 2.156,48 € en Cuenta corriente y 6.415,50 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
       "outcome": "BALANCE",
       "plans": [],
       "model_called": false,
-      "seconds": 0.03,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "05-erratas",
       "turn": 1,
+      "mechanism": "intent",
       "user": "cuanto gaste en el super el mes pasao",
       "answer": "465,56 € en supermercado el mes pasado, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -625,12 +749,13 @@
         }
       ],
       "model_called": true,
-      "seconds": 2.8,
+      "seconds": 2.55,
       "failures": []
     },
     {
       "episode": "05-erratas",
       "turn": 2,
+      "mechanism": "follow_up",
       "user": "y restauantes?",
       "answer": "465,56 € en restaurantes el mes pasado, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -654,18 +779,19 @@
         }
       ],
       "model_called": false,
-      "seconds": 1.27,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "05-erratas",
       "turn": 3,
+      "mechanism": "slot_carryover",
       "user": "solo esta semna",
-      "answer": "¿De qué año? Por ejemplo este año o el año pasado.",
+      "answer": "¿De qué semana? Por ejemplo, la semana pasada o esta semana.",
       "outcome": "NEEDS_CLARIFICATION",
       "plans": [],
       "model_called": true,
-      "seconds": 3.2,
+      "seconds": 3.12,
       "failures": [
         "QUERY was the right place, CLARIFY answered",
         "the query ran nothing, and the turn expects {'window': 'THIS_WEEK', 'categories': ['RESTAURANTS'], 'merchants': []}"
@@ -674,6 +800,7 @@
     {
       "episode": "05-erratas",
       "turn": 4,
+      "mechanism": "follow_up",
       "user": "y gasolina?",
       "answer": "465,56 € en gasolina el mes pasado, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -697,7 +824,7 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.04,
+      "seconds": 0.02,
       "failures": [
         "the query ran window='LAST_MONTH', and the turn expects 'THIS_WEEK'"
       ]
@@ -705,61 +832,67 @@
     {
       "episode": "05-erratas",
       "turn": 5,
+      "mechanism": "intent",
       "user": "cunato tengo",
-      "answer": "Tienes 7.755,92 € entre tus cuentas: 2.270,42 € en Cuenta corriente y 5.485,50 € en Hucha. Aparte, tienes 2.700,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "answer": "Tienes 8.571,98 € entre tus cuentas: 2.156,48 € en Cuenta corriente y 6.415,50 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
       "outcome": "BALANCE",
+      "plans": [],
+      "model_called": false,
+      "seconds": 0.01,
+      "failures": []
+    },
+    {
+      "episode": "05-erratas",
+      "turn": 6,
+      "mechanism": "intent",
+      "user": "gracias",
+      "answer": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "outcome": "COURTESY",
       "plans": [],
       "model_called": false,
       "seconds": 0.03,
       "failures": []
     },
     {
-      "episode": "05-erratas",
-      "turn": 6,
-      "user": "gracias",
-      "answer": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
-      "outcome": "COURTESY",
-      "plans": [],
-      "model_called": false,
-      "seconds": 0.02,
-      "failures": []
-    },
-    {
       "episode": "06-bizum",
       "turn": 1,
+      "mechanism": "intent",
       "user": "haz un bixum a Marta Solis Vega",
       "answer": "¿De cuánto quieres hacerle el bizum a Marta Solis Vega?",
       "outcome": "NEEDS_CLARIFICATION",
       "plans": [],
       "model_called": false,
-      "seconds": 0.02,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "06-bizum",
       "turn": 2,
+      "mechanism": "pending_resolution",
       "user": "20 euros",
-      "answer": "Vas a enviar 20,00 € a Marta Solis Vega (+34600333444). Te quedarían 2.250,42 €. ¿Confirmas? Responde sí o no.",
+      "answer": "Vas a enviar 20,00 € a Marta Solis Vega (+34600333444). Te quedarían 2.136,48 €. ¿Confirmas? Responde sí o no.",
       "outcome": "AWAITING_CONFIRMATION",
       "plans": [],
       "model_called": false,
-      "seconds": 0.02,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "06-bizum",
       "turn": 3,
+      "mechanism": "pending_resolution",
       "user": "mejor 25",
-      "answer": "He descartado el Bizum anterior. Vas a enviar 25,00 € a Marta Solis Vega (+34600333444). Te quedarían 2.245,42 €. ¿Confirmas? Responde sí o no.",
+      "answer": "He descartado el Bizum anterior. Vas a enviar 25,00 € a Marta Solis Vega (+34600333444). Te quedarían 2.131,48 €. ¿Confirmas? Responde sí o no.",
       "outcome": "AWAITING_CONFIRMATION",
       "plans": [],
       "model_called": false,
-      "seconds": 0.05,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "06-bizum",
       "turn": 4,
+      "mechanism": "pending_resolution",
       "user": "no",
       "answer": "Vale, no he enviado nada.",
       "outcome": "CANCELLED",
@@ -771,30 +904,33 @@
     {
       "episode": "06-bizum",
       "turn": 5,
+      "mechanism": "intent",
       "user": "cuanto tengo",
-      "answer": "Tienes 7.755,92 € entre tus cuentas: 2.270,42 € en Cuenta corriente y 5.485,50 € en Hucha. Aparte, tienes 2.700,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "answer": "Tienes 8.571,98 € entre tus cuentas: 2.156,48 € en Cuenta corriente y 6.415,50 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
       "outcome": "BALANCE",
       "plans": [],
       "model_called": false,
-      "seconds": 0.02,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "06-bizum",
       "turn": 6,
+      "mechanism": "intent",
       "user": "gracias",
       "answer": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
       "outcome": "COURTESY",
       "plans": [],
       "model_called": false,
-      "seconds": 0.02,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "07-consulta-u-operacion",
       "turn": 1,
+      "mechanism": "intent",
       "user": "cuanto le mande a Marta este mes",
-      "answer": "465,56 € con Marta en lo que va de mes, en 3 movimientos.\nConsultado en todas tus cuentas.",
+      "answer": "465,56 € a Marta en lo que va de mes, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
       "plans": [
         {
@@ -816,76 +952,93 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.04,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "07-consulta-u-operacion",
       "turn": 2,
+      "mechanism": "reference",
       "user": "y lo que me mando ella?",
-      "answer": "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días.",
-      "outcome": "NEEDS_CLARIFICATION",
-      "plans": [],
-      "model_called": true,
-      "seconds": 3.11,
-      "failures": [
-        "QUERY was the right place, CLARIFY answered",
-        "the query ran nothing, and the turn expects {'direction': 'INCOME', 'window': 'THIS_MONTH'}"
-      ]
+      "answer": "465,56 € de Marta en lo que va de mes, en 3 movimientos.\nConsultado en todas tus cuentas.",
+      "outcome": "PLANNED",
+      "plans": [
+        {
+          "window": "THIS_MONTH",
+          "direction": "INCOME",
+          "categories": [],
+          "merchants": [],
+          "excluded_categories": [],
+          "excluded_merchants": [],
+          "accounts": [],
+          "counterparties": [
+            "Marta"
+          ],
+          "internal_only": false,
+          "include_internal": false,
+          "transaction_ids": 0,
+          "group_by": "NONE",
+          "metric": "SUM"
+        }
+      ],
+      "model_called": false,
+      "seconds": 0.01,
+      "failures": []
     },
     {
       "episode": "07-consulta-u-operacion",
       "turn": 3,
+      "mechanism": "interruption",
       "user": "ahora quiero mandarle 20 euros a Marta",
-      "answer": "Eso no puedo calcularlo todavía.",
-      "outcome": "UNSUPPORTED",
+      "answer": "Tienes varios contactos que se llaman Marta: Marta Solis Vega, Marta Ruiz Gomez. ¿A quién?",
+      "outcome": "NEEDS_CLARIFICATION",
       "plans": [],
-      "model_called": true,
-      "seconds": 2.82,
-      "failures": [
-        "PAYMENT was the right place, REFUSED answered"
-      ]
+      "model_called": false,
+      "seconds": 0.01,
+      "failures": []
     },
     {
       "episode": "07-consulta-u-operacion",
       "turn": 4,
+      "mechanism": "pending_resolution",
       "user": "no",
-      "answer": "Eso no puedo calcularlo todavía.",
-      "outcome": "UNSUPPORTED",
+      "answer": "Vale, no he enviado nada.",
+      "outcome": "CANCELLED",
       "plans": [],
-      "model_called": true,
-      "seconds": 3.02,
-      "failures": [
-        "PAYMENT was the right place, REFUSED answered"
-      ]
+      "model_called": false,
+      "seconds": 0.01,
+      "failures": []
     },
     {
       "episode": "07-consulta-u-operacion",
       "turn": 5,
+      "mechanism": "intent",
       "user": "mis contactos",
       "answer": "Tienes estos contactos para enviar dinero: Marta Solis Vega, Marta Ruiz Gomez, Javi Nuñez, Aitor Beltran Diaz.",
       "outcome": "CONTACTS",
       "plans": [],
       "model_called": false,
-      "seconds": 0.02,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "07-consulta-u-operacion",
       "turn": 6,
+      "mechanism": "intent",
       "user": "cuanto tengo",
-      "answer": "Tienes 7.755,92 € entre tus cuentas: 2.270,42 € en Cuenta corriente y 5.485,50 € en Hucha. Aparte, tienes 2.700,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "answer": "Tienes 8.571,98 € entre tus cuentas: 2.156,48 € en Cuenta corriente y 6.415,50 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
       "outcome": "BALANCE",
       "plans": [],
       "model_called": false,
-      "seconds": 0.05,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "08-comparaciones",
       "turn": 1,
+      "mechanism": "intent",
       "user": "compara mis gastos en restaurantes de junio y julio de 2026",
-      "answer": "En junio de 2026: 465,56 €; en julio de 2026: 465,56 €. El gasto fue el mismo en ambos periodos.",
+      "answer": "En junio de 2026: 465,56 €; en julio de 2026: 465,56 €. El gasto en restaurantes fue el mismo en ambos periodos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
       "plans": [
         {
@@ -924,18 +1077,36 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.09,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "08-comparaciones",
       "turn": 2,
+      "mechanism": "comparison",
       "user": "y en gasolina?",
-      "answer": "465,56 € en gasolina el mes pasado, en 3 movimientos.\nConsultado en todas tus cuentas.",
+      "answer": "En junio de 2026: 465,56 €; en julio de 2026: 465,56 €. El gasto en gasolina fue el mismo en ambos periodos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
       "plans": [
         {
-          "window": "LAST_MONTH",
+          "window": "2026-07-01..2026-07-31",
+          "direction": "EXPENSE",
+          "categories": [
+            "TRANSPORT_FUEL"
+          ],
+          "merchants": [],
+          "excluded_categories": [],
+          "excluded_merchants": [],
+          "accounts": [],
+          "counterparties": [],
+          "internal_only": false,
+          "include_internal": false,
+          "transaction_ids": 0,
+          "group_by": "NONE",
+          "metric": "SUM"
+        },
+        {
+          "window": "2026-06-01..2026-06-30",
           "direction": "EXPENSE",
           "categories": [
             "TRANSPORT_FUEL"
@@ -952,15 +1123,14 @@
           "metric": "SUM"
         }
       ],
-      "model_called": true,
-      "seconds": 2.75,
-      "failures": [
-        "the query ran 1 queries, and the turn expects 2"
-      ]
+      "model_called": false,
+      "seconds": 0.02,
+      "failures": []
     },
     {
       "episode": "08-comparaciones",
       "turn": 3,
+      "mechanism": "comparison",
       "user": "ahora solo julio de 2026",
       "answer": "465,56 € en gasolina del 2026-07-01 al 2026-07-31, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -984,12 +1154,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.06,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "08-comparaciones",
       "turn": 4,
+      "mechanism": "follow_up",
       "user": "por comercio",
       "answer": "465,56 € en gasolina del 2026-07-01 al 2026-07-31, en 3 movimientos.\n  · Mercadona: 465,56 € (3)\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1013,12 +1184,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.05,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "08-comparaciones",
       "turn": 5,
+      "mechanism": "follow_up",
       "user": "y junio de 2026",
       "answer": "465,56 € en gasolina del 2026-06-01 al 2026-06-30, en 3 movimientos.\n  · Mercadona: 465,56 € (3)\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1042,23 +1214,25 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.07,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "08-comparaciones",
       "turn": 6,
+      "mechanism": "intent",
       "user": "gracias",
       "answer": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
       "outcome": "COURTESY",
       "plans": [],
       "model_called": false,
-      "seconds": 0.03,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "09-graficos",
       "turn": 1,
+      "mechanism": "intent",
       "user": "gastos de los ultimos 3 meses por categoria",
       "answer": "300,00 € en los últimos 3 meses, en 8 movimientos.\n  · supermercado: 200,00 € (5)\n  · restaurantes: 100,00 € (3)\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1080,12 +1254,13 @@
         }
       ],
       "model_called": true,
-      "seconds": 2.41,
+      "seconds": 2.62,
       "failures": []
     },
     {
       "episode": "09-graficos",
       "turn": 2,
+      "mechanism": "follow_up",
       "user": "por meses mejor",
       "answer": "450,00 € en los últimos 3 meses, en 9 movimientos.\n  · 2026-06: 100,00 € (2)\n  · 2026-07: 300,00 € (6)\n  · 2026-08: 50,00 € (1)\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1107,23 +1282,25 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.06,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "09-graficos",
       "turn": 3,
+      "mechanism": "follow_up",
       "user": "ponlo en lineas",
       "answer": "El gráfico ya está así; lo dejo como está.",
       "outcome": "VISUAL_UNCHANGED",
       "plans": [],
       "model_called": false,
-      "seconds": 0.03,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "09-graficos",
       "turn": 4,
+      "mechanism": "reference",
       "user": "por que julio es tan alto?",
       "answer": "465,56 € del 2026-07-01 al 2026-07-31, en 3 movimientos.\n  · Mercadona: 465,56 € (3)\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1145,12 +1322,13 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.08,
+      "seconds": 0.02,
       "failures": []
     },
     {
       "episode": "09-graficos",
       "turn": 5,
+      "mechanism": "slot_carryover",
       "user": "y solo restaurantes en julio de 2026?",
       "answer": "465,56 € en restaurantes del 2026-07-01 al 2026-07-31, en 3 movimientos.\n  · Mercadona: 465,56 € (3)\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1174,12 +1352,13 @@
         }
       ],
       "model_called": true,
-      "seconds": 3.86,
+      "seconds": 3.4,
       "failures": []
     },
     {
       "episode": "09-graficos",
       "turn": 6,
+      "mechanism": "intent",
       "user": "gracias",
       "answer": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
       "outcome": "COURTESY",
@@ -1191,6 +1370,7 @@
     {
       "episode": "10-recuperacion",
       "turn": 1,
+      "mechanism": "intent",
       "user": "cuanto gaste en supermercado el mes pasado",
       "answer": "465,56 € en supermercado el mes pasado, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1214,23 +1394,25 @@
         }
       ],
       "model_called": true,
-      "seconds": 3.15,
+      "seconds": 2.6,
       "failures": []
     },
     {
       "episode": "10-recuperacion",
       "turn": 2,
+      "mechanism": "reset",
       "user": "no era eso",
-      "answer": "Entendido. ¿Qué debería cambiar: el periodo, gastos o ingresos, la categoría, el comercio o el tipo de cálculo?",
-      "outcome": "NEEDS_CLARIFICATION",
+      "answer": "Vale, lo dejamos. ¿Qué quieres consultar?",
+      "outcome": "GUIDANCE",
       "plans": [],
       "model_called": false,
-      "seconds": 0.15,
+      "seconds": 0.01,
       "failures": []
     },
     {
       "episode": "10-recuperacion",
       "turn": 3,
+      "mechanism": "pending_resolution",
       "user": "me referia a gasolina este mes",
       "answer": "465,56 € en gasolina en lo que va de mes, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1253,113 +1435,26 @@
           "metric": "SUM"
         }
       ],
-      "model_called": false,
-      "seconds": 0.05,
+      "model_called": true,
+      "seconds": 2.53,
       "failures": []
     },
     {
       "episode": "10-recuperacion",
       "turn": 4,
+      "mechanism": "reset",
       "user": "olvidalo",
-      "answer": "465,56 € en gasolina en lo que va de mes, en 3 movimientos.\nConsultado en todas tus cuentas.",
-      "outcome": "PLANNED",
-      "plans": [
-        {
-          "window": "THIS_MONTH",
-          "direction": "EXPENSE",
-          "categories": [
-            "TRANSPORT_FUEL"
-          ],
-          "merchants": [
-            "olvidalo"
-          ],
-          "excluded_categories": [],
-          "excluded_merchants": [],
-          "accounts": [],
-          "counterparties": [],
-          "internal_only": false,
-          "include_internal": false,
-          "transaction_ids": 0,
-          "group_by": "NONE",
-          "metric": "SUM"
-        },
-        {
-          "window": "THIS_MONTH",
-          "direction": "EXPENSE",
-          "categories": [],
-          "merchants": [
-            "olvidalo"
-          ],
-          "excluded_categories": [],
-          "excluded_merchants": [],
-          "accounts": [],
-          "counterparties": [],
-          "internal_only": false,
-          "include_internal": false,
-          "transaction_ids": 0,
-          "group_by": "NONE",
-          "metric": "SUM"
-        },
-        {
-          "window": "THIS_MONTH",
-          "direction": "EXPENSE",
-          "categories": [],
-          "merchants": [],
-          "excluded_categories": [],
-          "excluded_merchants": [],
-          "accounts": [],
-          "counterparties": [],
-          "internal_only": false,
-          "include_internal": false,
-          "transaction_ids": 0,
-          "group_by": "MERCHANT",
-          "metric": "SUM"
-        },
-        {
-          "window": "THIS_MONTH",
-          "direction": "EXPENSE",
-          "categories": [
-            "TRANSPORT_FUEL"
-          ],
-          "merchants": [],
-          "excluded_categories": [],
-          "excluded_merchants": [],
-          "accounts": [],
-          "counterparties": [],
-          "internal_only": false,
-          "include_internal": false,
-          "transaction_ids": 0,
-          "group_by": "MERCHANT",
-          "metric": "SUM"
-        },
-        {
-          "window": "THIS_MONTH",
-          "direction": "EXPENSE",
-          "categories": [
-            "TRANSPORT_FUEL"
-          ],
-          "merchants": [],
-          "excluded_categories": [],
-          "excluded_merchants": [],
-          "accounts": [],
-          "counterparties": [],
-          "internal_only": false,
-          "include_internal": false,
-          "transaction_ids": 0,
-          "group_by": "NONE",
-          "metric": "SUM"
-        }
-      ],
+      "answer": "Vale, lo dejamos. ¿Qué quieres consultar?",
+      "outcome": "GUIDANCE",
+      "plans": [],
       "model_called": false,
-      "seconds": 0.08,
-      "failures": [
-        "CLARIFY was the right place, QUERY answered",
-        "the turn should call the ledger 0 time(s) and called it 5"
-      ]
+      "seconds": 0.01,
+      "failures": []
     },
     {
       "episode": "10-recuperacion",
       "turn": 5,
+      "mechanism": "intent",
       "user": "cuanto he ingresado este ano",
       "answer": "465,56 € en lo que va de año, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1381,12 +1476,13 @@
         }
       ],
       "model_called": true,
-      "seconds": 2.63,
+      "seconds": 2.48,
       "failures": []
     },
     {
       "episode": "10-recuperacion",
       "turn": 6,
+      "mechanism": "follow_up",
       "user": "y el mes pasado?",
       "answer": "465,56 € el mes pasado, en 3 movimientos.\nConsultado en todas tus cuentas.",
       "outcome": "PLANNED",
@@ -1408,8 +1504,43 @@
         }
       ],
       "model_called": false,
-      "seconds": 0.07,
+      "seconds": 0.03,
       "failures": []
     }
-  ]
+  ],
+  "by_mechanism": {
+    "comparison": {
+      "turns": 2,
+      "failed": 0
+    },
+    "follow_up": {
+      "turns": 13,
+      "failed": 1
+    },
+    "intent": {
+      "turns": 23,
+      "failed": 0
+    },
+    "interruption": {
+      "turns": 2,
+      "failed": 0
+    },
+    "pending_resolution": {
+      "turns": 6,
+      "failed": 0
+    },
+    "reference": {
+      "turns": 2,
+      "failed": 0
+    },
+    "reset": {
+      "turns": 3,
+      "failed": 0
+    },
+    "slot_carryover": {
+      "turns": 9,
+      "failed": 1
+    }
+  },
+  "recovery_rate": 0.5
 }

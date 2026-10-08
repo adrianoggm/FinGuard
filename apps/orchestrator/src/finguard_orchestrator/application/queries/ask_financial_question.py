@@ -4649,9 +4649,12 @@ class AskFinancialQuestionHandler:
         # The accounts the sentence leaves out (ruling R48), before anything reads one as chosen:
         # «sin la hucha» names the hucha, and every reader below would narrow to it.
         plan, kept = await self._the_accounts_left_out(plan, query)
-        if kept and self._every_account_by_default:
+        if kept and (self._every_account_by_default or not clarify):
             # Every account but those, which is what the sentence asked for. Under `ask` the
-            # question below asks which, as it always did.
+            # question below asks which, as it always did — where it may be asked. A caller that
+            # asks nothing (`clarify=False`: a comparison scopes each side with it) took every
+            # account instead, the hucha too, for «junio vs julio en restaurantes sin la hucha»
+            # (final review); the complement is what the sentence said.
             return replace(
                 plan,
                 across_accounts=False,

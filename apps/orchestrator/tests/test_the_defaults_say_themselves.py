@@ -728,6 +728,20 @@ def test_explicit_facts_never_reads_an_account_as_a_shop_left_out(
     assert explicit_facts.excluded_merchants_in(sentence) == shops
 
 
+@pytest.mark.parametrize("setting", ["all", "ask"])
+def test_a_comparison_with_an_account_left_out_leaves_every_other_one(setting: str) -> None:
+    """Final review: under `ask` a comparison is scoped without the account question, and it ran
+    every account — the hucha too — for «junio vs julio en restaurantes sin la hucha». Asked
+    nothing, it reads what the sentence asked for, as `all` does."""
+    stack = episodes.a_stack(account_scope_default=setting)
+    answered = ask(stack, "junio vs julio en restaurantes sin la hucha")
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    assert len(stack.ledger.plans) == 2
+    assert all(plan.only_account_ids == _ALL_BUT_THE_HUCHA for plan in stack.ledger.plans), [
+        (plan.across_accounts, plan.only_account_ids) for plan in stack.ledger.plans
+    ]
+
+
 def test_a_ranking_with_an_account_left_out_leaves_every_other_one() -> None:
     stack = episodes.a_stack()
     ask(stack, "¿cuál fue mi mayor gasto el mes pasado sin la hucha?")
