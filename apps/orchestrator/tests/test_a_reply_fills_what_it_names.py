@@ -155,6 +155,94 @@ def test_a_new_question_naming_an_account_never_runs_the_question_left_open(repl
     ]
 
 
+# --- a new question that names its own period (final review, C-1) -------------------------------
+#
+# Each of these fills the window «¿De qué periodo?» was waiting for, and none of them is its reply:
+# it opens the way a question opens and says what it is about. All of them were absorbed into the
+# restaurants draft — Marta, the ranking, the percentage and the income were dropped, and
+# restaurant spending ran for the period the new question named.
+
+_QUESTIONS_THAT_NAME_THEIR_OWN_PERIOD = (
+    "¿cuánto le mandé a Marta este año?",
+    "¿cuánto le he mandado a Marta este año?",
+    "mis 3 mayores gastos de este año",
+    "¿qué porcentaje de mis gastos fue en gasolina este año?",
+    "¿cuántos bizums le hice a Marta este año?",
+    "¿cuánto he recibido este año?",
+    "¿cuánto me ha entrado este mes?",
+    "dame los movimientos de este mes",
+    "¿cuánto he ahorrado este año?",
+    "¿cuánto gané este año?",
+    "¿cuánto me pagaron este año?",
+    # The period before the question word: one of the few windows a sentence opens with.
+    "¿y el mes pasado cuánto le mandé a Javi?",
+)
+
+
+@pytest.mark.parametrize("question", _QUESTIONS_THAT_NAME_THEIR_OWN_PERIOD)
+def test_a_new_question_that_names_its_own_period_is_not_the_reply(question: str) -> None:
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    answered = ask(stack, question, asked["conversation"])
+    assert stack.ledger.ran, answered["text"]
+    assert all("RESTAURANTS" not in query.categories for query in stack.ledger.ran), [
+        (query.direction, query.categories) for query in stack.ledger.ran
+    ]
+
+
+@pytest.mark.parametrize(
+    ("question", "person", "period"),
+    [
+        ("¿cuánto le mandé a Marta este año?", "Marta", Period.THIS_YEAR),
+        ("¿cuánto le he mandado a Marta este año?", "Marta", Period.THIS_YEAR),
+        ("¿cuántos bizums le hice a Marta este año?", "Marta", Period.THIS_YEAR),
+        ("¿y el mes pasado cuánto le mandé a Javi?", "Javi", Period.LAST_MONTH),
+    ],
+)
+def test_the_person_a_new_question_names_is_its_own(
+    question: str, person: str, period: Period
+) -> None:
+    """«¿Cuántos bizums le hice a Marta este año?» lost Marta without a word."""
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    ask(stack, question, asked["conversation"])
+    plan = stack.ledger.plans[-1]
+    assert plan.counterparties == (person,) and plan.period.period is period
+
+
+def test_a_new_question_never_moves_the_period_of_the_plan_waiting_for_its_account() -> None:
+    """Under `ask`, the plan behind «¿En qué cuenta…?» took the new question's year as its own."""
+    stack = account_question_stack()
+    asked = ask(stack, "¿Cuánto gasté en Spotify?")
+    told = ask(stack, "¿cuánto le mandé a Marta este año?", asked["conversation"])
+    ask(stack, "Todas mis cuentas", told["conversation"])
+    assert stack.ledger.plans[-1].period.period is Period.LAST_MONTH
+
+
+@pytest.mark.parametrize(
+    ("reply", "period", "categories"),
+    [
+        ("este año, pero cuéntalas", Period.THIS_YEAR, ("RESTAURANTS",)),
+        ("el mes pasado en gasolina", Period.LAST_MONTH, ("TRANSPORT_FUEL",)),
+        ("este año por comercio", Period.THIS_YEAR, ("RESTAURANTS",)),
+        ("¿y este año en gasolina?", Period.THIS_YEAR, ("TRANSPORT_FUEL",)),
+        ("lo que llevo gastado", Period.THIS_YEAR, ("RESTAURANTS",)),
+    ],
+)
+def test_a_reply_that_brings_the_period_is_still_absorbed(
+    reply: str, period: Period, categories: tuple[str, ...]
+) -> None:
+    """The other side of C-1: none of these opens like a question, so each is the reply — completed
+    in code, without the model, with what it says beside the period."""
+    stack = asking_for_the_window_stack()
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    answered = ask(stack, reply, asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.period.period is period and plan.categories == categories
+    assert reply not in stack.planner.asked, "absorbed, not read as a question of its own"
+
+
 # --- ruling R22: the category a reply names is absorbed, without the model -----------------------
 #
 # On `KeepsTheBase`, a planner that hands a forced base back untouched: the stub planner rebuilds

@@ -2827,7 +2827,7 @@ class AskFinancialQuestionHandler:
             if active.awaiting is Slot.WINDOW
             else None
         )
-        if by_default is None and _starts_new_financial_scope(query.sentence, today=query.today):
+        if by_default is None and _asks_a_question_of_its_own(query):
             return None
         draft = active.draft
         if active.awaiting is Slot.CATEGORY:
@@ -2893,7 +2893,7 @@ class AskFinancialQuestionHandler:
         active = query.conversation.active
         if not isinstance(active, FinancialClarification):
             return None
-        if _starts_new_financial_scope(query.sentence, today=query.today):
+        if _asks_a_question_of_its_own(query):
             return None
         draft = active.draft
         complete = draft.into_plan()
@@ -6101,6 +6101,21 @@ def _the_draft_with_the_window_it_names(
         _window_of(plan),
     )
     return PlanningResult.planned(plan)
+
+
+def _asks_a_question_of_its_own(query: AskFinancialQuestionQuery) -> bool:
+    """Whether the turn is a question of its own, which the open draft must not be completed with.
+
+    The two readings the arbitration takes as not a reply: a complete question with a window and a
+    verb of spending (`_starts_new_financial_scope`), and one that opens like a question and says
+    what it is about (`turn_arbiter.asks_its_own`, final review C-1). Asked again here because a
+    caller may bring no arbitration — and with only the first, «¿cuánto le mandé a Marta este año?»
+    still completed the restaurants draft with its year, and moved the period of the plan waiting
+    for its account under `ask`.
+    """
+    return _starts_new_financial_scope(
+        query.sentence, today=query.today
+    ) or turn_arbiter.asks_its_own(query.sentence)
 
 
 # Turns that are *about* something else without changing the subject. Each of these already passes

@@ -1637,6 +1637,15 @@ async def _continues_a_payment(
         for row in directory.contacts
     )
     if payment_router.continues(question, drafted, contacts):
+        if drafted.recipient_name and payment_words.changes_recipient(
+            question, previewed=drafted.recipient_name
+        ):
+            # An order to somebody else (final review, I-1; R14 before there is a preview). It
+            # continues the payment — the amount it says fills the slot asked — but the draft's
+            # person is not its person: kept, «mándale 20 € a Javi» to a Bizum to Marta waiting
+            # for its amount was previewed as 20 € to Marta. The recipient is reopened, so the
+            # prepare handler reads the one this sentence names.
+            return replace(drafted, recipient_name=None, recipient_contact_id=None)
         return drafted
     return None
 

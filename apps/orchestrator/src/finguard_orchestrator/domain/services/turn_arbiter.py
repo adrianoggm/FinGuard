@@ -258,11 +258,29 @@ _WINDOW_SLOTS: Final = frozenset({Slot.WINDOW, Slot.YEAR})
 # that one needs a question word and decides follow-ups for the readers too, and widening it would
 # move every reader's line between an ellipsis and a new question at once. «Dame», «lista» and the
 # other imperatives are not here on purpose — what they ask for is the noun after them.
+#
+# Money sent, a share, savings and earnings are subjects as well (final review, C-1): «¿cuánto le
+# mandé a Marta este año?» and «¿qué porcentaje de mis gastos…?» say what they are about as surely
+# as «gasté» does, and without these each was folded into the draft waiting for its period.
 _A_SUBJECT_OF_ITS_OWN: Final = re.compile(
-    r"\b(?:gast\w*|ingres\w*|cobr\w*|pagu\w*|pagad\w*|compr\w*|recib\w*"
-    r"|entr(?:o|aron|ado|ada)|saldo|dinero|desglos\w*)\b"
+    r"\b(?:gast\w*|ingres\w*|cobr\w*|pagu\w*|pagad\w*|compr\w*|recib\w*|mand\w*|envi\w*"
+    r"|porcentaje|ahorr\w*|gane\w*|ganad[oa]s?|pagaron|entr(?:o|aron|ado|ada)|saldo|dinero"
+    r"|desglos\w*)\b"
     rf"|\b(?:{MOVEMENT_NOUNS})(?:s|es)?\b|\b(?:operacion|transaccion)\w*"
     r"|\bpor\s+(?:categorias?|comercios?|tiendas?|meses|mes|semanas?|dias?|cuentas?|personas?)\b"
+)
+
+# How a question opens, read folded: a question word, or the imperative or possessive a request for
+# figures starts with — «¿cuánto…?», «¿qué porcentaje…?», «dame los movimientos…», «mis 3 mayores
+# gastos…». With an optional «y» in front, as a new question is often joined to the last.
+#
+# A window may come between them — «¿y el mes pasado cuánto le mandé a Javi?» — but only one of the
+# few that open a sentence this way, so that a reply leading with its period and going on to a
+# category («el mes pasado en gasolina», «¿y este año en gasolina?») is still a reply.
+_OPENS_LIKE_A_QUESTION: Final = re.compile(
+    r"^\W*(?:y\s+)?"
+    r"(?:(?:el|este|esta)\s+(?:mes|ano|semana|trimestre)(?:\s+pasad[oa])?\W+)?"
+    r"(?:cuant[oa]s?|cual(?:es)?|que|dame|lista|muestrame|ensename|mis)\b"
 )
 
 
@@ -286,6 +304,30 @@ def states_a_subject_of_its_own(sentence: str) -> bool:
         return True
     facts = explicit_facts.read(sentence)
     return facts.metric is not None or facts.group_by is not None
+
+
+def asks_its_own(sentence: str) -> bool:
+    """Whether the sentence opens like a question and says what it is about (final review, C-1).
+
+    Such a turn is a question of its own even when it names exactly the window the open question
+    is waiting for: «¿cuánto le mandé a Marta este año?» to «¿De qué periodo quieres ver tus gastos
+    en restaurantes?» is about Marta, and completing the restaurants draft with its year dropped
+    her. `states_a_question_of_its_own` cannot say so — its question words need a verb of spending
+    — and widening it would move every reader's line at once (see `_A_SUBJECT_OF_ITS_OWN`).
+
+    A reply that leads with what the question asked and goes on to change the rest — «este año,
+    pero cuéntalas», «el mes pasado en gasolina», «¿y este año en gasolina?» — does not open like a
+    question, and stays a reply.
+
+    Public because the handler's own completions ask it too (`_finish_pending`,
+    `_pending_continuation`), beside `_starts_new_financial_scope`: a turn the arbitration does not
+    call a reply must not complete the draft by another door.
+    """
+    folded = spanish.folded(sentence)
+    return (
+        _OPENS_LIKE_A_QUESTION.search(folded) is not None
+        and _A_SUBJECT_OF_ITS_OWN.search(folded) is not None
+    )
 
 
 def _what_the_question_holds(conversation: Conversation) -> frozenset[Slot]:
@@ -395,8 +437,14 @@ def _what_it_fills(
     **Nor is a turn that leaves the slot asked empty and says what it is about** (ruling R21,
     `states_a_subject_of_its_own`). Without a window, «en la hucha» can only be the account of the
     question waiting for one; «¿cuánto ingresé en la hucha?» is income, its own question, and the
-    account it names is that question's. With the slot filled, the rest of the sentence is the
-    reply's to change — «este año, pero cuéntalas» — and goes with it.
+    account it names is that question's.
+
+    **Filling the slot asked does not make a turn the reply either** (final review, C-1). A turn
+    that opens like a question and says what it is about (`asks_its_own`) is a question of its
+    own, whatever window it names: «¿cuánto le mandé a Marta este año?» is about Marta, and read as
+    the period it ran restaurant spending for the year. What still goes with the window is a reply
+    that leads with it and changes the rest — «este año, pero cuéntalas», «el mes pasado en
+    gasolina» — because it does not open like a question.
     """
     holds = _what_the_question_holds(conversation)
     if not holds or analysis.intent in _A_TURN_OF_ITS_OWN:
@@ -429,6 +477,9 @@ def _what_it_fills(
     if filled and asked not in filled and states_a_subject_of_its_own(sentence):
         # Ruling R21: what the question asked is still missing, so the reply is one only while it
         # is elliptical. A turn that says what it is about is asking that instead.
+        return frozenset()
+    if filled and asks_its_own(sentence):
+        # C-1: the slot asked is filled, by a question of its own that happens to name it.
         return frozenset()
     return frozenset(filled)
 

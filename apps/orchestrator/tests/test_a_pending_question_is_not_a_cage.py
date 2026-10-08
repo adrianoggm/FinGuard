@@ -162,6 +162,48 @@ def test_an_order_to_the_same_person_revises_the_preview() -> None:
     assert answered["conversation"]["amount_minor"] == 2_000
 
 
+@pytest.mark.parametrize(
+    "order",
+    [
+        "mándale 20 € a Javi",
+        "quiero mandarle 20 euros a Javi",
+        "pásale 20 a Javi",
+        "hazle un bizum de 20 a Javi",
+    ],
+)
+def test_a_half_built_bizum_never_takes_an_order_to_somebody_else_as_its_own(order: str) -> None:
+    """Final review, I-1: R14 before there is a preview. With a Bizum to Marta waiting for its
+    amount, «mándale 20 € a Javi» filled the amount and kept Marta — the preview said «Vas a enviar
+    20,00 € a Marta Solis Vega», and a «sí» would have paid her for an order that named Javi."""
+    stack = episodes.a_stack()
+    started = ask(stack, "hagamos un bizum a Marta Solis Vega")
+    assert started["conversation"]["workflow"] == "PAYMENT_IN_PROGRESS"
+
+    answered = ask(stack, order, started["conversation"])
+
+    assert not [r for r in stack.bank.prepared if r.recipient_name.startswith("Marta")], [
+        r.recipient_name for r in stack.bank.prepared
+    ]
+    assert answered["outcome"] == "AWAITING_CONFIRMATION", answered["text"]
+    assert answered["conversation"]["recipient"] == "Javi Nuñez"
+    assert answered["conversation"]["amount_minor"] == 2_000
+
+
+@pytest.mark.parametrize(
+    "reply", ["mándale 20 € a Marta", "mándale 20 € a Marta esta noche", "20 euros"]
+)
+def test_a_half_built_bizum_keeps_its_recipient_for_its_own_amount(reply: str) -> None:
+    """The other side of I-1: naming the draft's own person, or nobody, completes it."""
+    stack = episodes.a_stack()
+    started = ask(stack, "hagamos un bizum a Marta Solis Vega")
+
+    answered = ask(stack, reply, started["conversation"])
+
+    assert answered["outcome"] == "AWAITING_CONFIRMATION", answered["text"]
+    assert answered["conversation"]["recipient"] == "Marta Solis Vega"
+    assert answered["conversation"]["amount_minor"] == 2_000
+
+
 def test_olvidalo_after_an_answer_is_not_a_shop() -> None:
     stack = episodes.a_stack()
     first = ask(stack, "cuanto gaste en el super el mes pasado", SETTLED)
