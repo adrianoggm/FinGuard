@@ -900,6 +900,33 @@ class AskFinancialQuestionHandler:
             yield replace(restored, text=f"He vuelto a la consulta anterior. {restored.text}")
             return
 
+        impossible = window_words.a_day_no_year_has(query.sentence)
+        if impossible is not None:
+            # «El 31 de septiembre» exists in no year (validation fix 4, ruling R58). Asked its
+            # year, every year given was asked again, a question the person could not answer their
+            # way out of. Said here, before any reader or model can ask the year, with the nearest
+            # day every year has offered instead.
+            yield _a_date_no_year_has(impossible, was)
+            return
+        accepted = _the_day_accepted(query.sentence, was)
+        if accepted is not None:
+            # «Sí», «el 30» to «¿Te refieres al 30 de septiembre?»: the question first asked, about
+            # that day, read again from the start as `_answering_the_scope_question` reads the
+            # question its account chip settled — its year from the answer in view as a month
+            # takes it (F2), or asked when there is none.
+            answering[0] = accepted
+            again = replace(
+                query,
+                sentence=accepted,
+                conversation=replace(was, last_asked=None),
+                intent=None,
+                analysis=None,
+                arbitration=None,
+            )
+            async for step in self._steps(again, follow_up_seen, answering):
+                yield step
+            return
+
         season = window_words.season_ask(query.sentence, today=query.today)
         if season is not None:
             # B-4 (Wave 3 hardening): «este verano»/«el verano pasado»/«en primavera» are windows
@@ -3012,27 +3039,32 @@ class AskFinancialQuestionHandler:
             year = said.start.year
         else:
             return None
-        asked = next((turn for turn in reversed(query.conversation.turns) if turn.question), None)
-        if asked is None or not window_words.names_a_month_without_its_year(asked.sentence):
+        asked = _the_question_the_year_is_for(query.conversation, query.today)
+        if asked is None or not window_words.names_a_month_without_its_year(asked):
             return None
-        windows = window_words.windows_in_the_year(asked.sentence, year)
+        windows = window_words.windows_in_the_year(asked, year)
+        # Still to come: it has not begun — the 20th of this month, asked on the 8th (validation
+        # fix 3, item 2) — or it runs into a month that has not begun. The month under way has
+        # begun, and its figure so far is an answer, as «este mes» is.
+        if not windows:
+            return _the_year_lacks_the_day(query.conversation, year, asked)
         this_month = window_words.whole_month(query.today.year, query.today.month)
-        if not windows or any(window.end > this_month.end for window in windows):
-            return _the_year_again(query.conversation, year, still_to_come=bool(windows))
+        if any(window.start > query.today or window.end > this_month.end for window in windows):
+            return _the_year_again(
+                query.conversation, year, because=f"Ese periodo de {year} todavía no ha llegado."
+            )
         try:
             plans = [active.draft.with_window(window) for window in windows]
         except InvalidValueError:
-            return _the_year_again(query.conversation, year, still_to_come=False)
+            return _the_year_again(query.conversation, year)
         if any(
             plan_verifier.disagreement(query.sentence, plan, self._policy) is not None
             for plan in plans
         ):
-            return _the_year_again(query.conversation, year, still_to_come=False)
+            return _the_year_again(query.conversation, year)
         if len(plans) == 1:
             return plans[0]
-        return ComparisonPlan.between(*plans) or _the_year_again(
-            query.conversation, year, still_to_come=False
-        )
+        return ComparisonPlan.between(*plans) or _the_year_again(query.conversation, year)
 
     def _pending_continuation(self, query: AskFinancialQuestionQuery) -> ContinuationBase | None:
         """The validated fields behind an active clarification, completed as far as this turn can.
@@ -6195,13 +6227,9 @@ def _with_ratio_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> F
 
 
 def _comparison_window_label(plan: FinancialPlan) -> str:
-    """A compact natural label for the two sides of a comparison."""
-    if plan.date_range is not None and _is_whole_month(plan.date_range):
-        start = plan.date_range.start
-        return f"en {answer_writer.month_name(start.year, start.month)}"
-    if plan.date_range is not None and _is_whole_year(plan.date_range):
-        return f"en {plan.date_range.start.year}"
-    return answer_writer.window_of(plan)
+    """A compact natural label for the two sides of a comparison (`answer_writer.compared_window`,
+    which the percentage between them says its windows with too)."""
+    return answer_writer.compared_window(plan)
 
 
 def _numbered_month_window(month: int, today: date) -> AbsoluteRange:
@@ -6705,6 +6733,26 @@ def _the_months_it_names(query: AskFinancialQuestionQuery) -> FinancialPlan | Co
     window = template.period or template.date_range
     assert window is not None  # a plan carries one of the two
     months = window_words.months_alone(query.sentence)
+    one_day = window_words.a_day_alone(query.sentence)
+    if one_day is not None:
+        # A day said alone — «¿y el 30 de septiembre?», and the day offered for «el 31», accepted
+        # (round 4) — takes the year in view as a month does: the one the range in view covers,
+        # else the year the answer ends in, else the last time it happened.
+        day, month = one_day
+        covered = (
+            window_words.a_month_within(window, month)
+            if isinstance(window, AbsoluteRange)
+            else None
+        )
+        year = covered.start.year if covered else window_words.year_in_view(window, query.today)
+        that_day = _a_day_of(year, month, day)
+        if that_day is not None and that_day > query.today and covered is None:
+            that_day = _a_day_of(year - 1, month, day)
+        if that_day is None or that_day > query.today:
+            return None
+        return replace(
+            template, period=None, date_range=AbsoluteRange(start=that_day, end=that_day)
+        )
     if not months:
         return in_view if window_words.the_same_window(query.sentence, window) else None
 
@@ -6724,10 +6772,18 @@ def _the_months_it_names(query: AskFinancialQuestionQuery) -> FinancialPlan | Co
         )
         if side is not None:
             return side
+        # A month the range in view covers is the one it covers (validation fix 2, M-3): with
+        # November 2025 to February 2026 on screen, «¿y en noviembre?» is November 2025, not the
+        # November of 2026, the year the range ends in. The latest one, if it covers two.
+        covered = (
+            window_words.a_month_within(window, month)
+            if isinstance(window, AbsoluteRange)
+            else None
+        )
         return replace(
             template,
             period=None,
-            date_range=window_words.a_month_of(year, month, query.today),
+            date_range=covered or window_words.a_month_of(year, month, query.today),
         )
 
     named = sorted(
@@ -6747,24 +6803,167 @@ def _the_months_it_names(query: AskFinancialQuestionQuery) -> FinancialPlan | Co
     return ComparisonPlan.between(*named)
 
 
+# How the year is asked again (`_the_year_again`), which is also how a turn that asked it again is
+# told apart in the log from any other question (`_the_question_the_year_is_for`).
+_WHICH_YEAR: Final = "¿De qué año?"
+
+
+def _the_question_the_year_is_for(conversation: Conversation, today: date) -> str | None:
+    """The sentence «¿De qué año?» was first asked about, however many times it was asked again
+    (validation fix 3, ruling R57).
+
+    The last turn that asked a question, unless that turn was itself a year the question refused —
+    a reply that was only a year, asked «¿De qué año?» again because the period was still to come
+    or the date did not exist that year (`_the_year_again`): then the one before it, and so on back
+    to the question's own sentence. Any other question stops the walk, so an older question is
+    never read as this one. Read as the question's sentence, the refused
+    «2026» named no month, and the next year completed the draft as the whole year. Chosen over
+    carrying the months in the draft or on the wire, which would change what the conversation
+    serialises: the log already holds every sentence of the exchange.
+    """
+    turns = conversation.turns
+    for index in range(len(turns) - 1, -1, -1):
+        turn = turns[index]
+        if turn.question is None:
+            # An aside in between — «gracias» — asked nothing and leaves the question open.
+            continue
+        refused = (
+            turn.question.startswith(_WHICH_YEAR)
+            and window_words.window_in(turn.sentence, asked_for=Slot.YEAR, today=today) is not None
+            and not window_words.names_a_month_without_its_year(turn.sentence)
+        )
+        if not refused:
+            # The day offered for a date no year has, accepted on this turn (round 4): what was
+            # asked about is the first question, on that day.
+            return (
+                _the_day_accepted(
+                    turn.sentence, replace(conversation, turns=turns[:index]), any_slot=True
+                )
+                or turn.sentence
+            )
+    return None
+
+
 def _the_year_again(
-    conversation: Conversation, year: int, *, still_to_come: bool
+    conversation: Conversation, year: int, *, because: str | None = None, example: int | None = None
 ) -> AskFinancialQuestionResult:
     """«¿De qué año?» once more, with the question left open as it was (round 2, I-1).
 
     For a year that cannot complete what was asked: a month or a day of it still to come, or a
-    date it does not have. Said why when the reason is the calendar, so the person knows the year
-    was heard; the example is the year before, which has had every month.
+    date it does not have. `because` says why when the reason is the calendar, so the person knows
+    the year was heard — «Febrero de 2026 tiene 28 días.» (round 4); the example is `example`, or
+    else the year before, which has had every month.
     """
-    question = "¿De qué año? Por ejemplo " + str(year - 1) + "."
-    text = f"Ese periodo de {year} todavía no ha llegado. {question}" if still_to_come else question
+    shown = example if example is not None else year - 1
+    question = f"{_WHICH_YEAR} Por ejemplo {shown}."
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-        text=text,
+        text=f"{because} {question}" if because else question,
         question=question,
         conversation=conversation.asking(Slot.YEAR),
-        suggestions=[str(year - 1)],
+        suggestions=[str(shown)],
     )
+
+
+# The day offered for a date no year has (`_a_date_no_year_has`), as its question reads in the log.
+_THE_DAY_OFFERED: Final = re.compile(r"¿Te refieres al (?P<day>\d{1,2}) de (?P<month>[a-z]+)\?")
+
+# What says yes to the day offered, besides the day and its month: «sí», «vale», «sí, el 30».
+_YES_TO_THE_DAY: Final = frozenset(
+    "si vale ok okey claro eso ese correcto exacto perfecto venga vale".split()
+)
+_BESIDE_THE_DAY: Final = frozenset("por favor gracias el dia de".split())
+
+
+def _a_date_no_year_has(
+    impossible: tuple[int, int, int], was: Conversation
+) -> AskFinancialQuestionResult:
+    """«El 31 de septiembre no existe: septiembre tiene 30 días. ¿Te refieres al 30 de septiembre?»
+
+    The question is the day offered, recorded as the window asked (`asking`), so its reply is read
+    against it (`_the_day_accepted`) and nothing else is left open by it.
+    """
+    day, month, nearest = impossible
+    name = window_words.month_called(month)
+    has = (
+        "28 días, 29 en los años bisiestos"
+        if month == 2
+        else f"{window_words.days_in(2001, month)} días"
+    )
+    question = f"¿Te refieres al {nearest} de {name}?"
+    return AskFinancialQuestionResult(
+        outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+        text=f"El {day} de {name} no existe: {name} tiene {has}. {question}",
+        question=question,
+        conversation=was.asking(Slot.WINDOW),
+        suggestions=[f"El {nearest} de {name}"],
+    )
+
+
+def _the_day_accepted(sentence: str, was: Conversation, *, any_slot: bool = False) -> str | None:
+    """The first question again, on the day offered, when `sentence` accepts it; else None.
+
+    Only right after the offer: the last question in the log is it, and — on the turn that answers
+    it — nothing has been asked since (`any_slot` is for reading the log back later, from the year
+    completion). A reply that says anything but yes, the day and its month — «no, el 29» — is read
+    as itself.
+    """
+    if not any_slot and was.last_asked is not Slot.WINDOW:
+        return None
+    asked = next((turn for turn in reversed(was.turns) if turn.question), None)
+    offered = _THE_DAY_OFFERED.fullmatch(asked.question or "") if asked is not None else None
+    if asked is None or offered is None:
+        return None
+    day, month = offered.group("day"), offered.group("month")
+    words = re.findall(r"[a-z0-9]+", spanish.folded(sentence))
+    said = set(words)
+    if not words or not said <= {day, month} | _YES_TO_THE_DAY | _BESIDE_THE_DAY:
+        return None
+    if not (said & _YES_TO_THE_DAY or day in said):
+        return None
+    return window_words.with_the_day_it_offered(asked.sentence, int(day))
+
+
+def _the_year_lacks_the_day(
+    conversation: Conversation, year: int, asked: str
+) -> AskFinancialQuestionResult:
+    """The year asked again because it has no such day, saying so (validation fix 4, R58).
+
+    Only a date some years have reaches here — «el 29 de febrero»; one no year has was said not to
+    exist where the sentence was first read (`_a_date_no_year_has`). «Febrero de 2026 tiene 28
+    días.», and the example is the last year before it that has the day. Anything else that could
+    not be placed is asked about plainly.
+    """
+    said = window_words.a_day_said(asked)
+    if said is None:
+        return _the_year_again(conversation, year)
+    day, month = said
+    has_it = next(
+        (
+            earlier
+            for earlier in range(year - 1, year - 9, -1)
+            if window_words.days_in(earlier, month) >= day
+        ),
+        None,
+    )
+    month_and_year = answer_writer.month_name(year, month)
+    return _the_year_again(
+        conversation,
+        year,
+        because=(
+            f"{month_and_year[0].upper()}{month_and_year[1:]} tiene "
+            f"{window_words.days_in(year, month)} días."
+        ),
+        example=has_it,
+    )
+
+
+def _a_day_of(year: int, month: int, day: int) -> date | None:
+    """That day, or None when `year` does not have it."""
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
 
 
 def _the_year_asked_over_the_open_subject(

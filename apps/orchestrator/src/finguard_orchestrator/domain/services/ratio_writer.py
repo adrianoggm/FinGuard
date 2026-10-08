@@ -86,8 +86,8 @@ def _percent_change(latest: QueryAnswer, earlier: QueryAnswer, plan: RatioPlan) 
     earlier_value = answer_writer.comparison_value(earlier, plan.whole)
     delta = latest_value - earlier_value
     ratio = basis_points(delta, abs(earlier_value))
-    latest_window = answer_writer.window_of(plan.part)
-    earlier_window = answer_writer.window_of(plan.whole)
+    latest_window = answer_writer.compared_window(plan.part)
+    earlier_window = answer_writer.compared_window(plan.whole)
     concept = f"El {answer_writer.comparison_concept(plan.part)}"
     if ratio is None:
         return (
@@ -100,10 +100,12 @@ def _percent_change(latest: QueryAnswer, earlier: QueryAnswer, plan: RatioPlan) 
         conclusion = f"aumentó un {percentage(ratio)}"
     else:
         conclusion = f"disminuyó un {percentage(abs(ratio))}"
+    # Each figure beside its window, in the words the comparison itself uses (validation fix 3,
+    # item 3): «de 102,80 € en junio de 2026 a 159,46 € en julio de 2026». The windows went after a
+    # bare «de … a …», which read «de del 2026-07-01 al 2026-07-31» for every range.
     return (
-        f"{concept} {conclusion} de {earlier_window} a {latest_window}: "
-        f"{answer_writer.comparison_figure(earlier, plan.whole)} frente a "
-        f"{answer_writer.comparison_figure(latest, plan.part)}."
+        f"{concept} {conclusion}: de {answer_writer.comparison_figure(earlier, plan.whole)} "
+        f"{earlier_window} a {answer_writer.comparison_figure(latest, plan.part)} {latest_window}."
     )
 
 

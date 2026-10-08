@@ -507,3 +507,117 @@ def test_a_category_and_months_keep_the_year_question_and_both(reply: str) -> No
     assert stack.planner.asked == []
     assert sorted(_months(stack)) == [(2026, 7), (2026, 8)]
     assert all(plan.categories == ("RESTAURANTS",) for plan in stack.ledger.ran)
+
+
+# --- round 2, M-3: a month inside a range in view is that one -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("month", "year"), [("noviembre", 2025), ("diciembre", 2025), ("enero", 2026)]
+)
+def test_a_month_inside_the_range_in_view_is_the_one_in_it(month: str, year: int) -> None:
+    """November 2025 to February 2026 in view, asked on 2027-03-01: «¿y en noviembre?» is
+    November 2025, the one the answer covers — not November 2026, the year the range ends in."""
+    stack = _stack()
+    app.dependency_overrides[reporting_today] = lambda: date(2027, 3, 1)
+    _walk(
+        stack,
+        "¿cuánto gasté en restaurantes del 1 de noviembre de 2025 al 28 de febrero de 2026?",
+        f"¿y en {month}?",
+    )
+
+    assert _months(stack) == [(year, window_words._MONTH_NUMBER[month])]
+    assert stack.ledger.ran[0].categories == ("RESTAURANTS",)
+
+
+# --- round 3, R57: however many times the year is asked again, it completes the first question ---
+#
+# The year asked again — a period still to come, a date the year does not have — is a turn whose
+# sentence is the year that was refused. Read as the question's sentence, it named no month, and
+# the next year completed the draft as the whole year.
+
+
+def _asked_again(question: str, *replies: str) -> tuple[episodes.Stack, dict[str, Any]]:
+    """`question`, then each of `replies` asked again; the answer to the last one."""
+    stack, answer = _the_year_to(question, replies[0])
+    for reply in replies[1:]:
+        assert answer["outcome"] == "NEEDS_CLARIFICATION", answer["text"]
+        assert answer["conversation"]["last_asked"] == "YEAR", answer["text"]
+        stack.ledger.ran.clear()
+        stack.planner.asked.clear()
+        answer = ask(stack, reply, answer["conversation"])
+    return stack, answer
+
+
+@pytest.mark.parametrize(
+    ("question", "replies", "windows"),
+    [
+        (
+            "¿cuánto gasté de noviembre a febrero?",
+            ("2026", "2025"),
+            ((date(2025, 11, 1), date(2026, 2, 28)),),
+        ),
+        (
+            "¿cuánto gasté de noviembre a febrero?",
+            ("2026", "2026", "2025"),
+            ((date(2025, 11, 1), date(2026, 2, 28)),),
+        ),
+        (
+            "¿cuánto gasté en julio y diciembre?",
+            ("2026", "2025"),
+            ((date(2025, 7, 1), date(2025, 7, 31)), (date(2025, 12, 1), date(2025, 12, 31))),
+        ),
+        (
+            "¿cuánto gasté el 29 de febrero?",
+            ("2026", "2024"),
+            ((date(2024, 2, 29), date(2024, 2, 29)),),
+        ),
+    ],
+    ids=["a-span-across-new-year", "the-same-year-twice", "two-months", "a-leap-day"],
+)
+def test_the_year_asked_again_completes_the_first_question(
+    question: str, replies: tuple[str, ...], windows: tuple[tuple[date, date], ...]
+) -> None:
+    stack, answer = _asked_again(question, *replies)
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    assert stack.planner.asked == []
+    ran = sorted(
+        (plan.date_range.start, plan.date_range.end)
+        for plan in stack.ledger.ran
+        if isinstance(plan, FinancialPlan) and plan.date_range is not None
+    )
+    assert tuple(ran) == windows
+
+
+def test_a_day_no_year_has_is_never_asked_its_year() -> None:
+    """«El 31 de septiembre» is no day of any year. Round 3 asked the year again for every year
+    given; since round 4 (ruling R58) the date is said not to exist before any year is asked, and
+    the nearest day is offered (`test_a_date_no_year_has.py`)."""
+    stack = _stack()
+    answer = _walk(stack, "¿cuánto gasté el 31 de septiembre?")
+
+    assert answer["outcome"] == "NEEDS_CLARIFICATION", answer["text"]
+    assert "no existe" in answer["text"]
+    assert answer["conversation"]["last_asked"] != "YEAR"
+    assert stack.ledger.ran == [] and stack.planner.asked == []
+
+
+# --- round 3, item 2: a day still to come in this month is asked again too -----------------------
+
+
+def test_a_day_still_to_come_this_month_asks_the_year_again() -> None:
+    """The 20th of October 2026, asked on the 8th: no figure about a day nobody has lived yet."""
+    stack, answer = _the_year_to("¿cuánto gasté el 20 de octubre?", "2026")
+
+    assert answer["outcome"] == "NEEDS_CLARIFICATION", answer["text"]
+    assert stack.ledger.ran == []
+    assert answer["conversation"]["last_asked"] == "YEAR"
+
+
+def test_the_month_under_way_still_runs() -> None:
+    """October 2026 has begun: its figure so far is an answer, as «este mes» is."""
+    stack, answer = _the_year_to("mis gastos de octubre", "2026")
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    assert _ran_once(stack) == (date(2026, 10, 1), date(2026, 10, 31))

@@ -256,7 +256,7 @@ def _percentage_after(*turns: str) -> tuple[episodes.Stack, str]:
         (("¿cuánto gasté en gasolina en julio?", "compáralo con agosto"), "disminuyó un 37,29"),
         (
             ("¿cuánto gasté en gasolina en junio?", "compáralo con julio"),
-            "al 2026-06-30 a del 2026-07-01",
+            "de 102,80 € en junio de 2026 a 159,46 € en julio de 2026",
         ),
     ],
     ids=["june-then-july", "july-then-june", "july-then-august", "the-direction-said"],
@@ -296,3 +296,30 @@ def test_two_answers_compared_run_from_the_earlier_month(turns: tuple[str, ...],
 
     assert said in text, text
     assert ("aumentó" in said) != ("disminuyó" in text)
+
+
+# --- round 3, item 3: the percentage names its windows in words ---------------------------------
+#
+# «El gasto disminuyó un 35,53 % de del 2026-07-01 al 2026-07-31 a del 2026-06-01 al 2026-06-30»:
+# the windows were the plan line's dates, with «de» in front of a «del». They are named the way the
+# comparison's own text names them now.
+
+
+def test_the_percentage_names_its_months_in_words() -> None:
+    _, text = _percentage_after("¿cuánto gasté en gasolina en junio?", "compáralo con julio")
+
+    assert text == (
+        "El gasto aumentó un 55,12 %: de 102,80 € en junio de 2026 a 159,46 € en julio de 2026."
+    ), text
+
+
+def test_the_percentage_names_a_named_period_as_the_answers_do() -> None:
+    stack = episodes.a_stack()
+    compared = ask(stack, "¿gasté más este mes o el mes pasado?", SETTLED)
+    assert compared["outcome"] == "PLANNED", compared["text"]
+
+    answer = ask(stack, "en porcentaje", compared["conversation"])
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    assert "de 465,56 € el mes pasado a 465,56 € en lo que va de mes" in answer["text"]
+    assert "de del" not in answer["text"] and "-01" not in answer["text"]

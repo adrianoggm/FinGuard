@@ -718,6 +718,28 @@ def window_of(plan: FinancialPlan | TopMovements) -> str:
     return f"en los últimos {count} {'días' if day else 'meses'}"
 
 
+def compared_window(plan: FinancialPlan) -> str:
+    """One side of a comparison in words: «en julio de 2026», «en 2025», or the window as every
+    answer names it («el mes pasado», «en lo que va de mes»).
+
+    The comparison's own text has always said its sides this way. The percentage between the same
+    two sides said them as the plan line does, dates and all — «de del 2026-07-01 al 2026-07-31» —
+    so both read this now (validation fix 3, item 3). Person-facing only: `describe`, the line the
+    planner reads, does not call it.
+    """
+    if plan.date_range is not None:
+        start, end = plan.date_range.start, plan.date_range.end
+        if (
+            start.day == 1
+            and (end + timedelta(days=1)).day == 1
+            and (start.year, start.month) == (end.year, end.month)
+        ):
+            return f"en {month_name(start.year, start.month)}"
+        if start == start.replace(month=1, day=1) and end == start.replace(month=12, day=31):
+            return f"en {start.year}"
+    return window_of(plan)
+
+
 def _conversational_window_of(plan: FinancialPlan | TopMovements) -> str:
     """Use a natural month label only in concrete movement-ranking answers."""
     if plan.date_range is not None:

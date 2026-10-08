@@ -1301,6 +1301,107 @@ def a_month_of(year: int, month: int, today: date) -> AbsoluteRange:
     return window if window.start <= today else whole_month(_year_of(month, today), month)
 
 
+# --- validation fix 4 (R58): a date that exists in no year ------------------------------------
+#
+# «El 31 de septiembre» was asked «¿De qué año?», and every year given was asked again: no year has
+# it. The days a month has at most, in any year — February 29, in a leap year — say which dates are
+# impossible before any year is asked, and which real day is nearest to offer instead.
+_DAYS_AT_MOST: Final[dict[int, int]] = {
+    1: 31,
+    2: 29,
+    3: 31,
+    4: 30,
+    5: 31,
+    6: 30,
+    7: 31,
+    8: 31,
+    9: 30,
+    10: 31,
+    11: 30,
+    12: 31,
+}
+_A_DAY_SAID: Final = re.compile(
+    rf"(?<![0-9])(?P<day>\d{{1,2}})\s+de\s+(?P<month>{'|'.join(_MONTHS)})(?![a-z0-9])"
+)
+
+
+def a_day_no_year_has(sentence: str) -> tuple[int, int, int] | None:
+    """(day, month, the nearest day every year has) for the first date the sentence names that
+    exists in no year — «el 31 de septiembre», «el 30 de febrero», «el 32 de enero» — or None.
+
+    «El 29 de febrero» is not one: leap years have it, and its year is the question to ask. For
+    February the day offered is the 28th, which every year has; the 29th would need the year first.
+    """
+    for said in _A_DAY_SAID.finditer(spanish.folded(sentence)):
+        day, month = int(said.group("day")), _MONTH_NUMBER[said.group("month")]
+        if day == 0:
+            return day, month, 1
+        if day > _DAYS_AT_MOST[month]:
+            return day, month, 28 if month == 2 else _DAYS_AT_MOST[month]
+    return None
+
+
+def days_in(year: int, month: int) -> int:
+    """How many days `month` has in `year`."""
+    return monthrange(year, month)[1]
+
+
+def month_called(month: int) -> str:
+    """The name of a month, as a sentence says it: 9 is «septiembre»."""
+    return next(name for name, number in _MONTH_NUMBER.items() if number == month)
+
+
+_A_DAY_WRITTEN: Final = re.compile(
+    rf"(?<![0-9])(?P<day>\d{{1,2}})(?=\s+de\s+(?P<month>{'|'.join(_MONTHS)})(?![a-z0-9]))",
+    re.IGNORECASE,
+)
+
+
+def with_the_day_it_offered(sentence: str, day: int) -> str:
+    """`sentence` with the first date no year has (`a_day_no_year_has`) on `day` instead — «¿cuánto
+    gasté el 31 de septiembre?» with 30 is «¿cuánto gasté el 30 de septiembre?». Read on the
+    sentence as written, so its capitals and accents stay as the person typed them."""
+    for written in _A_DAY_WRITTEN.finditer(sentence):
+        month = _MONTH_NUMBER[spanish.folded(written.group("month"))]
+        if int(written.group("day")) == 0 or int(written.group("day")) > _DAYS_AT_MOST[month]:
+            return f"{sentence[: written.start()]}{day}{sentence[written.end() :]}"
+    return sentence
+
+
+def a_day_said(sentence: str) -> tuple[int, int] | None:
+    """(day, month) of the first day of a month the sentence names, or None."""
+    said = _A_DAY_SAID.search(spanish.folded(sentence))
+    return (int(said.group("day")), _MONTH_NUMBER[said.group("month")]) if said else None
+
+
+def a_day_alone(sentence: str) -> tuple[int, int] | None:
+    """(day, month) when a whole turn names one day of a month and nothing else — «el 30 de
+    septiembre», «¿y el 30 de septiembre?» — with no year; None otherwise (F2's months, for a day).
+    """
+    folded = spanish.folded(sentence)
+    days = tuple(_A_DAY_SAID.finditer(folded))
+    if len(days) != 1:
+        return None
+    day, month = days[0].group("day"), days[0].group("month")
+    words = _A_TOKEN.findall(folded)
+    if any(word not in {day, month, "dia"} and word not in _BESIDE_THE_MONTHS for word in words):
+        return None
+    return int(day), _MONTH_NUMBER[month]
+
+
+def a_month_within(window: AbsoluteRange, month: int) -> AbsoluteRange | None:
+    """The `month` a range covers, or None when it covers none of it (validation fix 2, M-3).
+
+    A range in view says which year its months are in better than the year it ends in: November in
+    November 2025 to February 2026 is 2025's. The latest one when the range covers two.
+    """
+    for in_year in range(window.end.year, window.start.year - 1, -1):
+        candidate = whole_month(in_year, month)
+        if candidate.start <= window.end and candidate.end >= window.start:
+            return candidate
+    return None
+
+
 def year_in_view(window: Window, today: date) -> int:
     """The calendar year a window ends in, which is the year a month named after it belongs to.
 
