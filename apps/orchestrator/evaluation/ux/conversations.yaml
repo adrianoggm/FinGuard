@@ -193,14 +193,14 @@ episodes:
         mechanism: intent
         route: QUERY
         ran:
-          - {window: '2026-07-01..2026-07-31', categories: [RESTAURANTS]}
           - {window: '2026-06-01..2026-06-30', categories: [RESTAURANTS]}
+          - {window: '2026-07-01..2026-07-31', categories: [RESTAURANTS]}
       - say: y en gasolina?
         mechanism: comparison
         route: QUERY
         ran:
-          - {window: '2026-07-01..2026-07-31', categories: [TRANSPORT_FUEL]}
           - {window: '2026-06-01..2026-06-30', categories: [TRANSPORT_FUEL]}
+          - {window: '2026-07-01..2026-07-31', categories: [TRANSPORT_FUEL]}
       - say: ahora solo julio de 2026
         mechanism: comparison
         route: QUERY
