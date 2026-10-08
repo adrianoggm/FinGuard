@@ -1,0 +1,2595 @@
+# FinGuard GENERALIZATION set: conversations that measure two conversation engines on wording
+# and on combinations of mechanisms they were not built from.
+#
+# Generated on 2026-10-09 by an agent that never saw either engine's code. It read only
+# evaluation/engine/regression/conversations.yaml, evaluation/engine/regression/ux.yaml, the
+# skill .claude/skills/finguard-real-conversation/SKILL.md (rubric and mechanism tags) and
+# evaluation/real/README.md.
+#
+# FROZEN. No engine is ever tuned on what is written here, and no expectation is ever edited to
+# make a turn pass: a failure is fixed in the engine, never in this file.
+#
+# Same schema as the regression set: `conversations:` of {name, goal, turns: [{say, expect:
+# {mechanism, route?, want}}]}. `mechanism` is one of the skill's tags; `route` is given when the
+# kind of answer is not in doubt; `want` (Spanish) is what a good assistant does, for the judge,
+# never what any engine does today. The holder is Laura; today is 2026-10-08 (a Thursday), there
+# are movements up to yesterday and the history starts in February 2025.
+#
+# (a) `<name>-v` and `ux-<name>-v`: one paraphrased variant of each of the 23 regression
+#     conversations and each of the 10 ux episodes: same goal, same number of turns, same intent
+#     per turn, different words. The ux `route` + `ran` are translated into `want`.
+# (b) `combo-<topic>`: new conversations of 5-9 turns, each composing three or more mechanisms in
+#     orders the regression set does not use.
+#
+# No turn says «sí», «vale», «ok» or «confirmo» after a payment, transfer or bizum preview: a goal
+# that ends in a payment is met at a correct preview and a «no».
+conversations:
+  # =============================================================================================
+  # (a) Variants of the regression conversations
+  # =============================================================================================
+  - name: gimnasio-ultimamente-v
+    goal: Saber cuánto se ha gastado en el gimnasio últimamente, en todas sus cuentas.
+    turns:
+      - say: "oye y ultimamente cuanto me he dejado en el gimnasio?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Gimnasio en los últimos 30 días («últimamente»), en todas las cuentas, diciendo la
+            ventana; sin preguntar ni el periodo ni la cuenta.
+      - say: "en todas las cuentas porfa"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Gimnasio, la misma ventana, todas las cuentas. Si quedaba una pregunta abierta, la
+            respuesta la completa y solo se pregunta lo que falte, nombrando el gimnasio. Nunca el
+            saldo.
+      - say: "amplialo a 3 meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Gimnasio en los últimos tres meses, en todas las cuentas.
+
+  - name: gimnasio-meses-v
+    goal: Saber lo gastado en el gimnasio estos meses y luego qué clases tiene su gimnasio.
+    turns:
+      - say: "hola, cuanto me he gastado en el gimnacio estos ultimos meses?"
+        expect:
+          mechanism: intent
+          want: >-
+            Gimnasio pese a «gimnacio». «Estos últimos meses» no dice cuántos: vale preguntarlo
+            nombrando el gimnasio, o asumir una ventana y decirla. Nunca pregunta la cuenta.
+      - say: "todas las cuentas"
+        expect:
+          mechanism: pending_resolution
+          want: >-
+            Conserva el gimnasio y la ventana (o la pregunta de cuántos meses) y lo extiende a
+            todas las cuentas. Nunca el saldo.
+      - say: "gimnasio he dicho!!"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Gimnasio (corrige el tema si se había leído otra cosa), con la misma ventana y
+            cuentas, y la cifra.
+      - say: "sacamelo por categorias"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El gasto de la misma ventana por categoría; la ventana y las cuentas no se pierden.
+      - say: "y en ocio cuanto?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Ocio, con la misma ventana y cuentas.
+      - say: "oye y cual es mi gimnasio? el que me cobra"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            El gimnasio que aparece en sus movimientos (el comercio, p. ej. Altafit), sacado de
+            los datos y sin inventar.
+      - say: "y q clases dan en el altafit?"
+        expect:
+          mechanism: intent
+          route: ACTIVITIES
+          want: >-
+            Las clases de Altafit por el agente de actividades, o una negativa clara si no está
+            disponible. Nunca una cifra de gasto.
+      - say: "y de boxeo?"
+        expect:
+          mechanism: follow_up
+          route: ACTIVITIES
+          want: >-
+            Las clases de boxeo de Altafit (filtra la oferta anterior); no lo lee como comercio
+            ni como categoría.
+
+  - name: spotify-llevo-v
+    goal: Saber cuánto lleva gastado en Spotify, en todas sus cuentas.
+    turns:
+      - say: "q llevo pagao de spotify?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Spotify en lo que va de año («llevo pagao»), en todas las cuentas, diciendo la
+            ventana; sin preguntar ni el periodo ni la cuenta.
+      - say: "en lo que va de 2026"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Spotify este año (2026). Si quedaba abierta la pregunta de la cuenta, conserva el año
+            y pregunta solo la cuenta: no repite la misma pregunta perdiendo el periodo.
+      - say: "de todas las cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Spotify este año en todas las cuentas. Nunca el saldo.
+
+  - name: transfer-then-compare-v
+    goal: Empezar un traspaso a la hucha, cambiar de idea y comparar la gasolina de dos meses.
+    turns:
+      - say: "quiero mover algo de pasta a la hucha"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Traspaso a la hucha que pregunta cuánto; no mueve dinero.
+      - say: "espera, en gasolina gaste mas en julio o en junio?"
+        expect:
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Deja el traspaso y compara la gasolina de junio con la de julio (las dos cifras y la
+            diferencia); no lo lee como importe ni como concepto del traspaso.
+      - say: "en todas las cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            La comparación de gasolina en todas las cuentas. Nunca el saldo ni el traspaso.
+
+  - name: marta-ella-pago-v
+    goal: Ver lo que se han mandado con Marta este mes y luego mandarle 20 €, y echarse atrás.
+    turns:
+      - say: "este mes cuanto le he enviado a marta?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo enviado a Marta este mes.
+      - say: "y ella a mi cuanto?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Marta este mes: la misma persona y ventana con la dirección invertida;
+            sin preguntar el periodo.
+      - say: "bueno, quiero pasarle 20€ a marta solis vega"
+        expect:
+          mechanism: interruption
+          route: PAYMENT
+          want: >-
+            Vista previa de un pago de 20,00 € a Marta Solís Vega que pide confirmación; no
+            ejecuta nada.
+      - say: "no, mejor no"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Cancela el pago y lo dice; no se mueve dinero.
+
+  - name: comparacion-gasolina-v
+    goal: Comparar junio y julio, primero en restaurantes y luego en gasolina.
+    turns:
+      - say: "comparame junio y julio en restaurantes"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Restaurantes en junio frente a julio, con las dos cifras y la diferencia.
+      - say: "y la gasolina?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en junio frente a julio (mantiene los dos meses, cambia la categoría).
+      - say: "pasamelo a %"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La misma comparación de gasolina expresada en porcentaje.
+      - say: "y de julio solo?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Gasolina en julio, una sola cifra.
+
+  - name: olvidalo-v
+    goal: Preguntar por el súper, corregirse, abandonar y acabar preguntando el saldo.
+    turns:
+      - say: "q me gaste el mes pasado en el supermercao"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado el mes pasado pese a «supermercao», en todas las cuentas.
+      - say: "no no, eso no era"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior (o pregunta qué quería decir); sin cifra y sin
+            buscar un comercio.
+      - say: "la gasolina"
+        expect:
+          mechanism: intent
+          want: >-
+            Gasolina: o el mes pasado (corrigiendo el tema) o la pregunta del periodo nombrando la
+            gasolina. Nunca el súper ni «gasolina» como comercio desconocido.
+      - say: "nada, dejalo estar"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo pendiente y lo dice en una frase; no busca un comercio llamado «dejalo
+            estar».
+      - say: "cuanta pasta tengo?"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de todas las cuentas («pasta» es dinero), sin ventana heredada.
+
+  - name: suscripciones-v
+    goal: Ver lo gastado en suscripciones y acotarlo a un servicio y a otro mes sin perder el resto.
+    turns:
+      - say: "en los ultimos nueve meses cuanto he pagado de suscripciones?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Suscripciones en los últimos 9 meses, en todas las cuentas, sin preguntar la cuenta.
+      - say: "solo lo de netflix"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Netflix en los mismos 9 meses.
+      - say: "y en lo que va de mes?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Netflix este mes.
+      - say: "perdona, spotify queria decir"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Spotify este mes (corrige el servicio y conserva el mes).
+      - say: "y el mes de antes?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Spotify el mes pasado (septiembre de 2026).
+      - say: "genial, gracias!"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: >-
+            Una respuesta de cortesía breve, sin cifra ni pregunta.
+
+  - name: gimnasio-marta-v
+    goal: >-
+      Saber cuánto cuesta el gimnasio y después pagar 20 € a Marta; parar en una vista previa
+      correcta y decir «no».
+    turns:
+      - say: "el gimnasio cuanto me sale al mes?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Lo que cuesta el gimnasio al mes (el cargo mensual, p. ej. Altafit), en todas las
+            cuentas, diciendo la ventana; sin preguntar la cuenta.
+      - say: "en todas las cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            El gimnasio en todas las cuentas: completa la pregunta de la cuenta si quedaba abierta,
+            o mantiene la misma consulta si ya era en todas. Nunca el saldo.
+      - say: "envia 20 euros a marta"
+        expect:
+          mechanism: intent
+          route: PAYMENT
+          want: >-
+            Un pago de 20,00 € a Marta: hay dos contactos con ese nombre, así que pregunta cuál
+            nombrando los dos (Marta Ruiz Gómez y Marta Solís Vega). No ejecuta nada.
+      - say: "a marta ruiz"
+        expect:
+          mechanism: pending_resolution
+          route: PAYMENT
+          want: >-
+            Elige a Marta Ruiz Gómez y muestra la vista previa de 20,00 € que pide confirmación;
+            no ejecuta nada.
+      - say: "no, cancela"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Cancela el pago y lo dice; no se mueve dinero.
+
+  - name: comparar-meses-v
+    goal: Comparar dos meses y después cambiar la categoría de la comparación.
+    turns:
+      - say: "restaurantes, agosto vs septiembre, cuanto gaste?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Restaurantes en agosto frente a septiembre de 2026, con las dos cifras y la
+            diferencia, en todas las cuentas y diciéndolo; sin preguntar la cuenta.
+      - say: "todas las cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            La misma comparación de restaurantes en todas las cuentas: completa la pregunta de la
+            cuenta si quedaba abierta, o la deja igual. Nunca el saldo ni pierde un mes.
+      - say: "y del supermercado?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Supermercado en agosto frente a septiembre de 2026 (mantiene los dos meses y cambia la
+            categoría), con las dos cifras y la diferencia; sin preguntar el periodo.
+      - say: "agosto y septiembre igual que antes"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Supermercado en agosto frente a septiembre de 2026: completa una pregunta abierta o
+            repite la misma comparación. No pregunta el año, que ya era 2026.
+      - say: "del 2026"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Supermercado en agosto frente a septiembre de 2026: «del 2026» completa una pregunta
+            del año si quedaba, y si no, deja la misma comparación. Nunca «Sigo sin tener claro el
+            periodo».
+      - say: "super septiembre 2026 contra agosto 2026"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado en septiembre frente a agosto de 2026, con las dos cifras y la
+            diferencia, en todas las cuentas.
+      - say: "y en ocio q?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Ocio en los mismos dos meses, agosto y septiembre de 2026 (mantiene los dos meses y
+            cambia la categoría) pese a la «q» final; sin preguntar el periodo.
+      - say: "agosto y septiembre, los de 2026"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Ocio en agosto frente a septiembre de 2026: completa la pregunta del periodo si
+            quedaba, o repite la misma comparación. Nunca vuelve al supermercado ni a un solo mes.
+
+  - name: mandado-recibido-v
+    goal: >-
+      Saber cuánto le he enviado a alguien este mes, después cuánto me ha enviado esa persona a
+      mí, y luego algo totalmente distinto.
+    turns:
+      - say: "cuanto le he enbiado a marta ruiz este mes?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Lo enviado a Marta Ruiz este mes pese a «enbiado», en todas las cuentas; sin
+            preguntar la cuenta. Si no hay nada, lo dice.
+      - say: "en todas las cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo enviado a Marta Ruiz este mes en todas las cuentas: completa la pregunta de la
+            cuenta si quedaba abierta, o mantiene la misma consulta. Nunca el saldo.
+      - say: "mejor los ultimos 3 meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo enviado a Marta Ruiz en los últimos tres meses, en todas las cuentas.
+      - say: "y ella cuanto me ha pasado?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Marta Ruiz en los últimos tres meses: la misma persona y ventana con la
+            dirección invertida; sin preguntar el periodo.
+      - say: "en esos 3 meses"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo recibido de Marta Ruiz en los últimos 3 meses: completa la pregunta del periodo si
+            quedaba, o confirma la misma ventana. Nunca vuelve a lo enviado.
+      - say: "que no, lo que he recibido de ella"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Marta Ruiz (la dirección invertida) en la misma ventana de 3 meses; sin
+            preguntar el periodo.
+      - say: "bah, da igual. que saldo tiene la hucha?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: >-
+            Deja lo que estuviera pendiente y da el saldo de la Hucha.
+      - say: "y la cuenta corriente?"
+        expect:
+          mechanism: slot_carryover
+          route: BALANCE
+          want: >-
+            El saldo de la Cuenta corriente (sigue siendo una pregunta de saldo); no reabre la
+            consulta de Marta.
+
+  - name: suscripciones-olvidalo-v
+    goal: Preguntar por las suscripciones, corregirse y después abandonar («olvídalo»).
+    turns:
+      - say: "q pago de suscripciones"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Suscripciones en lo que va de mes (o la ventana que asuma, diciéndola), en todas las
+            cuentas; sin preguntar la cuenta.
+      - say: "de todas mis cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Suscripciones en la misma ventana en todas las cuentas: completa la pregunta de la
+            cuenta si quedaba abierta, o mantiene la misma consulta. Nunca el saldo.
+      - say: "perdon, me referia al mes pasado"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Suscripciones el mes pasado, en todas las cuentas (corrige la ventana y conserva el
+            tema).
+      - say: "buf, nada, olvida"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior; no repite la consulta ni da una cifra.
+      - say: "q no, que lo dejes"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo anterior en una frase; no lo lee como una petición de cálculo ni repite la
+            cifra.
+      - say: "olvidalo ya"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo pendiente y lo dice en una frase; ni repite la consulta ni da una cifra.
+
+  - name: super-restaurantes-gasolina-v
+    goal: Comparar dos meses y después cambiar la categoría de la comparación.
+    turns:
+      - say: "en el súper cuando gaste mas, en agosto o en julio?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado en julio frente a agosto de 2026, con las dos cifras y la diferencia, en
+            todas las cuentas.
+      - say: "y los restaurantes"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en julio frente a agosto de 2026 (mantiene los dos meses y cambia la
+            categoría).
+      - say: "no perdona, gasolina"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en julio frente a agosto de 2026: corrige la categoría y conserva la
+            comparación. Nunca un solo mes.
+      - say: "de julio y agosto eh"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Gasolina en julio frente a agosto de 2026, el año de la comparación; no pregunta el
+            año.
+      - say: "de este año"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Si quedaba abierta la pregunta del año, «de este año» la completa: gasolina en julio
+            frente a agosto de 2026. Nunca todo el gasto del año.
+      - say: "gasolina agosto vs julio"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Gasolina en agosto frente a julio de 2026, con las dos cifras y la diferencia.
+      - say: "y lo de salud?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Salud en julio frente a agosto de 2026 (mantiene los dos meses y cambia la categoría);
+            no pasa a este mes.
+      - say: "los mismos meses de antes, julio y agosto"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Salud en julio frente a agosto de 2026, los meses de antes; no pregunta el año.
+
+  - name: carmen-mandado-recibido-v
+    goal: >-
+      Saber cuánto le he enviado a alguien este mes, después cuánto me ha enviado esa persona a mí,
+      y luego algo totalmente distinto.
+    turns:
+      - say: "este mes cuanto le he pasado a carmen"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo enviado a Carmen este mes, en todas las cuentas y sin preguntar la cuenta. Si no hay
+            nada, lo dice.
+      - say: "amplia a tres meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo enviado a Carmen en los últimos tres meses.
+      - say: "y ella q me ha mandado a mi?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen («ella») en los mismos tres meses: la misma persona y ventana con
+            la dirección invertida; sin preguntar el periodo.
+      - say: "en esos tres meses igual"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen en los últimos tres meses: completa la pregunta del periodo si
+            quedaba abierta, o repite la misma consulta. Nunca «Sigo sin tener claro el periodo».
+      - say: "3 ultimos meses"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen en los últimos 3 meses. Nunca todo el gasto de esos meses.
+      - say: "no, lo q carmen me ha enviado a mi"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen en los mismos tres meses; sin preguntar el periodo.
+      - say: "bueno da igual. q suscripciones me cobran?"
+        expect:
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Deja lo pendiente y dice qué suscripciones se le cobran (los comercios), diciendo la
+            ventana.
+
+  - name: suscripciones-dejalo-v
+    goal: Preguntar por las suscripciones, corregirse y después abandonar («olvídalo»).
+    turns:
+      - say: "cuánto me gasto en suscripciones"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Suscripciones en lo que va de mes (o la ventana que asuma, diciéndola), en todas las
+            cuentas; sin preguntar la cuenta.
+      - say: "uy, el mes pasado queria decir"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Suscripciones el mes pasado (corrige la ventana y conserva el tema).
+      - say: "da igual, déjalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior; no lo lee como una petición de cálculo ni da una
+            cifra.
+      - say: "que no, que lo olvides"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo anterior en una frase; ni «Eso no puedo calcularlo todavía» ni una cifra.
+      - say: "olvidalo!!"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo pendiente y lo dice en una frase; ni repite la consulta ni da una cifra.
+
+  - name: saldo-semana-anterior-v
+    goal: Saber el saldo de una cuenta, después lo gastado esta semana y luego «¿y la anterior?».
+    turns:
+      - say: "q saldo me queda en la cuenta corriente"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de la Cuenta corriente.
+      - say: "y esta semana cuanto me he fundido?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo gastado esta semana («me he fundido»), diciendo en qué cuentas; no repite el
+            saldo.
+      - say: "y la semana de antes?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo gastado la semana pasada: la misma consulta con la semana anterior; sin preguntar
+            el periodo.
+      - say: "pues la semana pasada"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo gastado la semana pasada: completa la pregunta del periodo si quedaba abierta, o
+            repite la misma consulta.
+
+  - name: gym-marta-v
+    goal: >-
+      Saber cuánto cuesta el gimnasio y después pagar 20 € a Marta; parar en una vista previa
+      correcta y decir «no».
+    turns:
+      - say: "cuanto pago al mes de gym?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            «gym» es el gimnasio: lo que cuesta al mes (el cargo mensual, p. ej. Altafit), en todas
+            las cuentas y diciendo la ventana; sin preguntar el periodo y sin leerlo como todas las
+            suscripciones.
+      - say: "solo el gym, del mes pasado"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            El gimnasio el mes pasado: completa la pregunta del periodo si quedaba abierta, y «solo
+            el gym» deja fuera el resto de suscripciones.
+      - say: "que no, solo el gimnasio"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Corrige el tema al gimnasio y conserva el mes pasado: una sola cifra, sin preguntar el
+            periodo.
+      - say: "solo gimnasio te digo"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            La misma corrección, insistida con otras palabras tras un error: el gimnasio el mes
+            pasado, sin preguntar el periodo.
+      - say: "el gimnasio nada mas"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            La misma corrección, insistida con otras palabras tras un error: el gimnasio el mes
+            pasado, sin preguntar el periodo.
+      - say: "el mes pasado cuanto pagué de gimnasio?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            El gimnasio el mes pasado, en todas las cuentas, diciendo la ventana.
+      - say: "bueno. mandale 20 pavos a marta ruiz"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Vista previa de un pago de 20,00 € («20 pavos») a Marta Ruiz Gómez que pide
+            confirmación; no ejecuta nada.
+      - say: "no, no lo mandes"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Cancela el pago y lo dice; no se mueve dinero.
+
+  - name: comparar-mayo-junio-v
+    goal: Comparar dos meses y después cambiar la categoría de la comparación.
+    turns:
+      - say: "super, mayo contra junio"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado en mayo frente a junio de 2026, con las dos cifras y la diferencia, en
+            todas las cuentas.
+      - say: "ok, y igual con restaurantes"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en mayo frente a junio de 2026 (mantiene los dos meses y cambia la
+            categoría); sin preguntar el periodo.
+      - say: "los mismos meses que antes, mayo y junio"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Restaurantes en mayo frente a junio de 2026: completa la pregunta del periodo si
+            quedaba abierta, sin perder ni volver a preguntar la categoría.
+      - say: "restaurantes he dicho"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Restaurantes en mayo frente a junio de 2026, como comparación de dos meses; nunca una
+            sola suma de los dos.
+      - say: "pero comparando, mayo vs junio"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en mayo frente a junio de 2026, con las dos cifras y la diferencia.
+      - say: "y gasolina q tal?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en mayo frente a junio de 2026 pese al «q tal» final (mantiene los dos meses
+            y cambia la categoría); sin preguntar el periodo.
+      - say: "gasolina, mayo y junio comparados"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Gasolina en mayo frente a junio de 2026, con las dos cifras y la diferencia.
+      - say: "y de salud?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Salud en mayo frente a junio de 2026 (mantiene los dos meses y cambia la categoría).
+
+  - name: aitor-mandado-recibido-v
+    goal: >-
+      Saber cuánto le he enviado a alguien este mes, después cuánto me ha enviado esa persona a
+      mí, y luego algo totalmente distinto.
+    turns:
+      - say: "q le he mandado a aitor este mes"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo enviado a Aitor (el contacto Aitor Beltrán Díaz) este mes, en todas las cuentas,
+            como persona y no como comercio ni solo en bizum; si no hay nada, lo dice nombrándolo.
+      - say: "no, a aitor, la persona"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Corrige el tema a lo enviado a Aitor, la persona, este mes; la respuesta lo nombra
+            como persona («a Aitor») y no ofrece «buscar sin comercio».
+      - say: "y él a mí q me ha pasado?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Aitor este mes: la misma persona y ventana con la dirección invertida,
+            y la respuesta dice que es lo recibido («de Aitor»).
+      - say: "nada, da igual. cuanto tengo en total sumando todo?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: >-
+            Deja lo anterior y da el saldo de todas las cuentas.
+      - say: "nada, da igual. cuanto tengo en total sumando todo?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: >-
+            La misma frase, reenviada tras un error: deja lo anterior y da el saldo de todas las
+            cuentas.
+
+  - name: restaurantes-porcentaje-ocio-v
+    goal: Comparar dos meses y después cambiar la categoría de la comparación.
+    turns:
+      - say: "cuando gasté más en restaurantes, en junio o en julio?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Restaurantes en junio frente a julio de 2026, con las dos cifras y la diferencia, en
+            todas las cuentas; sin preguntar.
+      - say: "y en porcentaje cuanto es?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La misma comparación de restaurantes en porcentaje, de junio a julio de 2026 y con la
+            palabra que corresponde; nunca que no puede identificar las dos cifras que acaba de
+            mostrar.
+      - say: "en %"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La comparación de restaurantes en porcentaje, de junio a julio de 2026 y con la palabra
+            que corresponde.
+      - say: "y ocio?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Ocio en junio frente a julio de 2026: mantiene los dos meses de la comparación que el
+            porcentaje expresaba y cambia la categoría; sin preguntar el periodo.
+      - say: "como antes, junio y julio"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Ocio en junio frente a julio de 2026: completa la pregunta del periodo si quedaba
+            abierta, o repite la misma comparación; no pregunta el año, que «como antes» ya dice.
+      - say: "de 2026"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Ocio en junio frente a julio de 2026: «de 2026» completa la pregunta del año si quedaba
+            abierta, o deja la misma comparación. Nunca todo el año ni «Sigo sin tener claro el
+            periodo».
+      - say: "perdon, era gasolina"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en junio frente a julio de 2026: corrige la categoría y conserva la
+            comparación. Nunca un solo mes.
+      - say: "y solo de junio?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en junio de 2026, una sola cifra.
+
+  - name: super-porcentaje-euros-v
+    goal: Comparar dos meses y luego cambiar la categoría.
+    turns:
+      - say: "comparame agosto y septiembre en el supermercado"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado en agosto frente a septiembre de 2026, con las dos cifras y la diferencia,
+            en todas las cuentas; sin preguntar.
+      - say: "lo mismo con restaurantes"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en agosto frente a septiembre de 2026 (mantiene los dos meses y cambia la
+            categoría); sin preguntar el periodo.
+      - say: "y la gasofa?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina («gasofa») en agosto frente a septiembre de 2026 (mantiene los dos meses y
+            cambia la categoría); sin preguntar el periodo ni buscar un comercio «gasofa».
+      - say: "eso en porcentaje"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La comparación de gasolina en porcentaje, de agosto a septiembre de 2026 y con la
+            palabra que corresponde.
+      - say: "y para ocio?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Ocio en agosto frente a septiembre de 2026: mantiene los dos meses y cambia la
+            categoría. Si el porcentaje no se puede calcular porque un mes es cero, da igualmente
+            las cifras de los dos meses (o dice que no hubo gasto de ocio en ninguno); nunca solo
+            que la variación no está definida.
+      - say: "dimelo en euros"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La misma comparación de ocio de agosto y septiembre de 2026 en euros, con las dos
+            cifras y la diferencia; sin preguntar el periodo.
+      - say: "los mismos dos meses de antes"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Ocio en agosto frente a septiembre de 2026: completa la pregunta del periodo si
+            quedaba abierta, o repite la misma comparación. Nunca todo el gasto ni pregunta el año.
+      - say: "no, ocio solo"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Ocio en agosto frente a septiembre de 2026: corrige (o confirma) la categoría y
+            conserva la comparación. Nunca este mes ni un solo mes.
+
+  - name: javi-carmen-pasado-v
+    goal: >-
+      Saber lo que he enviado a alguien este mes, luego lo que me ha enviado esa persona, y luego
+      otra cosa distinta.
+    turns:
+      - say: "q le he mandado a javi este mes"
+        expect:
+          mechanism: intent
+          want: >-
+            Javi no está entre los contactos (Aitor, Carmen y las dos Martas): lo enviado este mes
+            a una persona llamada Javi si hay movimientos con ese nombre, o dice que no tiene
+            ningún contacto Javi y cuáles tiene. Respeta «este mes» sin preguntarlo y no trata a
+            Javi como un comercio.
+      - say: "que este mes, ya te lo dije"
+        expect:
+          mechanism: pending_resolution
+          want: >-
+            Este mes, sobre lo enviado a Javi como persona: completa la pregunta si quedaba
+            abierta, o repite lo mismo. Nunca «gastos en Javi» como comercio ni «buscar sin
+            comercio».
+      - say: "no perdona, a carmen"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Corrige la persona a Carmen (Carmen Nieto Lara) y conserva este mes: lo enviado a
+            Carmen, como persona; si no hay nada, lo dice nombrándola.
+      - say: "y lo q ella me ha mandado?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen este mes: la misma persona y ventana con la dirección invertida;
+            sin preguntar el periodo.
+      - say: "amplialo a 3 meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen en los últimos tres meses.
+      - say: "bueno nada. cuanto dinero tengo en total?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: >-
+            Deja lo anterior y da el saldo de todas las cuentas.
+
+  - name: gym-netflix-dejalo-v
+    goal: Preguntar por las suscripciones, corregirse y después abandonar.
+    turns:
+      - say: "al mes cuanto se me va en suscripciones?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Lo que paga de suscripciones al mes (lo que va de mes o el cargo mensual, diciendo la
+            ventana), en todas las cuentas; sin preguntar.
+      - say: "solo el gimnasio"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Solo el gimnasio (Altafit) en la misma ventana.
+      - say: "y netflix tambien, no solo el gimnasio"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El gimnasio y Netflix juntos en la misma ventana: amplía a los dos (con la cifra de
+            cada uno si los separa). Nunca solo el gimnasio ni una categoría que nadie dijo.
+      - say: "bah da igual, dejalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior; no lo lee como una petición de cálculo ni da una
+            cifra.
+      - say: "olvidalo, nada"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo pendiente y lo dice en una frase; ni repite la consulta ni da una cifra.
+
+  # =============================================================================================
+  # (a) Variants of the ux battery episodes (`why` is the goal; `route` + `ran` are in `want`)
+  # =============================================================================================
+  - name: ux-01-suscripciones-v
+    goal: Cambiar comercio y periodo sin perder el alcance de la consulta.
+    turns:
+      - say: "cuanto he pagado de suscripciones en los ultimos 9 meses"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            La categoría suscripciones en los últimos 9 meses, en todas las cuentas y diciendo la
+            ventana; sin preguntar ni el periodo ni la cuenta.
+      - say: "de netflix solo"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Netflix en los mismos últimos 9 meses: la ventana no cambia y deja de ser toda la
+            categoría para ser solo ese comercio.
+      - say: "y en lo que va de mes?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Netflix este mes (octubre de 2026, lo que va de mes): conserva el comercio y cambia la
+            ventana.
+      - say: "uy no, spotify"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Spotify este mes: sustituye Netflix por Spotify (no los suma) y conserva el mes.
+      - say: "y en el mes anterior?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Spotify el mes pasado (septiembre de 2026): conserva el comercio y cambia la ventana.
+      - say: "mil gracias"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: >-
+            Una respuesta de cortesía breve, sin cifra ni pregunta.
+
+  - name: ux-02-cambio-de-tema-v
+    goal: Intercalar saldo y agenda antes de volver al gasto.
+    turns:
+      - say: "q me gaste en el supermercado en julio de 2026"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            La categoría supermercado en julio de 2026 (del 1 al 31 de julio), en todas las
+            cuentas; sin preguntar.
+      - say: "cuanto dinero hay en la hucha?"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de la Hucha; no le aplica julio ni el supermercado.
+      - say: "que contactos tengo guardados?"
+        expect:
+          mechanism: intent
+          route: CONTACTS
+          want: >-
+            La lista de contactos de la agenda (Marta Ruiz Gómez, Marta Solís Vega, Aitor Beltrán
+            Díaz, Carmen Nieto Lara, Elena Prat Mas, Sergio Vidal Pons); sin cifras ni saldo.
+      - say: "vuelvo al super: y junio de 2026?"
+        expect:
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Vuelve al supermercado y lo da en junio de 2026 (del 1 al 30 de junio): la categoría
+            de antes del saldo y la agenda, con el mes nuevo; nada del saldo ni de los contactos.
+      - say: "solo lo de mercadona"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Mercadona en junio de 2026: conserva junio y estrecha al comercio.
+      - say: "y en julio del 2026 q?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Mercadona en julio de 2026: conserva el comercio y cambia el mes.
+
+  - name: ux-03-correcciones-v
+    goal: Corregir fecha, categoria y eliminar el filtro sin alterar la fecha.
+    turns:
+      - say: "q gaste en julio 2026"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Todo el gasto de julio de 2026 (del 1 al 31 de julio), sin filtro de categoría ni de
+            comercio.
+      - say: "uy no, junio 2026"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Todo el gasto de junio de 2026 (del 1 al 30 de junio): corrige el mes y sigue sin
+            filtros.
+      - say: "solo lo de gasolina"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Gasolina en junio de 2026: añade la categoría y conserva junio.
+      - say: "no, restaurantes mejor"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Restaurantes en junio de 2026: sustituye la gasolina (no la suma) y conserva junio.
+      - say: "quitame los filtros, todo lo de junio 2026"
+        expect:
+          mechanism: reset
+          route: QUERY
+          want: >-
+            Todo el gasto de junio de 2026 sin ninguna categoría ni comercio: quita los filtros y
+            conserva junio.
+      - say: "y cuantos movimientos hay?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El número de movimientos de ese gasto de junio de 2026, sin filtros: un recuento, no
+            un importe, de la misma consulta.
+
+  - name: ux-04-aclaraciones-v
+    goal: Completar la cuenta solicitada y seguir modificando la consulta.
+    turns:
+      - say: "el mes pasado q me gaste en supermercados"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado el mes pasado (septiembre de 2026), en todas las cuentas y diciéndolo;
+            sin preguntar la cuenta.
+      - say: "en todas las cuentas"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Supermercado el mes pasado en todas las cuentas: completa la pregunta de la cuenta si
+            quedaba, o deja la misma consulta. Nunca el saldo.
+      - say: "desglosamelo por tienda"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El supermercado del mes pasado agrupado por comercio («por tienda»: Mercadona, Lidl,
+            Día…); conserva la ventana y la categoría.
+      - say: "y en lo que llevamos de mes"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El supermercado de este mes agrupado por comercio: conserva la agrupación y la
+            categoría y cambia la ventana.
+      - say: "cambialo a por categorias"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            El gasto de este mes agrupado por categoría: quita el filtro de supermercado (agrupar
+            por categoría lo pide) y conserva este mes.
+      - say: "y de saldo cuanto tengo?"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de todas las cuentas, sin ventana heredada ni cifras de gasto.
+
+  - name: ux-05-erratas-v
+    goal: Inferir vocabulario informal sin inventar filtros.
+    turns:
+      - say: "cuanto me gaste en el supemercado el mes pasdo"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado el mes pasado pese a «supemercado» y «pasdo»; sin inventar ningún
+            comercio.
+      - say: "y en restaurates?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Restaurantes el mes pasado pese a «restaurates»: cambia la categoría, conserva la
+            ventana y no añade ningún comercio.
+      - say: "y esta semaan solo"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Restaurantes esta semana pese a «semaan»: conserva la categoría, cambia la ventana y
+            sin comercio.
+      - say: "y gasolna?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Gasolina esta semana pese a «gasolna»: conserva la semana, cambia la categoría y sin
+            comercio.
+      - say: "cuanot tengo"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de todas las cuentas pese a «cuanot»; sin ventana heredada.
+      - say: "grasias"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: >-
+            Una respuesta de cortesía breve pese a «grasias», sin cifra ni pregunta.
+
+  - name: ux-06-bizum-v
+    goal: Preparar, corregir y cancelar sin confirmar ningun pago.
+    turns:
+      - say: "mandale un bizun a marta solis vega"
+        expect:
+          mechanism: intent
+          route: PAYMENT
+          want: >-
+            Un bizum a Marta Solís Vega pese a «bizun»: pregunta el importe; no ejecuta nada.
+      - say: "20€"
+        expect:
+          mechanism: pending_resolution
+          route: PAYMENT
+          want: >-
+            Completa el importe: vista previa de un bizum de 20,00 € a Marta Solís Vega que pide
+            confirmación; no ejecuta nada.
+      - say: "mejor que sean 25"
+        expect:
+          mechanism: pending_resolution
+          route: PAYMENT
+          want: >-
+            Corrige el importe: vista previa nueva de 25,00 € a Marta Solís Vega que pide
+            confirmación; ni ejecuta nada ni deja también el de 20 €.
+      - say: "no, cancelalo"
+        expect:
+          mechanism: pending_resolution
+          route: PAYMENT
+          want: >-
+            Cancela el bizum y lo dice; no se mueve dinero.
+      - say: "cuanto me queda en total"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de todas las cuentas, sin descontar ningún bizum (no se envió nada).
+      - say: "gracias!!"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: >-
+            Una respuesta de cortesía breve, sin cifra ni pregunta.
+
+  - name: ux-07-consulta-u-operacion-v
+    goal: No confundir historial enviado, recibido y un nuevo pago.
+    turns:
+      - say: "q le he enviado a marta este mes?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo enviado a Marta este mes, como persona (gasto, no ingresos); con dos Martas en la
+            agenda vale separarlas, sumarlas diciéndolo o preguntar cuál nombrando a las dos.
+            Nunca un comercio ni un pago nuevo.
+      - say: "y ella a mi?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Marta este mes: la misma persona y ventana con la dirección invertida
+            (ingresos); sin preguntar el periodo.
+      - say: "bueno, quiero enviarle 20 € a marta"
+        expect:
+          mechanism: interruption
+          route: PAYMENT
+          want: >-
+            Un pago nuevo de 20,00 € a Marta, no una consulta: como hay dos, pregunta cuál
+            nombrando a Marta Ruiz Gómez y a Marta Solís Vega (o muestra la vista previa si ya
+            quedó claro cuál). No ejecuta nada.
+      - say: "no, nada, cancela"
+        expect:
+          mechanism: pending_resolution
+          route: PAYMENT
+          want: >-
+            Cancela el pago pendiente (esté en la pregunta de cuál Marta o en la vista previa) y
+            lo dice; no se mueve dinero.
+      - say: "dime mis contactos"
+        expect:
+          mechanism: intent
+          route: CONTACTS
+          want: >-
+            La lista de contactos de la agenda; sin cifras ni pago.
+      - say: "y cuanto dinero tengo"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de todas las cuentas.
+
+  - name: ux-08-comparaciones-v
+    goal: Cambiar la categoria conservando ambos periodos de una comparacion.
+    turns:
+      - say: "restaurantes junio 2026 vs julio 2026"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Restaurantes en junio frente a julio de 2026 (del 1 al 30 de junio y del 1 al 31 de
+            julio), con las dos cifras y la diferencia.
+      - say: "y de gasolina?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en junio frente a julio de 2026: conserva los dos meses y cambia la
+            categoría.
+      - say: "solo julio 2026"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en julio de 2026, una sola cifra: deja junio y conserva la gasolina.
+      - say: "desglosado por comercios"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El gasto de julio de 2026 agrupado por comercio (lo esperable, la gasolina de julio
+            por gasolinera); conserva julio de 2026 y no vuelve a la comparación.
+      - say: "y en junio del 2026?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            La misma agrupación por comercio en junio de 2026: cambia solo el mes.
+      - say: "perfecto, gracias"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: >-
+            Una respuesta de cortesía breve, sin cifra ni pregunta.
+
+  - name: ux-09-graficos-v
+    goal: Reformular un grafico y seguir consultando sus datos.
+    turns:
+      - say: "por categorias, q he gastado los 3 ultimos meses?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            El gasto de los últimos 3 meses agrupado por categoría, diciendo la ventana; los
+            grupos suman el total.
+      - say: "mejor mes a mes"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El gasto de los mismos últimos 3 meses agrupado por mes, sin filtro de categoría.
+      - say: "hazme un grafico de lineas"
+        expect:
+          mechanism: follow_up
+          route: VISUAL
+          want: >-
+            Un gráfico de líneas de esos mismos datos por mes: redibuja lo ya consultado sin
+            volver a pedir datos a la banca; las cifras son las de la respuesta anterior.
+      - say: "y julio xq sale tan alto?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Explica julio de 2026, el mes señalado en el gráfico: su gasto desglosado o sus
+            movimientos mayores, con la ventana del 1 al 31 de julio. Si julio no es el más alto,
+            lo dice sin inventar.
+      - say: "y de restaurantes en julio de 2026, solo eso?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Restaurantes en julio de 2026, una sola cifra.
+      - say: "muchas gracias"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: >-
+            Una respuesta de cortesía breve, sin cifra ni pregunta.
+
+  - name: ux-10-recuperacion-v
+    goal: Rechazar una respuesta y reiniciar con una consulta independiente.
+    turns:
+      - say: "q me deje en el super el mes pasado"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado el mes pasado (septiembre de 2026), en todas las cuentas.
+      - say: "eso no es lo que te pedi"
+        expect:
+          mechanism: reset
+          route: GUIDANCE
+          want: >-
+            Un acuse breve que deja lo anterior (o pregunta qué quería); sin cifra y sin buscar un
+            comercio.
+      - say: "queria decir gasolina, de este mes"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Gasolina este mes (lo que va de octubre de 2026): una consulta con su propia ventana y
+            categoría; nada del supermercado ni del mes pasado.
+      - say: "olvida eso"
+        expect:
+          mechanism: reset
+          route: GUIDANCE
+          want: >-
+            Deja lo pendiente en una frase, sin consultar la banca ni dar una cifra.
+      - say: "cuanto he cobrado este año"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Los ingresos de lo que va de 2026 («cobrado» es ingreso), sin categoría ni comercio
+            heredados de la gasolina.
+      - say: "y solo el mes pasado?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Los ingresos del mes pasado (septiembre de 2026): conserva la dirección de ingresos,
+            sin filtros.
+
+  # =============================================================================================
+  # (b) New combinations
+  # =============================================================================================
+  - name: combo-ocio-porcentaje-euros
+    goal: >-
+      Comparar dos meses, cambiar la categoría, pasarlo a porcentaje y a euros, quedarse con un
+      mes, abandonar y preguntar otra cosa.
+    turns:
+      - say: "compara el ocio de julio con el de agosto"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Ocio en julio frente a agosto de 2026, con las dos cifras y la diferencia, en todas las
+            cuentas; sin preguntar el año ni la cuenta.
+      - say: "y en restaurantes?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en julio frente a agosto de 2026: conserva los dos meses y sustituye el
+            ocio (no lo suma); sin preguntar el periodo.
+      - say: "cuanto es eso en porcentaje"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La variación de restaurantes de julio a agosto de 2026 en porcentaje, con la palabra
+            que corresponde (sube o baja); nunca que no sabe qué dos cifras comparar.
+      - say: "y en euros?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La misma comparación de restaurantes de julio y agosto de 2026 en euros, con las dos
+            cifras y la diferencia; sin preguntar nada y sin volver al ocio.
+      - say: "solo agosto"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Restaurantes en agosto de 2026, una sola cifra, la misma que la comparación dio para
+            agosto.
+      - say: "olvida todo eso"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior; sin cifra, sin repetir la consulta y sin buscar
+            un comercio.
+      - say: "cuanto llevo en ocio este año?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Ocio en lo que va de 2026 (desde el 1 de enero), en todas las cuentas; ni restaurantes
+            ni agosto heredados de antes del «olvida».
+
+  - name: combo-periodo-correccion-persona
+    goal: >-
+      Preguntar por una persona sin decir el periodo, contestar a la vez el periodo y una
+      corrección de dirección, y seguir con otra persona por referencia.
+    turns:
+      - say: "cuanto me ha mandado elena?"
+        expect:
+          mechanism: intent
+          want: >-
+            Lo recibido de Elena (Elena Prat Mas, un contacto, no un comercio). Sin periodo dicho,
+            vale asumir una ventana y decirla o preguntar el periodo nombrando a Elena; nunca
+            pregunta la cuenta.
+      - say: "en septiembre. bueno no, al reves: lo que le mande yo a ella"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo enviado a Elena Prat Mas en septiembre de 2026: «en septiembre» fija el periodo
+            (completa la pregunta si quedaba) y la corrección invierte la dirección; «ella» es
+            Elena. Nunca lo recibido ni otro mes.
+      - say: "y a sergio?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Lo enviado a Sergio Vidal Pons en septiembre de 2026: cambia la persona y conserva la
+            dirección (enviado) y el mes.
+      - say: "y el a mi"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Sergio («él») en septiembre de 2026: la misma persona y mes con la
+            dirección invertida; sin preguntar el periodo y sin volver a Elena.
+      - say: "amplia a los ultimos tres meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Sergio Vidal Pons en los últimos tres meses: conserva la persona y la
+            dirección y cambia solo la ventana.
+      - say: "muchas gracias"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: >-
+            Una respuesta de cortesía breve, sin cifra ni pregunta.
+
+  - name: combo-saldo-en-comparacion
+    goal: Comparar dos meses, preguntar un saldo a mitad y retomar la comparación donde se dejó.
+    turns:
+      - say: "transporte publico agosto vs septiembre"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Transporte público en agosto frente a septiembre de 2026, con las dos cifras y la
+            diferencia, en todas las cuentas; sin preguntar el año.
+      - say: "por cierto, cuanto tengo en la corriente?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: >-
+            El saldo de la Cuenta corriente; no le aplica agosto ni septiembre y no repite la
+            comparación.
+      - say: "vale, sigo con lo de antes: y en uber y cabify?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Uber y Cabify en agosto frente a septiembre de 2026: retoma la comparación de antes
+            del saldo, conserva los dos meses y cambia el filtro a esos dos comercios. Nunca un
+            saldo ni este mes.
+      - say: "y eso en porcentaje"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La variación de Uber y Cabify de agosto a septiembre de 2026 en porcentaje, con la
+            palabra que corresponde.
+      - say: "eso solo con la cuenta corriente"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            La misma comparación de Uber y Cabify (agosto frente a septiembre de 2026) limitada a
+            la Cuenta corriente, diciéndolo; nunca el saldo de la corriente.
+      - say: "y en todas otra vez"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            La misma comparación de Uber y Cabify, agosto frente a septiembre de 2026, de nuevo en
+            todas las cuentas.
+
+  - name: combo-hucha-todas
+    goal: >-
+      Mirar algo solo en la hucha, ampliarlo a todas las cuentas y alternar el alcance de cuentas
+      en consultas y en saldos.
+    turns:
+      - say: "cuantos intereses me ha dado la hucha este año?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Los intereses cobrados en la Hucha en lo que va de 2026 (ingresos de la categoría
+            intereses), solo en la Hucha y diciéndolo.
+      - say: "y en todas las cuentas?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Los intereses de 2026 en todas las cuentas: amplía el alcance y conserva el año, la
+            categoría y que son ingresos.
+      - say: "y el año pasado?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Los intereses de 2025 en todas las cuentas: cambia el año y conserva el alcance
+            ampliado y la categoría.
+      - say: "cuanto tengo ahora en la hucha"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo actual de la Hucha; sin 2025 ni intereses heredados.
+      - say: "y en todas?"
+        expect:
+          mechanism: slot_carryover
+          route: BALANCE
+          want: >-
+            El saldo de todas las cuentas (sigue siendo un saldo, ahora en todas); no reabre los
+            intereses.
+      - say: "y solo el fondo indexado?"
+        expect:
+          mechanism: slot_carryover
+          route: BALANCE
+          want: >-
+            El saldo del Fondo indexado, solo esa cuenta.
+      - say: "q he gastado este mes con la corriente?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            El gasto de este mes (octubre de 2026, hasta ayer) solo en la Cuenta corriente,
+            diciéndolo; no un saldo ni el fondo.
+
+  - name: combo-agrupar-filtrar-comercio
+    goal: >-
+      Ver el gasto de un mes por categoría, quedarse con dos categorías, pasarlo a comercios y
+      seguir con el comercio que más.
+    turns:
+      - say: "en que se me fue el dinero en septiembre? por categorias"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            El gasto de septiembre de 2026 agrupado por categoría, en todas las cuentas; los
+            grupos suman el total.
+      - say: "solo comida: super y restaurantes"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Septiembre de 2026 solo en supermercado y restaurantes (las dos categorías, sin el
+            resto), con la cifra de cada una; conserva el mes.
+      - say: "mejor por comercio"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Supermercado y restaurantes de septiembre de 2026 agrupados por comercio (Mercadona,
+            Lidl, Bar Manolo, Goiko…): cambia la agrupación y conserva el mes y el filtro de las
+            dos categorías.
+      - say: "y cual es el que mas?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            El comercio con más gasto de esa lista (supermercado y restaurantes, septiembre de
+            2026), nombrándolo con su cifra, la misma que en la lista.
+      - say: "y ese en agosto?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo gastado en ese mismo comercio en agosto de 2026: conserva el comercio señalado y
+            cambia el mes; una cifra.
+      - say: "comparalo con septiembre"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Ese comercio en agosto frente a septiembre de 2026, con las dos cifras y la
+            diferencia; la de septiembre coincide con la de la lista.
+
+  - name: combo-carmen-ida-vuelta
+    goal: >-
+      Ver lo enviado a una persona y lo recibido de ella, cambiar de persona e ir y volver de
+      dirección.
+    turns:
+      - say: "lo que le mandé a carmen desde junio, cuanto es?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo enviado a Carmen Nieto Lara desde el 1 de junio de 2026 hasta hoy, como persona y
+            no como comercio, en todas las cuentas; sin preguntar.
+      - say: "¿y ella a mí?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen desde junio de 2026: la misma persona y ventana con la dirección
+            invertida; sin preguntar el periodo.
+      - say: "y aitor?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Lo recibido de Aitor Beltrán Díaz desde junio de 2026: cambia la persona y conserva la
+            dirección (recibido) y la ventana.
+      - say: "y yo a el?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo enviado a Aitor desde junio de 2026: la misma persona y ventana, otra vez con la
+            dirección invertida.
+      - say: "y a carmen y a aitor juntos?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo enviado a Carmen y a Aitor desde junio de 2026, juntos (o con la cifra de cada
+            uno); conserva lo enviado y la ventana.
+      - say: "por meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo enviado a Carmen y Aitor desde junio de 2026 agrupado por mes (de junio a octubre);
+            los meses suman la cifra anterior.
+      - say: "bueno nada, cuanto tengo?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: >-
+            Deja lo anterior y da el saldo de todas las cuentas.
+
+  - name: combo-anio-heredado
+    goal: Preguntar por un mes del año pasado y seguir con meses sueltos que heredan ese año.
+    turns:
+      - say: "cuanto me gaste en fnac en noviembre del año pasado?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Fnac en noviembre de 2025, como comercio, en todas las cuentas; si no hay compras, lo
+            dice.
+      - say: "y en diciembre?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Fnac en diciembre de 2025: hereda el año de la respuesta anterior. Nunca diciembre de
+            2026, que aún no ha llegado.
+      - say: "y en decathlon ese mes?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Decathlon en diciembre de 2025: cambia el comercio y conserva el mes y el año.
+      - say: "comparalo con enero"
+        expect:
+          mechanism: comparison
+          want: >-
+            Decathlon en diciembre de 2025 frente a enero de 2026 (el enero siguiente; el de 2025
+            queda antes del historial), con las dos cifras y la diferencia; o pregunta qué enero
+            nombrando Decathlon. Nunca pierde diciembre de 2025.
+      - say: "y en todo el año pasado?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Decathlon en todo 2025 (el historial empieza en febrero), una sola cifra.
+      - say: "y en lo que va de este?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Decathlon en lo que va de 2026, una cifra; conserva el comercio.
+
+  - name: combo-abandono-nueva
+    goal: >-
+      Empezar una pregunta que no se entiende, abandonarla y hacer otra nueva sobre salud que se va
+      acotando.
+    turns:
+      - say: "cuanto gaste en lo de siempre?"
+        expect:
+          mechanism: intent
+          want: >-
+            «Lo de siempre» no dice qué gasto: pregunta a qué se refiere (puede proponer
+            categorías o comercios habituales) sin inventar una categoría ni un comercio y sin dar
+            una cifra.
+      - say: "uf, nada, dejalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Abandona la pregunta abierta con un acuse breve; sin cifra ni otra pregunta.
+      - say: "cuanto he pagado en la farmacia este año?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            La farmacia (Farmacia Gran Vía) en lo que va de 2026, en todas las cuentas; nada de la
+            pregunta abandonada.
+      - say: "y en el dentista?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            El dentista (Clínica Dental Sur) en lo que va de 2026: cambia el comercio y conserva el
+            año.
+      - say: "todo lo de salud junto"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Toda la categoría salud en lo que va de 2026, una cifra que incluye farmacia y
+            dentista.
+      - say: "por meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            La salud de 2026 agrupada por mes, de enero a octubre; los meses suman la cifra
+            anterior.
+      - say: "no, eso no. olvidalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo anterior en una frase; sin cifra ni gráfico.
+
+  - name: combo-dos-operaciones
+    goal: Pedir dos operaciones en una frase y seguir combinándolas con un saldo de por medio.
+    turns:
+      - say: "compara junio y julio en ocio y dímelo en porcentaje"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Ocio en junio frente a julio de 2026 expresado en porcentaje, con la palabra que
+            corresponde (las dos cifras pueden acompañarlo): hace las dos cosas a la vez y sin
+            preguntar.
+      - say: "y lo mismo con restaurantes pero en euros"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en junio frente a julio de 2026 en euros, con las dos cifras y la
+            diferencia: cambia la categoría y el formato a la vez.
+      - say: "quita julio y pon agosto"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en junio frente a agosto de 2026: sustituye julio por agosto y conserva
+            junio, la categoría y los euros.
+      - say: "cuanto tengo en la hucha y cuanto en la corriente?"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de la Hucha y el de la Cuenta corriente, los dos; nada del gasto de
+            restaurantes.
+      - say: "vuelve a restaurantes, solo agosto y por comercio"
+        expect:
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Restaurantes en agosto de 2026 agrupado por comercio (Bar Manolo, Café Central, Goiko,
+            La Tagliatella…): retoma el tema de antes del saldo, se queda con agosto y agrupa.
+      - say: "y en el que mas, cuantas veces fui?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            El número de pagos en agosto de 2026 en el restaurante con más gasto de esa lista,
+            nombrándolo: un recuento, no un importe.
+      - say: "gracias"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: >-
+            Una respuesta de cortesía breve, sin cifra ni pregunta.
+
+  - name: combo-javi-rocio
+    goal: Preguntar por personas que no son contactos, intentar pagar a una de ellas y dejarlo.
+    turns:
+      - say: "cuanto me ha pasado rocio por bizum?"
+        expect:
+          mechanism: intent
+          want: >-
+            Rocío no es un contacto: lo recibido de los bizums que la nombran, en una ventana que
+            asume y dice (o pregunta el periodo nombrando a Rocío), o dice que no está en la agenda
+            y lo que encuentra. Nunca la trata como comercio ni da la cifra de otra persona.
+      - say: "este año"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo recibido de Rocío en 2026: completa el periodo si se preguntó, o acota la misma
+            consulta a este año; sigue siendo lo recibido y de Rocío.
+      - say: "y javi?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Lo recibido de Javi en 2026 (tampoco es contacto): cambia la persona y conserva la
+            dirección y el año.
+      - say: "y yo a el cuanto le he mandado?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo enviado a Javi en 2026: la misma persona y año con la dirección invertida; no lo
+            trata como comercio.
+      - say: "mandale 15 euros a javi"
+        expect:
+          mechanism: execution
+          want: >-
+            Javi no está en la agenda: no elige a otro contacto ni prepara un pago a alguien
+            inventado; dice que no lo encuentra entre sus contactos y pide cómo identificarlo (o
+            lista los que tiene). No ejecuta nada.
+      - say: "no, da igual, dejalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Abandona el pago a Javi y lo dice en una frase; no se mueve dinero.
+      - say: "cuanto le he mandado a sergio este año?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo enviado a Sergio Vidal Pons en 2026, como persona, en todas las cuentas; nada de
+            Javi ni de Rocío.
+
+  - name: combo-erratas
+    goal: Seguir una consulta de gasolina con mensajes llenos de erratas.
+    turns:
+      - say: "cuanto e gastao en gasolinera este mes"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Gasolina este mes (octubre de 2026, hasta ayer) pese a «e gastao» y «gasolinera», en
+            todas las cuentas.
+      - say: "y el mes psado en reposl?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Repsol el mes pasado (septiembre de 2026) pese a «psado» y «reposl»: cambia la ventana
+            y estrecha al comercio Repsol.
+      - say: "y en shel y cepas?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Shell y Cepsa en septiembre de 2026 pese a «shel» y «cepas»: cambia los comercios y
+            conserva el mes. Nunca un comercio desconocido llamado «cepas».
+      - say: "conparalo con agsto"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Shell y Cepsa en agosto frente a septiembre de 2026 pese a «conparalo» y «agsto», con
+            las dos cifras y la diferencia.
+      - say: "en procentaje plis"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La misma comparación de Shell y Cepsa, de agosto a septiembre de 2026, en porcentaje
+            pese a «procentaje», con la palabra que corresponde.
+      - say: "grax"
+        expect:
+          mechanism: intent
+          route: COURTESY
+          want: >-
+            Una respuesta de cortesía breve pese a «grax», sin cifra ni pregunta.
+
+  - name: combo-pago-en-medio
+    goal: >-
+      Consultar un gasto, meter un bizum a mitad, pararlo en la vista previa y seguir con la
+      consulta.
+    turns:
+      - say: "cuanto me gaste en restaurantes la semana pasada?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Restaurantes la semana pasada (del lunes 28 de septiembre al domingo 4 de octubre de
+            2026), en todas las cuentas, diciendo las fechas.
+      - say: "y esta?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Restaurantes esta semana (desde el lunes 5 de octubre de 2026); conserva la categoría.
+      - say: "por cierto, hazle un bizum de 12 euros a elena"
+        expect:
+          mechanism: interruption
+          route: PAYMENT
+          want: >-
+            Vista previa de un bizum de 12,00 € a Elena Prat Mas que pide confirmación; no ejecuta
+            nada ni lo mezcla con la consulta de restaurantes.
+      - say: "no"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Cancela el bizum y lo dice; no se mueve dinero.
+      - say: "y en el bar manolo esta semana?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Bar Manolo esta semana: retoma la consulta de antes del bizum y estrecha al comercio;
+            nada del pago.
+      - say: "y la semana pasada?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Bar Manolo la semana pasada (28 de septiembre a 4 de octubre de 2026); conserva el
+            comercio.
+      - say: "compara las dos semanas"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Bar Manolo esta semana frente a la semana pasada, con las dos cifras y la diferencia;
+            las cifras coinciden con las de los dos turnos anteriores.
+
+  - name: combo-traspaso-hucha
+    goal: >-
+      Preparar un traspaso a la hucha, corregir el importe, consultar entre medias y acabar sin
+      hacerlo.
+    turns:
+      - say: "pasa 100 euros de la corriente a la hucha"
+        expect:
+          mechanism: intent
+          route: PAYMENT
+          want: >-
+            Vista previa de un traspaso de 100,00 € de la Cuenta corriente a la Hucha que pide
+            confirmación; no mueve dinero.
+      - say: "mejor 150"
+        expect:
+          mechanism: pending_resolution
+          route: PAYMENT
+          want: >-
+            Corrige el importe: vista previa nueva de 150,00 € de la Cuenta corriente a la Hucha;
+            no mueve dinero ni deja dos traspasos.
+      - say: "espera, antes dime cuanto tengo en la corriente"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: >-
+            El saldo de la Cuenta corriente, sin restar los 150 € (no se ha movido nada); no
+            ejecuta el traspaso.
+      - say: "y cuanto he gastado este mes desde ella?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            El gasto de este mes (octubre de 2026) solo en la Cuenta corriente («ella»); no un
+            saldo.
+      - say: "no, al final no hago el traspaso"
+        expect:
+          mechanism: execution
+          want: >-
+            Ningún traspaso: anula el pendiente si seguía abierto, o dice que no queda ninguno.
+            Nunca lo ejecuta.
+      - say: "cuanto hay en la hucha?"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de la Hucha, sin los 150 € (no se movió nada).
+
+  - name: combo-gimnasio-actividades
+    goal: Preguntar por las clases del gimnasio, pasar a lo que cuesta y comparar dos años.
+    turns:
+      - say: "que clases de yoga hay en altafit?"
+        expect:
+          mechanism: intent
+          route: ACTIVITIES
+          want: >-
+            Las clases de yoga de Altafit por el agente de actividades, o una negativa clara si no
+            está disponible. Nunca una cifra de gasto.
+      - say: "y de spinning?"
+        expect:
+          mechanism: slot_carryover
+          route: ACTIVITIES
+          want: >-
+            Las clases de spinning de Altafit: cambia la actividad y conserva el gimnasio; no lo
+            lee como comercio ni como categoría.
+      - say: "y cuanto me cobra altafit al mes?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo que cobra Gimnasio Altafit al mes (el cargo mensual), en todas las cuentas,
+            diciendo la ventana; ninguna clase.
+      - say: "y en lo que va de año?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Altafit en lo que va de 2026, una cifra.
+      - say: "y todo el año pasado?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Altafit en 2025 (el historial empieza en febrero); conserva el comercio.
+      - say: "comparame los dos años"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Altafit en 2025 frente a lo que va de 2026, con las dos cifras y la diferencia,
+            diciendo las dos ventanas.
+
+  - name: combo-ingresos-nomina
+    goal: >-
+      Mirar la nómina de dos meses, compararlas, pasar a intereses y después al gasto del mismo
+      periodo.
+    turns:
+      - say: "cuanto he cobrado de nomina en septiembre?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            La nómina de septiembre de 2026: ingresos, no gastos; en todas las cuentas.
+      - say: "y en agosto?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            La nómina de agosto de 2026; conserva que es un ingreso de nómina.
+      - say: "comparalas"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            La nómina de agosto frente a la de septiembre de 2026 (las dos que acaba de dar), con
+            las dos cifras y la diferencia.
+      - say: "y los intereses?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Intereses en agosto frente a septiembre de 2026: conserva la comparación de los dos
+            meses y cambia la categoría de ingreso.
+      - say: "y todo lo que he ingresado este año?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Todos los ingresos de lo que va de 2026, sin filtro de categoría; una cifra.
+      - say: "y gastado en el mismo periodo?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            El gasto total de lo que va de 2026 («el mismo periodo»): invierte la dirección y
+            conserva la ventana.
+      - say: "por categorias"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El gasto de lo que va de 2026 agrupado por categoría; los grupos suman la cifra
+            anterior.
+
+  - name: combo-transporte-comercios
+    goal: >-
+      Ir de un comercio de transporte a otro, sumarlos, pasar a la categoría y comparar dos meses
+      de uno de ellos.
+    turns:
+      - say: "cuanto me he gastado en uber este mes?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Uber este mes (octubre de 2026, hasta ayer), en todas las cuentas.
+      - say: "y en cabify"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Cabify este mes: sustituye Uber y conserva el mes.
+      - say: "sumame los dos"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Uber y Cabify este mes juntos (con la cifra de cada uno si los separa); el total es la
+            suma de las dos cifras anteriores.
+      - say: "y en transporte publico?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            La categoría transporte público este mes, como categoría y no como la suma de Uber y
+            Cabify; conserva el mes.
+      - say: "por comercio"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El transporte público de este mes agrupado por comercio; conserva la categoría y el
+            mes.
+      - say: "y el mes pasado igual"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            El transporte público de septiembre de 2026 agrupado por comercio: cambia el mes y
+            conserva la agrupación y la categoría.
+      - say: "renfe este mes vs el pasado"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Renfe en lo que va de octubre frente a septiembre de 2026, con las dos cifras y la
+            diferencia.
+
+  - name: combo-ranking-restaurantes
+    goal: >-
+      Ver los restaurantes donde más gasta, cambiar de año, señalar uno de la lista y acabar con
+      otra pregunta.
+    turns:
+      - say: "donde mas me gasto comiendo fuera? top 3 restaurantes este año"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Los tres restaurantes con más gasto en lo que va de 2026, ordenados y con su cifra.
+      - say: "y en 2025?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            El mismo top 3 de restaurantes en 2025: conserva el ranking y cambia el año.
+      - say: "el primero de esa lista cuanto en diciembre?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            El primer restaurante del ranking de 2025, nombrándolo, en diciembre de 2025 (hereda
+            el año); una cifra.
+      - say: "y en goiko ese mes?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Goiko en diciembre de 2025; conserva el mes y el año.
+      - say: "bah olvidalo. cuantas veces he ido a la tagliatella este año?"
+        expect:
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            El número de pagos en La Tagliatella en lo que va de 2026 (un recuento, no un
+            importe), sin heredar diciembre ni 2025.
+      - say: "y cuanto me he dejado ahi en total?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo gastado en La Tagliatella («ahí») en lo que va de 2026, una cifra; conserva el
+            comercio y el año.
+
+  - name: combo-categorias-grafico
+    goal: Ver un mes por categorías, quitar una, dibujarlo y preguntar por una parte del gráfico.
+    turns:
+      - say: "gastos de agosto por categoria"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            El gasto de agosto de 2026 agrupado por categoría, en todas las cuentas.
+      - say: "quita el alquiler"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El gasto de agosto de 2026 por categoría sin el alquiler; conserva el mes y el resto de
+            categorías.
+      - say: "ponlo en una tarta"
+        expect:
+          mechanism: follow_up
+          route: VISUAL
+          want: >-
+            Un gráfico de sectores de esas mismas categorías de agosto de 2026 sin el alquiler;
+            las cifras son las de la respuesta anterior.
+      - say: "por que el ocio sale tanto?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Explica el ocio de agosto de 2026, la porción señalada: sus comercios o movimientos
+            mayores (p. ej. Cines Yelmo, Decathlon); conserva el mes.
+      - say: "y en julio el ocio?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Ocio en julio de 2026, una cifra.
+      - say: "compara esos dos meses"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Ocio en julio frente a agosto de 2026, con las dos cifras y la diferencia; la de
+            agosto coincide con la del gráfico.
+
+  - name: combo-marta-ambigua
+    goal: >-
+      Consultar lo enviado a las dos Martas, intentar pagar a una por referencia, cancelarlo y
+      volver a lo recibido.
+    turns:
+      - say: "cuanto le he pasado a marta solis este año?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo enviado a Marta Solís Vega en lo que va de 2026, como persona, en todas las
+            cuentas.
+      - say: "y a la otra marta?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo enviado a Marta Ruiz Gómez («la otra Marta») en 2026; conserva la dirección y el
+            año.
+      - say: "mandale 30 euros a ella"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Un pago de 30,00 € a Marta Ruiz Gómez («ella», la última nombrada): vista previa que
+            pide confirmación, o pregunta cuál Marta nombrando a las dos. Nunca a Marta Solís sin
+            preguntar; no ejecuta nada.
+      - say: "no"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Cancela el pago (o la pregunta de cuál Marta) y lo dice; no se mueve dinero.
+      - say: "y lo que me ha mandado ella este año?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Marta Ruiz Gómez en 2026: «ella» sigue siendo Marta Ruiz y la dirección
+            se invierte. Nada del pago cancelado.
+      - say: "y las dos martas juntas?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Marta Ruiz Gómez y de Marta Solís Vega en 2026, juntas (o con la cifra
+            de cada una); conserva lo recibido y el año.
+
+  - name: combo-mercadona-cuentas
+    goal: >-
+      Preguntar por un súper sin periodo, cambiar de comercios, cambiar de cuenta y volver, y
+      ampliar la ventana.
+    turns:
+      - say: "cuanto he gastado en mercadona?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Mercadona en una ventana razonable que asume y dice (este mes o lo que va de año), en
+            todas las cuentas; sin preguntar ni el periodo ni la cuenta.
+      - say: "y en lidl y dia?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Lidl y Día en la misma ventana: sustituye Mercadona; la cifra de cada uno o juntos.
+      - say: "solo con la corriente"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lidl y Día en la misma ventana, solo en la Cuenta corriente, diciéndolo.
+      - say: "y en todas?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lidl y Día en la misma ventana, otra vez en todas las cuentas; nunca el saldo.
+      - say: "desde enero"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lidl y Día desde el 1 de enero de 2026, en todas las cuentas: cambia la ventana y
+            conserva los comercios.
+      - say: "y alcampo y carrefour lo mismo"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Alcampo y Carrefour desde enero de 2026, en todas las cuentas.
+      - say: "de esos cuatro cual es donde mas?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            De Lidl, Día, Alcampo y Carrefour desde enero de 2026, el de más gasto con su cifra (o
+            los cuatro ordenados); sin Mercadona.
+
+  - name: combo-bizum-interrumpido
+    goal: Empezar un bizum, interrumpirlo con una consulta, retomarlo y pararlo en la vista previa.
+    turns:
+      - say: "quiero hacer un bizum a marta"
+        expect:
+          mechanism: intent
+          route: PAYMENT
+          want: >-
+            Un bizum a Marta: pregunta cuál de las dos (Marta Ruiz Gómez o Marta Solís Vega) y el
+            importe; no ejecuta nada.
+      - say: "espera, cuanto le mande a marta ruiz el mes pasado?"
+        expect:
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Lo enviado a Marta Ruiz Gómez el mes pasado (septiembre de 2026); no lee la frase como
+            respuesta al bizum ni lo ejecuta.
+      - say: "y a marta solis?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Lo enviado a Marta Solís Vega el mes pasado; conserva la dirección y el mes.
+      - say: "pues el bizum a marta solis, de 40 euros"
+        expect:
+          mechanism: intent
+          route: PAYMENT
+          want: >-
+            Vista previa de un bizum de 40,00 € a Marta Solís Vega que pide confirmación; no
+            ejecuta nada.
+      - say: "no, al final no"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Cancela el bizum y lo dice; no se mueve dinero.
+      - say: "cuanto me queda en la corriente"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de la Cuenta corriente, sin los 40 € (no se movió nada).
+
+  - name: combo-fin-de-semana
+    goal: Ver lo gastado un fin de semana, mirar un movimiento y compararlo con el anterior.
+    turns:
+      - say: "cuanto me gaste el finde pasado?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            El gasto del fin de semana pasado (sábado 3 y domingo 4 de octubre de 2026), en todas
+            las cuentas, diciendo las fechas.
+      - say: "y en que?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El gasto de ese fin de semana desglosado por categoría o por comercio; conserva las
+            fechas y los grupos suman la cifra anterior.
+      - say: "lo del bar manolo que fue?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Los movimientos de Bar Manolo de ese fin de semana (importe y día); no cambia de
+            fechas.
+      - say: "y todo lo del finde anterior?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Todo el gasto del fin de semana anterior (26 y 27 de septiembre de 2026), sin el
+            filtro de Bar Manolo.
+      - say: "compara los dos findes"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Todo el gasto del fin de semana del 3-4 de octubre frente al del 26-27 de septiembre
+            de 2026, con las dos cifras y la diferencia.
+      - say: "cuanto tengo en la corriente"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            El saldo de la Cuenta corriente; sin fechas heredadas.
+
+  - name: combo-alquiler-interanual
+    goal: >-
+      Saber lo que paga de alquiler, compararlo con la nómina y con el mismo mes del año pasado,
+      y abandonar.
+    turns:
+      - say: "cuanto pago de alquiler?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            El alquiler (el cargo mensual: el del último mes o el habitual), en todas las
+            cuentas, diciendo la ventana; sin preguntar.
+      - say: "y desde enero cuanto llevo?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El alquiler desde el 1 de enero de 2026, una cifra.
+      - say: "y de nomina en ese tiempo?"
+        expect:
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            La nómina cobrada desde enero de 2026: la misma ventana, ahora ingresos de nómina.
+      - say: "solo nomina, este septiembre contra el del año pasado"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            La nómina de septiembre de 2026 frente a la de septiembre de 2025, con las dos cifras
+            y la diferencia.
+      - say: "y el alquiler?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            El alquiler de septiembre de 2026 frente al de septiembre de 2025: conserva los dos
+            meses y cambia la categoría (y la dirección, a gasto).
+      - say: "en porcentaje"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La variación del alquiler de septiembre de 2025 a septiembre de 2026 en porcentaje,
+            con la palabra que corresponde.
+      - say: "olvidalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior; sin cifra y sin buscar un comercio llamado
+            «olvidalo».
