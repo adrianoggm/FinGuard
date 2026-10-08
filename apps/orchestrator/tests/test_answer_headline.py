@@ -488,6 +488,7 @@ def test_the_inert_exclusion_is_still_applied_to_the_plan() -> None:
         "sin contar el alquiler",
         plan(categories=("GROCERIES",)),
         today=date(2026, 8, 25),
+        answered_last=True,
     )
 
     assert patched.plan is not None

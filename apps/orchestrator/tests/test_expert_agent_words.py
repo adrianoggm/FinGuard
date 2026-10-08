@@ -398,7 +398,9 @@ def test_an_agent_is_named_by_its_shown_name_as_well_as_by_its_card() -> None:
     ],
 )
 def test_r36_a_payment_named_with_an_activity_is_a_payment_not_a_search(sentence: str) -> None:
-    """Ruling R36, closed: the imperative without a currency word is still an order to pay."""
+    """Ruling R36, narrowed rather than closed (R10, ADR-012): the imperative without a currency
+    word is still an order to pay. «Pásame 10 por el pádel del sábado», which asks to be handed
+    money, is left open and stays with the gym search."""
     assert payment_router.is_payment(sentence)
     assert not asks_an_expert_agent(sentence)
 

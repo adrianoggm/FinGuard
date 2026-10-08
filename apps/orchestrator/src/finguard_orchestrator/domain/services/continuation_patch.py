@@ -450,12 +450,17 @@ def apply(
     sentence: str,
     previous: FinancialPlan | None,
     *,
+    answered_last: bool,
     today: date | None = None,
 ) -> GroundedContinuationPatch:
-    """Compatibility wrapper around ``read`` and the immutable patch operation."""
+    """Compatibility wrapper around ``read`` and the immutable patch operation.
+
+    `answered_last` is `read`'s (ruling R34): whether `previous` is the answer the conversation
+    gave last. Required, with no default (final review, M-5): the wrapper used to say yes for every
+    caller, so «ella» was resolved to the person of a plan an aside had already followed.
+    """
     if previous is None:
         return GroundedContinuationPatch(PatchStatus.NOT_APPLICABLE)
-    # The plan it is handed is the one being patched, so it is the answer just given.
-    continuation = read(sentence, today=today, base=previous, answered_last=True)
+    continuation = read(sentence, today=today, base=previous, answered_last=answered_last)
     plan = continuation.patch.apply_to(previous) if continuation.patch is not None else None
     return GroundedContinuationPatch(continuation.status, continuation.patch, plan)

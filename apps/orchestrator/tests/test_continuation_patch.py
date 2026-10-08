@@ -1,3 +1,4 @@
+import inspect
 from dataclasses import replace
 from datetime import date
 from uuid import UUID
@@ -89,21 +90,40 @@ def test_status_and_patch_must_agree() -> None:
         GroundedContinuation(PatchStatus.AMBIGUOUS, read("Sin alquiler").patch)
 
 
+def test_apply_is_told_whether_the_plan_it_patches_was_the_last_answer() -> None:
+    """Final review, M-5. The wrapper answered ruling R34's question itself — always yes — so a
+    caller patching a plan that was not the last answer had «ella» resolved to its person anyway.
+    It is the caller's to say, and it has no default to forget it with."""
+    sent = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        counterparties=("Marta",),
+    )
+
+    last = apply("¿y ella a mí?", sent, today=TODAY, answered_last=True)
+    before_an_aside = apply("¿y ella a mí?", sent, today=TODAY, answered_last=False)
+
+    assert last.plan is not None and last.plan.direction is Direction.INCOME
+    assert before_an_aside.status is PatchStatus.NOT_APPLICABLE and before_an_aside.plan is None
+    default = inspect.signature(apply).parameters["answered_last"].default
+    assert default is inspect.Parameter.empty
+
+
 def test_patch_preserves_sensitive_scope_and_is_idempotent() -> None:
     previous = plan()
-    result = apply("Y por meses", previous, today=TODAY)
+    result = apply("Y por meses", previous, today=TODAY, answered_last=True)
     assert result.plan is not None
     assert result.plan.group_by is GroupBy.MONTH
     assert result.plan.only_account_id == previous.only_account_id
     assert result.plan.counterparties == previous.counterparties
     assert result.plan.transaction_ids == previous.transaction_ids
     assert result.plan.internal_only == previous.internal_only
-    again = apply("Y por meses", result.plan, today=TODAY)
+    again = apply("Y por meses", result.plan, today=TODAY, answered_last=True)
     assert again.plan == result.plan
 
 
 def test_exclude_category_keeps_window_and_scope() -> None:
-    result = apply("Sin el alquiler", plan(), today=TODAY)
+    result = apply("Sin el alquiler", plan(), today=TODAY, answered_last=True)
     assert result.status is PatchStatus.APPLIED
     assert result.plan is not None
     assert result.plan.period == RelativePeriod(Period.LAST_MONTH)
@@ -114,7 +134,7 @@ def test_exclude_category_keeps_window_and_scope() -> None:
 
 
 def test_exclude_merchant_keeps_window_and_scope() -> None:
-    result = apply("Excepto Mercadona", plan(), today=TODAY)
+    result = apply("Excepto Mercadona", plan(), today=TODAY, answered_last=True)
     assert result.status is PatchStatus.APPLIED
     assert result.plan is not None
     assert result.plan.period == RelativePeriod(Period.LAST_MONTH)
@@ -125,7 +145,7 @@ def test_exclude_merchant_keeps_window_and_scope() -> None:
 
 def test_year_correction_is_absolute_and_retains_every_filter() -> None:
     previous = plan()
-    result = apply("No, durante todo 2025", previous, today=TODAY)
+    result = apply("No, durante todo 2025", previous, today=TODAY, answered_last=True)
     assert result.status is PatchStatus.APPLIED
     assert result.plan is not None
     assert result.plan.date_range == AbsoluteRange(date(2025, 1, 1), date(2025, 12, 31))
@@ -141,7 +161,7 @@ def test_year_correction_is_absolute_and_retains_every_filter() -> None:
 
 def test_metric_continuation_changes_only_metric() -> None:
     previous = plan()
-    result = apply("Y cuántos movimientos", previous, today=TODAY)
+    result = apply("Y cuántos movimientos", previous, today=TODAY, answered_last=True)
     assert result.status is PatchStatus.APPLIED
     assert result.plan is not None
     assert result.plan.metric is Metric.COUNT

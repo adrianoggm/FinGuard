@@ -962,8 +962,10 @@ class AskFinancialQuestionHandler:
         # The kind of turn: the edge's when it brought one, and otherwise decided here by the same
         # function from the same reading — for a caller that builds the query itself (the tests,
         # a compound clause, the question the account backstop asks again), so a reply is a reply
-        # whoever sent it. RESET was settled above from the sentence alone; what is acted on below
-        # is ANSWER_PENDING, a reply that fills the question left open.
+        # whoever sent it. RESET was settled above from the sentence alone. What is acted on below
+        # is ANSWER_PENDING, a reply that fills the question left open; FOLLOW_UP, a patch on the
+        # answer in view that only the patch reads (`_only_the_patch_reads`); and the kinds a
+        # comparison may be continued on (`_A_PATCH_MAY_TAKE`, FOLLOW_UP and NEW_QUESTION).
         arbitration = query.arbitration or turn_arbiter.arbitrate(
             query.sentence, was, analysis, today=query.today
         )
