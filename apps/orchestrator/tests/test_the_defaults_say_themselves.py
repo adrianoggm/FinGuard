@@ -380,6 +380,18 @@ def test_a_reply_that_answers_nothing_still_gets_the_choices() -> None:
             FinancialPlan(direction=Direction.INCOME, period=_ANY, counterparties=("Marta",)),
             "¿De qué periodo quieres ver lo que recibiste de Marta?",
         ),
+        # Several people are «les» (ruling R46).
+        (
+            FinancialPlan(
+                direction=Direction.EXPENSE, period=_ANY, counterparties=("Marta", "Javi")
+            ),
+            "¿De qué periodo quieres ver lo que les mandaste a Marta y Javi?",
+        ),
+        # The payroll is yours, not «tus ingresos en nómina» (ruling R46).
+        (
+            FinancialPlan(direction=Direction.INCOME, period=_ANY, categories=("SALARY",)),
+            "¿De qué periodo quieres ver tu nómina?",
+        ),
         (
             FinancialPlan(direction=Direction.EXPENSE, period=_ANY, merchants=("Spotify",)),
             "¿De qué periodo quieres ver tus gastos en Spotify?",
@@ -543,3 +555,28 @@ def test_a_default_given_as_the_reply_fills_the_period_of_the_open_question(
     ran = stack.ledger.plans[-1]
     assert ran.categories == ("RESTAURANTS",) and ran.period == window
     assert reply not in planner.asked, "the period was filled in code"
+
+
+# --- an account left out (ruling R46) ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("setting", ["all", "ask"])
+@pytest.mark.parametrize(
+    "question",
+    [
+        "¿cuánto gasté el mes pasado en todas menos la hucha?",
+        "¿cuánto gasté el mes pasado sin contar la hucha?",
+        "¿cuánto gasté el mes pasado sin la hucha?",
+    ],
+)
+def test_an_account_left_out_is_never_the_one_read(setting: str, question: str) -> None:
+    """«Sin contar la hucha» ran only the hucha — the one account the person left out, a wrong
+    figure under both settings. It now goes the way «todas menos la hucha» goes: the account
+    question."""
+    stack = episodes.a_stack(account_scope_default=setting)
+    answered = ask(stack, question)
+    assert all(
+        plan.only_account_id != episodes.PIGGY and episodes.PIGGY not in plan.only_account_ids
+        for plan in stack.ledger.plans
+    )
+    assert answered["question"] == "¿En qué cuenta quieres consultarlo?"

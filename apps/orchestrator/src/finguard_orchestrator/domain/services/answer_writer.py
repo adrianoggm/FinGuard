@@ -776,6 +776,8 @@ _SENT_OR_RECEIVED: Final[dict[Direction, str]] = {
     Direction.EXPENSE: "lo que le mandaste",
     Direction.INCOME: "lo que recibiste",
 }
+# «Les», to more than one person: «lo que les mandaste a Marta y Javi» (ruling R46).
+_SENT_TO_SEVERAL: Final = "lo que les mandaste"
 
 
 def window_question(plan: FinancialPlan) -> str | None:
@@ -789,15 +791,20 @@ def window_question(plan: FinancialPlan) -> str | None:
 
     None when there is nothing to name beyond spending, which is what a bare «¿cuánto…?» is about
     and the plain question already asks.
+
+    The payroll alone is «tu nómina»: «tus ingresos en nómina» read the category's name as a place
+    the income was in (ruling R46).
     """
     named = filter_of(plan)
     if not named and plan.direction is Direction.EXPENSE:
         return None
-    subject = (
-        _SENT_OR_RECEIVED[plan.direction]
-        if plan.counterparties and plan.direction in _SENT_OR_RECEIVED
-        else f"tus {_DIRECTION_WORDS[plan.direction]}"
-    )
+    if named == f" en {category_words.name_of('SALARY')}" and plan.categories == ("SALARY",):
+        return f"¿De qué periodo quieres ver tu {category_words.name_of('SALARY')}?"
+    if plan.counterparties and plan.direction in _SENT_OR_RECEIVED:
+        several = plan.direction is Direction.EXPENSE and len(plan.counterparties) > 1
+        subject = _SENT_TO_SEVERAL if several else _SENT_OR_RECEIVED[plan.direction]
+    else:
+        subject = f"tus {_DIRECTION_WORDS[plan.direction]}"
     return f"¿De qué periodo quieres ver {subject}{named}?"
 
 

@@ -190,11 +190,16 @@ def named_in(sentence: str) -> tuple[str, ...]:
 
 
 def excluded_in(sentence: str) -> tuple[str, ...]:
-    """Account kinds explicitly removed with «no», «menos», «excepto» or «salvo».
+    """Account kinds explicitly removed with «no», «menos», «excepto», «salvo», «sin (contar /
+    incluir)» or «quitando».
 
     `named_in` deliberately reports every mention. Scope selection needs the second half too:
     «corriente y hucha, no el fondo» names three accounts but selects two. Treating every noun as
     positive silently widens the query to precisely the account the user excluded.
+
+    «Sin contar la hucha» was the other way round and worse: unrecognised as an exclusion, it was
+    read as naming the hucha, and the figure was the hucha's alone — the one account the person had
+    left out (ruling R46).
     """
     haystack = spanish.folded(sentence)
     excluded: dict[str, int] = {}
@@ -204,7 +209,9 @@ def excluded_in(sentence: str) -> tuple[str, ...]:
             if match is None:
                 continue
             prefix = haystack[max(0, match.start() - 24) : match.start()]
-            if re.search(r"\b(?:no|menos|excepto|salvo)\s*$", prefix):
+            if re.search(
+                r"\b(?:no|menos|excepto|salvo|sin(?:\s+(?:contar|incluir))?|quitando)\s*$", prefix
+            ):
                 excluded.setdefault(kind, match.start())
                 break
     return tuple(sorted(excluded, key=lambda kind: excluded[kind]))
