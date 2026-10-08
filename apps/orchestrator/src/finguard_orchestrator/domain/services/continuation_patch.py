@@ -6,12 +6,13 @@ therefore put it in front of an LLM planner without risking an accidental wideni
 one widening a patch makes is deliberate and argued where it happens (`plan_patch.divisible_by`): a
 breakdown asked of a plan filtered to the one value it would divide.
 
-Two readings need the answer the turn continues, and are made only when the caller hands it over
+Three readings need the answer the turn continues, and are made only when the caller hands it over
 (`read`'s `base`; spec §3.4): a follow-up that turns the question round on the person it was about
-(«¿cuánto le mandé a Marta?» → «¿y ella a mí?»), because who «ella» is lives in the base; and a
+(«¿cuánto le mandé a Marta?» → «¿y ella a mí?»), because who «ella» is lives in the base; a
 breakdown said as the whole turn («mejor por categoría»), because a turn that is nothing but a
-grouping is a patch only on something already answered. A caller without a base reads exactly what
-it read before either existed.
+grouping is a patch only on something already answered; and the period before the one answered
+(«¿y la anterior?», validation fix 1), because which unit «la anterior» steps back in is the base's.
+A caller without a base reads exactly what it read before any of them existed.
 """
 
 import re
@@ -27,6 +28,7 @@ from finguard_orchestrator.domain.services import (
     category_words,
     explicit_facts,
     spanish,
+    window_words,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.plan_patch import PatchField, PlanPatch
@@ -254,23 +256,36 @@ _A_REGROUPING: Final = re.compile(
 # the base afterwards (`_the_person`): the shape says the money turned round, the base says whose
 # money it is.
 #
-# The verbs are the unambiguous ones. «Me hizo» and «me pasó» are also what somebody did to the
-# holder or what happened to them, and with no «bizum» beside them nothing here could tell.
-_OPENS: Final = r"(?:(?:y|e|pero|ahora|vale|bueno)\s+)*"
+# The verbs are the unambiguous ones, and «pasar» is one of them (validation fix 1, F4): «¿y ella a
+# mí cuánto me ha pasado?» and «lo que ella me ha pasado a mí» were how people turned the money
+# round on 2026-10-08, and asked the period instead. Said as the whole turn over an answer about a
+# person, «me pasó» is money: what happened to the holder is a sentence these shapes do not take.
+# «Me hizo» stays out — with no «bizum» beside it, nothing here could tell what was done.
+#
+# A correction may lead the turn — «no, lo que ella me ha pasado a mí» — and «a mí» may trail it,
+# after the verb or after the name: «no, lo que me ha mandado carmen a mí». `_WHO` is lazy so that
+# trailing «a mí» is never read as part of the name (it was, as a person called «carmen a mi»).
+_OPENS: Final = r"(?:(?:y|e|pero|ahora|vale|bueno|no)\s+)*"
 _WHAT: Final = r"(?:(?:lo\s+que|cuanto)\s+)?"
-_WHO: Final = r"(?P<who>[a-z]+(?:\s+[a-z]+){0,2})"
-_PARTICIPLES: Final = r"(?:mandado|enviado|pagado|dado|transferido|devuelto|ingresado)"
-# Money that came from them: «me mandó», «me ha pagado».
-_TO_ME: Final = rf"me\s+(?:ha\s+{_PARTICIPLES}|mando|envio|pago|dio|transfirio|devolvio|ingreso)"
-# Money the holder sent them: «le mandé», «le he pagado».
-_TO_THEM: Final = rf"le\s+(?:he\s+{_PARTICIPLES}|mande|envie|pague|di|transferi|devolvi|ingrese)"
+_WHO: Final = r"(?P<who>[a-z]+(?:\s+[a-z]+){0,2}?)"
+_TO_ME_TOO: Final = r"(?:\s+a\s+mi)?"
+_PARTICIPLES: Final = r"(?:mandado|enviado|pagado|pasado|dado|transferido|devuelto|ingresado)"
+# Money that came from them: «me mandó», «me ha pagado», «me ha pasado».
+_TO_ME: Final = (
+    rf"me\s+(?:ha\s+{_PARTICIPLES}|mando|envio|pago|paso|dio|transfirio|devolvio|ingreso)"
+)
+# Money the holder sent them: «le mandé», «le he pagado», «le pasé».
+_TO_THEM: Final = (
+    rf"le\s+(?:he\s+{_PARTICIPLES}|mande|envie|pague|pase|di|transferi|devolvi|ingrese)"
+)
 _TURNED_ROUND: Final = (
-    # «¿y ella a mí?», «¿y Marta a mí?»
-    (Direction.INCOME, re.compile(rf"{_OPENS}{_WHO}\s+a\s+mi")),
-    # «y lo que ella me mandó», and «y lo que me mandó» with the person left unsaid
-    (Direction.INCOME, re.compile(rf"{_OPENS}{_WHAT}(?:{_WHO}\s+)?{_TO_ME}")),
-    # «y lo que me mandó ella», «¿y lo que me ha pagado Marta?»
-    (Direction.INCOME, re.compile(rf"{_OPENS}{_WHAT}{_TO_ME}\s+{_WHO}")),
+    # «¿y ella a mí?», «¿y Marta a mí?», and «¿y ella a mí cuánto me ha pasado?» saying it twice
+    (Direction.INCOME, re.compile(rf"{_OPENS}{_WHO}\s+a\s+mi(?:\s+{_WHAT}{_TO_ME})?")),
+    # «y lo que ella me mandó», «lo que ella me ha pasado a mí», and «y lo que me mandó» with the
+    # person left unsaid
+    (Direction.INCOME, re.compile(rf"{_OPENS}{_WHAT}(?:{_WHO}\s+)?{_TO_ME}{_TO_ME_TOO}")),
+    # «y lo que me mandó ella», «¿y lo que me ha pagado Marta?», «lo que me ha mandado Carmen a mí»
+    (Direction.INCOME, re.compile(rf"{_OPENS}{_WHAT}{_TO_ME}\s+{_WHO}{_TO_ME_TOO}")),
     # «y lo que recibí de ella», «lo que me llegó de Marta»
     (
         Direction.INCOME,
@@ -291,6 +306,19 @@ _TURNED_ROUND: Final = (
         re.compile(rf"{_OPENS}{_WHAT}{_WHO}\s+(?:ha\s+recibido|recibio)\s+de\s+mi"),
     ),
 )
+# «¿Y la anterior?», «y el anterior», «¿y la semana anterior?», «¿y el mes anterior?»: the period
+# before the one in view, in its unit (validation fix 1, F6). The whole turn, like every shape here.
+# With no unit said, the unit is the base's, and the article has to agree with it — «la» a week,
+# «el» a month or a year — because «la anterior» after a month may be the previous question rather
+# than a period. With the unit said, it has to be the base's own. The year said outright is not
+# here: «¿y el año anterior?» after July is July a year back, which `window_words.a_year_earlier`
+# reads.
+_THE_ONE_BEFORE: Final = re.compile(
+    r"(?:(?:y|e|pero|ahora|vale|bueno)\s+)*(?:(?P<article>la|el)\s+)?"
+    r"(?:(?P<unit>semana|mes)\s+)?(?:anterior|previa|previo)"
+)
+_ARTICLE_OF: Final = {"semana": "la", "mes": "el", "ano": "el"}
+
 # «Ella» and «él» (folded, «el») point at one person. Over a base about two, which one is a guess.
 _SHE_OR_HE: Final = frozenset({"ella", "el"})
 # A pause written inside a turn — «vale, mejor por categoría», «mejor, por categoría», «vale, ¿y
@@ -308,6 +336,43 @@ def grouping_in(sentence: str) -> GroupBy | None:
     """
     said = _A_GROUPING.search(spanish.folded(sentence))
     return _GROUPED_BY[said.group("dimension")] if said is not None else None
+
+
+def names_the_one_before_without_its_unit(sentence: str) -> bool:
+    """Whether the whole turn is «¿y la anterior?» or «y el anterior» — the period before the one
+    in view, with no unit said (F6).
+
+    Public because the handler answers these from the patch at once: no reader below reads them,
+    and the shapes that do name their unit stay with the follow-up reader that answered them first.
+    """
+    spoken = " ".join(_PAUSES.sub(" ", spanish.folded(sentence)).split())
+    before = _THE_ONE_BEFORE.fullmatch(spoken)
+    return before is not None and before.group("unit") is None
+
+
+def _the_one_before(
+    base: FinancialPlan, spoken: str, *, today: date | None
+) -> GroundedContinuation | None:
+    """The period before the base's, when the turn asks for it in the base's own unit (F6).
+
+    None when the turn is not that shape, or when the base's window is not a whole week, month or
+    year that agrees with what the turn said: the turn is then read as it was before this reading.
+    """
+    said = _THE_ONE_BEFORE.fullmatch(spoken)
+    window = base.period or base.date_range
+    if said is None or today is None or window is None:
+        return None
+    unit = window_words.calendar_unit_of(window)
+    if (
+        unit is None
+        or said.group("unit") not in (None, unit)
+        or said.group("article") not in (None, _ARTICLE_OF[unit])
+    ):
+        return None
+    before = window_words.window_before(window, unit, today)
+    if before is None:
+        return None
+    return GroundedContinuation(PatchStatus.APPLIED, PlanPatch(window=before))
 
 
 def _the_person(
@@ -348,6 +413,9 @@ def _read_on(
         return GroundedContinuation(
             PatchStatus.APPLIED, PlanPatch(group_by=_GROUPED_BY[regrouped.group("dimension")])
         )
+    stepped_back = _the_one_before(base, spoken, today=today)
+    if stepped_back is not None:
+        return stepped_back
     for direction, shape in _TURNED_ROUND:
         turned = shape.fullmatch(spoken)
         if turned is None:

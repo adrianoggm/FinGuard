@@ -37,7 +37,7 @@ Whichever phrase is longer is the one the person actually said.
 import re
 from calendar import monthrange
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from typing import Final
 
 from finguard_orchestrator.domain.enums import Period
@@ -278,6 +278,10 @@ _A_NAMED_YEAR: Final = re.compile(
 # A reply that points at whatever was just asked about and names nothing else. Meaningless in
 # isolation — which is why it is only read when a slot says what the question was.
 _THIS_ONE: Final = re.compile(r"(de\s+)?(este|esta|el\s+actual|la\s+actual|actual)")
+
+# A year and nothing else — «2026», «el 2026», «del año 2025». Only as the reply to «¿De qué año?»,
+# for the reason `window_in` gives where it reads it.
+_A_YEAR_ALONE: Final = re.compile(r"(?:(?:el|del|de|en)\s+)?(?:ano\s+)?(?P<year>20\d{2})")
 
 # "los últimos 30 días", "últimos 3 meses", "el último año", and the singular "el último mes"
 # which is n=1 — while the plural with no number, "los últimos meses", is a few (`_UNSTATED`
@@ -935,6 +939,14 @@ def window_in(
     if asked_for is Slot.YEAR and _THIS_ONE.fullmatch(folded.strip(" ?¿.!¡,")):
         return RelativePeriod(period=Period.THIS_YEAR)
 
+    a_year = _A_YEAR_ALONE.fullmatch(folded.strip(" ?¿.!¡,"))
+    if asked_for is Slot.YEAR and a_year is not None:
+        # «2026» as the whole answer to «¿De qué año?» (validation fix 1, F2). `_A_NAMED_YEAR`
+        # wants a preposition or «año» in front, because four digits anywhere else may be an
+        # amount; asked for a year, they can only be one. Read as nothing, the reply was put to
+        # the model, which asked the year again: «Sigo sin tener claro el periodo».
+        return whole_year(int(a_year.group("year")))
+
     month = _A_MONTH.search(folded)
     if month:
         # Before the year, because "julio de 2026" contains "de 2026" and reading that as the year
@@ -1109,6 +1121,225 @@ def _a_year_before(day: date) -> date:
         return day.replace(year=day.year - 1)
     except ValueError:
         return day.replace(year=day.year - 1, day=28)
+
+
+# --- validation fix 1, F2: a month said after an answer is a month of the year in view ---------
+#
+# «Ahora solo julio» after «junio vs julio» of 2026, «pero de julio y agosto» after a comparison of
+# both: on 2026-10-08 the model asked «¿De qué año?» about each, a year the answer on screen had
+# already said. The vocabulary below is what the handler needs to take the year from the answer
+# instead — which months a turn names when months are all it names, and which year a window is in —
+# and what it needs to complete «¿De qué año?» with the months that question was asked about.
+
+# Every word a turn made of months may carry besides them: what joins two («y», «o»), what opens a
+# follow-up («pero», «ahora», «solo»), the prepositions and articles in front of a month, and the
+# words that say the months are the ones already in view («los mismos meses», «como antes»). A
+# digit is none of these, so a month with a year written next to it is not this turn.
+_BESIDE_THE_MONTHS: Final = frozenset(
+    "y e o pero ahora solo solamente en de del durante el la los las mismo mismos misma mismas "
+    "mes meses como antes igual que no vale bueno pues entonces".split()
+)
+_A_TOKEN: Final = re.compile(r"[a-z0-9]+")
+
+
+def months_alone(sentence: str) -> tuple[int, ...]:
+    """The one or two months a whole turn names when months are all it says, in the order said;
+    empty otherwise.
+
+    «Ahora solo julio», «pero de julio y agosto», «los mismos meses, agosto y septiembre», «en julio
+    y agosto como antes». A bare month is no window to `window_in` on purpose — inside a longer
+    sentence it may be part of a name — but a turn with nothing else in it can only mean the month,
+    and only the caller knows the answer in view whose year it takes.
+    """
+    words = _A_TOKEN.findall(spanish.folded(sentence))
+    months = tuple(dict.fromkeys(_MONTH_NUMBER[word] for word in words if word in _MONTH_NUMBER))
+    if not 1 <= len(months) <= 2 or any(
+        word not in _MONTH_NUMBER and word not in _BESIDE_THE_MONTHS for word in words
+    ):
+        return ()
+    return months
+
+
+def months_without_a_year(sentence: str) -> tuple[int, ...]:
+    """The months a sentence names with no year beside them, in the order it names them.
+
+    For the sentence «¿De qué año?» was asked about: the year that answers it belongs to these
+    months, and completing the open question with the whole year instead drops them — «este año»
+    to the question about «julio y agosto» ran every expense of the year (impro-comparar-meses 5).
+    A day of a month («el 15 de julio») is a date, not a month, and leaves the sentence to be read
+    as it always was.
+    """
+    folded = spanish.folded(sentence)
+    if _A_DAY_OF_A_MONTH.search(folded):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            _MONTH_NUMBER[mention.group("month")]
+            if mention.group("month") is not None
+            else int(mention.group("number"))
+            for mention in _MONTH_MENTION.finditer(folded)
+            if mention.group("year") is None and mention.group("relative") is None
+        )
+    )
+
+
+def a_month_of(year: int, month: int, today: date) -> AbsoluteRange:
+    """`month` of `year`, or of the last year it happened when that one has not reached it.
+
+    A year taken from the answer in view can be this year, and «¿y en noviembre?» after this year's
+    figures in October is not a month nobody has lived yet: it is last November, which is what the
+    month alone has always meant (`_year_of`).
+    """
+    window = whole_month(year, month)
+    return window if window.start <= today else whole_month(_year_of(month, today), month)
+
+
+def year_in_view(window: Window, today: date) -> int:
+    """The calendar year a window ends in, which is the year a month named after it belongs to.
+
+    A range says it outright. A named period is resolved only as far as its year, and only where the
+    year can differ from today's: the previous month, quarter, semester, week or day across New
+    Year. Everything else ends today.
+    """
+    if isinstance(window, AbsoluteRange):
+        return window.end.year
+    period = window.period
+    if period is Period.LAST_MONTH:
+        return today.year - 1 if today.month == 1 else today.year
+    if period is Period.LAST_QUARTER:
+        return today.year - 1 if today.month <= 3 else today.year
+    if period is Period.LAST_SEMESTER:
+        return today.year - 1 if today.month <= 6 else today.year
+    if period is Period.YESTERDAY:
+        return (today - timedelta(days=1)).year
+    if period in {Period.LAST_WEEK, Period.LAST_WEEKEND}:
+        # Both end by the Sunday before this week's Monday.
+        return (today - timedelta(days=today.weekday() + 1)).year
+    if period is Period.LAST_FORTNIGHT:
+        return today.year - 1 if today.month == 1 and today.day <= 15 else today.year
+    return today.year
+
+
+# --- validation fix 1, F6: the period before, in the unit of the one in view ------------------
+#
+# «¿Y la anterior?» after this week's spending is last week. The step back was the follow-up
+# reader's alone (`readers/windows._previous_calendar_window`), where the turn has to name its unit;
+# with none named the model got it and asked which period. The week, month and year steps live here
+# now, below both readers that need them — the follow-up patch, which reads the unit off the answer,
+# and the follow-up reader, which reads it off the sentence — so the two cannot answer June in one
+# turn and July in the other. The other units stay where they were.
+
+# The calendar unit a window is one of, in the words a sentence names it with.
+_UNIT_OF_A_PERIOD: Final[dict[Period, str]] = {
+    Period.THIS_WEEK: "semana",
+    Period.LAST_WEEK: "semana",
+    Period.THIS_MONTH: "mes",
+    Period.LAST_MONTH: "mes",
+    Period.THIS_YEAR: "ano",
+}
+
+
+def calendar_unit_of(window: Window) -> str | None:
+    """«semana», «mes» or «ano» when `window` is one whole week, month or year — this one, the
+    last one, or one named by its dates — and None otherwise: thirty days back is no unit."""
+    if isinstance(window, RelativePeriod):
+        return _UNIT_OF_A_PERIOD.get(window.period)
+    if window == whole_month(window.start.year, window.start.month):
+        return "mes"
+    if window == whole_year(window.start.year):
+        return "ano"
+    if (window.end - window.start).days == 6:
+        return "semana"
+    return None
+
+
+def window_before(window: Window, unit: str, today: date) -> Window | None:
+    """The `unit` («semana», «mes», «ano») directly before `window`, or None when `window` is not
+    one of that unit.
+
+    Named periods step back as named periods while the banking contract has one — this month to
+    LAST_MONTH, this week to LAST_WEEK — and to dates when it has none: the month before last, the
+    week before last, last year. A range steps back by its own dates.
+    """
+    if unit == "mes":
+        if isinstance(window, RelativePeriod):
+            if window.period is Period.THIS_MONTH:
+                return RelativePeriod(Period.LAST_MONTH)
+            if window.period is Period.LAST_MONTH:
+                before_last = date(today.year, today.month, 1) - timedelta(days=32)
+                return whole_month(before_last.year, before_last.month)
+            return None
+        if window == whole_month(window.start.year, window.start.month):
+            before = window.start - timedelta(days=1)
+            return whole_month(before.year, before.month)
+        return None
+    if unit == "semana":
+        if isinstance(window, RelativePeriod):
+            if window.period is Period.THIS_WEEK:
+                return RelativePeriod(Period.LAST_WEEK)
+            if window.period is Period.LAST_WEEK:
+                monday = today - timedelta(days=today.weekday())
+                return AbsoluteRange(
+                    start=monday - timedelta(days=14), end=monday - timedelta(days=8)
+                )
+            return None
+        if (window.end - window.start).days == 6:
+            return AbsoluteRange(
+                start=window.start - timedelta(days=7), end=window.end - timedelta(days=7)
+            )
+        return None
+    if unit == "ano":
+        if isinstance(window, RelativePeriod):
+            return whole_year(today.year - 1) if window.period is Period.THIS_YEAR else None
+        if window == whole_year(window.start.year):
+            return whole_year(window.start.year - 1)
+    return None
+
+
+# «Los mismos 3 meses», «los mismos meses», «el mismo periodo», «como antes»: the window of the last
+# answer, said as the whole turn (impro-mandado-recibido 4 got «Sigo sin tener claro el periodo»).
+# A count, when said, has to be the last answer's own, so «los mismos 6 meses» after three is not
+# resolved to three.
+_THE_SAME_WINDOW: Final = re.compile(
+    r"(?:(?:y|pues|vale|bueno|entonces|pero)\s+)*(?:(?:en|de|durante|para)\s+)?"
+    r"(?:(?:los|las|el|la)\s+mism[oa]s?"
+    r"(?:\s+(?P<count>\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce))?"
+    r"(?:\s+(?P<unit>dias|dia|semanas|semana|meses|mes|anos|ano|periodo|fechas))?"
+    r"(?:\s+(?:que|de)\s+antes)?"
+    r"|(?:igual\s+que|como)\s+antes)"
+)
+# What a counted unit is in the plan's own terms: the period and how many of it one unit is.
+_SAME_UNIT: Final[dict[str, tuple[Period, int]]] = {
+    "dia": (Period.LAST_N_DAYS, 1),
+    "dias": (Period.LAST_N_DAYS, 1),
+    "semana": (Period.LAST_N_DAYS, 7),
+    "semanas": (Period.LAST_N_DAYS, 7),
+    "mes": (Period.LAST_N_MONTHS, 1),
+    "meses": (Period.LAST_N_MONTHS, 1),
+    "ano": (Period.LAST_N_MONTHS, 12),
+    "anos": (Period.LAST_N_MONTHS, 12),
+}
+
+
+def the_same_window(sentence: str, before: Window | None) -> Window | None:
+    """`before`, when the whole turn says it wants the window of the last answer again; else None.
+
+    `before` is that answer's window, which only the caller holds. None when there is none, and
+    when a count the turn states contradicts it: «los mismos 6 meses» after three months names a
+    window nobody answered, and guessing which of the two was meant is a figure on a guess.
+    """
+    said = _THE_SAME_WINDOW.fullmatch(spanish.folded(sentence).strip(" ?¿.!¡,"))
+    if before is None or said is None:
+        return None
+    count = said.group("count")
+    if count is None:
+        return before
+    stated = int(count) if count.isdigit() else spanish_numbers.integer(count)
+    unit = _SAME_UNIT.get(said.group("unit") or "")
+    if stated is None or unit is None or not isinstance(before, RelativePeriod):
+        return None
+    period, size = unit
+    return before if before.period is period and before.n == stated * size else None
 
 
 # --- B-4 (Wave 3 hardening): a season is a question with its months in it ----------------------

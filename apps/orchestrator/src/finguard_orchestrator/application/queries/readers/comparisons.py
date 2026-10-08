@@ -381,20 +381,20 @@ def _direct_period_comparison(
     if _DIRECT_PERIOD_COMPARISON.search(folded) is None:
         return None
     windows: tuple[window_words.Window, window_words.Window] | None = None
-    named_ranges = window_words.compared_date_ranges(query.sentence, today=query.today)
-    named_months = window_words.compared_calendar_months(query.sentence, today=query.today)
-    named_years = window_words.compared_calendar_years(query.sentence, today=query.today)
-    natural_periods = window_words.compared_natural_periods(query.sentence, today=query.today)
-    if named_ranges is not None:
-        windows = (named_ranges[1], named_ranges[0])
-    elif named_months is not None:
-        # `_compare_periods` writes its `latest` argument first. Reverse mention order here so the
-        # answer follows the user's order: "julio con junio" reads July before June.
-        windows = (named_months[1], named_months[0])
-    elif named_years is not None:
-        windows = (named_years[1], named_years[0])
-    elif natural_periods is not None:
-        windows = (natural_periods[1], natural_periods[0])
+    named = (
+        window_words.compared_date_ranges(query.sentence, today=query.today)
+        or window_words.compared_calendar_months(query.sentence, today=query.today)
+        or window_words.compared_calendar_years(query.sentence, today=query.today)
+        or window_words.compared_natural_periods(query.sentence, today=query.today)
+    )
+    if named is not None:
+        # The window that came first is the reference, whichever was said first (validation fix
+        # 1, F3; P-1). This used to reverse the order they were said in, so that `_compare_periods`
+        # — which writes `latest` first — would follow the person's words; «junio vs julio» then
+        # had July as the reference and June as the side whose change is reported, and «en
+        # porcentaje» said «disminuyó» about a month that went up 55 %. The change is a fact about
+        # time, so the pair is ordered by time, as every other comparison reader already orders it.
+        windows = _in_calendar_order(*named)
     elif re.search(r"\beste\s+mes\b", folded) and re.search(
         r"\b(?:(?:el\s+)?mes\s+(?:pasado|anterior)|el\s+(?:pasado|anterior))\b",
         folded,
@@ -512,6 +512,22 @@ def _direct_period_comparison(
         date_range=windows[0] if isinstance(windows[0], AbsoluteRange) else None,
     )
     return ComparisonPlan.between(earlier, base)
+
+
+def _in_calendar_order(
+    first: window_words.Window, second: window_words.Window
+) -> tuple[window_words.Window, window_words.Window]:
+    """Two contrasted windows, the one that happened first first (F3).
+
+    Two ranges by where they start. Two named periods are a block and the one before it —
+    `compared_natural_periods` pairs THIS_* with LAST_* — so the LAST_* one comes first. A pair of
+    one of each is not one the readers above build, and is ordered as it always was.
+    """
+    if isinstance(first, AbsoluteRange) and isinstance(second, AbsoluteRange):
+        return (first, second) if first.start <= second.start else (second, first)
+    if isinstance(first, RelativePeriod) and isinstance(second, RelativePeriod):
+        return (second, first) if first.period.value.startswith("THIS_") else (first, second)
+    return second, first
 
 
 def _a_comparison_owns_it(query: AskFinancialQuestionQuery) -> bool:

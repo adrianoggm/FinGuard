@@ -37,29 +37,12 @@ def _previous_calendar_window(
     """The calendar window directly before a compatible plan window."""
     if unit == "periodo":
         unit = _calendar_unit_of(plan) or ""
-    if unit == "mes":
-        if plan.period and plan.period.period is Period.THIS_MONTH:
-            return RelativePeriod(Period.LAST_MONTH)
-        if plan.period and plan.period.period is Period.LAST_MONTH:
-            year, month = _month_before(today.year, today.month)
-            year, month = _month_before(year, month)
-            return window_words.whole_month(year, month)
-        if plan.date_range and _is_whole_month(plan.date_range):
-            year, month = _month_before(plan.date_range.start.year, plan.date_range.start.month)
-            return window_words.whole_month(year, month)
-    if unit == "semana":
-        if plan.period and plan.period.period is Period.THIS_WEEK:
-            return RelativePeriod(Period.LAST_WEEK)
-        if plan.date_range and (plan.date_range.end - plan.date_range.start).days == 6:
-            return AbsoluteRange(
-                start=plan.date_range.start - timedelta(days=7),
-                end=plan.date_range.end - timedelta(days=7),
-            )
-    if unit == "ano":
-        if plan.period and plan.period.period is Period.THIS_YEAR:
-            return window_words.whole_year(today.year - 1)
-        if plan.date_range and _is_whole_year(plan.date_range):
-            return window_words.whole_year(plan.date_range.start.year - 1)
+    if unit in {"mes", "semana", "ano"}:
+        # The week, the month and the year are `window_words.window_before`'s, which the follow-up
+        # patch reads too when a turn says «¿y la anterior?» and names no unit (validation fix 1,
+        # F6): one definition for both, and last week steps back to the week before it there.
+        window = plan.period or plan.date_range
+        return window_words.window_before(window, unit, today) if window is not None else None
     if unit == "trimestre":
         if plan.period and plan.period.period is Period.THIS_QUARTER:
             return RelativePeriod(Period.LAST_QUARTER)

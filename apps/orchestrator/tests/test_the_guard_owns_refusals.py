@@ -879,8 +879,10 @@ async def test_two_periods_can_be_compared_in_one_natural_sentence(
             "junio de 2026",
         ),
         (
+            # The earlier year first since validation fix 1 (F3): it is the reference the change is
+            # read from. It was 2026 first, the reverse of the order the years were said in.
             "Compara mis ingresos de 2025 con 2026",
-            [date(2026, 1, 1), date(2025, 1, 1)],
+            [date(2025, 1, 1), date(2026, 1, 1)],
             "en 2025",
             "en 2026",
         ),
@@ -1228,8 +1230,11 @@ async def test_a_direct_period_comparison_preserves_the_calendar_average() -> No
     assert planner.asked == 0
     assert all(plan.metric is Metric.PERIOD_AVERAGE for plan in ledger.plans)
     assert all(plan.group_by is GroupBy.MONTH for plan in ledger.plans)
-    assert "En 2025: 1.000,00 €" in answer.text
-    assert "en 2026: 500,00 €" in answer.text
+    # The later year is written first since validation fix 1 (F3), as every comparison writes its
+    # `latest` side first: 2025 is now the reference, where the reverse of the order said made it
+    # 2026.
+    assert "En 2026: 500,00 €" in answer.text
+    assert "en 2025: 1.000,00 €" in answer.text
     assert "gasto medio mensual fue 500,00 € mayor en 2025" in answer.text
 
 

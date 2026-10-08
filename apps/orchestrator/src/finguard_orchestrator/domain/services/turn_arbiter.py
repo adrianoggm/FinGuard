@@ -10,7 +10,8 @@ again, so the only way out of an open question was to answer it.
 **The order is the design**, and the first match wins:
 
     RESET          the turn is only words that drop what was open — «olvídalo», «déjalo», «no
-                   importa», «nada», «no era eso» — with nothing after them. First, because it is
+                   importa», «nada», «no era eso» — with nothing after them but courtesy and the
+                   fillers people wrap them in («bah», «que no», «da igual»). First, because it is
                    the one turn about the open question itself: read as its answer, it never ends.
     CONFIRMATION   a payment or booking preview is waiting for a yes. Its gates in the controller
                    answer it before this is asked, whatever the words; this is the arbitration
@@ -135,18 +136,30 @@ _RESET: Final = (
 # is how the reset is usually said. None of these is a reset by itself, which is why a turn has to
 # say at least one word of `_RESET`: a bare «no» while a question is open is somebody answering it,
 # and a bare «gracias» is manners.
+#
+# And the fillers people wrap a reset in (validation fix 1, F5): «bah olvídalo», «que no, déjalo»,
+# «déjalo, da igual», «venga, olvídalo», «pues nada». Without them each was a request that happened
+# to contain a reset word — the last query ran again, or «Eso no puedo calcularlo todavía.». «Da
+# igual» is here and still not a reset alone, which ruling R51 needs: alone, it answers «¿En qué
+# cuenta…?» as any account. «Que no» before «no», because the first match wins.
 _ALONGSIDE: Final = (
     ("por", "favor"),
     ("gracias",),
     ("vale",),
+    ("que", "no"),
     ("no",),
+    ("bah",),
+    ("venga",),
+    ("pues",),
+    ("da", "igual"),
 )
 
 _WORD: Final = re.compile(r"[a-z0-9]+")
 
 
 def is_a_reset(sentence: str) -> bool:
-    """Whether the whole turn is reset words, with at most courtesy and a «no» around them.
+    """Whether the whole turn is reset words, with at most courtesy, a «no» and fillers around them
+    (`_ALONGSIDE`).
 
     Folded and read word by word, so accents, capitals and punctuation change nothing: «¡Olvídalo!»
     and «olvidalo» are the same turn. Any other word — a category, a window, «más» — makes it a
@@ -443,6 +456,23 @@ def _names_an_account(sentence: str, conversation: Conversation) -> bool:
     )
 
 
+def the_window_answered_last(conversation: Conversation) -> window_words.Window | None:
+    """The window of the last answer when it was one plan, or None (validation fix 1, F2).
+
+    What «los mismos 3 meses» names as the reply to «¿De qué periodo?»: the period the person
+    has just seen. Not after a comparison or a proportion, whose two windows are not one period.
+    Public because the handler completes the open question with the window this said it fills.
+    """
+    plan = conversation.last_plan
+    if (
+        conversation.last_comparison is not None
+        or conversation.last_ratio is not None
+        or not isinstance(plan, FinancialPlan)
+    ):
+        return None
+    return plan.period or plan.date_range
+
+
 def _what_it_fills(
     sentence: str, conversation: Conversation, analysis: TurnAnalysis, *, today: date
 ) -> frozenset[Slot]:
@@ -491,9 +521,13 @@ def _what_it_fills(
         return frozenset()
     filled: set[Slot] = set()
     window_slot = Slot.YEAR if Slot.YEAR in holds else Slot.WINDOW
-    if (
-        window_slot in holds
-        and window_words.window_in(sentence, asked_for=window_slot, today=today) is not None
+    if window_slot in holds and (
+        window_words.window_in(sentence, asked_for=window_slot, today=today) is not None
+        or (
+            window_slot is Slot.WINDOW
+            and window_words.the_same_window(sentence, the_window_answered_last(conversation))
+            is not None
+        )
     ):
         filled.add(window_slot)
     if Slot.ACCOUNT in holds and _names_an_account(sentence, conversation):
@@ -602,8 +636,14 @@ def arbitrate(
     # wrong, and the correction path would ask «¿Qué debería cambiar…?» or re-plan a figure that
     # stood. A reading that calls it one is overruled by the shape; every other correction keeps
     # its place before the follow-up.
+    #
+    # And the money turned round said as a correction — «no, lo que ella me ha pasado a mí»
+    # (validation fix 1, F4). It is one: the person meant the other direction. But the patch says
+    # all of it, the person and the window stay, and the correction path has no «ella» to resolve,
+    # so a reading that calls it a correction is overruled the same way and the patch answers it.
     regroups = patch is not None and patch.changed == {PatchField.GROUP_BY}
-    if analysis.relation is TurnRelation.CORRECTION and not regroups:
+    turns_round = patch is not None and PatchField.DIRECTION in patch.changed
+    if analysis.relation is TurnRelation.CORRECTION and not (regroups or turns_round):
         return Arbitration(TurnType.CORRECTION)
     if patch is not None:
         return Arbitration(TurnType.FOLLOW_UP, patch=patch)

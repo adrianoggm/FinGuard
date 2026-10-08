@@ -167,10 +167,11 @@ episodes:
         route: QUERY
         no_model: true
         ran: [{window: '2026-06-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      # Earlier window first since validation fix 1 (F3): the reference the change is read from.
       - say: Compara mis ingresos de 2025 vs 2026
         route: QUERY
         no_model: true
-        ran: [{window: '2026-01-01..2026-12-31', direction: INCOME, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        ran: [{window: '2025-01-01..2025-12-31', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}, {window: '2026-01-01..2026-12-31', direction: INCOME, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
 
   - name: a_comparison_keeps_the_measure_the_user_named
     why: >
@@ -193,16 +194,17 @@ episodes:
         no_model: true
         says: importe medio por movimiento
         ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: AVERAGE}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}]
+      # Earlier window first since validation fix 1 (F3): the reference the change is read from.
       - say: Compara mi gasto medio mensual de 2025 con 2026
         route: QUERY
         no_model: true
         says: gasto medio mensual
-        ran: [{window: '2026-01-01..2026-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}]
+        ran: [{window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}, {window: '2026-01-01..2026-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}]
       - say: ¿Y en cuál hubo más?
         route: QUERY
         no_model: true
         says: gasto medio mensual
-        ran: [{window: '2026-01-01..2026-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}]
+        ran: [{window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}, {window: '2026-01-01..2026-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}]
       - say: gracias
         route: COURTESY
 

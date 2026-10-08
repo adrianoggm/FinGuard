@@ -119,6 +119,7 @@ from finguard_orchestrator.domain.models.planning_context import (
     ContinuationBase,
     ContinuationSource,
     QueryFocus,
+    RatioFocus,
     focus_of,
     planning_context,
 )
@@ -1100,6 +1101,18 @@ class AskFinancialQuestionHandler:
                 ):
                     yield step
                 return
+            # «¿Y la anterior?» with no unit said (F6): the period before the one answered, in its
+            # unit, which only the patch could read. Answered as the follow-up reader answers «¿y
+            # el mes anterior?» — the window replaced and nothing else — and not through the
+            # planner's path, whose silence rule would put the answer's own window back. The shapes
+            # that name their unit keep going to that reader, as they always did.
+            stepped_back = _the_period_before(query, grounded)
+            if stepped_back is not None:
+                yield Stage("planned", answer_writer.plan_in_words(stepped_back))
+                yield Stage("querying")
+                answered = await self._answer(query, stepped_back)
+                yield replace(answered, plan_continues_conversation=True)
+                return
 
         scope_followup = await self._scope_change_followup(query)
         if scope_followup is not None:
@@ -1344,16 +1357,43 @@ class AskFinancialQuestionHandler:
         # restaurantes» is both months in fuel. After the comparison readers, so «compáralos otra
         # vez» is still theirs, and before every reader of the query in view, which would read one
         # operand of the pair as the whole of it. Only on a turn the arbitration left to the
-        # readers: a reply to the question left open is that question's.
+        # readers: a reply to the question left open is that question's. And a correction of the
+        # subject read as a correction (F3): «no, digo gasolina» over the pair is its subject
+        # corrected on both sides, which no correction reader below can say of a comparison.
         continued = (
             _the_comparison_continued(query)
-            if intent is Intent.FINANCIAL_QUERY and arbitration.type in _A_PATCH_MAY_TAKE
+            if (intent is Intent.FINANCIAL_QUERY and arbitration.type in _A_PATCH_MAY_TAKE)
+            or (
+                arbitration.type is TurnType.CORRECTION
+                and _CORRECTS_THE_SUBJECT.match(_clean_turn(query.sentence)) is not None
+            )
             else None
         )
         if continued is not None:
             yield Stage("querying")
             compared = await self._compare_periods(query, continued)
             yield replace(compared, plan_continues_conversation=True)
+            return
+
+        # A turn made of months over the answer in view — «ahora solo julio», «pero de julio y
+        # agosto» — in the year that answer is in (F2). After the comparison readers and the
+        # comparison continued, which own a comparison word or a new subject, and before the
+        # readers of the query in view, which read a bare month as nothing and two as nothing.
+        inherited = (
+            _the_months_it_names(query)
+            if intent is Intent.FINANCIAL_QUERY and arbitration.type in _A_PATCH_MAY_TAKE
+            else None
+        )
+        if isinstance(inherited, ComparisonPlan):
+            yield Stage("querying")
+            compared = await self._compare_periods(query, inherited)
+            yield replace(compared, plan_continues_conversation=True)
+            return
+        if isinstance(inherited, FinancialPlan):
+            yield Stage("planned", answer_writer.plan_in_words(inherited))
+            yield Stage("querying")
+            answered = await self._answer(query, inherited)
+            yield replace(answered, plan_continues_conversation=True)
             return
 
         if intent is Intent.FINANCIAL_QUERY and account_words.asks_for_other_accounts(
@@ -1788,6 +1828,20 @@ class AskFinancialQuestionHandler:
             yield await self._answer_with_month_fallback(query, first, second)
             return
 
+        by_the_year = self._the_months_the_year_completes(query)
+        if by_the_year is not None:
+            # «2026» to «¿De qué año?»: the months that question was about, in that year, with the
+            # subject its draft holds — never the whole year in their place (F2).
+            query = self._the_accounts_it_chose(query)
+            if isinstance(by_the_year, ComparisonPlan):
+                yield Stage("querying")
+                yield await self._compare_periods(query, by_the_year)
+                return
+            yield Stage("planned", answer_writer.plan_in_words(by_the_year))
+            yield Stage("querying")
+            yield await self._answer(query, by_the_year)
+            return
+
         finished = self._finish_pending(query)
         if finished is not None:
             # No model. The question back was about a slot, the reply fills it, and both the window
@@ -1861,7 +1915,10 @@ class AskFinancialQuestionHandler:
                 # as the holder's choice here, they outlived a question the holder walked away from
                 # — «olvídalo», a balance, a cancelled Bizum — and the next question ran the hucha
                 # alone (final review, I-2).
-                asking, note = await self._waiting_for_the_window(rescued or planned, query)
+                asking, note = await self._waiting_for_the_window(
+                    _the_year_asked_over_the_open_subject(rescued or planned, was, query.sentence),
+                    query,
+                )
                 declined = _decline(asking, was, said, query.sentence)
                 yield replace(declined, text=f"{declined.text}\n({note})") if note else declined
                 return
@@ -2883,8 +2940,18 @@ class AskFinancialQuestionHandler:
 
         # Against the slot the question asked for, which is what makes a two-word reply readable:
         # "de este" names nothing on its own and is this year as the answer to "¿de qué año?".
-        window = by_default or window_words.window_in(
-            query.sentence, asked_for=active.awaiting, today=query.today
+        # And «los mismos 3 meses» is the period of the last answer (validation fix 1, F2), which
+        # the arbitration read the same way when it called this turn the reply.
+        window = (
+            by_default
+            or window_words.window_in(query.sentence, asked_for=active.awaiting, today=query.today)
+            or (
+                window_words.the_same_window(
+                    query.sentence, turn_arbiter.the_window_answered_last(query.conversation)
+                )
+                if active.awaiting is Slot.WINDOW
+                else None
+            )
         )
         if window is None:
             return None
@@ -2905,6 +2972,58 @@ class AskFinancialQuestionHandler:
         return explicit_facts.of_its_kind(
             finished, explicit_facts.read(query.sentence, today=query.today)
         )
+
+    def _the_months_the_year_completes(
+        self, query: AskFinancialQuestionQuery
+    ) -> FinancialPlan | ComparisonPlan | None:
+        """The months «¿De qué año?» was asked about, in the year the reply gives (F2).
+
+        The question is a model's, about a sentence that named months and no year, and the draft it
+        leaves holds the subject and never the months: a draft has one window, and the months are
+        the part it was asking about. So «este año» completed it as the whole year — every expense
+        of 2026 for a question about July and August (impro-comparar-meses 5). The months are read
+        back off the sentence the question was asked about, which the turn log keeps, as the
+        backstop's account question reads its own (`_asked_which_account_about`): one month is the
+        draft over that month, two are the draft compared over both.
+
+        None — and `_finish_pending` completes the draft as before — when the reply gives no year,
+        the question asked was not the year, or its sentence names no month with no year.
+        """
+        active = query.conversation.active
+        if not isinstance(active, FinancialClarification) or active.awaiting is not Slot.YEAR:
+            return None
+        if _asks_a_question_of_its_own(query):
+            return None
+        said = window_words.window_in(query.sentence, asked_for=Slot.YEAR, today=query.today)
+        if isinstance(said, RelativePeriod) and said.period is Period.THIS_YEAR:
+            year = query.today.year
+        elif isinstance(said, AbsoluteRange) and _is_whole_year(said):
+            year = said.start.year
+        else:
+            return None
+        asked = next((turn for turn in reversed(query.conversation.turns) if turn.question), None)
+        months = window_words.months_without_a_year(asked.sentence) if asked is not None else ()
+        if not 1 <= len(months) <= 2:
+            return None
+        windows = sorted(
+            (window_words.whole_month(year, month) for month in months),
+            key=lambda window: window.start,
+        )
+        if any(window.start > query.today for window in windows):
+            # A month of that year still to come is no figure: read as before.
+            return None
+        try:
+            plans = [active.draft.with_window(window) for window in windows]
+        except InvalidValueError:
+            return None
+        if any(
+            plan_verifier.disagreement(query.sentence, plan, self._policy) is not None
+            for plan in plans
+        ):
+            return None
+        if len(plans) == 1:
+            return plans[0]
+        return ComparisonPlan.between(*plans)
 
     def _pending_continuation(self, query: AskFinancialQuestionQuery) -> ContinuationBase | None:
         """The validated fields behind an active clarification, completed as far as this turn can.
@@ -3001,11 +3120,25 @@ class AskFinancialQuestionHandler:
         Phrases such as ``ahora en todas mis cuentas`` contain no new period, so sending them
         through planning loses the previous window.  They are a deterministic patch to the
         already validated plan instead.
+
+        And a whole turn that only names every account, «ahora» or not (validation fix 1, F1):
+        «Todas mis cuentas», «en todas mis cuentas». Every account is the default now, so with
+        nothing open the person is restating or widening the scope of the answer just given. It
+        used to wait for «ahora» here, so it reached the model as a question of its own, which read
+        it as «everything, by account» and dropped the subject; and every later turn inherited
+        that. The base runs again across every account — a comparison as a comparison
+        (`_every_account_again`) — and with nothing answered the turn is guidance, never the
+        balance the interpreter can take it for. With a question open it is that question's
+        reply, absorbed before this is reached.
         """
         selected = _query_for_reader(query)
         previous = selected.plan
-        if previous is None or not _is_scope_change_followup(selected.wording, today=query.today):
+        said_alone = query.conversation.at_rest and _names_only_every_account(selected.wording)
+        if previous is None:
+            return await self._every_account_again(query) if said_alone else None
+        if not said_alone and not _is_scope_change_followup(selected.wording, today=query.today):
             return None
+        already = said_alone and self._read_every_account(previous, query.conversation)
         reader_query = replace(query, sentence=selected.wording)
         scoped: PlannedQuery | AskFinancialQuestionResult
         if account_words.asks_for_all_accounts(selected.wording):
@@ -3042,8 +3175,63 @@ class AskFinancialQuestionHandler:
                     conversation=query.conversation,
                 )
         if isinstance(scoped, TopMovements):
-            return await self._ranked(query, scoped)
-        return await self._answer(query, scoped)
+            return _said_it_already_was(await self._ranked(query, scoped), already)
+        return _said_it_already_was(await self._answer(query, scoped), already)
+
+    async def _every_account_again(
+        self, query: AskFinancialQuestionQuery
+    ) -> AskFinancialQuestionResult | None:
+        """«Todas mis cuentas» said alone over something that is not one plan (F1).
+
+        Over a comparison, the comparison: both windows, the same subject, every account — the
+        model, handed no base for it, asked the period of «tus movimientos». With nothing
+        answered, short guidance, and the choice kept: the interpreter can take the turn for a
+        question about money held, and the balance is not what was said. Anything else in view —
+        a balance, a proportion — is left where it was, which for a balance is the balance of
+        every account.
+        """
+        was = query.conversation
+        focus = focus_of(was)
+        if focus is None:
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text="Vale, en todas tus cuentas. ¿Qué quieres consultar?",
+                conversation=replace(
+                    was, account_selection=AccountSelection(AccountSelectionMode.ALL)
+                ),
+            )
+        if not isinstance(focus, ComparisonFocus):
+            return None
+        already = self._read_every_account(focus.value.latest, was)
+        sides = tuple(
+            replace(side, across_accounts=True, only_account_id=None, only_account_ids=())
+            for side in (focus.value.earlier, focus.value.latest)
+        )
+        comparison = ComparisonPlan.between(*sides)
+        if comparison is None:
+            return None
+        # Remembered as chosen, as `_answer` remembers it for one plan: `_compare_periods` keeps
+        # the conversation it is handed and stores no scope of its own.
+        compared = await self._compare_periods(
+            _remember_explicit_scope(query, comparison.latest), comparison
+        )
+        return _said_it_already_was(replace(compared, plan_continues_conversation=True), already)
+
+    def _read_every_account(self, plan: PlannedQuery, was: Conversation) -> bool:
+        """Whether the answer `plan` gave was already read across every account.
+
+        The remembered plan does not always say so: an unqualified answer under `all` is kept as
+        asked, without the scope it ran with (`_answer`'s `remembered`). So the scope the run took
+        is read the way `_scoped` decides it: a narrowed plan was narrowed, a chosen selection
+        stands, and with nothing chosen the deployment's default decides.
+        """
+        if plan.only_account_id is not None or plan.only_account_ids:
+            return False
+        if plan.across_accounts:
+            return True
+        if was.account_selection is not None:
+            return was.account_selection.mode is AccountSelectionMode.ALL
+        return self._every_account_by_default
 
     async def _scope_ranking(
         self,
@@ -6284,6 +6472,24 @@ _ONLY_THE_PATCH_READS: Final = frozenset(
 _A_BREAKDOWN_BY_KIND: Final = frozenset({GroupBy.CATEGORY, GroupBy.COUNTERPARTY})
 
 
+def _the_period_before(
+    query: AskFinancialQuestionQuery, grounded: continuation_patch.GroundedContinuation | None
+) -> FinancialPlan | None:
+    """The answer in view over the period before its own, when the follow-up asked for that and
+    named no unit (F6): «¿y la anterior?» after this week's spending is last week's."""
+    focus = focus_of(query.conversation)
+    if (
+        grounded is None
+        or grounded.patch is None
+        or grounded.changed != {PatchField.WINDOW}
+        or not continuation_patch.names_the_one_before_without_its_unit(query.sentence)
+        or not isinstance(focus, QueryFocus)
+        or not isinstance(focus.current, FinancialPlan)
+    ):
+        return None
+    return grounded.patch.apply_to(focus.current)
+
+
 def _only_the_patch_reads(grounded: continuation_patch.GroundedContinuation) -> bool:
     """Whether a follow-up's patch is one `_ONLY_THE_PATCH_READS` argues no reader reads better."""
     patch = grounded.patch
@@ -6310,8 +6516,19 @@ _A_BOTH_SIDES_PATCH: Final = frozenset(
 )
 
 # How a turn that only names a category opens when it continues what is in view: «¿y en
-# gasolina?», «solo en gasolina», «ahora en gasolina», «en gasolina».
-_AN_ELLIPSIS_OPENS: Final = frozenset({"y", "solo", "ahora", "en"})
+# gasolina?», «solo en gasolina», «ahora en gasolina», «en gasolina». And «¿y de salud?», «de
+# salud» (validation fix 1, F3): «de» introduces the subject as «en» does, and «¿y de salud?» went
+# to the model and lost both months where «¿y en restaurantes?» kept them (impro-comparar-meses 7).
+_AN_ELLIPSIS_OPENS: Final = frozenset({"y", "solo", "ahora", "en", "de"})
+
+# A correction of the subject, said before it: «no, digo gasolina», «quería decir gasolina», «me
+# refería a la gasolina» (F3). Like an opening «y», it is the evidence that the turn continues what
+# is in view: «no, digo gasolina» over «julio o agosto en restaurantes» was planned from scratch and
+# answered fuel last month, both months dropped (impro-comparar-meses 3).
+_CORRECTS_THE_SUBJECT: Final = re.compile(
+    r"^(?:(?:no|perdona|perdon)\s+)?"
+    r"(?:digo|queria\s+decir|quise\s+decir|me\s+referia\s+a|me\s+refiero\s+a)\s+"
+)
 
 # Every word such a turn may carry besides the category: the openers again, and the articles.
 #
@@ -6328,16 +6545,21 @@ _ELLIPSIS_WORDS: Final = _AN_ELLIPSIS_OPENS | {"el", "la", "los", "las"}
 def _the_category_an_ellipsis_names(sentence: str) -> str | None:
     """The one category «¿y en gasolina?» says, when saying it is the whole turn.
 
-    The opening (`_AN_ELLIPSIS_OPENS`) is the evidence the turn continues something; every other
-    word has to be the category's own or one of `_ELLIPSIS_WORDS`. «¿Cuánto gasté en gasolina?»
+    The opening (`_AN_ELLIPSIS_OPENS`), or a correction said before the category
+    (`_CORRECTS_THE_SUBJECT`), is the evidence the turn continues something; every other word has
+    to be the category's own or one of `_ELLIPSIS_WORDS`. «¿Cuánto gasté en gasolina?»
     opens with a question and is one of its own, and «¿y cuánto en gasolina?» or «en gasolina en
     agosto» say more than a category, so none of them is read here. Two categories are refused for
     `_direct_period_comparison`'s reason: «¿y en gasolina y restaurantes?» over two windows is one
     combined figure or two, and choosing would be a guess.
     """
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\s+", "", _clean_turn(sentence))
+    corrected = _CORRECTS_THE_SUBJECT.match(folded)
+    if corrected is not None:
+        # The correction opens the turn, so what follows it may be the category alone.
+        folded = folded[corrected.end() :]
     words = folded.split()
-    if not words or words[0] not in _AN_ELLIPSIS_OPENS:
+    if not words or (corrected is None and words[0] not in _AN_ELLIPSIS_OPENS):
         return None
     named = category_words.precisely_named_in(sentence)
     said = set(words) - category_words.words_named_in(sentence) - _ELLIPSIS_WORDS
@@ -6414,6 +6636,119 @@ def _the_comparison_continued(query: AskFinancialQuestionQuery) -> ComparisonPla
     except InvalidValueError:
         return None
     return ComparisonPlan.between(earlier, latest)
+
+
+def _the_months_it_names(query: AskFinancialQuestionQuery) -> FinancialPlan | ComparisonPlan | None:
+    """A turn made of months, over the answer in view: those months, in the year in view (F2).
+
+    «Ahora solo julio» after «junio vs julio» of 2026, «pero de julio y agosto» after a comparison
+    of both, «en julio y agosto como antes»: on 2026-10-08 each reached the model, which asked
+    «¿De qué año?» about a year the answer on screen had already said. A bare month is no window
+    to `window_words` and two months with no comparison word are no comparison to the comparison
+    readers, so nothing else took the turn.
+
+    The months take the year of the answer in view (`window_words.year_in_view`): a month one of
+    the compared windows already is keeps that window's year, and any other takes the year the
+    answer ends in — unless that month has not come yet, which leaves it the last one that did
+    (`window_words.a_month_of`), as with nothing in view. The subject is the answer's: one month is
+    the answer over it, two are the answer compared over both, in the order they happened.
+
+    «Los mismos meses» or «como antes» and no month is the answer again, a comparison as one.
+
+    Only with nothing open: a question waiting is what a turn is about until it is answered. And
+    one month over a single answer that the follow-up reader reads as the same window — «¿y en
+    julio?» after a question about this year — is left to it, as it always was: there is no year
+    to take there that it does not already take.
+    """
+    was = query.conversation
+    if not was.at_rest:
+        return None
+    focus = focus_of(was)
+    sides: tuple[FinancialPlan, ...]
+    in_view: FinancialPlan | ComparisonPlan | None
+    if isinstance(focus, ComparisonFocus):
+        sides, in_view = (focus.value.earlier, focus.value.latest), focus.value
+    elif isinstance(focus, RatioFocus) and focus.value.kind is RatioKind.PERCENT_CHANGE:
+        # «En porcentaje» after a comparison: the same two windows, measured as a change.
+        sides, in_view = (focus.value.whole, focus.value.part), None
+    elif isinstance(focus, QueryFocus) and isinstance(focus.current, FinancialPlan):
+        sides, in_view = (focus.current,), focus.current
+    else:
+        return None
+    template = sides[-1]
+    if template.transaction_ids:
+        return None
+    window = template.period or template.date_range
+    assert window is not None  # a plan carries one of the two
+    months = window_words.months_alone(query.sentence)
+    if not months:
+        return in_view if window_words.the_same_window(query.sentence, window) else None
+
+    year = window_words.year_in_view(window, query.today)
+
+    def the_month(month: int) -> FinancialPlan:
+        # A month one of the sides already is: that side, in its own year.
+        side = next(
+            (
+                side
+                for side in sides
+                if side.date_range is not None
+                and _is_whole_month(side.date_range)
+                and side.date_range.start.month == month
+            ),
+            None,
+        )
+        if side is not None:
+            return side
+        return replace(
+            template,
+            period=None,
+            date_range=window_words.a_month_of(year, month, query.today),
+        )
+
+    named = sorted(
+        (the_month(month) for month in months),
+        key=lambda plan: plan.date_range.start if plan.date_range is not None else query.today,
+    )
+    if len(named) == 1:
+        (one,) = named
+        reads_it_too = window_words.window_in(query.sentence, today=query.today)
+        if (
+            isinstance(focus, QueryFocus | ComparisonFocus)
+            and reads_it_too is not None
+            and reads_it_too == one.date_range
+        ):
+            return None
+        return one
+    return ComparisonPlan.between(*named)
+
+
+def _the_year_asked_over_the_open_subject(
+    planned: PlanningResult, was: Conversation, sentence: str
+) -> PlanningResult:
+    """«¿De qué año?» asked about a reply to the question left open, over that question's subject.
+
+    comparar-meses 3 and 4 (2026-10-08): the supermarket waited for its period, the reply named two
+    months, and the model asked their year with a draft of the reply alone — no supermarket in it.
+    The reply named months and nothing else, so the subject is still the open question's: its draft
+    goes on to the year question, and «2026» completes the supermarket. Only when the model's draft
+    names no subject and the reply states none of its own (`turn_arbiter.
+    states_a_subject_of_its_own`); a question about a new subject keeps the model's draft.
+    """
+    open_question = was.active
+    draft = planned.draft
+    if (
+        planned.outcome is not PlanningOutcome.NEEDS_CLARIFICATION
+        or planned.awaiting is not Slot.YEAR
+        or not isinstance(open_question, FinancialClarification)
+        or (
+            draft is not None
+            and any((draft.categories, draft.merchants, draft.merchant_terms, draft.counterparties))
+        )
+        or turn_arbiter.states_a_subject_of_its_own(sentence)
+    ):
+        return planned
+    return replace(planned, draft=open_question.draft)
 
 
 # "El total", "en total", "todo junto" - the whole of it, said about a balance that had just named
@@ -7572,6 +7907,46 @@ def _is_scope_change_followup(sentence: str, *, today: date) -> bool:
     if _starts_new_financial_scope(sentence, today=today):
         return False
     return account_words.asks_for_all_accounts(sentence) or bool(account_words.named_in(sentence))
+
+
+# Every account and nothing else, as a whole turn: «Todas mis cuentas» (the chip), «en todas mis
+# cuentas», «¿y en todas mis cuentas?», «pues en todas mis cuentas». The whole turn on purpose, like
+# the follow-up shapes in `continuation_patch`: a sentence that says anything more is a question of
+# its own, and «en todas mis cuentas por cuenta» asks for the breakdown by account, which only
+# saying «por cuenta» does.
+_ONLY_EVERY_ACCOUNT: Final = re.compile(
+    r"(?:(?:y|e|pero|ahora|vale|bueno|pues|mejor|entonces)\s+)*"
+    r"(?:(?:en|de|con|para)\s+)?todas\s+(?:mis\s+|las\s+)?cuentas(?:\s+por\s+favor)?"
+)
+
+
+def _names_only_every_account(sentence: str) -> bool:
+    """Whether the whole turn says every account and nothing else (F1)."""
+    return _ONLY_EVERY_ACCOUNT.fullmatch(_clean_turn(sentence)) is not None
+
+
+# Said under an answer run again across every account when it already was (F1): the figure is the
+# same, and the line says why rather than leaving the person to wonder whether anything happened.
+# The scope note's own place under the figure, which says nothing back to a turn that asked for
+# every account (ruling R44); this is the one thing worth saying then.
+_ALREADY_EVERY_ACCOUNT: Final = "Ya estaba consultado en todas tus cuentas."
+
+
+def _said_it_already_was(
+    answered: AskFinancialQuestionResult, already: bool
+) -> AskFinancialQuestionResult:
+    """`answered`, with `_ALREADY_EVERY_ACCOUNT` under it when the scope did not change.
+
+    Only under a figure, and only where no scope line was written: under `ask` the turn gets
+    «Consultado en todas tus cuentas.», as every answer across accounts does there.
+    """
+    if (
+        not already
+        or answered.outcome != PlanningOutcome.PLANNED.value
+        or "Consultado en " in answered.text
+    ):
+        return answered
+    return replace(answered, text=f"{answered.text}\n{_ALREADY_EVERY_ACCOUNT}")
 
 
 def _answers_account_scope(sentence: str, names: tuple[str, ...]) -> bool:
