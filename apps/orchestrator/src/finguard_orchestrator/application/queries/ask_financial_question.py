@@ -3032,7 +3032,18 @@ class AskFinancialQuestionHandler:
             return replace(ranking, across_accounts=True)
         if self._account_directory is None:
             return ranking
-        named = account_words.named_in(query.sentence)
+        # Left out first, as `_scoped` reads it (ruling R48): «sin la hucha» names the hucha too.
+        ranking, kept = await self._the_accounts_left_out(ranking, query)
+        if kept and self._every_account_by_default:
+            return replace(
+                ranking,
+                only_account_id=kept[0] if len(kept) == 1 else None,
+                only_account_ids=kept if len(kept) > 1 else (),
+            )
+        left_out = frozenset(account_words.excluded_in(query.sentence))
+        named = tuple(
+            kind for kind in account_words.named_in(query.sentence) if kind not in left_out
+        )
         if named:
             try:
                 holdings = (
@@ -4610,9 +4621,26 @@ class AskFinancialQuestionHandler:
                 ),
             )
 
-        alias_names = account_words.learned_aliases_in(
-            query.sentence,
-            tuple(alias.alias for alias in query.conversation.account_aliases),
+        # The accounts the sentence leaves out (ruling R48), before anything reads one as chosen:
+        # «sin la hucha» names the hucha, and every reader below would narrow to it.
+        plan, kept = await self._the_accounts_left_out(plan, query)
+        if kept and self._every_account_by_default:
+            # Every account but those, which is what the sentence asked for. Under `ask` the
+            # question below asks which, as it always did.
+            return replace(
+                plan,
+                across_accounts=False,
+                only_account_id=kept[0] if len(kept) == 1 else None,
+                only_account_ids=kept if len(kept) > 1 else (),
+                include_internal=plan.include_internal
+                or (len(kept) == 1 and plan.direction is Direction.ALL),
+            )
+        every_alias = tuple(alias.alias for alias in query.conversation.account_aliases)
+        aliases_left_out = account_words.left_out_among(query.sentence, every_alias)
+        alias_names = tuple(
+            name
+            for name in account_words.learned_aliases_in(query.sentence, every_alias)
+            if name not in aliases_left_out
         )
         aliased = tuple(
             alias for alias in query.conversation.account_aliases if alias.alias in alias_names
@@ -4764,7 +4792,7 @@ class AskFinancialQuestionHandler:
                     raise
                 return _across_every_account(plan)
             names = tuple(holding.display_name for holding in holdings if holding.display_name)
-            custom = account_words.custom_chosen_among(query.sentence, names)
+            custom = _chosen_and_not_left_out(query.sentence, names)
             wanted_custom = [holding for holding in holdings if holding.display_name in custom]
             if len(wanted_custom) == 1:
                 return replace(
@@ -4804,7 +4832,7 @@ class AskFinancialQuestionHandler:
             return _across_every_account(plan)
 
         names = tuple(holding.display_name for holding in summary.holdings if holding.display_name)
-        custom = account_words.custom_chosen_among(query.sentence, names)
+        custom = _chosen_and_not_left_out(query.sentence, names)
         wanted = (
             [holding for holding in summary.holdings if holding.display_name in custom]
             if custom
@@ -5001,8 +5029,14 @@ class AskFinancialQuestionHandler:
         )
         named, shop = await self._the_shop_it_names(draft, query)
         note = _only_the_shop(draft, shop) if shop is not None else None
-        kept = _the_kind_still_open(named, query)
-        chosen = await self._the_accounts_its_question_names(query)
+        kept, keeps = await self._the_accounts_left_out(_the_kind_still_open(named, query), query)
+        chosen = (
+            # Every account but those the question leaves out, under `all`, as `_scoped` reads it
+            # (ruling R48); otherwise the accounts it names, if any.
+            AccountSelection(AccountSelectionMode.SELECTED, keeps)
+            if keeps and self._every_account_by_default
+            else await self._the_accounts_its_question_names(query)
+        )
         if chosen is not None:
             try:
                 kept = kept.with_accounts(chosen)
@@ -5030,6 +5064,83 @@ class AskFinancialQuestionHandler:
         ):
             return None
         return await self._the_accounts_it_names(query)
+
+    async def _the_accounts_left_out[P: (FinancialPlan, TopMovements, FinancialPlanDraft)](
+        self, plan: P, query: AskFinancialQuestionQuery
+    ) -> tuple[P, tuple[UUID, ...]]:
+        """The plan without an account it took for a shop left out, and every account the sentence
+        keeps when it leaves some out — or () for the second when it leaves none out, names one
+        in as well, or the accounts cannot be read (ruling R48).
+
+        Left out by kind («sin la hucha», `account_words.excluded_in`), by the holder's own name
+        («sin la cuenta Viajes») or by a learned alias («menos viajes»), and by an excluded shop
+        that turns out to be one of those — a model, or a name no vocabulary knows, can still put
+        «Viajes» there, and «sin Viajes» over a figure that holds Viajes is the wrong label R48
+        exists for. A sentence that also names an account in («la corriente, no el fondo») is left
+        to the readers that narrow to what is named; the second value is then (), and they read
+        the exclusion themselves.
+
+        The directory only: a handler without one has no names to read, and its summary is not
+        probed for an unqualified read (`_scoped`).
+        """
+        sentence = query.sentence
+        kinds = frozenset(account_words.excluded_in(sentence))
+        if self._account_directory is None or not (
+            kinds
+            or plan.excluded_merchants
+            or query.conversation.account_aliases
+            or account_words.explicitly_names_a_custom_account(sentence)
+        ):
+            return plan, ()
+        try:
+            holdings = await self._account_directory.all_of(query.account_id)
+        except BankingUnavailableError:
+            return plan, ()
+        aliases = query.conversation.account_aliases
+        names = tuple(holding.display_name for holding in holdings if holding.display_name)
+        names_out = frozenset(account_words.left_out_among(sentence, names))
+        aliases_out = frozenset(
+            account_words.left_out_among(sentence, tuple(alias.alias for alias in aliases))
+        )
+        left_out = {
+            holding.account_id
+            for holding in holdings
+            if holding.kind in kinds or holding.display_name in names_out
+        } | {alias.account_id for alias in aliases if alias.alias in aliases_out}
+        shops: list[str] = []
+        for shop in plan.excluded_merchants:
+            said = spanish.folded(shop).strip()
+            accounts = {
+                holding.account_id
+                for holding in holdings
+                if spanish.folded(holding.display_name or "") == said
+                or holding.kind in account_words.named_in(shop)
+            } | {alias.account_id for alias in aliases if spanish.folded(alias.alias) == said}
+            if accounts:
+                left_out |= accounts
+            else:
+                shops.append(shop)
+        plan = replace(plan, excluded_merchants=tuple(shops))
+        chosen = (
+            tuple(kind for kind in account_words.named_in(sentence) if kind not in kinds)
+            or tuple(
+                name
+                for name in account_words.custom_chosen_among(sentence, names)
+                if name not in names_out
+            )
+            or tuple(
+                name
+                for name in account_words.learned_aliases_in(
+                    sentence, tuple(alias.alias for alias in aliases)
+                )
+                if name not in aliases_out
+            )
+        )
+        if not left_out or chosen:
+            return plan, ()
+        return plan, tuple(
+            holding.account_id for holding in holdings if holding.account_id not in left_out
+        )
 
     @property
     def _every_account_by_default(self) -> bool:
@@ -7292,13 +7403,25 @@ def _scope_note(
             return "Consultado en todas tus cuentas."
     elif account_words.asks_for_all_accounts(sentence) or plan.across_accounts:
         return "Consultado en todas tus cuentas."
-    names = account_words.named_in(sentence)
+    # Named in, never left out: «sin la hucha» names the hucha, and its subset is every other
+    # account (ruling R48) — said, like every subset, as the accounts chosen.
+    left_out = account_words.excluded_in(sentence)
+    names = tuple(kind for kind in account_words.named_in(sentence) if kind not in left_out)
     labels = {"CURRENT": "cuenta corriente", "SAVINGS": "Hucha", "ASSET": "fondo"}
     if len(names) == 1 and names[0] in labels:
         return f"Consultado en {labels[names[0]]}."
     if plan.only_account_id is not None or plan.only_account_ids:
         return "Consultado en la cuenta seleccionada."
     return None
+
+
+def _chosen_and_not_left_out(sentence: str, names: tuple[str, ...]) -> tuple[str, ...]:
+    """The holder's own account names the sentence chooses, without those it leaves out: «sin la
+    cuenta Viajes» names Viajes, and narrowing to it ran the one account left out (ruling R48)."""
+    left_out = account_words.left_out_among(sentence, names)
+    return tuple(
+        name for name in account_words.custom_chosen_among(sentence, names) if name not in left_out
+    )
 
 
 def _is_scope_change_followup(sentence: str, *, today: date) -> bool:
