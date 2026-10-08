@@ -837,3 +837,143 @@ conversations:
           mechanism: comparison
           route: QUERY
           want: Gasolina en junio de 2026, una sola cifra.
+
+  - name: super-porcentaje-euros
+    goal: Comparar dos meses y luego cambiar la categoría.
+    turns:
+      - say: "compara el super de agosto con el de septiembre"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado en agosto frente a septiembre de 2026, con las dos cifras y la diferencia,
+            en todas las cuentas; sin preguntar.
+      - say: "ok lo mismo pero de restaurantes"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en agosto frente a septiembre de 2026 (mantiene los dos meses y cambia la
+            categoría); sin preguntar el periodo.
+      - say: "y la gasolina q?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en agosto frente a septiembre de 2026 pese a la «q» final (mantiene los dos
+            meses y cambia la categoría); sin preguntar el periodo.
+      - say: "y eso en %?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La comparación de gasolina en porcentaje, de agosto a septiembre de 2026 y con la
+            palabra que corresponde.
+      - say: "y de ocio?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Ocio en agosto frente a septiembre de 2026: mantiene los dos meses y cambia la
+            categoría. Si el porcentaje no se puede calcular porque un mes es cero, da igualmente
+            las cifras de los dos meses (o dice que no hubo gasto de ocio en ninguno); nunca solo
+            que la variación no está definida.
+      - say: "y en euros?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            La misma comparación de ocio de agosto y septiembre de 2026 en euros, con las dos
+            cifras y la diferencia; sin preguntar el periodo.
+      - say: "agosto y septiembre como antes"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Ocio en agosto frente a septiembre de 2026: completa la pregunta del periodo si
+            quedaba abierta, o repite la misma comparación. Nunca todo el gasto ni pregunta el año.
+      - say: "no, solo ocio"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Ocio en agosto frente a septiembre de 2026: corrige (o confirma) la categoría y
+            conserva la comparación. Nunca este mes ni un solo mes.
+
+  - name: javi-carmen-pasado
+    goal: >-
+      Saber lo que he enviado a alguien este mes, luego lo que me ha enviado esa persona, y luego
+      otra cosa distinta.
+    turns:
+      - say: "cuanto le he pasado a javi este mes?"
+        expect:
+          mechanism: intent
+          want: >-
+            Javi no está entre los contactos (Aitor, Carmen y las dos Martas): lo enviado este mes
+            a una persona llamada Javi si hay movimientos con ese nombre, o dice que no tiene
+            ningún contacto Javi y cuáles tiene. Respeta «este mes» sin preguntarlo y no trata a
+            Javi como un comercio.
+      - say: "este mes, ya te lo he dicho"
+        expect:
+          mechanism: pending_resolution
+          want: >-
+            Este mes, sobre lo enviado a Javi como persona: completa la pregunta si quedaba
+            abierta, o repite lo mismo. Nunca «gastos en Javi» como comercio ni «buscar sin
+            comercio».
+      - say: "no, digo a carmen"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Corrige la persona a Carmen (Carmen Nieto Lara) y conserva este mes: lo enviado a
+            Carmen, como persona; si no hay nada, lo dice nombrándola.
+      - say: "y ella a mi?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen este mes: la misma persona y ventana con la dirección invertida;
+            sin preguntar el periodo.
+      - say: "Ampliar a tres meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: Lo recibido de Carmen en los últimos tres meses.
+      - say: "vale nada. q tengo en total entre todo?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: Deja lo anterior y da el saldo de todas las cuentas.
+
+  - name: gym-netflix-dejalo
+    goal: Preguntar por las suscripciones, corregirse y después abandonar.
+    turns:
+      - say: "cuanto me gasto en suscripciones al mes?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Lo que paga de suscripciones al mes (lo que va de mes o el cargo mensual, diciendo la
+            ventana), en todas las cuentas; sin preguntar.
+      - say: "solo el gym"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: Solo el gimnasio (Altafit) en la misma ventana.
+      - say: "no solo el gym, tambien netflix"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            El gimnasio y Netflix juntos en la misma ventana: amplía a los dos (con la cifra de
+            cada uno si los separa). Nunca solo el gimnasio ni una categoría que nadie dijo.
+      - say: "uf da igual, dejalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior; no lo lee como una petición de cálculo ni da una
+            cifra.
+      - say: "nada, olvidalo"
+        expect:
+          mechanism: reset
+          want: Deja lo pendiente y lo dice en una frase; ni repite la consulta ni da una cifra.
