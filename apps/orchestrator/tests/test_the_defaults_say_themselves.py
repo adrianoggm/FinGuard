@@ -448,9 +448,13 @@ def test_an_account_named_beside_the_period_question_is_the_one_that_runs(
     stack = asking_for_the_window_stack(settled=False, account_scope_default=setting)
     asked = ask(stack, question)
     assert asked["outcome"] == "NEEDS_CLARIFICATION", asked["text"]
-    assert asked["conversation"]["account_selection_mode"] == "SELECTED"
+    # Kept on the draft, and the conversation's only once the question is answered (final review,
+    # I-2): stored on the asking turn, it outlived a question the holder walked away from.
+    assert asked["conversation"]["draft"]["only_account_id"] == str(account)
+    assert asked["conversation"].get("account_selection_mode") is None
     answered = ask(stack, "este año", asked["conversation"])
     assert answered["outcome"] == "PLANNED", answered["text"]
+    assert answered["conversation"]["account_selection_mode"] == "SELECTED"
     ran = stack.ledger.plans[-1]
     assert ran.only_account_id == account and not ran.across_accounts
     assert ran.period.period is Period.THIS_YEAR
@@ -486,6 +490,52 @@ def test_the_payroll_is_not_the_current_account_beside_the_period_question() -> 
     stack = asking_for_the_window_stack(settled=False)
     asked = ask(stack, "¿cuánto cobré de nómina?")
     assert asked["conversation"].get("account_selection_mode") is None
+
+
+# --- the account of a question nobody answered (final review, I-2) ------------------------------
+#
+# The account a question waiting for its period names is that question's, and becomes the
+# conversation's only when the question is answered. Stored as the holder's choice on the turn that
+# asked, it outlived the question: «¿cuánto he gastado en la hucha?» → «¿De qué periodo?» →
+# «olvídalo» → «¿cuánto gasté en julio?» ran the hucha alone.
+
+
+@pytest.mark.parametrize(
+    "between",
+    [
+        ("olvídalo",),
+        ("¿cuánto tengo?",),
+        ("mándale 20 € a Marta Solis Vega", "no"),
+        ("¿cuánto gasté en restaurantes en julio?",),
+    ],
+)
+def test_the_account_of_a_question_left_unanswered_is_not_the_conversations(
+    between: tuple[str, ...],
+) -> None:
+    stack = asking_for_the_window_stack(settled=False, account_scope_default="all")
+    asked = ask(stack, "¿cuánto he gastado en la hucha?")
+    assert asked["outcome"] == "NEEDS_CLARIFICATION", asked["text"]
+    conversation = asked["conversation"]
+    for sentence in between:
+        conversation = ask(stack, sentence, conversation)["conversation"]
+    answered = ask(stack, "¿cuánto gasté en julio?", conversation)
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    assert all(
+        plan.only_account_id != episodes.PIGGY and plan.across_accounts
+        for plan in stack.ledger.plans
+    ), [(plan.only_account_id, plan.across_accounts) for plan in stack.ledger.plans]
+
+
+@pytest.mark.parametrize("setting", ["all", "ask"])
+def test_the_account_of_the_question_is_remembered_once_it_is_answered(setting: str) -> None:
+    """The other side of I-2: answered, the hucha is the conversation's, and the next question
+    naming no account reads it, as a question that named it and ran at once does."""
+    stack = asking_for_the_window_stack(settled=False, account_scope_default=setting)
+    asked = ask(stack, "¿cuánto he gastado en la hucha?")
+    answered = ask(stack, "este año", asked["conversation"])
+    assert answered["conversation"]["account_selection_mode"] == "SELECTED"
+    ask(stack, "¿cuánto gasté en julio?", answered["conversation"])
+    assert stack.ledger.plans[-1].only_account_id == episodes.PIGGY
 
 
 # --- rankings (ruling R46, I-1) ----------------------------------------------------------------
@@ -666,6 +716,36 @@ def test_a_ranking_with_an_account_left_out_leaves_every_other_one() -> None:
     ran = stack.ledger.ran[-1]
     assert isinstance(ran, TopMovements)
     assert ran.only_account_ids == _ALL_BUT_THE_HUCHA and ran.excluded_merchants == ()
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "¿cuánto he ingresado este año sin contar la nómina?",
+        "¿cuánto he ingresado este año sin la nómina?",
+        "¿cuánto he ingresado este año menos la nómina?",
+    ],
+)
+def test_the_payroll_left_out_is_the_payroll_and_not_the_current_account(question: str) -> None:
+    """Final review, I-3: ruling R25 for what is left out. «Nómina» without «cuenta» is the
+    payroll, so «sin contar la nómina» is income without the payroll from every account — it ran
+    income from the hucha and the fund only, leaving out the account the payroll is paid into."""
+    stack = episodes.a_stack()
+    answered = ask(stack, question)
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    ran = stack.ledger.plans[-1]
+    assert ran.direction is Direction.INCOME and ran.period.period is Period.THIS_YEAR
+    assert ran.excluded_categories == ("SALARY",)
+    assert ran.across_accounts and ran.only_account_ids == () and ran.only_account_id is None
+    assert "Consultado en todas tus cuentas." in answered["text"]
+
+
+def test_the_payroll_account_left_out_is_still_the_account() -> None:
+    """The other side of I-3: «la cuenta nómina» is the account (R25), and leaving it out leaves
+    every other one."""
+    stack = episodes.a_stack()
+    ask(stack, "¿cuánto he ingresado este año sin contar la cuenta nómina?")
+    assert stack.ledger.plans[-1].only_account_ids == (episodes.PIGGY, episodes.FUND)
 
 
 def test_an_account_left_out_beside_the_period_question_is_left_out_of_its_answer() -> None:

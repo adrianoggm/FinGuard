@@ -365,12 +365,30 @@ _THE_PAYROLL_ACCOUNT: Final = re.compile(r"\bcuenta\s+nomina\b")
 _THE_PAYROLL: Final = re.compile(r"\bnomina\b")
 
 
-def _kinds_of_account_named(sentence: str) -> tuple[str, ...]:
-    """`account_words.named_in`, with a «nómina» that names the payroll left out of it."""
+def _without_the_payroll(sentence: str) -> str:
+    """The sentence folded, with a «nómina» that is the payroll and not the account taken out."""
     folded = spanish.folded(sentence)
-    if _THE_PAYROLL_ACCOUNT.search(folded):
-        return account_words.named_in(folded)
-    return account_words.named_in(_THE_PAYROLL.sub(" ", folded))
+    return folded if _THE_PAYROLL_ACCOUNT.search(folded) else _THE_PAYROLL.sub(" ", folded)
+
+
+def kinds_of_account_named(sentence: str) -> tuple[str, ...]:
+    """`account_words.named_in`, with a «nómina» that names the payroll left out of it.
+
+    Public because the handler reads the accounts a sentence chooses beside the ones it leaves
+    out (`kinds_of_account_left_out`), and the two have to read «nómina» the same way.
+    """
+    return account_words.named_in(_without_the_payroll(sentence))
+
+
+def kinds_of_account_left_out(sentence: str) -> tuple[str, ...]:
+    """`account_words.excluded_in`, with a «nómina» that names the payroll left out of it.
+
+    Ruling R25 for what is left out (final review, I-3): «sin contar la nómina» and «menos la
+    nómina» leave out the payroll, which the category exclusion already does, and not the account
+    it is paid into — read as the account, income without the payroll ran from the hucha and the
+    fund only. «Sin contar la cuenta nómina» is still the account.
+    """
+    return account_words.excluded_in(_without_the_payroll(sentence))
 
 
 def categories_a_reply_names(sentence: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -402,7 +420,7 @@ def _names_an_account(sentence: str, conversation: Conversation) -> bool:
     matched against the names that question offered — the conversation carries them, so this needs
     no directory either.
     """
-    if account_words.asks_for_all_accounts(sentence) or _kinds_of_account_named(sentence):
+    if account_words.asks_for_all_accounts(sentence) or kinds_of_account_named(sentence):
         return True
     asked = conversation.awaiting or conversation.last_asked
     if asked is Slot.ACCOUNT and account_words.all_accounts_as_a_reply(sentence):
