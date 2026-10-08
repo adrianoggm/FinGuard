@@ -184,18 +184,121 @@ def test_a_ranking_cannot_carry_a_person_so_it_asks_rather_than_drop_one() -> No
 # --- Patch -----------------------------------------------------------------------------------
 
 
-def test_patch_on_a_query_replaces_only_the_fields_given() -> None:
-    base = plan(JULY, ["RESTAURANTS"], metric=Metric.COUNT, excluded_merchants=("Lidl",))
+# Every field an operation can carry, set away from its default, so a patch that moved a field it
+# did not name could not hide behind the default. The state around it is just as full.
+RICH_STATE: dict[str, object] = {
+    "version": 5,
+    "scope": Scope((HUCHA.account_id,)),
+    "turns": (DialogueTurn("¿y en julio?", "tus gastos en julio"),),
+}
+
+
+def rich(window: AbsoluteRange, **over: object) -> FinancialPlan:
+    fields: dict[str, object] = {
+        "direction": Direction.INCOME,
+        "date_range": window,
+        "categories": ("RESTAURANTS",),
+        "excluded_categories": ("LEISURE",),
+        "merchants": ("Casa Pepe",),
+        "excluded_merchants": ("Lidl",),
+        "counterparties": ("Marta Ruiz",),
+        "metric": Metric.COUNT,
+        **over,
+    }
+    return FinancialPlan(**fields)
+
+
+@pytest.mark.parametrize(
+    ("changes", "moved"),
+    [
+        (PlanFields(direction=Direction.EXPENSE), {"direction": Direction.EXPENSE}),
+        (PlanFields(window=JUNE), {"date_range": JUNE}),
+        (PlanFields(categories=("TRANSPORT_FUEL",)), {"categories": ("TRANSPORT_FUEL",)}),
+        (PlanFields(excluded_categories=()), {"excluded_categories": ()}),
+        (PlanFields(merchants=("Bar Manolo",)), {"merchants": ("Bar Manolo",)}),
+        (PlanFields(excluded_merchants=("Dia",)), {"excluded_merchants": ("Dia",)}),
+        (PlanFields(people=()), {"counterparties": ()}),
+        (PlanFields(metric=Metric.SUM), {"metric": Metric.SUM}),
+        (PlanFields(group_by=GroupBy.CATEGORY), {"group_by": GroupBy.CATEGORY}),
+        (PlanFields(limit=5), {"group_limit": 5}),
+    ],
+    ids=[
+        "direction",
+        "window",
+        "categories",
+        "excluded_categories",
+        "merchants",
+        "excluded_merchants",
+        "people",
+        "metric",
+        "group_by",
+        "limit",
+    ],
+)
+def test_patch_on_a_query_replaces_only_the_fields_given(
+    changes: PlanFields, moved: dict[str, object]
+) -> None:
+    base = rich(JULY, group_by=GroupBy.MERCHANT, group_limit=3)
+    s = state_with(QueryFocus(base), **RICH_STATE)
+
+    t = apply(s, [Patch("focus", changes)], today=TODAY, grounds=G)
+
+    patched = replace(base, **moved)
+    assert t == Transition(
+        replace(s, focus=QueryFocus(patched)), Work("QUERY", patched, (HUCHA.account_id,)), None
+    )
+
+
+def test_patch_on_a_comparison_replaces_only_the_fields_given_on_both_sides() -> None:
+    before = ComparisonPlan.between(rich(JUNE), rich(JULY))
+    assert before is not None
+    s = state_with(ComparisonFocus(before, Measure.COUNT), **RICH_STATE)
 
     t = apply(
-        state_with(QueryFocus(base)),
-        [Patch("focus", PlanFields(categories=("LEISURE",)))],
+        s, [Patch("focus", PlanFields(categories=("TRANSPORT_FUEL",)))], today=TODAY, grounds=G
+    )
+
+    after = ComparisonPlan.between(
+        rich(JUNE, categories=("TRANSPORT_FUEL",)), rich(JULY, categories=("TRANSPORT_FUEL",))
+    )
+    assert after is not None
+    assert t == Transition(
+        replace(s, focus=ComparisonFocus(after, Measure.COUNT)),
+        Work("COMPARE", after, (HUCHA.account_id,)),
+        None,
+    )
+
+
+def test_patch_on_a_ratio_replaces_only_the_fields_given_on_part_and_whole() -> None:
+    part = rich(JULY, metric=Metric.SUM)
+    whole = replace(part, categories=(), merchants=(), counterparties=())
+    s = state_with(RatioFocus(RatioPlan(part, whole, RatioKind.SHARE)), **RICH_STATE)
+
+    t = apply(
+        s,
+        [Patch("focus", PlanFields(window=JUNE, excluded_merchants=("Dia",)))],
         today=TODAY,
         grounds=G,
     )
 
-    assert t.work == Work("QUERY", replace(base, categories=("LEISURE",)))
-    assert t.state.focus == QueryFocus(replace(base, categories=("LEISURE",)))
+    moved: dict[str, object] = {"date_range": JUNE, "excluded_merchants": ("Dia",)}
+    after = RatioPlan(
+        replace(part, **moved),
+        replace(whole, **moved),
+        RatioKind.SHARE,
+    )
+    assert t == Transition(
+        replace(s, focus=RatioFocus(after)), Work("RATIO", after, (HUCHA.account_id,)), None
+    )
+
+
+def test_a_limit_on_a_share_cannot_turn_its_part_into_a_ranking() -> None:
+    share = RatioPlan(part=plan(JULY, ["RESTAURANTS"]), whole=plan(JULY, []), kind=RatioKind.SHARE)
+    s = state_with(RatioFocus(share))
+
+    t = apply(s, [Patch("focus", PlanFields(limit=3))], today=TODAY, grounds=G)
+
+    assert t == Transition(s, None, Clarify(Missing.SUBJECT))
 
 
 def test_a_patch_on_a_ranking_moves_its_rank() -> None:
@@ -518,6 +621,55 @@ def test_a_compare_with_nothing_on_screen_and_a_side_without_a_window_asks_for_i
     assert t == Transition(EMPTY, None, Clarify(Missing.OPERAND))
 
 
+def test_a_compare_with_accounts_on_one_side_is_clarify_operand() -> None:
+    s = state_with(QueryFocus(plan(JULY, ["RESTAURANTS"])))
+
+    t = apply(
+        s,
+        [Compare(PlanFields(), PlanFields(window=JUNE, accounts=("hucha",)), PlanFields())],
+        today=TODAY,
+        grounds=WITH_ACCOUNTS,
+    )
+
+    assert t == Transition(s, None, Clarify(Missing.OPERAND))
+
+
+def test_a_compare_over_a_comparison_takes_what_it_does_not_name_from_its_latest_side() -> None:
+    s = state_with(ComparisonFocus(pair(JUNE, JULY)))
+
+    t = apply(
+        s,
+        [Compare(PlanFields(categories=("LEISURE",)), PlanFields(window=MAY), PlanFields())],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert t.work == Work("COMPARE", pair(MAY, JULY, ("LEISURE",)))
+
+
+def test_a_compare_over_a_share_takes_what_it_does_not_name_from_its_part() -> None:
+    share = RatioPlan(part=plan(JULY, ["RESTAURANTS"]), whole=plan(JULY, []), kind=RatioKind.SHARE)
+
+    t = apply(
+        state_with(RatioFocus(share)),
+        [Compare(PlanFields(), PlanFields(window=JUNE), PlanFields())],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert t.work == Work("COMPARE", pair(JUNE, JULY))
+
+
+def test_a_compare_over_a_ranking_is_clarify_operand() -> None:
+    s = state_with(QueryFocus(TopMovements(direction=Direction.EXPENSE, date_range=JULY, rank=1)))
+
+    t = apply(
+        s, [Compare(PlanFields(), PlanFields(window=JUNE), PlanFields())], today=TODAY, grounds=G
+    )
+
+    assert t == Transition(s, None, Clarify(Missing.OPERAND))
+
+
 # --- ChangeMeasure ---------------------------------------------------------------------------
 
 
@@ -638,6 +790,23 @@ def test_share_of_a_comparison_asks_which_side() -> None:
     t = apply(s, [ChangeMeasure(Measure.SHARE)], today=TODAY, grounds=G)
 
     assert t == Transition(s, None, Clarify(Missing.OPERAND))
+
+
+@pytest.mark.parametrize(
+    "focus",
+    [
+        None,
+        BalanceFocus(),
+        RatioFocus(RatioPlan(plan(JULY, ["RESTAURANTS"]), plan(JULY, []), RatioKind.SHARE)),
+    ],
+    ids=["nothing", "balance", "share"],
+)
+def test_a_measure_with_no_query_or_pair_on_screen_is_clarify(focus: Focus | None) -> None:
+    s = replace(EMPTY, focus=focus)
+
+    t = apply(s, [ChangeMeasure(Measure.COUNT)], today=TODAY, grounds=G)
+
+    assert t == Transition(s, None, Clarify(Missing.SUBJECT))
 
 
 # --- SelectOperand ---------------------------------------------------------------------------
