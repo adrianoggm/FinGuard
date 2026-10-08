@@ -27,12 +27,13 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
 )
+from finguard_orchestrator.application.queries.readers import comparisons
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
-from finguard_orchestrator.domain.models.conversation import Slot
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.models.conversation import Conversation, Slot
 from finguard_orchestrator.domain.models.planning_context import ComparisonFocus, focus_of
 from finguard_orchestrator.domain.services.turn_arbiter import Arbitration, TurnType
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
@@ -390,3 +391,60 @@ def test_a_question_left_open_over_the_comparison_is_what_the_turn_is_about() ->
     ask(stack, "¿y en gasolina?", asked["conversation"])
 
     assert not _continued(stack.ledger.ran)
+
+
+# --- a comparison about a shop (final review, I-5) -----------------------------------------------
+#
+# The direct comparison reader carries a shop only from the plan before it: it has no list of shops
+# to read a name against. «junio vs julio en Mercadona» was compared over every movement — two real
+# figures under a question about one shop. A shop it does not carry is the planner's to read.
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "junio vs julio en Mercadona",
+        "junio vs julio en mercadona",
+        "¿gasté más en Mercadona en junio o en julio?",
+        "compara junio con julio en Mercadona",
+    ],
+)
+def test_a_comparison_about_a_shop_never_compares_every_movement(question: str) -> None:
+    stack = episodes.a_stack()
+    ask(stack, question, SETTLED)
+    without_the_shop = [
+        plan
+        for plan in stack.ledger.ran
+        if isinstance(plan, FinancialPlan) and not plan.merchants and not plan.merchant_terms
+    ]
+    assert len(without_the_shop) < 2, [(p.direction, p.date_range) for p in without_the_shop]
+
+
+@pytest.mark.parametrize(
+    "question", ["junio vs julio en gasolina", "compara junio con julio", COMPARISON]
+)
+def test_a_comparison_that_names_no_shop_is_still_the_readers(question: str) -> None:
+    stack = episodes.a_stack()
+    answered = ask(stack, question, SETTLED)
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    assert len(stack.ledger.ran) == 2
+    assert stack.planner.asked == [], "compared without the model"
+
+
+def test_a_shop_the_comparison_carries_is_still_compared() -> None:
+    """The shop of the plan before it is the comparison's own, named again or not."""
+    before = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        merchants=("Mercadona",),
+    )
+    compared = comparisons._direct_period_comparison(
+        AskFinancialQuestionQuery(
+            "¿y junio vs julio en Mercadona?",
+            episodes.ACCOUNT,
+            episodes.TODAY,
+            conversation=Conversation(last_plan=before),
+        )
+    )
+    assert compared is not None
+    assert compared.earlier.merchants == compared.latest.merchants == ("Mercadona",)

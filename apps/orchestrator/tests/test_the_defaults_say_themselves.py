@@ -740,6 +740,31 @@ def test_the_payroll_left_out_is_the_payroll_and_not_the_current_account(questio
     assert "Consultado en todas tus cuentas." in answered["text"]
 
 
+@pytest.mark.parametrize("setting", ["all", "ask"])
+@pytest.mark.parametrize(
+    ("question", "figure", "kept", "left_out"),
+    [
+        ("¿cuánto tengo sin la hucha?", 215_648, "2.156,48 € en Cuenta corriente", "Hucha"),
+        (
+            "¿cuánto tengo sin contar el fondo?",
+            215_648 + 641_550,
+            "6.415,50 € en Hucha",
+            "Fondo indexado",
+        ),
+    ],
+)
+def test_the_balance_honours_an_account_left_out(
+    setting: str, question: str, figure: int, kept: str, left_out: str
+) -> None:
+    """Final review, I-4: R48 for the balance. «¿cuánto tengo sin la hucha?» answered «Tienes
+    6.415,50 € en Hucha.», the one account left out, and «sin contar el fondo» the fund alone."""
+    stack = episodes.a_stack(account_scope_default=setting)
+    answered = ask(stack, question)
+    assert answered["outcome"] == "BALANCE", answered["text"]
+    assert answered["total_minor"] == figure, answered["text"]
+    assert kept in answered["text"] and left_out not in answered["text"]
+
+
 def test_the_payroll_account_left_out_is_still_the_account() -> None:
     """The other side of I-3: «la cuenta nómina» is the account (R25), and leaving it out leaves
     every other one."""

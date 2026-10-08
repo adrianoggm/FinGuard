@@ -52,6 +52,7 @@ from finguard_orchestrator.domain.models.planning_context import (
 from finguard_orchestrator.domain.services import (
     category_words,
     explicit_facts,
+    merchant_words,
     spanish,
     window_words,
 )
@@ -105,6 +106,24 @@ _DIRECT_PERIOD_COMPARISON: Final = re.compile(
     r"|(?:cual|que|donde)\b.{0,50}\b(?:mas|menos|mayor|menor)"
     r"|mayor|menor)\b"
 )
+
+
+# Where a comparison says the shop it is about: after «en» or «de» — «junio vs julio en Mercadona»,
+# «mis gastos de Spotify» — with an article or a possessive between. Only the words
+# `merchant_words.shop_words_in` already takes for a shop's name count, so «en junio», «de este
+# mes» and «en la hucha» say none; and a name starts with a letter, so «de 2025» is a year.
+_A_PLACE_SAID: Final = re.compile(
+    r"\b(?:en|de|del)\s+(?:(?:el|la|los|las|mis?|tus?)\s+)?([a-z][a-z0-9]*)"
+)
+
+
+def _shops_said(sentence: str) -> tuple[str, ...]:
+    """The words the sentence says a shop with, folded: «junio vs julio en Mercadona» is
+    ("mercadona",)."""
+    candidates = frozenset(merchant_words.shop_words_in(sentence))
+    return tuple(
+        word for word in _A_PLACE_SAID.findall(spanish.folded(sentence)) if word in candidates
+    )
 
 
 _SALARY_HISTORY_COMPARISON: Final = re.compile(
@@ -481,6 +500,12 @@ def _direct_period_comparison(
         ),
         facts,
     )
+    carried = tuple(spanish.folded(merchant) for merchant in base.merchants)
+    if any(not any(word in shop for shop in carried) for word in _shops_said(query.sentence)):
+        # A shop this reader does not carry (final review, I-5). It reads no shop from the sentence
+        # — it has no list of them to match a name against — and the pair without it compared
+        # every movement for «junio vs julio en Mercadona». The planner reads the shop.
+        return None
     earlier = replace(
         base,
         period=windows[0] if isinstance(windows[0], RelativePeriod) else None,

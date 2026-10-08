@@ -2590,9 +2590,20 @@ class AskFinancialQuestionHandler:
         # ordinary case: "¿cuánto tengo?" names none and gets the total with a breakdown, because a
         # breakdown is a better answer than a question. That is also why no clarification is asked
         # here even when a kind matches two accounts — both are listed, and nobody has to reply.
-        named = account_words.named_in(query.sentence)
+        #
+        # Named in, never left out (ruling R48, final review I-4): «sin la hucha» names the hucha,
+        # and «¿cuánto tengo sin la hucha?» was answered with the hucha's balance alone.
+        left_out = frozenset(account_words.excluded_in(query.sentence))
+        named = tuple(
+            kind for kind in account_words.named_in(query.sentence) if kind not in left_out
+        )
         names = tuple(holding.display_name for holding in summary.holdings if holding.display_name)
-        custom = account_words.custom_chosen_among(query.sentence, names)
+        names_out = frozenset(account_words.left_out_among(query.sentence, names))
+        custom = tuple(
+            name
+            for name in account_words.custom_chosen_among(query.sentence, names)
+            if name not in names_out
+        )
         alias_names = account_words.learned_aliases_in(
             query.sentence,
             tuple(alias.alias for alias in was.account_aliases),
@@ -2611,6 +2622,14 @@ class AskFinancialQuestionHandler:
                 )
             )
         )
+        if (left_out or names_out) and not named and not selected:
+            # Left out and nothing named in its place: every other account, which is what the
+            # sentence asked for.
+            selected = tuple(
+                holding
+                for holding in summary.holdings
+                if holding.kind not in left_out and holding.display_name not in names_out
+            )
 
         return AskFinancialQuestionResult(
             outcome=Spoken.BALANCE.value,
