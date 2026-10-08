@@ -52,25 +52,62 @@ def test_a_category_key_matches_with_spaces_for_its_underscores() -> None:
 
 @pytest.mark.parametrize(
     ("said", "found"),
-    [("Javi", "Javi Nuñez"), ("marta r", "Marta Ruiz"), ("solis", "Marta Solis Vega")],
+    [
+        ("Javi", "Javi Nuñez"),
+        ("solis", "Marta Solis Vega"),
+        ("Ruiz", "Marta Ruiz"),
+        ("marta solis", "Marta Solis Vega"),
+        ("solis vega", "Marta Solis Vega"),
+    ],
 )
-def test_a_name_that_begins_exactly_one_contact_matches_it(said: str, found: str) -> None:
+def test_whole_words_of_exactly_one_contact_match_it(said: str, found: str) -> None:
     assert ground(PlanFields(people=(said,)), GROUNDS) == PlanFields(people=(found,))
 
 
 @pytest.mark.parametrize(
     ("said", "found"), [("corriente", "Cuenta corriente"), ("fondo", "Fondo indexado")]
 )
-def test_the_start_of_any_word_of_an_account_name_matches_it(said: str, found: str) -> None:
+def test_a_whole_word_of_exactly_one_account_matches_it(said: str, found: str) -> None:
     assert ground(PlanFields(accounts=(said,)), GROUNDS) == PlanFields(accounts=(found,))
 
 
-def test_an_exact_name_wins_over_the_longer_names_it_begins() -> None:
+def test_an_exact_name_wins_over_the_longer_names_that_contain_it() -> None:
     assert ground(PlanFields(people=("aitor",)), GROUNDS) == PlanFields(people=("Aitor",))
 
 
-def test_a_name_that_begins_two_contacts_is_unknown_never_a_guess() -> None:
+def test_a_name_that_two_contacts_contain_is_unknown_never_a_guess() -> None:
     assert ground(PlanFields(people=("Marta",)), GROUNDS) == Unknown(Missing.PERSON, "Marta")
+
+
+# A catalogue where the start of a word is somebody else's whole name: «Juan» is not Juana.
+LOOKALIKES = Grounds(
+    categories=frozenset({"SALARY", "GROCERIES"}),
+    accounts=(Holding(UUID(int=31), "CURRENT", "Cuenta corriente", "EUR", 0),),
+    contacts=(
+        Contact(UUID(int=41), "Juana Pérez", "641"),
+        Contact(UUID(int=42), "Luisa García", "642"),
+        Contact(UUID(int=43), "Anabel Soto", "643"),
+        Contact(UUID(int=44), "Marta Ruiz", "644"),
+        Contact(UUID(int=45), "Carmen", "645"),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("said", "unknown"),
+    [
+        (PlanFields(people=("Juan",)), Unknown(Missing.PERSON, "Juan")),
+        (PlanFields(people=("Luis",)), Unknown(Missing.PERSON, "Luis")),
+        (PlanFields(people=("Ana",)), Unknown(Missing.PERSON, "Ana")),
+        (PlanFields(people=("Mar",)), Unknown(Missing.PERSON, "Mar")),
+        (PlanFields(people=("C",)), Unknown(Missing.PERSON, "C")),
+        (PlanFields(accounts=("c",)), Unknown(Missing.ACCOUNT, "c")),
+        (PlanFields(categories=("sal",)), Unknown(Missing.SUBJECT, "sal")),
+    ],
+    ids=["juan-juana", "luis-luisa", "ana-anabel", "mar-marta", "c-carmen", "c-cuenta", "sal"],
+)
+def test_the_start_of_a_word_is_not_the_word(said: PlanFields, unknown: Unknown) -> None:
+    assert ground(said, LOOKALIKES) == unknown
 
 
 @pytest.mark.parametrize(

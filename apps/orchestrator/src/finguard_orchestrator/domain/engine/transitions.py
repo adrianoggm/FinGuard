@@ -186,6 +186,9 @@ def _asked(state: DialogueState, said: PlanFields, today: date, grounds: Grounds
 
 
 def _patched_focus(state: DialogueState, op: Patch, today: date, grounds: Grounds) -> Applied:
+    if op.target != "focus" and op.changes.accounts is not None:
+        # A pair has one scope: accounts said about one side would re-scope both.
+        raise _CannotApplyError(Missing.OPERAND)
     changes = _grounded(op.changes, grounds)
     state = _scoped(state, changes, grounds)
     focus = state.focus

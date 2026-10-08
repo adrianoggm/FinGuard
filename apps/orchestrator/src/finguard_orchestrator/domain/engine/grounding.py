@@ -2,8 +2,8 @@
 
 Pure lookups: a name is compared with a list of names, and the sentence never reaches this module.
 A name matches when, with case, accents and underscores folded away, it is an entry exactly, or
-it begins exactly one entry or one of that entry's words («corriente» is «Cuenta corriente»,
-«Solis» is «Marta Solis Vega»).
+its words are a run of whole words of exactly one entry («corriente» is «Cuenta corriente»,
+«Solis» is «Marta Solis Vega», but «Juan» is not «Juana Pérez»).
 
 A name that matches nothing, or more than one entry, comes back as `Unknown` rather than dropped
 or guessed. A filter silently lost answers a wider question than the one asked, with a real
@@ -79,15 +79,20 @@ def _entries(
 
 
 def _the_one(name: str, catalogue: Collection[str]) -> str | None:
-    said = _key(name)
+    said = _words(name)
     if not said:
-        # The empty prefix begins everything; it names nothing.
         return None
-    exact = [entry for entry in catalogue if _key(entry) == said]
-    begun = [entry for entry in catalogue if f" {said}" in f" {_key(entry)}"]
-    candidates = exact or begun
+    exact = [entry for entry in catalogue if _words(entry) == said]
+    within = [entry for entry in catalogue if _runs_through(said, _words(entry))]
+    candidates = exact or within
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _key(name: str) -> str:
-    return " ".join(folded(name).replace("_", " ").split())
+def _runs_through(said: tuple[str, ...], words: tuple[str, ...]) -> bool:
+    """Whether `said` is a run of whole, consecutive words of `words`. Whole words only: the
+    start of a word is often somebody else's whole name («Juan» and Juana, «Luis» and Luisa)."""
+    return any(words[start : start + len(said)] == said for start in range(len(words)))
+
+
+def _words(name: str) -> tuple[str, ...]:
+    return tuple(folded(name).replace("_", " ").split())

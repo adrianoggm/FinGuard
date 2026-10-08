@@ -234,6 +234,21 @@ def test_patch_on_one_side_of_a_comparison_changes_only_that_side() -> None:
     assert t.work == Work("COMPARE", pair(MAY, JULY))
 
 
+@pytest.mark.parametrize("side", ["earlier", "latest"])
+def test_accounts_said_about_one_side_of_a_comparison_are_clarify_operand(side: str) -> None:
+    # One pair has one scope, so accounts said about one side would re-scope both.
+    s = state_with(ComparisonFocus(pair(JUNE, JULY)), scope=Scope((CORRIENTE.account_id,)))
+
+    t = apply(
+        s,
+        [Patch(side, PlanFields(accounts=("hucha",)))],
+        today=TODAY,
+        grounds=WITH_ACCOUNTS,
+    )
+
+    assert t == Transition(s, None, Clarify(Missing.OPERAND))
+
+
 def test_a_window_patch_on_a_comparison_moves_both_sides_by_the_shift_of_the_latest() -> None:
     t = apply(
         state_with(ComparisonFocus(pair(JUNE, JULY))),
