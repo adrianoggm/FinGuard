@@ -15,19 +15,15 @@ from pathlib import Path
 
 import pytest
 from support import episodes
-from support.pending import AsksForTheWindow, ask, asking_for_the_window_stack
+from support.pending import SETTLED, AsksForTheWindow, ask, asking_for_the_window_stack
 
-from finguard_orchestrator.application import AskFinancialQuestionQuery
-from finguard_orchestrator.application.queries.ask_financial_question import (
-    _the_draft_with_the_window_it_names,
-)
 from finguard_orchestrator.bootstrap.config import Settings, get_settings
 from finguard_orchestrator.bootstrap.main import app, create_app
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
-from finguard_orchestrator.domain.services import answer_writer, category_words, explicit_facts
+from finguard_orchestrator.domain.services import answer_writer, category_words
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
@@ -55,7 +51,8 @@ def test_an_unqualified_spending_question_does_not_ask_for_the_account() -> None
     answered = ask(stack, "¿Cuánto gasté en restaurantes en julio?")
     assert answered["outcome"] == "PLANNED"
     assert stack.ledger.plans[-1].across_accounts
-    assert "Consultado en todas tus cuentas" not in answered["text"]
+    # A default is said (ruling R44, which reverses this line of the brief: «not in»).
+    assert "Consultado en todas tus cuentas." in answered["text"]
 
 
 def test_the_old_question_is_one_setting_away() -> None:
@@ -103,9 +100,18 @@ def test_an_account_chosen_earlier_in_the_conversation_still_wins() -> None:
     assert not ran.across_accounts and ran.only_account_id == episodes.PIGGY
 
 
-def test_every_account_is_said_when_the_sentence_asks_for_every_account() -> None:
+def test_every_account_asked_for_in_words_is_not_said_back() -> None:
+    """Ruling R44: the turn said it, so the answer does not repeat it."""
     stack = episodes.a_stack()
     answered = ask(stack, "¿Cuánto gasté en julio en todas mis cuentas?")
+    assert stack.ledger.plans[-1].across_accounts
+    assert "Consultado en todas tus cuentas" not in answered["text"]
+
+
+def test_every_account_chosen_earlier_is_said() -> None:
+    """A persisted choice of every account is not this turn's words (ruling R44)."""
+    stack = episodes.a_stack()
+    answered = ask(stack, "¿Cuánto gasté en julio?", SETTLED)
     assert stack.ledger.plans[-1].across_accounts
     assert "Consultado en todas tus cuentas." in answered["text"]
 
@@ -223,21 +229,51 @@ def test_a_window_the_sentence_states_is_still_the_models_to_ask_about() -> None
     assert stack.ledger.plans == []
 
 
-def test_a_comparison_is_not_answered_with_one_window() -> None:
-    """Two categories compared «últimamente»: the draft completed with one window would be one
-    figure for a question about two."""
-    sentence = "¿Gasté más en restaurantes o en gasolina últimamente?"
-    query = AskFinancialQuestionQuery(sentence, episodes.ACCOUNT, episodes.TODAY)
-    asked = PlanningResult.needs_clarification(
-        WINDOW_QUESTION,
-        FinancialPlanDraft(
-            direction=Direction.EXPENSE, categories=("RESTAURANTS", "TRANSPORT_FUEL")
+class AsksAboutThisDraft(AsksForTheWindow):
+    """A model that asks for the window over the draft it was built with, whatever it is told."""
+
+    def __init__(self, draft: FinancialPlanDraft) -> None:
+        super().__init__()
+        self._draft = draft
+
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
+        self.asked.append(sentence)
+        return PlanningResult.needs_clarification(WINDOW_QUESTION, self._draft, Slot.WINDOW)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "draft"),
+    [
+        (
+            "¿he gastado más en Mercadona o en Lidl últimamente?",
+            FinancialPlanDraft(direction=Direction.EXPENSE, merchants=("Mercadona", "Lidl")),
         ),
-        Slot.WINDOW,
-    )
-    facts = explicit_facts.read(sentence, today=episodes.TODAY)
-    assert facts.window is not None  # read, so only the comparison stops it
-    assert _the_draft_with_the_window_it_names(asked, facts, query) is None
+        (
+            "¿llevo gastado más en Mercadona o en Lidl?",
+            FinancialPlanDraft(direction=Direction.EXPENSE, merchants=("Mercadona", "Lidl")),
+        ),
+        (
+            "¿he gastado más en Marta o en Javi últimamente?",
+            FinancialPlanDraft(direction=Direction.EXPENSE, counterparties=("Marta", "Javi")),
+        ),
+    ],
+)
+def test_a_comparison_is_not_answered_with_one_window(
+    sentence: str, draft: FinancialPlanDraft
+) -> None:
+    """Rulings R42 and R46 (I-3). Two shops or two people, compared over a default window the
+    model asked about: the draft completed with that window would be one figure — the two summed —
+    for a question about which is more. The model's question stands instead. (Two categories named
+    precisely never reach this: `_from_what_the_sentence_said` builds them a breakdown.)"""
+    stack = asking_for_the_window_stack(planner=AsksAboutThisDraft(draft))
+    asked = ask(stack, sentence)
+    assert asked["outcome"] == "NEEDS_CLARIFICATION", asked["text"]
+    summed = [
+        plan
+        for plan in stack.ledger.plans
+        if len(plan.merchants) > 1 or len(plan.counterparties) > 1 or len(plan.categories) > 1
+    ]
+    assert summed == []
 
 
 # --- the period question ------------------------------------------------------------------------

@@ -61,7 +61,8 @@ episodes:
       # The asymmetry, first: the dimension word is here and the ranking signal is not.
       - say: ¿cuánto gasté en julio en todas mis cuentas?
         route: QUERY
-        says: Consultado en todas tus cuentas
+        # Every account, asked for in those words: the answer does not say it back (ruling R44).
+        not_says: Consultado en todas tus cuentas
         ran: {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       # The turn the episode exists for. TRANSPORT_FUEL is the stub planner's — it answers any
       # superlative with a fuel ranking — and `rank` is the discriminator: read as a grouping this

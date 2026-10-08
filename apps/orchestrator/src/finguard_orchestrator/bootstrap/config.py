@@ -416,8 +416,9 @@ class Settings(BaseSettings):
     # What a spending or income question means when it names no account and the conversation has
     # chosen none.
     #
-    #   all   every account the holder has, and the answer does not say so unless the person asked
-    #         about accounts: it is what «¿cuánto gasté?» means to whoever asks it.
+    #   all   every account the holder has, which is what «¿cuánto gasté?» means to whoever asks
+    #         it — and the answer says so («Consultado en todas tus cuentas.»), unless the person
+    #         asked for every account in those words.
     #   ask   «¿En qué cuenta quieres consultarlo?» first, as every thread began until 2026-10-07.
     #
     # `all` since spec §3.5 (conversation state, slice 1). Live that day, «¿Cuánto llevo gastado en

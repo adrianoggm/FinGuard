@@ -813,3 +813,24 @@ def test_a_default_is_told_apart_from_a_window_the_sentence_states(
     sentence: str, window: RelativePeriod | None
 ) -> None:
     assert window_words.default_window_in(sentence, today=REFERENCE) == window
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuánto he gastado últimamente desde Navidad?",
+        "¿cuánto he gastado últimamente hace un mes?",
+        "¿cuánto he gastado últimamente en la semana en curso?",
+        "¿cuánto he gastado últimamente, desde que empecé a trabajar?",
+        "¿cuánto he gastado últimamente los fines de semana?",
+        "¿cuánto he gastado últimamente en verano?",
+        "¿cuánto he gastado últimamente por las mañanas?",
+    ],
+)
+def test_lately_stands_aside_for_a_window_it_cannot_read(sentence: str) -> None:
+    """Ruling R46 (I-2): beside a window the sentence names and this file does not read, the last
+    30 days would be a different window presented as the one asked about — the rule «llevo
+    gastado» already keeps."""
+    assert window_words.window_in(sentence, today=REFERENCE) != RelativePeriod(
+        Period.LAST_N_DAYS, n=30
+    )

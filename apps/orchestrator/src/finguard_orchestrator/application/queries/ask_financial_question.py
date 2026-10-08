@@ -5954,8 +5954,11 @@ def _the_draft_with_the_window_it_names(
     whose window is one of the two defaults (`window_words.default_window_in`): «últimamente»,
     «llevo gastado». A window the sentence states is not taken here — a model that asked about one
     saw something the vocabulary did not, so its question stands, as it always did. A draft the
-    window will not build from is left to ask, as the reply's own `with_window` leaves it. And not
-    a comparison of two categories: one window over the draft would answer it with one figure.
+    window will not build from is left to ask, as the reply's own `with_window` leaves it.
+
+    And not over two of anything the question compares — two categories, two shops, two people
+    (rulings R42, R46): completed with one window, «¿he gastado más en Mercadona o en Lidl
+    últimamente?» was one figure, the two summed, for a question about which is more.
     """
     draft = planned.draft
     window = window_words.default_window_in(query.sentence, today=query.today)
@@ -5966,6 +5969,8 @@ def _the_draft_with_the_window_it_names(
         or not draft.needs_a_window
         or window is None
         or facts.compared_categories
+        or len(draft.merchants) > 1
+        or len(draft.counterparties) > 1
     ):
         return None
     try:
@@ -7258,23 +7263,27 @@ def _scope_note(
 ) -> str | None:
     """Which of the holder's accounts the figure came from, when that is worth a line.
 
-    Said under every answer across accounts while the deployment asks which account first (`ask`):
-    there, every account is always something the person chose. Where every account is what a
-    question naming none means (`all`, spec §3.5), the same line under every answer is noise about
-    the one thing the person did not ask, so it is said only when the turn was about accounts —
-    «en todas mis cuentas», the «Todas mis cuentas» chip that answers the account question, «por
-    cuenta», or an account named that the figure could not be narrowed to, which is the case that
-    keeps a figure for three accounts from passing as the hucha's. A narrower scope is said under
-    both, because it is never the default.
+    Under `ask`, the line goes under every answer across accounts, as it always did: there every
+    account is something the person chose.
 
-    The holder's account count is not read here, and under `all` it need not be: a holder with one
-    account hears this line only after a sentence about accounts, which is a question about them
-    whatever their number. (`_scoped` narrows a lone account to itself, said as the account chosen,
-    as it always was.)
+    Under `all` (spec §3.5, ruling R44) every account is the default, and a default is said: the
+    line goes under every answer across accounts — a question that named none, a choice of every
+    account made earlier in the thread, an account named that the figure could not be narrowed to
+    (the accounts could not be read, or the holder has none of that kind), which is what keeps a
+    figure for three accounts from passing as the hucha's. Except after a turn that asked for every
+    account in so many words — «en todas mis cuentas», the «Todas mis cuentas» chip — where saying
+    it back adds nothing the person did not just say.
+
+    A narrower scope is said under both, because it is never the default. The holder's account
+    count is not read here: `_scoped` narrows a lone account to itself, said as the account chosen,
+    so an answer across accounts is one over more than one, or over accounts it could not count.
     """
-    if account_words.asks_for_all_accounts(sentence) or plan.across_accounts:
-        if every_account_by_default and not _about_accounts(sentence):
-            return None
+    if every_account_by_default:
+        if plan.across_accounts:
+            if account_words.all_accounts_as_a_reply(sentence):
+                return None
+            return "Consultado en todas tus cuentas."
+    elif account_words.asks_for_all_accounts(sentence) or plan.across_accounts:
         return "Consultado en todas tus cuentas."
     names = account_words.named_in(sentence)
     labels = {"CURRENT": "cuenta corriente", "SAVINGS": "Hucha", "ASSET": "fondo"}
@@ -7283,23 +7292,6 @@ def _scope_note(
     if plan.only_account_id is not None or plan.only_account_ids:
         return "Consultado en la cuenta seleccionada."
     return None
-
-
-# The word itself, for the sentences no account vocabulary claims: «por cuenta», «en cada cuenta»,
-# «en mis cuentas». A false positive costs one true line under the figure.
-_AN_ACCOUNT: Final = re.compile(r"\bcuentas?\b")
-
-
-def _about_accounts(sentence: str) -> bool:
-    """Whether the sentence said anything about which accounts — every one, one of them, one left
-    out, or the word itself. `all_accounts_as_a_reply` rather than `asks_for_all_accounts`, so the
-    «todas» chip that answers the account question counts as the choice it is."""
-    return (
-        account_words.all_accounts_as_a_reply(sentence)
-        or bool(account_words.named_in(sentence))
-        or bool(account_words.excluded_in(sentence))
-        or _AN_ACCOUNT.search(spanish.folded(sentence)) is not None
-    )
 
 
 def _is_scope_change_followup(sentence: str, *, today: date) -> bool:

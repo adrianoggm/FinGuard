@@ -383,14 +383,15 @@ _MONTHS_PER: Final[dict[str, int]] = {"ano": 12, "anos": 12}
 _SO_FAR: Final = re.compile(r"\bllevo\s+gastad[oa]s?\b")
 
 # Words that name a window, whether or not this file can read the one they name. «Llevo gastado
-# desde Navidad» and «… en la semana en curso» each name a window nothing here reads; the year so
-# far in their place would be a different window presented as the one asked about, so a sentence
-# carrying any of these goes to the model as it always did. A digit is a date or a year. Generous
-# on purpose — a word here that was not a window costs one question back, as before.
+# desde Navidad» and «… en la semana en curso» each name a window nothing here reads; a default in
+# its place — the year so far, the last 30 days — would be a different window presented as the one
+# asked about, so a sentence carrying any of these goes to the model as it always did. A digit is a
+# date or a year. Generous on purpose — a word here that was not a window costs one question back,
+# as before.
 _A_WINDOW_IS_NAMED: Final = re.compile(
     r"\d|\b(?:desde|hasta|hace|durante|dias?|semanas?|finde|mes|meses|anos?|trimestres?"
     r"|semestres?|quincenas?|temporada|curso|ejercicio|periodo|epoca|verano|invierno|primavera"
-    r"|otono|navidad(?:es)?|puente|vacaciones|manana|tarde|noche|ultim[oa]s?|ultimamente"
+    r"|otono|navidad(?:es)?|puente|vacaciones|mananas?|tardes?|noches?|ultim[oa]s?|ultimamente"
     r"|lunes|martes|miercoles|jueves|viernes|sabados?|domingos?|" + "|".join(_MONTHS) + r")\b"
 )
 
@@ -408,14 +409,22 @@ _A_NAME_CALLED_LATELY: Final = re.compile(r"\w[\s«\"'“]+[ÚU]ltimamente\b")
 # directions, so «¿qué tal últimamente?» stays a sentence about nothing this file can date.
 _SPENT: Final = explicit_lexicon.compiled("expense")
 _RECEIVED: Final = explicit_lexicon.compiled("income")
+_THE_WORD_LATELY: Final = re.compile(r"\bultimamente\b")
 
 
 def _lately(sentence: str, folded: str) -> bool:
-    """Whether «últimamente» is, in this sentence, the window of money spent or received."""
+    """Whether «últimamente» is, in this sentence, the window of money spent or received.
+
+    Not beside another window the sentence names (ruling R46): «últimamente desde Navidad», «…
+    los fines de semana», «… hace un mes» each say a window this file does not read, and the last
+    30 days in its place would be a different one presented as theirs — the rule «llevo gastado»
+    keeps, with the word itself left out of the count.
+    """
     return (
         _LATELY.search(folded) is not None
         and _A_NAME_CALLED_LATELY.search(sentence) is None
         and (_SPENT.search(folded) is not None or _RECEIVED.search(folded) is not None)
+        and _A_WINDOW_IS_NAMED.search(_THE_WORD_LATELY.sub(" ", folded)) is None
     )
 
 

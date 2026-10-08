@@ -591,8 +591,9 @@ async def test_the_dentist_is_the_health_category_as_before() -> None:
 
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert [(plan.categories, plan.merchants) for plan in ledger.plans] == [(("HEALTH",), ())]
-    # Every account, unsaid: the sentence asked nothing about accounts (spec §3.5).
-    assert result.text == "72,50 € en salud en lo que va de año, en 2 movimientos."
+    assert result.text == (
+        "72,50 € en salud en lo que va de año, en 2 movimientos.\nConsultado en todas tus cuentas."
+    )
 
 
 async def test_a_follow_up_setting_the_gym_apart_is_not_the_gym() -> None:
