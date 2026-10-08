@@ -110,3 +110,40 @@ def test_the_courtesy_in_front_is_no_reset() -> None:
 def test_spending_and_what_is_owed_are_not_the_balance(sentence: str) -> None:
     """Money that went out, and a question about what is due, are not money held."""
     assert intent_router.route(sentence, has_previous=False) is not Intent.ACCOUNT_BALANCE
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿qué tengo en total en recibos este mes?",
+        "¿qué tengo en total de gastos este mes?",
+        "qué tengo en total este mes",
+    ],
+)
+def test_what_there_is_in_total_with_more_said_is_a_question_of_its_own(sentence: str) -> None:
+    """Fix round 2, item 4: after restaurants this month, a question that opens «qué tengo en total»
+    and says more is a question of its own — never «este mes» patched onto the restaurants."""
+    stack = episodes.a_stack()
+    answered = ask(stack, "¿cuánto gasté en restaurantes este mes?", SETTLED)
+    stack.ledger.plans.clear()
+    stack.planner.asked.clear()
+
+    ask(stack, sentence, answered["conversation"])
+
+    assert stack.planner.asked == [sentence]
+    assert not any(plan.categories == ("RESTAURANTS",) for plan in stack.ledger.plans)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿qué tengo en total en recibos este mes?",
+        "q tengo en total de gastos este mes",
+        "qué tengo en total",
+    ],
+)
+def test_what_there_is_in_total_is_a_whole_question(sentence: str) -> None:
+    """A question of its own for the arbitration (never a reply to another question's period) and
+    for the readers (never a patch on the answer in view, nor a base handed to the planner)."""
+    assert turn_arbiter.asks_its_own(sentence)
+    assert turn_arbiter.states_a_question_of_its_own(sentence, today=episodes.TODAY)

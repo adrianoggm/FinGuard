@@ -274,9 +274,11 @@ _PARTICIPLES: Final = r"(?:mandado|enviado|pagado|pasado|dado|transferido|devuel
 _TO_ME: Final = (
     rf"me\s+(?:ha\s+{_PARTICIPLES}|mando|envio|pago|paso|dio|transfirio|devolvio|ingreso)"
 )
-# Money the holder sent them: «le mandé», «le he pagado», «le pasé».
+# Money the holder sent them: «le mandé», «le he pagado», «le pasé», and «les mandé», which is
+# money that went just the same (validation fix 3, fix round 2): after what Javi sent, «¿cuánto les
+# mandé este año?» was not read as the money the other way, and ran Javi's.
 _TO_THEM: Final = (
-    rf"le\s+(?:he\s+{_PARTICIPLES}|mande|envie|pague|pase|di|transferi|devolvi|ingrese)"
+    rf"les?\s+(?:he\s+{_PARTICIPLES}|mande|envie|pague|pase|di|transferi|devolvi|ingrese)"
 )
 _TURNED_ROUND: Final = (
     # «¿y ella a mí?», «¿y Marta a mí?», and «¿y ella a mí cuánto me ha pasado?» saying it twice
@@ -366,7 +368,30 @@ def asks_about_another_person(sentence: str, base: FinancialPlan) -> bool:
         who.append(word)
     if not who:
         return False
-    return _the_person(" ".join(who), base.counterparties, answered_last=True) is None
+    return not names_the_bases_person(" ".join(who), base.counterparties)
+
+
+def speaks_of_money_between_people(sentence: str) -> bool:
+    """Whether the sentence says money came from somebody or went to somebody — «me mandó», «le
+    pagué» — anywhere in it, whoever it names (fix round 2).
+
+    For the handler, which asks its contact directory who is named only when this says the turn is
+    about a person's money at all: the directory is a call to the bank.
+    """
+    spoken = " ".join(_PAUSES.sub(" ", spanish.folded(sentence)).split())
+    return _MONEY_TO_ME.search(spoken) is not None or _MONEY_TO_THEM.search(spoken) is not None
+
+
+def names_the_bases_person(who: str, counterparties: tuple[str, ...]) -> bool:
+    """Whether the name said is the base's person: as `_the_person` reads it (R33: every word
+    said is a word of theirs, and only one of them has it), or the whole of the name the base has,
+    said in full — «Javi Nuñez» after an answer about «Javi» (fix round 2).
+    """
+    said = spanish.folded(who)
+    if _the_person(said, counterparties, answered_last=True) is not None:
+        return True
+    words = set(said.split())
+    return any(set(spanish.folded(person).split()) <= words for person in counterparties)
 
 
 def grouping_in(sentence: str) -> GroupBy | None:

@@ -219,3 +219,46 @@ def test_not_only_the_gym_is_not_only_the_gym(sentence: str) -> None:
     stack, _ = _after("¿cuánto pago de suscripciones este mes?", sentence)
 
     assert not any(plan.merchant_terms == THE_GYM for plan in stack.ledger.plans)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "no solo restaurantes, también gasolina",
+        "no solo restaurantes sino también gasolina",
+        "no solo en restaurantes, también en gasolina",
+    ],
+)
+def test_not_only_one_category_also_another_widens_the_answer(sentence: str) -> None:
+    """Fix round 2, item 3: «no solo X, también Y» over an answer about X is X and Y, in the window
+    in view, with no model — as it was at c9b55b5a. It is never «solo X»."""
+    stack, answer = _after("¿cuánto gasté en restaurantes el mes pasado?", sentence)
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    plan = stack.ledger.plans[-1]
+    assert set(plan.categories) == {"RESTAURANTS", "TRANSPORT_FUEL"}, plan
+    assert plan.period is not None and plan.period.period is Period.LAST_MONTH, plan
+    assert stack.planner.asked == []
+
+
+def test_not_only_the_gym_also_a_shop_goes_to_the_model() -> None:
+    """The gym is a kind (a term inside SUBSCRIPTIONS) and Spotify a shop: one plan cannot hold
+    «these gyms or that shop», so the widening is the model's to read — never the gym alone."""
+    stack, _ = _after("¿cuánto pago de suscripciones este mes?", "no solo el gym, también spotify")
+
+    assert stack.planner.asked == ["no solo el gym, también spotify"]
+    assert not any(plan.merchant_terms == THE_GYM for plan in stack.ledger.plans)
+
+
+def test_a_split_that_says_tambien_is_still_a_split() -> None:
+    """«Sepáralo en transporte público y también en gasolina» asks the two apart: the widening
+    above never takes a split verb's turn."""
+    stack, answer = _after(
+        "¿cuánto gasté en restaurantes el mes pasado?",
+        "sepáralo en transporte público y también en gasolina",
+    )
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    plan = stack.ledger.plans[-1]
+    assert plan.categories == ("TRANSPORT_PUBLIC", "TRANSPORT_FUEL"), plan
+    assert plan.group_by is GroupBy.CATEGORY, plan

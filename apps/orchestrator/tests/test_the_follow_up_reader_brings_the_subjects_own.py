@@ -47,15 +47,20 @@ def _restore() -> Iterator[None]:
 class ReadsAsAModelDoes(AsksForTheWindow):
     """How a model plans the sentences these tests open with or hand over.
 
-    The payroll as INCOME; every movement as ALL; and «¿cuánto me mandó Javi este año?» as what
-    Javi sent, this year. Anything else is `AsksForTheWindow`'s.
+    The payroll as INCOME; every movement as ALL; and «¿cuánto me mandó Javi este año?» — or Marta,
+    wherever the name is said — as what that person sent, in the window said. Anything else is
+    `AsksForTheWindow`'s.
     """
 
     async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
         folded = spanish.folded(sentence)
         window = explicit_facts.read(sentence, today=episodes.TODAY).window
-        if window is None or not any(
-            word in folded for word in ("nomina", "movimientos", "me mando javi")
+        person = next(
+            (name for name in ("Javi", "Marta") if name.lower() in folded and "me mando" in folded),
+            None,
+        )
+        if window is None or (
+            person is None and not any(word in folded for word in ("nomina", "movimientos"))
         ):
             return await super().plan(sentence, context=context)
         self.asked.append(sentence)
@@ -63,10 +68,10 @@ class ReadsAsAModelDoes(AsksForTheWindow):
         fields: dict[str, Any] = {"direction": Direction.ALL}
         if "nomina" in folded:
             fields = {"direction": Direction.INCOME, "categories": ("SALARY",)}
-        elif "javi" in folded:
+        elif person is not None:
             fields = {
                 "direction": Direction.INCOME,
-                "counterparties": ("Javi",),
+                "counterparties": (person,),
                 "counterparty_types": (CounterpartyType.PERSON,),
             }
         return PlanningResult.planned(
@@ -210,3 +215,71 @@ def test_money_sent_to_somebody_after_no_person_is_a_question_of_its_own(base: s
     assert not any(
         plan.categories in {("RESTAURANTS",), ("SALARY",)} for plan in stack.ledger.plans
     )
+
+
+# --- fix round 2, item 1: a contact named anywhere is the person asked about -----------------
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuánto Marta me mandó este año?",
+        "¿cuánto me mandó este año Marta?",
+        "¿Marta cuánto me mandó este año?",
+        "y Marta, ¿cuánto me mandó este año?",
+    ],
+)
+def test_another_contact_named_anywhere_is_not_the_answers_person(sentence: str) -> None:
+    """After what Javi sent this month, Marta said before the verb, after the window or at the
+    front is still Marta: never Javi's money this year, read off the answer in view."""
+    stack, _ = _after("¿cuánto me mandó Javi este mes?", sentence)
+
+    assert not any(plan.counterparties == ("Javi",) for plan in stack.ledger.plans)
+    assert stack.planner.asked == [sentence]
+
+
+@pytest.mark.parametrize(
+    "sentence", ["¿cuánto me mandó Javi este año?", "¿cuánto me mandó Javi Nuñez este año?"]
+)
+def test_the_answers_contact_named_again_keeps_the_patch(sentence: str) -> None:
+    """The base's own contact, by the name the base has or the whole of it: Javi this year, read
+    without the model."""
+    stack, answer = _after("¿cuánto me mandó Javi este mes?", sentence)
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    plan = _the_plan(stack)
+    assert plan.counterparties == ("Javi",), plan
+    assert plan.period is not None and plan.period.period is Period.THIS_YEAR
+    assert stack.planner.asked == []
+
+
+# --- fix round 2, item 2: «les mandé» and «le mandé yo» are money that went ------------------
+
+
+@pytest.mark.parametrize(
+    "sentence", ["¿cuánto les mandé este año?", "¿cuánto le mandé yo este año?"]
+)
+def test_money_that_went_after_money_that_came_is_a_question_of_its_own(sentence: str) -> None:
+    """After what Javi sent, «les mandé» is read like «le mandé»: money the holder sent, the
+    other way round from the answer, so never Javi's money this year."""
+    stack, _ = _after("¿cuánto me mandó Javi este mes?", sentence)
+
+    assert stack.planner.asked == [sentence]
+    assert not any(
+        plan.counterparties == ("Javi",) and plan.direction is Direction.INCOME
+        for plan in stack.ledger.plans
+    )
+
+
+@pytest.mark.parametrize(
+    "sentence", ["¿cuánto les mandé este año?", "¿cuánto le mandé yo este año?"]
+)
+def test_money_that_went_after_money_that_went_keeps_the_patch(sentence: str) -> None:
+    """After what the holder sent Javi this month, the same money this year, with no model."""
+    stack, answer = _after("cuanto le mande a javi este mes?", sentence)
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    plan = _the_plan(stack)
+    assert (plan.counterparties, plan.direction) == (("Javi",), Direction.EXPENSE), plan
+    assert plan.period is not None and plan.period.period is Period.THIS_YEAR
+    assert stack.planner.asked == []

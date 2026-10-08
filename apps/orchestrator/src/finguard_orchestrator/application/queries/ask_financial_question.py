@@ -1728,7 +1728,16 @@ class AskFinancialQuestionHandler:
             )
             return
 
-        in_view = seam.READERS.select(query, among=_ON_THE_QUERY_IN_VIEW)
+        # A question about somebody else's money is not a patch on this answer (fix round 2): after
+        # what Javi sent this month, «¿cuánto Marta me mandó este año?» and «¿cuánto me mandó este
+        # año Marta?» were read as «este año» said of Javi's answer. The readers of the query in
+        # view cannot tell — they hold no directory — so they are not asked; the turn goes on to be
+        # read as a question of its own.
+        in_view = (
+            None
+            if await self._names_somebody_else(query)
+            else seam.READERS.select(query, among=_ON_THE_QUERY_IN_VIEW)
+        )
         if in_view is not None:
             async for step in self._answering(in_view, query, was):
                 yield step
@@ -2419,6 +2428,40 @@ class AskFinancialQuestionHandler:
         if person is None:
             return None
         return self._person_payment_plan(query, person, Direction.EXPENSE)
+
+    async def _names_somebody_else(self, query: AskFinancialQuestionQuery) -> bool:
+        """Whether a question about money between people names a contact, anywhere in it, who is
+        not the person of the answer in view (validation fix 3, fix round 2).
+
+        The follow-up reader reads the person only right after the verb, and has no directory:
+        «¿cuánto Marta me mandó este año?», «¿cuánto me mandó este año Marta?» and «¿Marta cuánto
+        me mandó este año?» after Javi's money all ran Javi this year. Here every contact the
+        directory finds in the sentence (`payment_words.contacts_in`) is matched, by the part of
+        their name it writes, against the base's people (`continuation_patch.names_the_bases_
+        person`): «Javi Nuñez» after «Javi» is Javi, and Marta is somebody else.
+
+        Only over one plan in view, and only for a sentence about a person's money at all
+        (`speaks_of_money_between_people`), because the directory is a call to the bank.
+        """
+        focus = focus_of(query.conversation)
+        if (
+            not isinstance(focus, QueryFocus)
+            or not isinstance(focus.current, FinancialPlan)
+            or not continuation_patch.speaks_of_money_between_people(query.sentence)
+        ):
+            return False
+        try:
+            directory = await self._contacts.all_of(query.account_id)
+        except BankingUnavailableError:
+            return False
+        base = focus.current
+        for contact in payment_words.contacts_in(query.sentence, directory):
+            written = payment_words.name_as_written(query.sentence, (contact,))
+            if written is not None and not continuation_patch.names_the_bases_person(
+                written, base.counterparties
+            ):
+                return True
+        return False
 
     async def _the_person_corrected(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
         """«No, digo a Aitor» over the answer in view: the same question, about that person.

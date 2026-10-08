@@ -243,8 +243,10 @@ _KIND_SPELLINGS: Final[dict[str, tuple[str, ...]]] = {"gimnasio": ("gym",)}
 # "en restaurantes" for a request to drop restaurants, the worst failure mode this vocabulary can
 # produce because it is wrong with full confidence. `ya no` (`"ya no cuentes"`) already matched
 # through the existing `no\s+cuentes` branch and is not repeated here.
+# «Sin» is a whole word (validation fix 3, fix round 2): «no solo restaurantes sino también
+# gasolina» read «sino» as «sin» and left the fuel out of the very answer it asked to add it to.
 _EXCLUSION_PREFIX: Final = re.compile(
-    r"(?:\bsin(?:\s+contar|\s+incluir)?|\bquitando|\bquita(?:r)?|\belimina(?:r)?|\bborra(?:r)?"
+    r"(?:\bsin\b(?:\s+contar|\s+incluir)?|\bquitando|\bquita(?:r)?|\belimina(?:r)?|\bborra(?:r)?"
     r"|\bsaca(?:r)?|\bexcluye(?:ndo)?|\bexcepto|\bsalvo|\bmenos|\bfuera(?:\s+de)?"
     r"|\bno\s+(?:contamos|cuentes|incluimos|incluyas|metas))"
     r"(?:\s+(?:el|la|los|las|de|gastos?|movimientos?|categorias?|y|ni))*"

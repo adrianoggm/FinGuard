@@ -65,6 +65,7 @@ from finguard_orchestrator.domain.services import (
     continuation_patch,
     explicit_facts,
     spanish,
+    turn_arbiter,
     window_words,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -156,10 +157,13 @@ _CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
 
 _CATEGORY_REFERENCE: Final = re.compile(r"\b(?:esa|esta|aquella|la\s+misma)\s+categoria\b")
 
-# A second subject added to the first: «solo el gym, también Spotify», «no solo el gimnasio sino
-# también Netflix» (fix round 1, M-1). The subject filter below replaces the subject with the
-# categories named, so a turn that adds one to the other is not one it can read.
+# A second subject added to the first: «no solo restaurantes, también gasolina», «solo el gym,
+# también Spotify» (fix round 1, M-1; fix round 2). It widens the answer to every category it names,
+# so it is read only when it names two or more — never as «solo X», which narrows. A kind beside a
+# shop («el gym, también Spotify») is not that: one plan cannot hold «these gyms or that shop», and
+# it is left to the model.
 _AND_ALSO: Final = re.compile(r"\b(?:tambien|sino)\b")
+_NOT_ONLY: Final = re.compile(r"^no\s+solo\b")
 
 
 # "Separa transporte público y gasolina" — a verb that asks the plan in view to be broken apart,
@@ -276,6 +280,10 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
     cascade already writes. `contextual_follow_up_plan` below is the cascade's own name for this
     same body, wrapped once in the seam that call site needs.
     """
+    if turn_arbiter.asks_what_there_is_in_total(query.sentence):
+        # «¿Qué tengo en total en recibos este mes?» is a question of its own about what there is
+        # (validation fix 3, fix round 2), never «este mes» patched onto the restaurants in view.
+        return None
     focus = focus_of(query.conversation)
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
@@ -473,10 +481,14 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
         - category_words.words_named_in(query.sentence)
         - {"y", "en", "solo", "el", "la", "los", "las"}
     )
-    if (
-        named
-        and (_CATEGORY_FILTER_FOLLOW_UP.search(folded) or category_ellipsis)
-        and _AND_ALSO.search(folded) is None
+    # A split («sepáralo en transporte público y también en gasolina») says «también» too, and is
+    # the split branch's below: the categories apart, not added into one figure.
+    widens = (
+        _NOT_ONLY.match(folded) is not None or _AND_ALSO.search(folded) is not None
+    ) and _SPLIT_BY_NAMES.search(folded) is None
+    if named and (
+        (widens and len(named) >= 2)
+        or (not widens and (_CATEGORY_FILTER_FOLLOW_UP.search(folded) or category_ellipsis))
     ):
         group_by = (
             GroupBy.NONE

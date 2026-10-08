@@ -238,6 +238,10 @@ def states_a_question_of_its_own(sentence: str, *, today: date) -> bool:
     follow-ups through `financial_turn._starts_new_financial_scope`, which reads this.
     """
     folded = spanish.folded(sentence)
+    if asks_what_there_is_in_total(sentence):
+        # «¿Qué tengo en total … este mes?» (fix round 2): a whole question about what there is,
+        # so the planner is handed no answer to continue — never the restaurants in view.
+        return True
     if re.search(r"\b(?:esa|ese|esas|esos)\b|\blo\s+mismo\b", folded):
         return False
     return (
@@ -360,9 +364,26 @@ def asks_its_own(sentence: str) -> bool:
     call a reply must not complete the draft by another door.
     """
     folded = spanish.folded(sentence)
+    if asks_what_there_is_in_total(sentence):
+        return True
     return _OPENS_LIKE_A_QUESTION.search(folded) is not None and _names_its_subject(
         sentence, folded
     )
+
+
+# «¿Qué tengo en total…?», «q tengo en total…»: a question about what there is, whatever follows it
+# (validation fix 3, fix round 2). Said alone it is the balance (the router's anchored row); with
+# more said — «… en recibos este mes», «… de gastos este mes», «… este mes» — it is still a question
+# of its own, and after an answer about restaurants it was read as «este mes» patched onto them.
+_WHAT_THERE_IS_IN_TOTAL: Final = re.compile(
+    r"^\W*(?:y\s+)?(?:que|q)\s+(?:dinero\s+)?tengo\s+en\s+total\b"
+)
+
+
+def asks_what_there_is_in_total(sentence: str) -> bool:
+    """Whether the sentence opens «(qué|q) tengo en total» (fix round 2): a whole question, never a
+    patch on the answer in view. Public because the follow-up reader declines it too."""
+    return _WHAT_THERE_IS_IN_TOTAL.search(spanish.folded(sentence)) is not None
 
 
 def _what_the_question_holds(conversation: Conversation) -> frozenset[Slot]:
