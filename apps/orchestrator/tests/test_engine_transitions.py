@@ -5,6 +5,7 @@ that cannot apply is a clarification, never a crash) and 4 (an unknown name is a
 name, never dropped).
 """
 
+import typing
 from dataclasses import replace
 from datetime import date
 from uuid import UUID
@@ -334,6 +335,64 @@ def test_patch_on_a_ratio_patches_part_and_whole_together() -> None:
     assert t.state.focus == RatioFocus(moved)
 
 
+def test_a_subject_patch_on_a_share_changes_the_part_only() -> None:
+    # «¿y en ocio?» after «qué porcentaje de mis gastos fue en restaurantes»: a new part of the
+    # same whole. Patching the whole too would make it a share of itself.
+    share = RatioPlan(part=plan(JULY, ["RESTAURANTS"]), whole=plan(JULY, []), kind=RatioKind.SHARE)
+
+    t = apply(
+        state_with(RatioFocus(share)),
+        [Patch("focus", PlanFields(categories=("LEISURE",), people=("Marta Ruiz",)))],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert t.work == Work(
+        "RATIO",
+        RatioPlan(
+            part=plan(JULY, ["LEISURE"], counterparties=("Marta Ruiz",)),
+            whole=plan(JULY, []),
+            kind=RatioKind.SHARE,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("changes", "moved"),
+    [
+        (PlanFields(window=JUNE), {"date_range": JUNE}),
+        (PlanFields(direction=Direction.INCOME), {"direction": Direction.INCOME}),
+    ],
+    ids=["window", "direction"],
+)
+def test_window_and_direction_patches_on_a_share_move_part_and_whole(
+    changes: PlanFields, moved: dict[str, object]
+) -> None:
+    part, whole = plan(JULY, ["RESTAURANTS"]), plan(JULY, [])
+    share = RatioPlan(part=part, whole=whole, kind=RatioKind.SHARE)
+
+    t = apply(state_with(RatioFocus(share)), [Patch("focus", changes)], today=TODAY, grounds=G)
+
+    assert t.work == Work(
+        "RATIO",
+        RatioPlan(part=replace(part, **moved), whole=replace(whole, **moved), kind=RatioKind.SHARE),
+    )
+
+
+def test_an_accounts_patch_on_a_share_rescopes_it_and_keeps_both_plans() -> None:
+    share = RatioPlan(part=plan(JULY, ["RESTAURANTS"]), whole=plan(JULY, []), kind=RatioKind.SHARE)
+
+    t = apply(
+        state_with(RatioFocus(share)),
+        [Patch("focus", PlanFields(accounts=("hucha",)))],
+        today=TODAY,
+        grounds=WITH_ACCOUNTS,
+    )
+
+    assert t.work == Work("RATIO", share, (HUCHA.account_id,))
+    assert t.state.scope == Scope((HUCHA.account_id,))
+
+
 def test_patch_on_pending_merges_into_the_draft_and_runs_as_an_ask_once_complete() -> None:
     draft = PlanFields(direction=Direction.EXPENSE, categories=("RESTAURANTS",))
     s = replace(EMPTY, pending=Pending(Missing.WINDOW, draft))
@@ -466,6 +525,45 @@ def test_percent_change_on_a_single_query_asks_for_the_operand() -> None:
     s = state_with(QueryFocus(plan(JULY, ["RESTAURANTS"])))
 
     t = apply(s, [ChangeMeasure(Measure.PERCENT_CHANGE)], today=TODAY, grounds=G)
+
+    assert t == Transition(s, None, Clarify(Missing.OPERAND))
+
+
+def test_share_of_a_query_is_its_part_of_the_same_question_without_the_subject() -> None:
+    # «¿Qué porcentaje de mis gastos fue en restaurantes?» The whole keeps everything that is not
+    # the subject — the window, the direction, what was excluded — and the scope stays the same.
+    base = plan(
+        JULY,
+        ["RESTAURANTS"],
+        merchants=("Casa Pepe",),
+        counterparties=("Marta Ruiz",),
+        excluded_categories=("LEISURE",),
+    )
+    s = state_with(QueryFocus(base), scope=Scope((HUCHA.account_id,)))
+
+    t = apply(s, [ChangeMeasure(Measure.SHARE)], today=TODAY, grounds=G)
+
+    share = RatioPlan(
+        part=base,
+        whole=replace(base, categories=(), merchants=(), counterparties=()),
+        kind=RatioKind.SHARE,
+    )
+    assert t.work == Work("RATIO", share, (HUCHA.account_id,))
+    assert t.state.focus == RatioFocus(share)
+
+
+def test_share_of_a_query_without_a_subject_asks_for_it() -> None:
+    s = state_with(QueryFocus(plan(JULY, [], excluded_categories=("LEISURE",))))
+
+    t = apply(s, [ChangeMeasure(Measure.SHARE)], today=TODAY, grounds=G)
+
+    assert t == Transition(s, None, Clarify(Missing.SUBJECT))
+
+
+def test_share_of_a_comparison_asks_which_side() -> None:
+    s = state_with(ComparisonFocus(pair(JUNE, JULY)))
+
+    t = apply(s, [ChangeMeasure(Measure.SHARE)], today=TODAY, grounds=G)
 
     assert t == Transition(s, None, Clarify(Missing.OPERAND))
 
@@ -745,3 +843,26 @@ def test_the_state_remembers_only_the_last_eight_turns() -> None:
 
     assert [turn.said for turn in s.turns] == [f"q{n}" for n in range(2, 10)]
     assert s.version == EMPTY.version
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        DialogueState,
+        Pending,
+        PlanFields,
+        QueryFocus,
+        ComparisonFocus,
+        RatioFocus,
+        BalanceFocus,
+        Ask,
+        Patch,
+        Compare,
+        Work,
+        Transition,
+    ],
+)
+def test_every_engine_type_resolves_its_own_annotations(cls: type) -> None:
+    # A codec or a schema builder reads these with `get_type_hints`; a forward reference to a
+    # name another module defines would make that raise.
+    assert typing.get_type_hints(cls)

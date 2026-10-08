@@ -5,45 +5,27 @@ so a correction carries only what changed and the transition keeps the rest. Tha
 means throughout: not said, and therefore kept.
 """
 
-import dataclasses
 from dataclasses import dataclass
 from typing import Literal
 
-from finguard_orchestrator.domain.engine.state import Measure, Missing
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
-from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, RelativePeriod
+# `PlanFields` lives with the state, whose pending question holds one; it is named here too because
+# it is what every operation carries.
+from finguard_orchestrator.domain.engine.state import Measure, Missing, PlanFields
 
-
-@dataclass(frozen=True)
-class PlanFields:
-    """A plan described field by field, every field optional. None is "not said"; an empty tuple
-    is said, and means none. Names are as the model wrote them until grounding replaces them."""
-
-    direction: Direction | None = None
-    window: RelativePeriod | AbsoluteRange | None = None
-    categories: tuple[str, ...] | None = None
-    merchants: tuple[str, ...] | None = None
-    people: tuple[str, ...] | None = None
-    accounts: tuple[str, ...] | None = None
-    excluded_categories: tuple[str, ...] | None = None
-    excluded_merchants: tuple[str, ...] | None = None
-    metric: Metric | None = None
-    group_by: GroupBy | None = None
-    limit: int | None = None
-
-    def named(self) -> frozenset[str]:
-        """The fields that were said."""
-        return frozenset(
-            field.name
-            for field in dataclasses.fields(self)
-            if getattr(self, field.name) is not None
-        )
-
-    def merged(self, changes: "PlanFields") -> "PlanFields":
-        """These fields with every field `changes` names replaced, and no other."""
-        return dataclasses.replace(
-            self, **{name: getattr(changes, name) for name in changes.named()}
-        )
+__all__ = [
+    "Ask",
+    "Balance",
+    "ChangeMeasure",
+    "Clarify",
+    "Compare",
+    "Delegate",
+    "Operation",
+    "Patch",
+    "PlanFields",
+    "Reset",
+    "SelectOperand",
+    "Smalltalk",
+]
 
 
 @dataclass(frozen=True)

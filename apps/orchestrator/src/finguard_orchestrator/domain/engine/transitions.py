@@ -200,12 +200,16 @@ def _patched_focus(state: DialogueState, op: Patch, today: date, grounds: Ground
     if isinstance(focus, QueryFocus):
         return _on_query(state, _patched(focus.plan, changes, today))
     if isinstance(focus, RatioFocus):
-        part, whole = (_patched(p, changes, today) for p in (focus.ratio.part, focus.ratio.whole))
+        whole_changes = changes
+        if focus.ratio.kind is RatioKind.SHARE:
+            # A new subject is a new part of the same whole; patching the whole too would make it
+            # a share of itself. Everything else (window, direction) moves both.
+            whole_changes = replace(changes, categories=None, merchants=None, people=None)
+        part = _patched(focus.ratio.part, changes, today)
+        whole = _patched(focus.ratio.whole, whole_changes, today)
         if not isinstance(part, FinancialPlan) or not isinstance(whole, FinancialPlan):
             raise _CannotApplyError(Missing.SUBJECT)
-        ratio = RatioPlan(part=part, whole=whole, kind=focus.ratio.kind)
-        state = replace(state, focus=RatioFocus(ratio), pending=None)
-        return state, Work("RATIO", ratio, state.scope.account_ids)
+        return _on_ratio(state, RatioPlan(part=part, whole=whole, kind=focus.ratio.kind))
     raise _CannotApplyError(Missing.SUBJECT)
 
 
@@ -254,6 +258,9 @@ def _measured(state: DialogueState, measure: Measure, today: date) -> Applied:
     if isinstance(focus, ComparisonFocus):
         if measure is Measure.PERCENT_CHANGE:
             return _on_pair(state, focus.comparison, percent=True)
+        if measure is Measure.SHARE:
+            # A share is of one figure, and a pair has two.
+            raise _CannotApplyError(Missing.OPERAND)
         to_metric = PlanFields(metric=_METRIC_OF[measure])
         pair = focus.comparison
         return _on_pair(
@@ -267,8 +274,23 @@ def _measured(state: DialogueState, measure: Measure, today: date) -> Applied:
         if measure is Measure.PERCENT_CHANGE:
             # A change is between two figures, and one query has one.
             raise _CannotApplyError(Missing.OPERAND)
+        if measure is Measure.SHARE:
+            return _on_ratio(state, _share_of(focus.plan))
         return _on_query(state, _patched(focus.plan, PlanFields(metric=_METRIC_OF[measure]), today))
     raise _CannotApplyError(Missing.SUBJECT)
+
+
+def _share_of(plan: Plan) -> RatioPlan:
+    """«¿Qué porcentaje de mis gastos fue en restaurantes?»: the plan on screen as the part, and
+    the same question without its subject as the whole. Exclusions, window and direction stay on
+    both, because they say what the whole is."""
+    if not isinstance(plan, FinancialPlan) or not (
+        plan.categories or plan.merchants or plan.counterparties
+    ):
+        # Without a subject the part is the whole, and a share of itself says nothing.
+        raise _CannotApplyError(Missing.SUBJECT)
+    whole = replace(plan, categories=(), merchants=(), counterparties=())
+    return RatioPlan(part=plan, whole=whole, kind=RatioKind.SHARE)
 
 
 # --- what a work puts on screen ---------------------------------------------------------------
@@ -284,6 +306,11 @@ _METRIC_OF: Final = {measure: metric for metric, measure in _MEASURE_OF.items()}
 def _on_query(state: DialogueState, plan: Plan) -> Applied:
     state = replace(state, focus=QueryFocus(plan), pending=None)
     return state, Work("QUERY", plan, state.scope.account_ids)
+
+
+def _on_ratio(state: DialogueState, ratio: RatioPlan) -> Applied:
+    state = replace(state, focus=RatioFocus(ratio), pending=None)
+    return state, Work("RATIO", ratio, state.scope.account_ids)
 
 
 def _on_pair(state: DialogueState, pair: ComparisonPlan, *, percent: bool) -> Applied:

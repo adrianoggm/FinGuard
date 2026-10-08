@@ -8,30 +8,33 @@ there is nothing for two copies of the same fact to disagree about.
 against a version that is no longer current.
 """
 
+import dataclasses
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 from uuid import UUID
 
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
-if TYPE_CHECKING:
-    # Operations name the state's enums and a pending question holds an operation's fields; one
-    # side of that pair has to be a type-only import.
-    from finguard_orchestrator.domain.engine.operations import PlanFields
-
 
 class Measure(StrEnum):
-    """How a comparison is shown. PERCENT_CHANGE is the one no metric says: it is arithmetic over
-    the pair, which is why it lives on the focus and not on the plans."""
+    """How the figure on screen is shown. PERCENT_CHANGE and SHARE are the two no metric says:
+    each is arithmetic over two reads (a pair, or a part and its whole), which is why they live on
+    the focus and not on the plans."""
 
     AMOUNT = "AMOUNT"
     COUNT = "COUNT"
     AVERAGE = "AVERAGE"
     PERCENT_CHANGE = "PERCENT_CHANGE"
+    SHARE = "SHARE"
 
 
 class Missing(StrEnum):
@@ -72,11 +75,47 @@ Focus = QueryFocus | ComparisonFocus | RatioFocus | BalanceFocus
 
 
 @dataclass(frozen=True)
+class PlanFields:
+    """A plan described field by field, every field optional. None is "not said"; an empty tuple
+    is said, and means none. Names are as the model wrote them until grounding replaces them.
+
+    Defined here rather than beside the operations that carry it because a pending question holds
+    one, and a type another module defines would be a forward reference nobody can resolve.
+    """
+
+    direction: Direction | None = None
+    window: RelativePeriod | AbsoluteRange | None = None
+    categories: tuple[str, ...] | None = None
+    merchants: tuple[str, ...] | None = None
+    people: tuple[str, ...] | None = None
+    accounts: tuple[str, ...] | None = None
+    excluded_categories: tuple[str, ...] | None = None
+    excluded_merchants: tuple[str, ...] | None = None
+    metric: Metric | None = None
+    group_by: GroupBy | None = None
+    limit: int | None = None
+
+    def named(self) -> frozenset[str]:
+        """The fields that were said."""
+        return frozenset(
+            field.name
+            for field in dataclasses.fields(self)
+            if getattr(self, field.name) is not None
+        )
+
+    def merged(self, changes: "PlanFields") -> "PlanFields":
+        """These fields with every field `changes` names replaced, and no other."""
+        return dataclasses.replace(
+            self, **{name: getattr(changes, name) for name in changes.named()}
+        )
+
+
+@dataclass(frozen=True)
 class Pending:
     """A question asked back, holding everything already said, so the reply only fills the gap."""
 
     missing: Missing
-    draft: "PlanFields"
+    draft: PlanFields
 
 
 @dataclass(frozen=True)
