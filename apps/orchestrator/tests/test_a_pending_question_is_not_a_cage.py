@@ -204,6 +204,20 @@ def test_a_half_built_bizum_keeps_its_recipient_for_its_own_amount(reply: str) -
     assert answered["conversation"]["amount_minor"] == 2_000
 
 
+@pytest.mark.parametrize(
+    "sentence", ["mi ex me pasa 300 a la cuenta cada mes", "¿y Javi le pasa 20 a Marta cada mes?"]
+)
+def test_somebody_else_handing_money_over_starts_no_payment(sentence: str) -> None:
+    """Final review, M-1: the third-person «pasa» says what somebody else does."""
+    stack = episodes.a_stack()
+    answered = ask(stack, sentence, SETTLED)
+    assert stack.bank.prepared == []
+    assert answered["conversation"].get("workflow") not in {
+        "PAYMENT_IN_PROGRESS",
+        "PAYMENT_CONFIRMATION",
+    }, answered["text"]
+
+
 def test_olvidalo_after_an_answer_is_not_a_shop() -> None:
     stack = episodes.a_stack()
     first = ask(stack, "cuanto gaste en el super el mes pasado", SETTLED)

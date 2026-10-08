@@ -448,3 +448,39 @@ def test_a_shop_the_comparison_carries_is_still_compared() -> None:
     )
     assert compared is not None
     assert compared.earlier.merchants == compared.latest.merchants == ("Mercadona",)
+
+
+# --- a comparison says what it compared, and where (final review, I-6) --------------------------
+#
+# «En junio de 2026: 465,56 €; en julio de 2026: 465,56 €.» said neither what was compared nor in
+# which accounts: after «junio vs julio en restaurantes», «¿y en apuestas?» was read as leisure and
+# the answer gave no sign of it. For the person only — the plan's line (`describe`) is pinned.
+
+
+def test_a_comparison_says_what_it_compared() -> None:
+    stack = episodes.a_stack()
+    answered = ask(stack, COMPARISON, SETTLED)
+    assert "El gasto en restaurantes fue" in answered["text"], answered["text"]
+
+
+def test_a_comparison_continued_says_the_category_it_read() -> None:
+    stack = episodes.a_stack()
+    first = ask(stack, COMPARISON, SETTLED)
+    second = ask(stack, "¿y en apuestas?", first["conversation"])
+    assert second["outcome"] == "PLANNED", second["text"]
+    assert "en ocio" in second["text"], second["text"]
+
+
+def test_a_comparison_says_the_accounts_it_read() -> None:
+    stack = episodes.a_stack()
+    answered = ask(stack, COMPARISON, SETTLED)
+    assert answered["text"].endswith("\nConsultado en todas tus cuentas."), answered["text"]
+
+
+def test_a_comparison_over_a_chosen_account_says_so() -> None:
+    stack = episodes.a_stack()
+    chosen = {"account_selection_mode": "SELECTED", "account_selection_ids": [str(episodes.PIGGY)]}
+    answered = ask(stack, COMPARISON, chosen)
+    assert all(plan.only_account_id == episodes.PIGGY for plan in stack.ledger.ran)
+    assert "\nConsultado en " in answered["text"], answered["text"]
+    assert "todas tus cuentas" not in answered["text"]

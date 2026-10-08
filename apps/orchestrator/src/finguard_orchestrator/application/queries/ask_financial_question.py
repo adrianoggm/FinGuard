@@ -3808,25 +3808,30 @@ class AskFinancialQuestionHandler:
             earlier_window=earlier_window,
             latest_window=latest_window,
         )
+        # What was compared, said once in the conclusion (final review, I-6): the two figures alone
+        # never said that «¿y en apuestas?» was read as leisure.
+        about = answer_writer.compared_subject(latest)
         if latest.metric is Metric.AVERAGE and (earlier_answer.is_empty or latest_answer.is_empty):
             empty_window = earlier_window if earlier_answer.is_empty else latest_window
             conclusion = (
-                f"No hubo movimientos {empty_window}, así que la media de ese periodo "
+                f"No hubo movimientos{about} {empty_window}, así que la media de ese periodo "
                 "no está definida."
             )
         elif latest_value == earlier_value:
             conclusion = (
-                "Hubo el mismo número de movimientos en ambos periodos."
+                f"Hubo el mismo número de movimientos{about} en ambos periodos."
                 if latest.metric is Metric.COUNT
-                else f"El {concept} fue el mismo en ambos periodos."
+                else f"El {concept}{about} fue el mismo en ambos periodos."
             )
         else:
             higher_window = latest_window if latest_value > earlier_value else earlier_window
             conclusion = (
-                f"Hubo {difference_figure} más {higher_window}."
+                f"Hubo {difference_figure} más{about} {higher_window}."
                 if latest.metric is Metric.COUNT
-                else f"El {concept} fue {difference_figure} mayor {higher_window}."
+                else f"El {concept}{about} fue {difference_figure} mayor {higher_window}."
             )
+        # And where: the accounts both sides were read from, as every other answer says them.
+        scope_note = self._scope_note(scoped_latest, query.sentence)
 
         movements = (*latest_answer.movements, *earlier_answer.movements)
         remembered_earlier = scoped_earlier
@@ -3886,7 +3891,8 @@ class AskFinancialQuestionHandler:
                     f"{latest_window.capitalize()}: {latest_figure}; "
                     f"{earlier_window}: {earlier_figure}. {conclusion}"
                 )
-            ),
+            )
+            + (f"\n{scope_note}" if scope_note else ""),
             plan=(f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"),
             plan_in_words=(
                 f"{answer_writer.plan_in_words(latest)} frente a "

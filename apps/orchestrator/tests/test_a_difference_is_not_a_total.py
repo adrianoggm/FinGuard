@@ -153,10 +153,13 @@ async def test_a_period_comparison_does_not_offer_its_difference_as_the_leading_
     result = await ask("¿He gastado más este mes que el anterior?", ledger)
 
     assert result.outcome == PlanningOutcome.PLANNED.value
-    # The sentence measured over HTTP, unchanged: this fix moves a field, not an answer.
+    # The sentence measured over HTTP, unchanged: this fix moves a field, not an answer. The
+    # accounts it was read from are said under it since the final review (I-6), as under every
+    # other answer read across them.
     assert result.text == (
         "En lo que va de mes: 0,00 €; el mes pasado: 1.895,97 €. "
-        "El gasto fue 1.895,97 € mayor el mes pasado."
+        "El gasto fue 1.895,97 € mayor el mes pasado.\n"
+        "Consultado en todas tus cuentas."
     )
     assert leading_figure_the_answer_never_says(result) is None
     # And it is absent rather than rewritten: a comparison states two figures and the change

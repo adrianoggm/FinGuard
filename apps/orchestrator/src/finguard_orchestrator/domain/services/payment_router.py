@@ -164,10 +164,26 @@ _PAYING: Final = re.compile(
 # 2024 a Marta» has no amount straight behind the verb. Imperative and infinitive-with-clitic only:
 # «le pasé 20 a Javi» is `_ALREADY`'s, and a bare «pasa» is also «qué pasa», so it needs the amount
 # right behind it to count.
+_AN_AMOUNT_TO_SOMEBODY: Final = r"\s+\d+(?:[.,]\d{1,2})?\s*(?:€|euros?\b)?\s+a\s+[a-z]"
 _HANDING_OVER: Final = re.compile(
-    r"\b(?:pasale|pasales|pasarle|pasarles|dale|dales|pasa)\s+"
-    r"\d+(?:[.,]\d{1,2})?\s*(?:€|euros?\b)?\s+a\s+[a-z]"
+    r"\b(?:pasale|pasales|pasarle|pasarles|dale|dales)" + _AN_AMOUNT_TO_SOMEBODY
 )
+
+# The bare «pasa» is also the third person (final review, M-1): «mi ex me pasa 300 a la cuenta cada
+# mes» and «¿y Javi le pasa 20 a Marta cada mes?» say what somebody else does, and each started a
+# Bizum. A clitic in front points it at another person, and an order is not asked, so the bare form
+# counts only with neither (`_hands_over`) — the imperative «pasa 20 a Javi» still does.
+_A_BARE_PASA: Final = re.compile(
+    r"(?<!\bme\s)(?<!\bte\s)(?<!\ble\s)(?<!\bles\s)(?<!\bnos\s)\bpasa" + _AN_AMOUNT_TO_SOMEBODY
+)
+
+
+def _hands_over(folded: str) -> bool:
+    """`_HANDING_OVER`, or the bare «pasa» said as an order rather than asked about."""
+    return _HANDING_OVER.search(folded) is not None or (
+        "?" not in folded and "¿" not in folded and _A_BARE_PASA.search(folded) is not None
+    )
+
 
 # A fully stated instruction remains an instruction when the user appends ``¿cómo lo hago?`` or
 # ``¿verdad?``. The volitional prefix is required; without it, ``¿cómo puedo enviar dinero?`` is a
@@ -345,7 +361,7 @@ def is_explicit_order(sentence: str) -> bool:
         or _SUBJUNCTIVE_ORDER.search(folded)
         or _IMPERATIVE_ORDER.search(folded)
         or _MAKING.search(folded)
-        or _HANDING_OVER.search(folded)
+        or _hands_over(folded)
     )
 
 
@@ -385,6 +401,6 @@ def is_payment(sentence: str) -> bool:
     # `_MONEY` already said about "bizum" — said here as well so a misspelling keeps that property
     # instead of losing it in two places at once.
     rail = payment_words.names_a_rail(sentence)
-    if _HANDING_OVER.search(folded):
+    if _hands_over(folded):
         return True
     return (bool(_PAYING.search(folded)) or rail) and (bool(_MONEY.search(folded)) or rail)

@@ -367,3 +367,26 @@ def test_a_wider_past_does_not_swallow_an_order(sentence: str) -> None:
     """What a stem (``mand\\w*``) would have cost. Completeness has to come from conjugating the
     verb, not from widening the match until it reaches the imperative too."""
     assert payment_router.is_payment(sentence) is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "mi ex me pasa 300 a la cuenta cada mes",
+        "¿y Javi le pasa 20 a Marta cada mes?",
+        "mi madre nos pasa 50 a todos",
+        "¿pasa 20 a Marta cada mes?",
+    ],
+)
+def test_somebody_else_handing_money_over_is_not_an_order(sentence: str) -> None:
+    """Final review, M-1. «Pasa» with an amount and a person behind it is the imperative only when
+    nothing points it at somebody else: «me pasa», «le pasa» are what another person does, and a
+    question asks about it. Read as an order, «mi ex me pasa 300 a la cuenta» started a Bizum."""
+    assert payment_router.is_payment(sentence) is False
+
+
+@pytest.mark.parametrize(
+    "sentence", ["pásale 20 a Javi", "pasa 20 a Javi", "dale 8 a Laura", "¿pásale 20 a Javi?"]
+)
+def test_handing_money_over_is_still_an_order(sentence: str) -> None:
+    assert payment_router.is_payment(sentence) is True

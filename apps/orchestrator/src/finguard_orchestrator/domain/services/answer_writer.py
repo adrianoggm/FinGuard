@@ -1446,6 +1446,20 @@ def comparison_concept(plan: FinancialPlan) -> str:
     }[plan.direction]
 
 
+def compared_subject(plan: FinancialPlan) -> str:
+    """What both sides of a comparison are about, to follow its concept, or "" when nothing narrows
+    them: «El gasto *en ocio* fue…», «Hubo 3 movimientos más *a Marta*…» (final review, I-6).
+
+    One side's `filter_of`, because a comparison's two sides share every filter
+    (`ComparisonPlan.between` refuses a pair that does not). Without it «¿y en apuestas?» after a
+    comparison was answered over leisure with nothing to say that was the category read. A filter
+    with an exclusion in it closes with a comma, so the verb after it still reads: «el gasto en
+    restaurantes, sin Mercadona, fue…». For the person only; `describe` does not call it.
+    """
+    about = filter_of(plan)
+    return f"{about}," if "," in about else about
+
+
 def _period_count(answer: QueryAnswer, plan: FinancialPlan) -> int:
     """Calendar buckets touched by the exact range banking executed, including empty ones."""
     group_by = plan.group_by
