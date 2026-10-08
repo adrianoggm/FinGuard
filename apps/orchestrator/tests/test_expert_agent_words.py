@@ -198,7 +198,15 @@ EVALUATION = Path(__file__).resolve().parents[1] / "evaluation"
 # `real/conversations.yaml` replays real conversations, which mix topics on purpose (a gym question
 # among the financial ones); their expectations are judged on the live stack.
 MEANT_FOR_AGENTS = frozenset(
-    {"conversations/35-expert-agents.yaml", "a2a/cases.yaml", "real/conversations.yaml"}
+    {
+        "conversations/35-expert-agents.yaml",
+        "a2a/cases.yaml",
+        "real/conversations.yaml",
+        # The engine's frozen sets: a byte copy of real/conversations.yaml and its variants, which
+        # ask the gyms on purpose for the same reason the original does.
+        "engine/regression/conversations.yaml",
+        "engine/generalization/conversations.yaml",
+    }
 )
 
 
