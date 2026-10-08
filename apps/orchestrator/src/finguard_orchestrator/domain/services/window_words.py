@@ -381,6 +381,9 @@ _MONTHS_PER: Final[dict[str, int]] = {"ano": 12, "anos": 12}
 # decision on 2026-10-07). It asked «¿De qué periodo?» before, about a question whose own verb says
 # "up to now"; the answer says «en lo que va de año», so the year is stated rather than assumed.
 _SO_FAR: Final = re.compile(r"\bllevo\s+gastad[oa]s?\b")
+# What «llevo» already says, said again: up to now. Not a window of its own, so it does not stand in
+# the way of the year so far — «hasta hoy» used to be read as today (ruling R46).
+_UP_TO_NOW: Final = re.compile(r"\bhasta\s+(?:ahora|la\s+fecha|hoy|el\s+dia\s+de\s+hoy)\b")
 
 # Words that name a window, whether or not this file can read the one they name. «Llevo gastado
 # desde Navidad» and «… en la semana en curso» each name a window nothing here reads; a default in
@@ -389,7 +392,7 @@ _SO_FAR: Final = re.compile(r"\bllevo\s+gastad[oa]s?\b")
 # date or a year. Generous on purpose — a word here that was not a window costs one question back,
 # as before.
 _A_WINDOW_IS_NAMED: Final = re.compile(
-    r"\d|\b(?:desde|hasta|hace|durante|dias?|semanas?|finde|mes|meses|anos?|trimestres?"
+    r"\d|\b(?:desde|hasta|hace|durante|hoy|ayer|dias?|semanas?|finde|mes|meses|anos?|trimestres?"
     r"|semestres?|quincenas?|temporada|curso|ejercicio|periodo|epoca|verano|invierno|primavera"
     r"|otono|navidad(?:es)?|puente|vacaciones|mananas?|tardes?|noches?|ultim[oa]s?|ultimamente"
     r"|lunes|martes|miercoles|jueves|viernes|sabados?|domingos?|" + "|".join(_MONTHS) + r")\b"
@@ -995,6 +998,13 @@ def window_in(
         # an explicit range said the more particular thing and keeps it.
         return RelativePeriod(period=Period.THIS_WEEK)
 
+    # «Llevo gastado» before the table only so that «hasta hoy» is not read as today: it stands
+    # aside for every other window word, the table's own included, so «… este mes» is still this
+    # month and «… hoy» still today.
+    so_far = _so_far(folded)
+    if so_far is not None:
+        return so_far
+
     for phrase, period in _NAMED:
         if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", folded):
             return RelativePeriod(period=period)
@@ -1012,9 +1022,43 @@ def _a_default(sentence: str, folded: str) -> Window | None:
     second a sentence that names no other window at all, read or not."""
     if _lately(sentence, folded):
         return RelativePeriod(period=Period.LAST_N_DAYS, n=30)
-    if _SO_FAR.search(folded) and not _A_WINDOW_IS_NAMED.search(folded):
+    return _so_far(folded)
+
+
+def _so_far(folded: str) -> Window | None:
+    """«Llevo gastado» naming no other window, read or not — «hasta ahora» is no other window."""
+    if _SO_FAR.search(folded) and not _A_WINDOW_IS_NAMED.search(_UP_TO_NOW.sub(" ", folded)):
         return RelativePeriod(period=Period.THIS_YEAR)
     return None
+
+
+# A reply to the period question that says nothing but a default: «últimamente», «¿y
+# últimamente?», «lo que he gastado últimamente», «lo que llevo gastado (hasta ahora)». Every word
+# of it has to be one of these, so a reply that names anything else — a shop, a category, an
+# account — is never read as only a period.
+_A_DEFAULT_REPLY_WORDS: Final = frozenset(
+    "y pues bueno vale lo de que me he has llevo llevas gastado gastados gastada gastadas "
+    "ultimamente hasta ahora la fecha hoy el dia en total".split()
+)
+_A_WORD: Final = re.compile(r"[a-z]+")
+
+
+def default_reply_window(sentence: str) -> Window | None:
+    """The default a reply to «¿De qué periodo…?» gives as its whole answer, or None.
+
+    The reply is about the money the open question is about, so «últimamente» needs no word for
+    money here, and «lo que llevo gastado» is not a new question about all spending but the year so
+    far of the one waiting (ruling R46). Only as the whole reply, word for word from a closed set:
+    the caller completes the open draft with this and nothing else, so a reply that also says a
+    subject is left to the readers that read subjects.
+    """
+    folded = spanish.folded(sentence)
+    words = _A_WORD.findall(folded)
+    if not words or any(word not in _A_DEFAULT_REPLY_WORDS for word in words):
+        return None
+    if "ultimamente" in words:
+        return RelativePeriod(period=Period.LAST_N_DAYS, n=30)
+    return _so_far(folded)
 
 
 def default_window_in(sentence: str, *, today: date | None = None) -> Window | None:

@@ -399,13 +399,20 @@ def _what_it_fills(
     reply's to change — «este año, pero cuéntalas» — and goes with it.
     """
     holds = _what_the_question_holds(conversation)
-    if (
-        not holds
-        or analysis.intent in _A_TURN_OF_ITS_OWN
-        or states_a_question_of_its_own(sentence, today=today)
-    ):
+    if not holds or analysis.intent in _A_TURN_OF_ITS_OWN:
         return frozenset()
     asked = conversation.awaiting or conversation.last_asked
+    if (
+        asked is Slot.WINDOW
+        and Slot.WINDOW in holds
+        and window_words.default_reply_window(sentence) is not None
+    ):
+        # «Últimamente», «lo que llevo gastado»: a default as the whole reply (ruling R46). Before
+        # the question-of-its-own test, which «lo que llevo gastado» passes — a window and a verb
+        # of spending — although it is the period of the question waiting, not a question.
+        return frozenset({Slot.WINDOW})
+    if states_a_question_of_its_own(sentence, today=today):
+        return frozenset()
     filled: set[Slot] = set()
     window_slot = Slot.YEAR if Slot.YEAR in holds else Slot.WINDOW
     if (

@@ -2820,7 +2820,14 @@ class AskFinancialQuestionHandler:
         active = query.conversation.active
         if not isinstance(active, FinancialClarification):
             return None
-        if _starts_new_financial_scope(query.sentence, today=query.today):
+        # A default as the whole reply — «últimamente», «lo que llevo gastado» — is this question's
+        # period, though «lo que llevo gastado» reads as a question of its own (ruling R46).
+        by_default = (
+            window_words.default_reply_window(query.sentence)
+            if active.awaiting is Slot.WINDOW
+            else None
+        )
+        if by_default is None and _starts_new_financial_scope(query.sentence, today=query.today):
             return None
         draft = active.draft
         if active.awaiting is Slot.CATEGORY:
@@ -2850,7 +2857,7 @@ class AskFinancialQuestionHandler:
 
         # Against the slot the question asked for, which is what makes a two-word reply readable:
         # "de este" names nothing on its own and is this year as the answer to "¿de qué año?".
-        window = window_words.window_in(
+        window = by_default or window_words.window_in(
             query.sentence, asked_for=active.awaiting, today=query.today
         )
         if window is None:

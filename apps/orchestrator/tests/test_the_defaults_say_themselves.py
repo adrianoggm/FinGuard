@@ -15,7 +15,13 @@ from pathlib import Path
 
 import pytest
 from support import episodes
-from support.pending import SETTLED, AsksForTheWindow, ask, asking_for_the_window_stack
+from support.pending import (
+    SETTLED,
+    AsksForTheWindow,
+    KeepsTheBase,
+    ask,
+    asking_for_the_window_stack,
+)
 
 from finguard_orchestrator.bootstrap.config import Settings, get_settings
 from finguard_orchestrator.bootstrap.main import app, create_app
@@ -493,3 +499,47 @@ def test_a_ranking_in_a_named_account_stays_there(setting: str) -> None:
     ask(stack, "¿cuál fue mi mayor gasto en la hucha el mes pasado?")
     ran = stack.ledger.ran[-1]
     assert ran.only_account_id == episodes.PIGGY and not ran.across_accounts
+
+
+# --- «llevo gastado» up to now, and a default as the reply (ruling R46) -------------------------
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "¿cuánto llevo gastado hasta ahora?",
+        "¿cuánto llevo gastado hasta la fecha?",
+        "¿cuánto llevo gastado hasta hoy?",
+    ],
+)
+def test_llevo_gastado_up_to_now_is_the_year_so_far_and_says_so(question: str) -> None:
+    stack = episodes.a_stack()
+    answered = ask(stack, question)
+    assert stack.ledger.plans[-1].period.period is Period.THIS_YEAR
+    assert "en lo que va de año" in answered["text"]
+
+
+@pytest.mark.parametrize(
+    ("reply", "window"),
+    [
+        ("últimamente", RelativePeriod(Period.LAST_N_DAYS, n=30)),
+        ("¿y últimamente?", RelativePeriod(Period.LAST_N_DAYS, n=30)),
+        ("lo que he gastado últimamente", RelativePeriod(Period.LAST_N_DAYS, n=30)),
+        ("lo que llevo gastado", RelativePeriod(Period.THIS_YEAR)),
+        ("lo que llevo gastado hasta ahora", RelativePeriod(Period.THIS_YEAR)),
+    ],
+)
+def test_a_default_given_as_the_reply_fills_the_period_of_the_open_question(
+    reply: str, window: RelativePeriod
+) -> None:
+    """Ruling R46. A reply to «¿De qué periodo…?» is about the money that question is about, so
+    «últimamente» needs no word for money there, and «lo que llevo gastado» is not a new question
+    about all spending: both complete the restaurants question, without the model."""
+    planner = KeepsTheBase()
+    stack = asking_for_the_window_stack(planner=planner)
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    answered = ask(stack, reply, asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    ran = stack.ledger.plans[-1]
+    assert ran.categories == ("RESTAURANTS",) and ran.period == window
+    assert reply not in planner.asked, "the period was filled in code"

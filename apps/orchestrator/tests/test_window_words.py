@@ -834,3 +834,44 @@ def test_lately_stands_aside_for_a_window_it_cannot_read(sentence: str) -> None:
     assert window_words.window_in(sentence, today=REFERENCE) != RelativePeriod(
         Period.LAST_N_DAYS, n=30
     )
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuánto llevo gastado hasta ahora?",
+        "¿cuánto llevo gastado hasta la fecha?",
+        "¿cuánto llevo gastado hasta hoy?",
+    ],
+)
+def test_llevo_gastado_up_to_now_is_still_the_year_so_far(sentence: str) -> None:
+    """Ruling R46: «hasta ahora», «hasta la fecha», «hasta hoy» say what «llevo» already says — up
+    to now — and name no window of their own. «Hasta hoy» was read as today."""
+    assert window_words.window_in(sentence, today=REFERENCE) == RelativePeriod(Period.THIS_YEAR)
+    assert window_words.default_window_in(sentence, today=REFERENCE) == RelativePeriod(
+        Period.THIS_YEAR
+    )
+
+
+def test_today_on_its_own_is_still_today() -> None:
+    assert window_words.window_in("¿cuánto llevo gastado hoy?", today=REFERENCE) == (
+        RelativePeriod(Period.TODAY)
+    )
+
+
+@pytest.mark.parametrize(
+    ("reply", "window"),
+    [
+        ("últimamente", RelativePeriod(Period.LAST_N_DAYS, n=30)),
+        ("pues últimamente", RelativePeriod(Period.LAST_N_DAYS, n=30)),
+        ("lo que llevo gastado", RelativePeriod(Period.THIS_YEAR)),
+        # A reply that says anything more is not only a period.
+        ("últimamente en gasolina", None),
+        ("lo que llevo gastado en la hucha", None),
+        ("lo que llevo gastado este mes", None),
+        ("hoy", None),
+        ("pues no sé", None),
+    ],
+)
+def test_a_default_is_a_whole_reply_or_nothing(reply: str, window: RelativePeriod | None) -> None:
+    assert window_words.default_reply_window(reply) == window
