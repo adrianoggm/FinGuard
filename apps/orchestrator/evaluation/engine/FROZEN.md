@@ -2,11 +2,13 @@
 
 These files are frozen and must not be edited. A change to any of them invalidates the comparison between the rules engine and the model engine. If a file has to change, start a new set with a new date, and keep this one.
 
-| File | sha256 | Content |
+| File | sha256 of the stored content | Content |
 |---|---|---|
-| `regression/conversations.yaml` | `d76c957447b9eedb1439a9445af6ca87f4efb0773da06c8566f30a9eb8a24a2f` | Byte copy of `evaluation/real/conversations.yaml` at develop `a478f219`: 23 real conversations, 135 turns. |
-| `regression/ux.yaml` | `e94f18984766868b694f7179163ed26c296b34c42a3bdebb3527b072fdb1e92a` | Byte copy of `evaluation/ux/conversations.yaml`: 10 episodes, 60 turns. |
+| `regression/conversations.yaml` | `61ddf0c95780c33cfe71b4edea06839609d1ace7e5ccccd77d397c3deb767409` | Byte copy of `evaluation/real/conversations.yaml` at develop `a478f219`: 23 real conversations, 135 turns. |
+| `regression/ux.yaml` | `06b2f9d2066cbc75d874f569db8497eba49b56abbaef0b9b7969812673171b13` | Byte copy of `evaluation/ux/conversations.yaml`: 10 episodes, 60 turns. |
 | `generalization/conversations.yaml` | `ea97364efbacabe54eceb761ac9909767dc3f59fd0f34ba647fedc57198f71af` | 33 paraphrased variants plus 23 new combination conversations: 56 conversations, 344 turns. |
+
+Verify with `git show HEAD:apps/orchestrator/evaluation/engine/<file> | sha256sum` — the hash of what git stores, the same on any checkout.
 
 ## What each set measures
 
