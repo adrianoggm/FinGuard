@@ -33,6 +33,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlanDraft,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.planning.llm_query_planner import WINDOW_QUESTION
 
 # A window for a plan whose window the test does not read.
@@ -358,3 +359,101 @@ def test_the_question_says_the_subject_in_the_answers_words(
     plan: FinancialPlan, asked: str | None
 ) -> None:
     assert answer_writer.window_question(plan) == asked
+
+
+# --- an account named beside the period question (ruling R46, C-1) -----------------------------
+#
+# The account a question names is read when the question runs, from its own sentence. A question
+# the planner answers with «¿De qué periodo?» runs on the reply's turn, and «este año» names no
+# account: under `all` the figure came from every account, with no line to say so.
+
+
+@pytest.mark.parametrize("setting", ["all", "ask"])
+@pytest.mark.parametrize(
+    ("question", "account"),
+    [
+        ("¿cuánto he gastado en la hucha?", episodes.PIGGY),
+        ("¿cuánto he gastado en restaurantes en la hucha?", episodes.PIGGY),
+        ("¿cuánto he gastado en Fondo indexado?", episodes.FUND),
+    ],
+)
+def test_an_account_named_beside_the_period_question_is_the_one_that_runs(
+    setting: str, question: str, account: object
+) -> None:
+    stack = asking_for_the_window_stack(settled=False, account_scope_default=setting)
+    asked = ask(stack, question)
+    assert asked["outcome"] == "NEEDS_CLARIFICATION", asked["text"]
+    assert asked["conversation"]["account_selection_mode"] == "SELECTED"
+    answered = ask(stack, "este año", asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    ran = stack.ledger.plans[-1]
+    assert ran.only_account_id == account and not ran.across_accounts
+    assert ran.period.period is Period.THIS_YEAR
+
+
+@pytest.mark.parametrize("setting", ["all", "ask"])
+def test_a_new_question_naming_an_account_keeps_it_for_its_own_period(setting: str) -> None:
+    """While «¿cuánto gasté en restaurantes?» waited for its period: the new question is asked its
+    own period (Task 8), and the account it named is still its account when the period comes."""
+    stack = asking_for_the_window_stack(account_scope_default=setting)
+    asked = ask(stack, "¿cuánto gasté en restaurantes?")
+    told = ask(stack, "¿cuánto ingresé en la hucha?", asked["conversation"])
+    assert told["outcome"] == "NEEDS_CLARIFICATION", told["text"]
+    answered = ask(stack, "este año", told["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    ran = stack.ledger.plans[-1]
+    assert ran.only_account_id == episodes.PIGGY and ran.direction is Direction.INCOME
+    assert ran.categories == ()
+
+
+def test_every_account_named_beside_the_period_question_is_kept_under_ask() -> None:
+    """«En todas mis cuentas» in the question settles the scope there and then: the period that
+    follows is not asked which account as well."""
+    stack = asking_for_the_window_stack(settled=False, account_scope_default="ask")
+    asked = ask(stack, "¿cuánto he gastado en restaurantes en todas mis cuentas?")
+    answered = ask(stack, "este año", asked["conversation"])
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    assert stack.ledger.plans[-1].across_accounts
+
+
+def test_the_payroll_is_not_the_current_account_beside_the_period_question() -> None:
+    """«Nómina» alone is the payroll, as `_scoped` reads it (ruling R25): it narrows nothing."""
+    stack = asking_for_the_window_stack(settled=False)
+    asked = ask(stack, "¿cuánto cobré de nómina?")
+    assert asked["conversation"].get("account_selection_mode") is None
+
+
+# --- rankings (ruling R46, I-1) ----------------------------------------------------------------
+#
+# A ranking scopes itself (`_scope_ranking`), and it asked the account question of its own.
+
+_RANKINGS = (
+    "¿cuál fue mi mayor gasto el mes pasado?",
+    "¿cuáles fueron mis 3 mayores gastos el mes pasado?",
+    "¿cuál fue mi mayor ingreso este año?",
+)
+
+
+@pytest.mark.parametrize("question", _RANKINGS)
+def test_a_ranking_reads_every_account_by_default(question: str) -> None:
+    stack = episodes.a_stack()
+    answered = ask(stack, question)
+    assert answered["outcome"] == "PLANNED", answered["text"]
+    ran = stack.ledger.ran[-1]
+    assert isinstance(ran, TopMovements) and ran.across_accounts
+
+
+@pytest.mark.parametrize("question", _RANKINGS)
+def test_a_ranking_asks_the_account_when_the_deployment_asks(question: str) -> None:
+    stack = episodes.a_stack(account_scope_default="ask")
+    asked = ask(stack, question)
+    assert asked["question"] == "¿En qué cuenta quieres consultarlo?"
+    assert stack.ledger.ran == []
+
+
+@pytest.mark.parametrize("setting", ["all", "ask"])
+def test_a_ranking_in_a_named_account_stays_there(setting: str) -> None:
+    stack = episodes.a_stack(account_scope_default=setting)
+    ask(stack, "¿cuál fue mi mayor gasto en la hucha el mes pasado?")
+    ran = stack.ledger.ran[-1]
+    assert ran.only_account_id == episodes.PIGGY and not ran.across_accounts

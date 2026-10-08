@@ -1853,7 +1853,12 @@ class AskFinancialQuestionHandler:
             if rescued is None or not rescued.is_answerable:
                 # A question rather than a plan: the sentence named a category and no period, or
                 # the model asked one of its own.
-                asking, note = await self._waiting_for_the_window(rescued or planned, query)
+                asking, note, chosen = await self._waiting_for_the_window(rescued or planned, query)
+                if chosen is not None and self._account_directory is not None:
+                    # Remembered as `_with_the_account_it_names` remembers an account a reply gives:
+                    # the reply that brings the period names none, and the turns after it are about
+                    # the account this question chose (ruling R46).
+                    was = replace(was, account_selection=chosen)
                 declined = _decline(asking, was, said, query.sentence)
                 yield replace(declined, text=f"{declined.text}\n({note})") if note else declined
                 return
@@ -3103,6 +3108,11 @@ class AskFinancialQuestionHandler:
             if len(holdings) == 1:
                 return replace(ranking, only_account_id=holdings[0].account_id)
             return ranking
+        if self._every_account_by_default:
+            # The same default `_scoped` applies to a total (ruling R46): nothing named, nothing
+            # chosen, every account. A ranking asked its own account question, so «¿cuál fue mi
+            # mayor gasto?» was the one question the setting did not reach.
+            return replace(ranking, across_accounts=True)
         candidates = tuple(
             AccountCandidate(h.account_id, h.display_name, h.kind)
             for h in holdings
@@ -4947,9 +4957,9 @@ class AskFinancialQuestionHandler:
 
     async def _waiting_for_the_window(
         self, planned: PlanningResult, query: AskFinancialQuestionQuery
-    ) -> tuple[PlanningResult, str | None]:
+    ) -> tuple[PlanningResult, str | None, AccountSelection | None]:
         """A question back about the window, with the draft it keeps narrowed to a shop it named,
-        and the note that says so -- or None when it narrowed nothing.
+        and the note that says so -- or None when it narrowed nothing -- and the accounts it named.
 
         Only the window: it is the question whose reply names nothing but a period. A question
         about anything else keeps its draft as it is, and the reply that answers it is a sentence
@@ -4960,9 +4970,16 @@ class AskFinancialQuestionHandler:
         note goes on this turn, under the question: it is the turn that decided, and the reply's
         answer will name the shop.
 
-        And last, the question asked again (`_the_kind_still_open`): a reply that answered nothing
+        And the question asked again (`_the_kind_still_open`): a reply that answered nothing
         gets the window asked a second time, over a draft that has lost the kind the open one
         carried.
+
+        **And the account the question names, for the same reason as the shop** (ruling R46).
+        `_scoped` reads an account from the sentence that runs the plan, and the plan that waits
+        runs on the reply's turn: «¿cuánto he gastado en la hucha?» → «este año» named no account
+        there, and ran every one, without a line to say so. Read while the question's words are
+        here, the way `_with_the_account_it_names` reads one a reply gives, and kept on the draft
+        (`with_accounts`); returned so the turn remembers it as the holder's choice.
         """
         draft = planned.draft
         if (
@@ -4971,13 +4988,41 @@ class AskFinancialQuestionHandler:
             or planned.awaiting is not Slot.WINDOW
             or not draft.needs_a_window
         ):
-            return planned, None
+            return planned, None, None
         draft = explicit_facts.of_its_kind(
             draft, explicit_facts.read(query.sentence, today=query.today)
         )
         named, shop = await self._the_shop_it_names(draft, query)
         note = _only_the_shop(draft, shop) if shop is not None else None
-        return replace(planned, draft=_the_kind_still_open(named, query)), note
+        kept = _the_kind_still_open(named, query)
+        chosen = await self._the_accounts_its_question_names(query)
+        if chosen is not None:
+            try:
+                kept = kept.with_accounts(chosen)
+            except InvalidValueError:
+                chosen = None
+        return replace(planned, draft=kept), note, chosen
+
+    async def _the_accounts_its_question_names(
+        self, query: AskFinancialQuestionQuery
+    ) -> AccountSelection | None:
+        """The accounts a question that waits for its period names, or None when it names none.
+
+        Every account, a kind or a custom name, resolved as a reply's account is resolved
+        (`_the_accounts_it_names`, which also turns down an exclusion and two of them). «Nómina»
+        alone is the payroll and names no account, as `_scoped` reads it (ruling R25).
+        """
+        folded = spanish.folded(query.sentence)
+        kinds = account_words.named_in(query.sentence)
+        if "nomina" in folded and "cuenta" not in folded:
+            kinds = tuple(kind for kind in kinds if kind != "CURRENT")
+        if not (
+            kinds
+            or account_words.explicitly_names_a_custom_account(query.sentence)
+            or account_words.asks_for_all_accounts(query.sentence)
+        ):
+            return None
+        return await self._the_accounts_it_names(query)
 
     @property
     def _every_account_by_default(self) -> bool:
