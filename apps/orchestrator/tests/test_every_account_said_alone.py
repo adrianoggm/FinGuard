@@ -236,3 +236,21 @@ def test_by_account_is_a_breakdown_only_when_the_turn_says_so() -> None:
     )
 
     assert ALREADY not in answer["text"]
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "en todas mis cuentas gracias",
+        "Todas mis cuentas, gracias",
+        "en todas mis cuentas por favor",
+    ],
+)
+def test_courtesy_after_every_account_is_still_that_turn(sentence: str) -> None:
+    """Round 2, M-1: «gracias» after it made the turn a question of its own again."""
+    stack = _stack()
+    ran, answer = _after(stack, "¿cuánto gasté en el gimnasio este mes?", sentence)
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    assert stack.planner.asked == []
+    assert stack.ledger.ran == [ran]

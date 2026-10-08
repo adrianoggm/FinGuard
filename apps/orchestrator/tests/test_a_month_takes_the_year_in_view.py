@@ -364,3 +364,146 @@ def test_a_year_alone_is_a_window_only_as_the_answer_to_the_year_question() -> N
         window_words.whole_year(2026)
     )
     assert window_words.window_in("2026", today=REAL_RUN) is None
+
+
+# --- round 2, I-1: the year never completes a question about months as the whole year ----------
+#
+# The review of round 1: a day, three or more months, a range or «en total», and a month still to
+# come each fell out of the year completion, and `_finish_pending` ran the whole of 2026 for them.
+
+
+def _the_year_to(question: str, reply: str) -> tuple[episodes.Stack, dict[str, Any]]:
+    """`reply` to the year the model asked about `question`, with only the reply's own reads and
+    model calls left to read."""
+    stack = _stack()
+    asked = _walk(stack, question)
+    assert asked["conversation"]["last_asked"] == "YEAR", asked["text"]
+    stack.planner.asked.clear()
+    return stack, ask(stack, reply, asked["conversation"])
+
+
+def _ran_once(stack: episodes.Stack) -> tuple[date, date]:
+    (plan,) = stack.ledger.ran
+    assert isinstance(plan, FinancialPlan) and plan.date_range is not None
+    assert stack.planner.asked == [], "no model reads the reply"
+    return plan.date_range.start, plan.date_range.end
+
+
+@pytest.mark.parametrize("reply", ["2026", "este año"])
+def test_a_day_is_that_day_of_the_year(reply: str) -> None:
+    stack, answer = _the_year_to("¿cuánto gasté el 15 de julio?", reply)
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    assert _ran_once(stack) == (date(2026, 7, 15), date(2026, 7, 15))
+
+
+def test_days_of_one_month_are_those_days() -> None:
+    stack, _ = _the_year_to("¿cuánto gasté del 1 al 15 de julio?", "2026")
+
+    assert _ran_once(stack) == (date(2026, 7, 1), date(2026, 7, 15))
+
+
+def test_three_months_are_the_span_they_cover() -> None:
+    """No reader answers several named months one by one, so the span from the first to the last."""
+    stack, answer = _the_year_to("mis gastos de julio, agosto y septiembre", "2026")
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    assert _ran_once(stack) == (date(2026, 7, 1), date(2026, 9, 30))
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "¿cuánto gasté de julio a agosto?",
+        "¿cuánto gasté entre julio y agosto?",
+        "¿cuánto gasté desde julio hasta agosto?",
+        "¿cuánto gasté en total en julio y agosto?",
+    ],
+)
+def test_a_range_or_a_total_is_one_window_never_a_comparison(question: str) -> None:
+    stack, answer = _the_year_to(question, "2026")
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    assert answer["conversation"]["last_comparison_earlier"] is None
+    assert _ran_once(stack) == (date(2026, 7, 1), date(2026, 8, 31))
+
+
+def test_two_bare_months_joined_by_y_stay_a_comparison() -> None:
+    """Ruling R54."""
+    stack, answer = _the_year_to("¿cuánto gasté en julio y agosto?", "2026")
+
+    assert answer["conversation"]["last_comparison_earlier"] is not None
+    assert sorted(_months(stack)) == [(2026, 7), (2026, 8)]
+
+
+@pytest.mark.parametrize(
+    ("question", "reply"),
+    [
+        ("mis gastos de diciembre", "2026"),
+        ("mis gastos de diciembre", "este año"),
+        ("¿cuánto gasté el 15 de diciembre?", "2026"),
+        ("mis gastos de septiembre, octubre y noviembre", "2026"),
+    ],
+)
+def test_a_month_still_to_come_asks_the_year_again(question: str, reply: str) -> None:
+    """December 2026 has not happened on 2026-10-08: the year is asked again, never run whole."""
+    stack, answer = _the_year_to(question, reply)
+
+    assert answer["outcome"] == "NEEDS_CLARIFICATION", answer["text"]
+    assert "año" in answer["text"]
+    assert stack.ledger.ran == [] and stack.planner.asked == []
+    assert answer["conversation"]["last_asked"] == "YEAR"
+    assert answer["conversation"]["workflow"] == "FINANCIAL_CLARIFICATION"
+
+    again = ask(stack, "2025", answer["conversation"])
+
+    assert again["outcome"] == "PLANNED", again["text"]
+    (plan,) = stack.ledger.ran
+    assert plan.date_range is not None and plan.date_range.start.year == 2025
+
+
+@pytest.mark.parametrize(
+    ("sentence", "windows"),
+    [
+        ("el 15 de julio", ((date(2026, 7, 15), date(2026, 7, 15)),)),
+        ("entre el 1 y el 15 de julio", ((date(2026, 7, 1), date(2026, 7, 15)),)),
+        ("del 20 de diciembre al 6 de enero", ((date(2026, 12, 20), date(2027, 1, 6)),)),
+        ("julio, agosto y septiembre", ((date(2026, 7, 1), date(2026, 9, 30)),)),
+        ("noviembre, diciembre y enero", ((date(2026, 11, 1), date(2027, 1, 31)),)),
+        ("septiembre, julio y agosto", ((date(2026, 7, 1), date(2026, 9, 30)),)),
+        ("de julio a agosto", ((date(2026, 7, 1), date(2026, 8, 31)),)),
+        (
+            "agosto y julio",
+            ((date(2026, 7, 1), date(2026, 7, 31)), (date(2026, 8, 1), date(2026, 8, 31))),
+        ),
+        ("el 30 de febrero", ()),
+        ("este año", ()),
+    ],
+)
+def test_what_a_year_completes_is_placed_in_that_year(
+    sentence: str, windows: tuple[tuple[date, date], ...]
+) -> None:
+    placed = window_words.windows_in_the_year(sentence, 2026)
+    assert tuple((window.start, window.end) for window in placed) == windows
+
+
+# --- round 2, I-2: a month question that names a category reaches the year completion ----------
+
+
+@pytest.mark.parametrize("reply", ["este año", "2026"])
+def test_a_category_and_months_keep_the_year_question_and_both(reply: str) -> None:
+    """«¿cuánto gasté en restaurantes en julio y agosto?» got the window question instead of the
+    year, and its draft kept the category but not the months: «este año» dropped them, and «2026»
+    got «Sigo sin tener claro el periodo»."""
+    stack = _stack()
+    asked = _walk(stack, "¿cuánto gasté en restaurantes en julio y agosto?")
+    assert asked["conversation"]["last_asked"] == "YEAR", asked["text"]
+    assert asked["text"].startswith("¿De qué año?"), asked["text"]
+    stack.planner.asked.clear()
+
+    answer = ask(stack, reply, asked["conversation"])
+
+    assert answer["outcome"] == "PLANNED", answer["text"]
+    assert stack.planner.asked == []
+    assert sorted(_months(stack)) == [(2026, 7), (2026, 8)]
+    assert all(plan.categories == ("RESTAURANTS",) for plan in stack.ledger.ran)

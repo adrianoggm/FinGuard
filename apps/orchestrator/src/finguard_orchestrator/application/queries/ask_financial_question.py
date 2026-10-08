@@ -1829,6 +1829,10 @@ class AskFinancialQuestionHandler:
             return
 
         by_the_year = self._the_months_the_year_completes(query)
+        if isinstance(by_the_year, AskFinancialQuestionResult):
+            # The year names a window still to come, or one it does not have: asked again.
+            yield by_the_year
+            return
         if by_the_year is not None:
             # «2026» to «¿De qué año?»: the months that question was about, in that year, with the
             # subject its draft holds — never the whole year in their place (F2).
@@ -2975,19 +2979,26 @@ class AskFinancialQuestionHandler:
 
     def _the_months_the_year_completes(
         self, query: AskFinancialQuestionQuery
-    ) -> FinancialPlan | ComparisonPlan | None:
-        """The months «¿De qué año?» was asked about, in the year the reply gives (F2).
+    ) -> FinancialPlan | ComparisonPlan | AskFinancialQuestionResult | None:
+        """What «¿De qué año?» was asked about, in the year the reply gives (F2; round 2, I-1).
 
         The question is a model's, about a sentence that named months and no year, and the draft it
         leaves holds the subject and never the months: a draft has one window, and the months are
         the part it was asking about. So «este año» completed it as the whole year — every expense
-        of 2026 for a question about July and August (impro-comparar-meses 5). The months are read
-        back off the sentence the question was asked about, which the turn log keeps, as the
-        backstop's account question reads its own (`_asked_which_account_about`): one month is the
-        draft over that month, two are the draft compared over both.
+        of 2026 for a question about July and August (impro-comparar-meses 5). What was asked about
+        is read back off the sentence the question was asked about, which the turn log keeps, as
+        the backstop's account question reads its own (`_asked_which_account_about`), and placed
+        in the year (`window_words.windows_in_the_year`): a day, a span of days, one month, a span
+        of months or three of them are one window; two months contrasted are compared.
+
+        **Never the whole year in their place** (round 2, I-1). A window still to come in that year
+        — December 2026, asked about in October — and a date that year does not have are asked
+        about again, keeping the question open: answering them with the twelve months of 2026 was
+        what the review found the round-1 version still did whenever it gave up.
 
         None — and `_finish_pending` completes the draft as before — when the reply gives no year,
-        the question asked was not the year, or its sentence names no month with no year.
+        the question asked was not the year, or its sentence named no month without its year: then
+        the year is what the question was about.
         """
         active = query.conversation.active
         if not isinstance(active, FinancialClarification) or active.awaiting is not Slot.YEAR:
@@ -3002,28 +3013,26 @@ class AskFinancialQuestionHandler:
         else:
             return None
         asked = next((turn for turn in reversed(query.conversation.turns) if turn.question), None)
-        months = window_words.months_without_a_year(asked.sentence) if asked is not None else ()
-        if not 1 <= len(months) <= 2:
+        if asked is None or not window_words.names_a_month_without_its_year(asked.sentence):
             return None
-        windows = sorted(
-            (window_words.whole_month(year, month) for month in months),
-            key=lambda window: window.start,
-        )
-        if any(window.start > query.today for window in windows):
-            # A month of that year still to come is no figure: read as before.
-            return None
+        windows = window_words.windows_in_the_year(asked.sentence, year)
+        this_month = window_words.whole_month(query.today.year, query.today.month)
+        if not windows or any(window.end > this_month.end for window in windows):
+            return _the_year_again(query.conversation, year, still_to_come=bool(windows))
         try:
             plans = [active.draft.with_window(window) for window in windows]
         except InvalidValueError:
-            return None
+            return _the_year_again(query.conversation, year, still_to_come=False)
         if any(
             plan_verifier.disagreement(query.sentence, plan, self._policy) is not None
             for plan in plans
         ):
-            return None
+            return _the_year_again(query.conversation, year, still_to_come=False)
         if len(plans) == 1:
             return plans[0]
-        return ComparisonPlan.between(*plans)
+        return ComparisonPlan.between(*plans) or _the_year_again(
+            query.conversation, year, still_to_come=False
+        )
 
     def _pending_continuation(self, query: AskFinancialQuestionQuery) -> ContinuationBase | None:
         """The validated fields behind an active clarification, completed as far as this turn can.
@@ -6320,17 +6329,32 @@ def _from_what_the_sentence_said(
         # Everything but the period. Asking for it is the true answer — "no puedo calcularlo" about
         # a question that only lacks a window is a capability limit that does not exist, and it
         # teaches somebody the product cannot do something it does.
+        draft = explicit_facts.reshaped(
+            FinancialPlanDraft(direction=facts.direction or _direction_of(named), categories=named),
+            group_by=facts.group_by or GroupBy.NONE,
+            metric=facts.metric or Metric.SUM,
+        )
+        if (
+            planned.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+            and planned.awaiting is Slot.YEAR
+            and planned.question
+            and window_words.names_a_month_without_its_year(query.sentence)
+        ):
+            # Except when the model asked the year of months the sentence named (round 2, I-2):
+            # that question is the right one, and only the year completes it with its months
+            # (`_the_months_the_year_completes`). Asked as the period instead, «¿cuánto gasté en
+            # restaurantes en julio y agosto?» lost both months to «este año», and «2026» was no
+            # period at all. Kept, over the subject the sentence named.
+            return PlanningResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION,
+                question=planned.question,
+                draft=draft,
+                awaiting=Slot.YEAR,
+            )
         return PlanningResult(
             outcome=PlanningOutcome.NEEDS_CLARIFICATION,
             question=_WHICH_PERIOD,
-            draft=explicit_facts.reshaped(
-                FinancialPlanDraft(
-                    direction=facts.direction or _direction_of(named),
-                    categories=named,
-                ),
-                group_by=facts.group_by or GroupBy.NONE,
-                metric=facts.metric or Metric.SUM,
-            ),
+            draft=draft,
             awaiting=Slot.WINDOW,
         )
 
@@ -6721,6 +6745,26 @@ def _the_months_it_names(query: AskFinancialQuestionQuery) -> FinancialPlan | Co
             return None
         return one
     return ComparisonPlan.between(*named)
+
+
+def _the_year_again(
+    conversation: Conversation, year: int, *, still_to_come: bool
+) -> AskFinancialQuestionResult:
+    """«¿De qué año?» once more, with the question left open as it was (round 2, I-1).
+
+    For a year that cannot complete what was asked: a month or a day of it still to come, or a
+    date it does not have. Said why when the reason is the calendar, so the person knows the year
+    was heard; the example is the year before, which has had every month.
+    """
+    question = "¿De qué año? Por ejemplo " + str(year - 1) + "."
+    text = f"Ese periodo de {year} todavía no ha llegado. {question}" if still_to_come else question
+    return AskFinancialQuestionResult(
+        outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+        text=text,
+        question=question,
+        conversation=conversation.asking(Slot.YEAR),
+        suggestions=[str(year - 1)],
+    )
 
 
 def _the_year_asked_over_the_open_subject(
@@ -7913,10 +7957,12 @@ def _is_scope_change_followup(sentence: str, *, today: date) -> bool:
 # cuentas», «¿y en todas mis cuentas?», «pues en todas mis cuentas». The whole turn on purpose, like
 # the follow-up shapes in `continuation_patch`: a sentence that says anything more is a question of
 # its own, and «en todas mis cuentas por cuenta» asks for the breakdown by account, which only
-# saying «por cuenta» does.
+# saying «por cuenta» does. Courtesy after it asks for nothing more (validation fix 2, M-1): «en
+# todas mis cuentas, gracias» is the same turn.
 _ONLY_EVERY_ACCOUNT: Final = re.compile(
     r"(?:(?:y|e|pero|ahora|vale|bueno|pues|mejor|entonces)\s+)*"
-    r"(?:(?:en|de|con|para)\s+)?todas\s+(?:mis\s+|las\s+)?cuentas(?:\s+por\s+favor)?"
+    r"(?:(?:en|de|con|para)\s+)?todas\s+(?:mis\s+|las\s+)?cuentas"
+    r"(?:\s+(?:por\s+favor|gracias))*"
 )
 
 

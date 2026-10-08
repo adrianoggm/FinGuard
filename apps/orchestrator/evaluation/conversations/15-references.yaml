@@ -135,10 +135,11 @@ episodes:
         route: QUERY
         no_model: true
         ran: {window: '2026-06-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      # Earlier window first since validation fix 2 (I-3): the reference the change is read from.
       - say: Entonces cual he cobrado mas?
         route: QUERY
         no_model: true
-        ran: [{window: '2026-07-01..2026-07-31', direction: INCOME, categories: ['SALARY'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: ACCOUNT, metric: SUM}, {window: '2026-06-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        ran: [{window: '2026-06-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}, {window: '2026-07-01..2026-07-31', direction: INCOME, categories: ['SALARY'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: ACCOUNT, metric: SUM}]
 
   - name: two_new_periods_can_be_compared_in_one_sentence
     why: >
@@ -232,14 +233,15 @@ episodes:
         no_model: true
         says: julio de 2025
         ran: [{window: '2025-07-01..2025-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
+      # Earlier window first since validation fix 2 (I-3): the reference the change is read from.
       - say: Compáralo con la semana pasada
         route: QUERY
         no_model: true
         says: la semana pasada
-        ran: [{window: LAST_WEEK, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_WEEK, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
       - say: ¿Y en porcentaje?
         route: QUERY
         no_model: true
-        ran: [{window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_WEEK, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: LAST_WEEK, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
       - say: gracias
         route: COURTESY

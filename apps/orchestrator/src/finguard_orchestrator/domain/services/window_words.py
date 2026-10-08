@@ -1183,6 +1183,113 @@ def months_without_a_year(sentence: str) -> tuple[int, ...]:
     )
 
 
+def names_a_month_without_its_year(sentence: str) -> bool:
+    """Whether the sentence names a month, or a day of one, with no year beside it (round 2, I-1).
+
+    What a question «¿De qué año?» is asked about has to be completed with that month, never with
+    the year in its place — whether the sentence names one month, a day of it, three months or a
+    span of them.
+    """
+    return any(
+        mention.group("year") is None and mention.group("relative") is None
+        for mention in _MONTH_MENTION.finditer(spanish.folded(sentence))
+    )
+
+
+# Days of one month written once at the end: «del 1 al 15 de julio», «desde el 1 hasta el 15 de
+# julio», «entre el 1 y el 15 de julio». Only for a sentence whose year is being given separately,
+# so it is not `window_in`'s, whose own narrowness about these is argued at `_SHARED_MONTH_RANGE`.
+_DAYS_OF_ONE_MONTH: Final = re.compile(
+    rf"\b(?:del|desde(?:\s+el)?|entre\s+el)\s+(?P<start_day>\d{{1,2}})\s+"
+    rf"(?:al|hasta(?:\s+el)?|y(?:\s+el)?)\s+(?P<end_day>\d{{1,2}})\s+de\s+"
+    rf"(?P<month>{'|'.join(_MONTHS)})\b"
+)
+# Months said as one span rather than contrasted: «de julio a agosto», «desde julio hasta agosto»,
+# «entre julio y agosto», or a total asked over them, «en total en julio y agosto».
+_A_SPAN_OF_MONTHS: Final = re.compile(
+    rf"\b(?:de|desde)\s+(?:el\s+mes\s+de\s+)?(?:{'|'.join(_MONTHS)})\s+(?:a|al|hasta)\s+"
+    rf"|\bentre\s+(?:{'|'.join(_MONTHS)})\s+y\s+"
+    r"|\b(?:en\s+total|el\s+total|en\s+conjunto|juntos|sumando)\b"
+)
+
+
+def _a_day(year: int, month: int, day: int) -> AbsoluteRange | None:
+    try:
+        return AbsoluteRange(start=date(year, month, day), end=date(year, month, day))
+    except (ValueError, InvalidValueError):
+        return None
+
+
+def windows_in_the_year(sentence: str, year: int) -> tuple[AbsoluteRange, ...]:
+    """The windows a sentence named without a year, placed in `year`, earliest first (I-1).
+
+    For completing «¿De qué año?» with what it was asked about. Empty when the sentence names no
+    month without its year, or names one this cannot place, and the caller asks the year again:
+    the whole year in their place is a figure about twelve months for a question about one.
+
+    - A range of days, of one month or across two: that range, starting in `year`.
+    - One day: that day.
+    - Months said as one span — «de julio a agosto», «entre julio y agosto», «en total» — or
+      three and more: one window from the first month's start to the last one's end. No reader
+      answers several named months one by one, so their span is the answer.
+    - One month: that month. Two contrasted («julio y agosto»): both, compared (ruling R54).
+
+    Months said in an order that goes back across New Year — «noviembre, diciembre y enero» —
+    take the year after for the ones after the turn of the year, the convention `_a_month_range`
+    already follows for «de diciembre a febrero de 2026».
+    """
+    folded = spanish.folded(sentence)
+    ranged = _DATE_RANGE.search(folded)
+    if ranged is not None and not ranged.group("start_year") and not ranged.group("end_year"):
+        start_month = _MONTH_NUMBER[ranged.group("start_month")]
+        end_month = _MONTH_NUMBER[ranged.group("end_month")]
+        start = _a_day(year, start_month, int(ranged.group("start_day")))
+        end = _a_day(year + int(end_month < start_month), end_month, int(ranged.group("end_day")))
+        if start is None or end is None or end.start < start.start:
+            return ()
+        return (AbsoluteRange(start=start.start, end=end.end),)
+    days = _DAYS_OF_ONE_MONTH.search(folded)
+    if days is not None:
+        month = _MONTH_NUMBER[days.group("month")]
+        first = _a_day(year, month, int(days.group("start_day")))
+        last = _a_day(year, month, int(days.group("end_day")))
+        if first is None or last is None or last.start < first.start:
+            return ()
+        return (AbsoluteRange(start=first.start, end=last.end),)
+    one_day = tuple(_A_DAY_OF_A_MONTH.finditer(folded))
+    if one_day:
+        day = re.match(r"(\d{1,2})\s+de\s+([a-z]+)", one_day[0].group(0))
+        if len(one_day) != 1 or day is None:
+            return ()
+        found = _a_day(year, _MONTH_NUMBER[day.group(2)], int(day.group(1)))
+        return (found,) if found is not None else ()
+    months = months_without_a_year(sentence)
+    if not months:
+        return ()
+    if len(months) <= 2 and not (len(months) == 2 and _A_SPAN_OF_MONTHS.search(folded)):
+        # One month, or two contrasted: each in the year given, in whichever order they were said.
+        return tuple(
+            sorted((whole_month(year, month) for month in months), key=lambda window: window.start)
+        )
+    # A span. It goes across New Year only when the months are said in order round it — «noviembre,
+    # diciembre y enero», «de diciembre a enero» — which is the shorter way to read them; any other
+    # order is the months of the one year, from the earliest to the latest.
+    turns = sum(later < earlier for earlier, later in zip(months, months[1:], strict=False))
+    round_new_year = (months[-1] - months[0]) % 12 + 1
+    if turns == 1 and months[-1] < months[0] and round_new_year < max(months) - min(months) + 1:
+        return (
+            AbsoluteRange(
+                start=whole_month(year, months[0]).start,
+                end=whole_month(year + 1, months[-1]).end,
+            ),
+        )
+    return (
+        AbsoluteRange(
+            start=whole_month(year, min(months)).start, end=whole_month(year, max(months)).end
+        ),
+    )
+
+
 def a_month_of(year: int, month: int, today: date) -> AbsoluteRange:
     """`month` of `year`, or of the last year it happened when that one has not reached it.
 

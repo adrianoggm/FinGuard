@@ -37,6 +37,7 @@ from finguard_orchestrator.application.queries.readers.seam import _recogniser
 from finguard_orchestrator.application.queries.readers.windows import (
     _calendar_month_window,
     _previous_calendar_window,
+    _the_earlier_first,
 )
 from finguard_orchestrator.domain.enums import (
     Direction,
@@ -216,7 +217,10 @@ def _period_comparison_plans(
         return None
     if latest.metric is Metric.PERIOD_AVERAGE and latest.group_by is not earlier.group_by:
         return None
-    return ComparisonPlan.between(earlier, latest)
+    # The two answers in the order they happened, not the order they were asked in (validation fix
+    # 2, I-3): «¿y en junio?» after July, then «compáralos», made July the reference and «en
+    # porcentaje» said «disminuyó» about June to July, which went up 55 %.
+    return ComparisonPlan.between(*_the_earlier_first(earlier, latest, query.today))
 
 
 @_recogniser
@@ -316,9 +320,11 @@ def _comparison_with_a_named_window(
       with a real figure on it. The same predicate `average`, `natural_period` and
       `deterministic_breakdown` ask, so "this sentence compares two periods" keeps one definition.
 
-    The plan in view is `latest`: the pronoun is the subject of the sentence, so it is the side
-    whose change is reported, and the window the sentence names is the reference it is measured
-    against. `_comparison_with_previous_period` reads the pair the same way round.
+    The pair runs from the window that came first (validation fix 2, I-3), as every comparison
+    reader's does now: the plan in view was always `latest`, the side whose change is reported,
+    and after a question about June «compáralo con julio» then reported June's change from July
+    — «disminuyó» about a month that went up. `_comparison_with_previous_period`'s window named
+    is always the earlier one, so it was right by construction.
 
     **Two shapes it refuses**, and neither refusal is spelled out below. Nothing in view is caught
     by the `isinstance` — one operand of two is stated and the other would have to be invented,
@@ -365,7 +371,11 @@ def _comparison_with_a_named_window(
     # *that* query and not two bare months. It is also what leaves the same-window refusal where it
     # belongs — «compáralo con julio» about July builds two identical windows and `between` returns
     # None, which is `ComparisonPlan`'s invariant and does not want a second copy here.
-    return ComparisonPlan.between(earlier, latest)
+    #
+    # And in the order the two windows happened (I-3): the reference is the earlier one, whichever
+    # the pronoun and the name are. «Compáralo con julio» after June made June the side that
+    # changed, and «en porcentaje» said «disminuyó» about a month that went up.
+    return ComparisonPlan.between(*_the_earlier_first(earlier, latest, query.today))
 
 
 @_recogniser
@@ -393,8 +403,10 @@ def _direct_period_comparison(
         # — which writes `latest` first — would follow the person's words; «junio vs julio» then
         # had July as the reference and June as the side whose change is reported, and «en
         # porcentaje» said «disminuyó» about a month that went up 55 %. The change is a fact about
-        # time, so the pair is ordered by time, as every other comparison reader already orders it.
-        windows = _in_calendar_order(*named)
+        # time, so the pair is ordered by time — as the other two readers that build a pair order
+        # theirs since round 2 (I-3); before it, they did not either. Two windows this cannot place
+        # keep the order they always had here.
+        windows = _the_earlier_first(named[1], named[0], query.today)
     elif re.search(r"\beste\s+mes\b", folded) and re.search(
         r"\b(?:(?:el\s+)?mes\s+(?:pasado|anterior)|el\s+(?:pasado|anterior))\b",
         folded,
@@ -512,22 +524,6 @@ def _direct_period_comparison(
         date_range=windows[0] if isinstance(windows[0], AbsoluteRange) else None,
     )
     return ComparisonPlan.between(earlier, base)
-
-
-def _in_calendar_order(
-    first: window_words.Window, second: window_words.Window
-) -> tuple[window_words.Window, window_words.Window]:
-    """Two contrasted windows, the one that happened first first (F3).
-
-    Two ranges by where they start. Two named periods are a block and the one before it —
-    `compared_natural_periods` pairs THIS_* with LAST_* — so the LAST_* one comes first. A pair of
-    one of each is not one the readers above build, and is ordered as it always was.
-    """
-    if isinstance(first, AbsoluteRange) and isinstance(second, AbsoluteRange):
-        return (first, second) if first.start <= second.start else (second, first)
-    if isinstance(first, RelativePeriod) and isinstance(second, RelativePeriod):
-        return (second, first) if first.period.value.startswith("THIS_") else (first, second)
-    return second, first
 
 
 def _a_comparison_owns_it(query: AskFinancialQuestionQuery) -> bool:

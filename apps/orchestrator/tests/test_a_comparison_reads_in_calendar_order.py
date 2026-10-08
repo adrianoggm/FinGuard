@@ -213,3 +213,86 @@ def test_a_correction_that_is_not_one_subject_is_not_read_as_one(sentence: str) 
         and sorted(_months(stack)) == [7, 8]
         and all(plan.categories == ("TRANSPORT_FUEL",) for plan in ran)
     )
+
+
+# --- round 2, I-3: the other two readers that build a pair ---------------------------------------
+#
+# `_comparison_with_a_named_window` («compáralo con julio») made the window named the reference and
+# the one in view the side that changed; `_period_comparison_plans` («compáralos») made the earlier
+# answer the reference. Either way round, «en porcentaje» could say «disminuyó» about a month that
+# went up. July 159,46 €, June 102,80 €, August 100,00 €.
+
+
+class FuelByThreeMonths(FuelByMonth):
+    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+        self.plans.append(plan)
+        self.ran.append(plan)
+        assert plan.date_range is not None
+        total = {6: 10_280, 7: 15_946, 8: 10_000}[plan.date_range.start.month]
+        return QueryAnswer(currency="EUR", total_minor=total, movement_count=3)
+
+
+def _percentage_after(*turns: str) -> tuple[episodes.Stack, str]:
+    stack = episodes.a_stack()
+    stack.ledger = FuelByThreeMonths()
+    _with_planner(stack, stack.planner)
+    conversation: dict[str, Any] | None = SETTLED
+    for turn in turns:
+        answer = ask(stack, turn, conversation)
+        assert answer["outcome"] == "PLANNED", (turn, answer["text"])
+        conversation = answer["conversation"]
+    stack.ledger.plans.clear()
+    stack.ledger.ran.clear()
+    percentage = ask(stack, "en porcentaje", conversation)
+    assert percentage["outcome"] == "PLANNED", percentage["text"]
+    return stack, percentage["text"]
+
+
+@pytest.mark.parametrize(
+    ("turns", "said"),
+    [
+        (("¿cuánto gasté en gasolina en junio?", "compáralo con julio"), "aumentó un 55,12"),
+        (("¿cuánto gasté en gasolina en julio?", "compáralo con junio"), "aumentó un 55,12"),
+        (("¿cuánto gasté en gasolina en julio?", "compáralo con agosto"), "disminuyó un 37,29"),
+        (
+            ("¿cuánto gasté en gasolina en junio?", "compáralo con julio"),
+            "al 2026-06-30 a del 2026-07-01",
+        ),
+    ],
+    ids=["june-then-july", "july-then-june", "july-then-august", "the-direction-said"],
+)
+def test_a_named_window_compared_runs_from_the_earlier_month(
+    turns: tuple[str, ...], said: str
+) -> None:
+    _, text = _percentage_after(*turns)
+
+    assert said in text, text
+
+
+@pytest.mark.parametrize(
+    ("turns", "said"),
+    [
+        (
+            ("¿cuánto gasté en gasolina en julio?", "¿y en junio?", "compáralos"),
+            "aumentó un 55,12",
+        ),
+        (
+            ("¿cuánto gasté en gasolina en junio?", "¿y en julio?", "compáralos"),
+            "aumentó un 55,12",
+        ),
+        (
+            ("¿cuánto gasté en gasolina en julio?", "¿y en agosto?", "compáralos"),
+            "disminuyó un 37,29",
+        ),
+        (
+            ("¿cuánto gasté en gasolina en agosto?", "¿y en julio?", "compáralos"),
+            "disminuyó un 37,29",
+        ),
+    ],
+    ids=["july-then-june", "june-then-july", "july-then-august", "august-then-july"],
+)
+def test_two_answers_compared_run_from_the_earlier_month(turns: tuple[str, ...], said: str) -> None:
+    _, text = _percentage_after(*turns)
+
+    assert said in text, text
+    assert ("aumentó" in said) != ("disminuyó" in text)

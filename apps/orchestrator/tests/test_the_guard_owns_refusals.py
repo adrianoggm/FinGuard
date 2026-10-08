@@ -1375,15 +1375,22 @@ GROCERIES_IN_JULY = FinancialPlan(
 
 
 @pytest.mark.parametrize(
-    ("sentence", "earlier", "names"),
+    ("sentence", "named", "names", "ran_first"),
     [
-        ("Compáralo con junio", window_words.whole_month(2026, 6), "junio de 2026"),
-        ("Compáralo con julio de 2025", window_words.whole_month(2025, 7), "julio de 2025"),
-        ("Compáralo con la semana pasada", RelativePeriod(Period.LAST_WEEK), "la semana pasada"),
+        ("Compáralo con junio", window_words.whole_month(2026, 6), "junio de 2026", True),
+        ("Compáralo con julio de 2025", window_words.whole_month(2025, 7), "julio de 2025", True),
+        # The week starts after July does, so July is the reference since validation fix 2 (I-3):
+        # the pair runs in the order the windows happened. The week ran first before it.
+        (
+            "Compáralo con la semana pasada",
+            RelativePeriod(Period.LAST_WEEK),
+            "la semana pasada",
+            False,
+        ),
     ],
 )
 async def test_one_named_window_is_compared_against_the_plan_in_view(
-    sentence: str, earlier: AbsoluteRange | RelativePeriod, names: str
+    sentence: str, named: AbsoluteRange | RelativePeriod, names: str, ran_first: bool
 ) -> None:
     """A pronoun and one window is a comparison, and it was the one comparison shape with no reader.
 
@@ -1406,7 +1413,8 @@ async def test_one_named_window_is_compared_against_the_plan_in_view(
 
     assert planner.asked == 0, "a complete comparison is intercepted before the model"
     assert answer.outcome == PlanningOutcome.PLANNED.value
-    assert ledger.windows == [earlier, window_words.whole_month(2026, 7)]
+    july = window_words.whole_month(2026, 7)
+    assert ledger.windows == ([named, july] if ran_first else [july, named])
     assert all(plan.categories == ("GROCERIES",) for plan in ledger.plans)
     assert "julio de 2026" in answer.text
     assert names in answer.text

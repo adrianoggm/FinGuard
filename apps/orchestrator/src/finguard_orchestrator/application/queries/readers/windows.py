@@ -194,3 +194,75 @@ def _last_completed_weekend(today: date) -> AbsoluteRange:
         current_saturday = today - timedelta(days=today.weekday() - 5)
         sunday = current_saturday - timedelta(days=6)
     return AbsoluteRange(start=sunday - timedelta(days=1), end=sunday)
+
+
+def _starts_on(window: window_words.Window, today: date) -> date | None:
+    """The day a window starts, as far as ordering two of them needs (validation fix 2, I-3).
+
+    A comparison's reference is the window that came first, and two answers in view — «junio»,
+    then «compáralo con julio» — are not always said in that order. A range says where it starts;
+    a named period is resolved here only far enough to be placed before or after another, which is
+    a question about order and never a window anybody runs: banking still resolves the one it
+    reads. None for a period this does not place, and the caller keeps the order it was given.
+    """
+    if isinstance(window, AbsoluteRange):
+        return window.start
+    period, n = window.period, window.n
+    monday = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+    quarter_start = date(today.year, (today.month - 1) // 3 * 3 + 1, 1)
+    semester_start = date(today.year, 1 if today.month <= 6 else 7, 1)
+    starts = {
+        Period.TODAY: today,
+        Period.YESTERDAY: today - timedelta(days=1),
+        Period.THIS_WEEK: monday,
+        Period.LAST_WEEK: monday - timedelta(days=7),
+        Period.THIS_MONTH: month_start,
+        Period.LAST_MONTH: (month_start - timedelta(days=1)).replace(day=1),
+        Period.THIS_QUARTER: quarter_start,
+        Period.LAST_QUARTER: window_words.whole_quarter(
+            (quarter_start - timedelta(days=1)).year,
+            ((quarter_start - timedelta(days=1)).month - 1) // 3 + 1,
+        ).start,
+        Period.THIS_SEMESTER: semester_start,
+        Period.LAST_SEMESTER: (semester_start - timedelta(days=1)).replace(
+            month=1 if semester_start.month == 7 else 7, day=1
+        ),
+        Period.THIS_FORTNIGHT: today.replace(day=1 if today.day <= 15 else 16),
+        Period.LAST_FORTNIGHT: (
+            (month_start - timedelta(days=1)).replace(day=16) if today.day <= 15 else month_start
+        ),
+        Period.THIS_WEEKEND: monday + timedelta(days=5),
+        Period.LAST_WEEKEND: _last_completed_weekend(today).start,
+        Period.THIS_YEAR: date(today.year, 1, 1),
+    }
+    if period in starts:
+        return starts[period]
+    if period is Period.LAST_N_DAYS and n:
+        return today - timedelta(days=n - 1)
+    if period is Period.LAST_N_MONTHS and n:
+        months_back = today.year * 12 + today.month - 1 - n
+        return date(months_back // 12, months_back % 12 + 1, 1)
+    return None
+
+
+def _the_earlier_first[T: (window_words.Window, FinancialPlan)](
+    first: T, second: T, today: date
+) -> tuple[T, T]:
+    """`first` and `second`, the one whose window starts earlier first (I-3).
+
+    For a pair of windows or of plans, which every comparison reader builds: the earlier window is
+    the reference, so the change between them and its word — «aumentó», «disminuyó» — is a fact
+    about time. Two windows that start on the same day, or one this cannot place, keep the order
+    they were given in.
+    """
+    first_window = first.period or first.date_range if isinstance(first, FinancialPlan) else first
+    second_window = (
+        second.period or second.date_range if isinstance(second, FinancialPlan) else second
+    )
+    if first_window is None or second_window is None:
+        return first, second
+    starts, other = _starts_on(first_window, today), _starts_on(second_window, today)
+    if starts is None or other is None or starts <= other:
+        return first, second
+    return second, first
