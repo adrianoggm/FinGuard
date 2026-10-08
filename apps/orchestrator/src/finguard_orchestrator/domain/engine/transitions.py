@@ -106,32 +106,44 @@ def apply(
     """Apply `ops` in order, each to what the previous ones made.
 
     A turn gives one answer: the last work, so «junio vs julio, en porcentaje» is the comparison
-    then its percentage. Courtesy beside a question does not replace the question's answer.
-    `today` only refuses windows that have not begun.
+    then its percentage. What the state keeps is what that answer and any reset made; a question
+    the turn does not answer never becomes the focus. Courtesy beside a question does not replace
+    the question's answer. `today` only refuses windows that have not begun.
     """
     if not ops:
         return Transition(state, None, Clarify(Missing.SUBJECT))
-    current = state
+    # `resting` is the state with only the resets applied: what is left when no work of this turn
+    # so far is the one answered.
+    current = resting = state
     work: Work | None = None
     courtesy: Smalltalk | None = None
     for op in ops:
         if isinstance(op, Smalltalk):
             courtesy = courtesy or op
             continue
-        if isinstance(op, Clarify | Delegate):
+        if isinstance(op, Delegate):
+            # The turn belongs to another flow, and the conversation must be exactly as it was
+            # when that flow hands it back.
             return Transition(state, None, op)
+        if isinstance(op, Clarify):
+            return Transition(resting, None, op)
         try:
             current, work = _applied(current, op, today, grounds)
         except _CannotApplyError as question:
             # One operation that cannot apply makes the whole turn a question. Half a turn run
             # would answer something nobody asked; only the question it opens is kept.
-            return Transition(
-                replace(state, pending=question.pending or state.pending), None, question.clarify
-            )
+            pending = question.pending or resting.pending
+            return Transition(replace(resting, pending=pending), None, question.clarify)
         except InvalidValueError:
             # The fields were understood but make a plan the domain refuses: say what is missing
             # rather than send the bank something else.
-            return Transition(state, None, Clarify(Missing.SUBJECT))
+            return Transition(resting, None, Clarify(Missing.SUBJECT))
+        if work is None:
+            resting = current  # a reset: what it cleared stays cleared whatever follows
+        elif work.kind == "BALANCE":
+            # An aside answered after a question: that question is not answered, so it must not
+            # become what is on screen either.
+            current = resting
     return Transition(current, work, None if work else courtesy)
 
 
@@ -162,9 +174,11 @@ def _applied(
         case Reset():
             return replace(state, focus=None, pending=None), None
         case Balance(accounts=names):
-            # An aside: it leaves the focus, the open question and the scope as they were.
+            # An aside: it leaves the focus, the open question and the scope as they were. With no
+            # account named it is about all the money (ruling R11), as on the rules route: a scope
+            # narrowed for spending questions must not hide an account from the balance.
             if not names:
-                return state, Work("BALANCE", None, state.scope.account_ids)
+                return state, Work("BALANCE", None, ())
             accounts = _grounded(PlanFields(accounts=names), grounds).accounts or ()
             return state, Work("BALANCE", None, _account_ids(accounts, grounds))
         case _:
@@ -186,6 +200,10 @@ def _asked(state: DialogueState, said: PlanFields, today: date, grounds: Grounds
 
 
 def _patched_focus(state: DialogueState, op: Patch, today: date, grounds: Grounds) -> Applied:
+    if not op.changes.named():
+        # Nothing said to change: running the same question again would read as an answer to
+        # something the person did not ask.
+        raise _CannotApplyError(Missing.SUBJECT)
     if op.target != "focus" and op.changes.accounts is not None:
         # A pair has one scope: accounts said about one side would re-scope both.
         raise _CannotApplyError(Missing.OPERAND)
@@ -217,21 +235,24 @@ def _repaired(
     pair: ComparisonPlan, target: str, changes: PlanFields, today: date
 ) -> ComparisonPlan:
     """The pair with `changes` on the side `target` names, or on both."""
+    earlier: Plan = pair.earlier
+    latest: Plan = pair.latest
     if target == "earlier":
-        return _paired(_patched(pair.earlier, changes, today), pair.latest)
-    if target == "latest":
-        return _paired(pair.earlier, _patched(pair.latest, changes, today))
-    earlier_changes = changes
-    if changes.window is not None:
-        # A window said over a pair moves the pair: the latest side becomes the window said and
-        # the earlier one moves as far, so the gap between them and their order are kept.
-        moved = _shifted(pair.earlier.date_range, pair.latest.date_range, changes.window)
-        if moved is None:
-            raise _CannotApplyError(Missing.OPERAND)
-        earlier_changes = replace(changes, window=moved)
-    return _paired(
-        _patched(pair.earlier, earlier_changes, today), _patched(pair.latest, changes, today)
-    )
+        earlier = _patched(earlier, changes, today)
+    elif target == "latest":
+        latest = _patched(latest, changes, today)
+    else:
+        earlier_changes = changes
+        if changes.window is not None:
+            # A window said over a pair moves the pair: the latest side becomes the window said
+            # and the earlier one moves as far, so the gap between them and their order are kept.
+            moved = _shifted(pair.earlier.date_range, pair.latest.date_range, changes.window)
+            if moved is None:
+                raise _CannotApplyError(Missing.OPERAND)
+            earlier_changes = replace(changes, window=moved)
+        earlier = _patched(earlier, earlier_changes, today)
+        latest = _patched(latest, changes, today)
+    return _as_said(_paired(earlier, latest), changes)
 
 
 def _compared(state: DialogueState, op: Compare, today: date, grounds: Grounds) -> Applied:
@@ -250,7 +271,8 @@ def _compared(state: DialogueState, op: Compare, today: date, grounds: Grounds) 
             raise _CannotApplyError(Missing.OPERAND)
         else:
             sides.append(_built(said, today))
-    return _on_pair(_scoped(state, shared, grounds), _paired(*sides), percent=False)
+    pair = _as_said(_paired(*sides), shared, earlier, latest)
+    return _on_pair(_scoped(state, shared, grounds), pair, percent=False)
 
 
 def _measured(state: DialogueState, measure: Measure, today: date) -> Applied:
@@ -295,10 +317,13 @@ def _share_of(plan: Plan) -> RatioPlan:
 
 # --- what a work puts on screen ---------------------------------------------------------------
 
+# One label per metric a comparison can carry (`COMPARABLE_METRICS`), so a pair always shows what
+# it measures.
 _MEASURE_OF: Final = {
     Metric.SUM: Measure.AMOUNT,
     Metric.COUNT: Measure.COUNT,
     Metric.AVERAGE: Measure.AVERAGE,
+    Metric.PERIOD_AVERAGE: Measure.PERIOD_AVERAGE,
 }
 _METRIC_OF: Final = {measure: metric for metric, measure in _MEASURE_OF.items()}
 
@@ -319,7 +344,7 @@ def _on_pair(state: DialogueState, pair: ComparisonPlan, *, percent: bool) -> Ap
     A percentage keeps the comparison as the focus and only changes how it is measured, so «en
     euros» afterwards finds the pair and not a ratio it would have to take apart.
     """
-    measure = Measure.PERCENT_CHANGE if percent else _MEASURE_OF.get(pair.metric, Measure.AMOUNT)
+    measure = Measure.PERCENT_CHANGE if percent else _MEASURE_OF[pair.metric]
     state = replace(state, focus=ComparisonFocus(pair, measure), pending=None)
     if percent:
         ratio = RatioPlan(part=pair.latest, whole=pair.earlier, kind=RatioKind.PERCENT_CHANGE)
@@ -353,6 +378,17 @@ def _paired(earlier: Plan, latest: Plan) -> ComparisonPlan:
         earlier, latest = latest, earlier
     pair = ComparisonPlan.between(earlier, latest)
     if pair is None:
+        raise _CannotApplyError(Missing.OPERAND)
+    return pair
+
+
+def _as_said(pair: ComparisonPlan, *said: PlanFields) -> ComparisonPlan:
+    """`pair`, unless it lost a grouping that was said.
+
+    A comparison is one figure per side, so `ComparisonPlan.between` folds a presentation grouping
+    away. Said explicitly, that grouping would vanish and the pair be answered as if applied.
+    """
+    if any(fields.group_by not in (None, pair.latest.group_by) for fields in said):
         raise _CannotApplyError(Missing.OPERAND)
     return pair
 
@@ -480,26 +516,41 @@ def _built(said: PlanFields, today: date) -> Plan:
 def _shifted(
     window: AbsoluteRange | None, latest: AbsoluteRange | None, new: Window
 ) -> AbsoluteRange | None:
-    """`window` moved as far as `latest` moved to become `new`.
+    """`window` moved as far as `latest` moved to become `new`, or None when there is no such move.
 
     Only between explicit ranges: a relative period would have to be resolved to be moved, and
     what LAST_MONTH covers is banking's business. Whole months move by months, because June to
-    July is one month and not 30 days; anything else moves by days.
+    July is one month and not 30 days; anything else moves by days. `new` must be as long as
+    `latest`: half a month or a quarter said over a pair of months is no shift of that pair, and
+    moving it anyway would compare windows nobody named.
     """
     if window is None or latest is None or not isinstance(new, AbsoluteRange):
         return None
-    if all(_whole_months(each) for each in (window, latest, new)):
-        months = _month_index(new.start) - _month_index(latest.start)
-        return AbsoluteRange(
-            _first_day(_month_index(window.start) + months),
-            _first_day(_month_index(window.end) + months + 1) - timedelta(days=1),
-        )
-    days = new.start - latest.start
-    return AbsoluteRange(window.start + days, window.end + days)
+    try:
+        if all(_whole_months(each) for each in (window, latest, new)):
+            if _months_in(new) != _months_in(latest):
+                return None
+            months = _month_index(new.start) - _month_index(latest.start)
+            return AbsoluteRange(
+                _first_day(_month_index(window.start) + months),
+                _first_day(_month_index(window.end) + months + 1) - timedelta(days=1),
+            )
+        if new.end - new.start != latest.end - latest.start:
+            return None
+        days = new.start - latest.start
+        return AbsoluteRange(window.start + days, window.end + days)
+    except (ValueError, OverflowError):
+        # Moved past the first or the last day the calendar holds (`_first_day` and the date
+        # arithmetic both raise there): there is no such window to compare with.
+        return None
 
 
 def _whole_months(window: AbsoluteRange) -> bool:
     return window.start.day == 1 and (window.end + timedelta(days=1)).day == 1
+
+
+def _months_in(window: AbsoluteRange) -> int:
+    return _month_index(window.end) - _month_index(window.start) + 1
 
 
 def _month_index(day: date) -> int:

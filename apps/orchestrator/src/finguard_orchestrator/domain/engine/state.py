@@ -32,7 +32,10 @@ class Measure(StrEnum):
 
     AMOUNT = "AMOUNT"
     COUNT = "COUNT"
+    # Per movement, against PERIOD_AVERAGE per calendar bucket: two different figures, as in
+    # `Metric`, so a label that merged them would let «en media» quietly change the divisor.
     AVERAGE = "AVERAGE"
+    PERIOD_AVERAGE = "PERIOD_AVERAGE"
     PERCENT_CHANGE = "PERCENT_CHANGE"
     SHARE = "SHARE"
 
