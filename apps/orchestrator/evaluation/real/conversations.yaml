@@ -624,3 +624,156 @@ conversations:
           want: >-
             Lo gastado la semana pasada: completa la pregunta del periodo si quedaba abierta, o
             repite la misma consulta.
+
+  - name: gym-marta
+    goal: >-
+      Saber cuánto cuesta el gimnasio y después pagar 20 € a Marta; parar en una vista previa
+      correcta y decir «no».
+    turns:
+      - say: "q me cuesta el gym al mes?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            «gym» es el gimnasio: lo que cuesta al mes (el cargo mensual, p. ej. Altafit), en todas
+            las cuentas y diciendo la ventana; sin preguntar el periodo y sin leerlo como todas las
+            suscripciones.
+      - say: "el mes pasado, solo el gym"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            El gimnasio el mes pasado: completa la pregunta del periodo si quedaba abierta, y «solo
+            el gym» deja fuera el resto de suscripciones.
+      - say: "no, solo lo del gimnasio"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Corrige el tema al gimnasio y conserva el mes pasado: una sola cifra, sin preguntar el
+            periodo.
+      - say: "no, solo lo del gimnasio"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            La misma corrección, reenviada tras un error: el gimnasio el mes pasado, sin preguntar
+            el periodo.
+      - say: "no, solo lo del gimnasio"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            La misma corrección, reenviada tras un error: el gimnasio el mes pasado, sin preguntar
+            el periodo.
+      - say: "cuanto pague de gimnasio el mes pasado?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: El gimnasio el mes pasado, en todas las cuentas, diciendo la ventana.
+      - say: "vale. pasale 20€ a marta ruiz"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: >-
+            Vista previa de un pago de 20,00 € a Marta Ruiz Gómez que pide confirmación; no
+            ejecuta nada.
+      - say: "no"
+        expect:
+          mechanism: execution
+          route: PAYMENT
+          want: Cancela el pago y lo dice; no se mueve dinero.
+
+  - name: comparar-mayo-junio
+    goal: Comparar dos meses y después cambiar la categoría de la comparación.
+    turns:
+      - say: "comparame el super de mayo con el de junio"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado en mayo frente a junio de 2026, con las dos cifras y la diferencia, en
+            todas las cuentas.
+      - say: "vale y lo mismo pero de restaurantes"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en mayo frente a junio de 2026 (mantiene los dos meses y cambia la
+            categoría); sin preguntar el periodo.
+      - say: "mayo y junio, como antes"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Restaurantes en mayo frente a junio de 2026: completa la pregunta del periodo si
+            quedaba abierta, sin perder ni volver a preguntar la categoría.
+      - say: "restaurantes!"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Restaurantes en mayo frente a junio de 2026, como comparación de dos meses; nunca una
+            sola suma de los dos.
+      - say: "pero comparado, mayo frente a junio"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: Restaurantes en mayo frente a junio de 2026, con las dos cifras y la diferencia.
+      - say: "y en gasolina q?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en mayo frente a junio de 2026 pese a la «q» final (mantiene los dos meses y
+            cambia la categoría); sin preguntar el periodo.
+      - say: "gasolina mayo vs junio"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: Gasolina en mayo frente a junio de 2026, con las dos cifras y la diferencia.
+      - say: "y en salud?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Salud en mayo frente a junio de 2026 (mantiene los dos meses y cambia la categoría).
+
+  - name: aitor-mandado-recibido
+    goal: >-
+      Saber cuánto le he enviado a alguien este mes, después cuánto me ha enviado esa persona a
+      mí, y luego algo totalmente distinto.
+    turns:
+      - say: "cuanto le he pasado a aitor este mes?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo enviado a Aitor (el contacto Aitor Beltrán Díaz) este mes, en todas las cuentas,
+            como persona y no como comercio ni solo en bizum; si no hay nada, lo dice nombrándolo.
+      - say: "no, digo a aitor"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Corrige el tema a lo enviado a Aitor, la persona, este mes; la respuesta lo nombra
+            como persona («a Aitor») y no ofrece «buscar sin comercio».
+      - say: "y el a mi cuanto me ha mandado?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Aitor este mes: la misma persona y ventana con la dirección invertida,
+            y la respuesta dice que es lo recibido («de Aitor»).
+      - say: "bueno da igual. q tengo en total entre todo?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: Deja lo anterior y da el saldo de todas las cuentas.
+      - say: "bueno da igual. q tengo en total entre todo?"
+        expect:
+          mechanism: interruption
+          route: BALANCE
+          want: >-
+            La misma frase, reenviada tras un error: deja lo anterior y da el saldo de todas las
+            cuentas.
