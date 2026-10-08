@@ -293,6 +293,20 @@ _A_SUBJECT_OF_ITS_OWN: Final = re.compile(
     r"|\bpor\s+(?:categorias?|comercios?|tiendas?|meses|mes|semanas?|dias?|cuentas?|personas?)\b"
 )
 
+
+def _names_its_subject(sentence: str, folded: str) -> bool:
+    """`_A_SUBJECT_OF_ITS_OWN`, or money the holder says they passed to somebody.
+
+    «Pasar» cannot be a stem up there: «el mes pasado» is the commonest reply the window question
+    gets. So money passed is read the way the payment vocabulary reads it (`payment_router`,
+    validation fix 3, G1), pointed at somebody — «¿cuánto le he pasado a Aitor este mes?» is about
+    Aitor as surely as «¿cuánto le he mandado…?» is.
+    """
+    return _A_SUBJECT_OF_ITS_OWN.search(
+        folded
+    ) is not None or payment_router.describes_a_past_payment(sentence)
+
+
 # How a question opens, read folded: a question word, or the imperative or possessive a request for
 # figures starts with — «¿cuánto…?», «¿qué porcentaje…?», «dame los movimientos…», «mis 3 mayores
 # gastos…». With an optional «y» in front, as a new question is often joined to the last.
@@ -320,9 +334,8 @@ def states_a_subject_of_its_own(sentence: str) -> bool:
     is an account, the most ordinary of the replies this has to leave alone.
     """
     folded = spanish.folded(sentence)
-    if (
-        _SELF_CONTAINED_FINANCIAL_QUESTION.search(folded) is not None
-        or _A_SUBJECT_OF_ITS_OWN.search(folded) is not None
+    if _SELF_CONTAINED_FINANCIAL_QUESTION.search(folded) is not None or _names_its_subject(
+        sentence, folded
     ):
         return True
     facts = explicit_facts.read(sentence)
@@ -347,9 +360,8 @@ def asks_its_own(sentence: str) -> bool:
     call a reply must not complete the draft by another door.
     """
     folded = spanish.folded(sentence)
-    return (
-        _OPENS_LIKE_A_QUESTION.search(folded) is not None
-        and _A_SUBJECT_OF_ITS_OWN.search(folded) is not None
+    return _OPENS_LIKE_A_QUESTION.search(folded) is not None and _names_its_subject(
+        sentence, folded
     )
 
 

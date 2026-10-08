@@ -101,10 +101,22 @@ def _past(*verbs: str) -> str:
 # action because of a complaint in front of it. The past that matters here belongs to the verb that
 # moves money, and only `hacer` needs its auxiliary spelled out — because "he hecho la compra" is
 # not a payment and "he hecho un bizum" is.
+#
+# «Pasar» is the one verb that moves money only when it is pointed at somebody (validation fix 3,
+# G1): «¿cuánto le he pasado a Aitor?», «le pasé 20 a Javi», «lo que he pasado a Marta». Asked on
+# 2026-10-08 it was nobody's — Aitor became a shop and the window the sentence said was asked for.
+# So not in `_PAYMENT_VERBS`, whose every form counts anywhere: «el mes pasado» is in every other
+# sentence, and «¿qué le ha pasado a Aitor?» is something that happened to him. The holder has to
+# be the one passing — a clitic and «pasé», or «he»/«hemos» and the participle — and a person has
+# to follow within a few words. «Pasao» is how the participle is said aloud, in this verb only.
+_PASSED_TO_SOMEBODY: Final = (
+    r"(?:\b(?:le|les)\s+pase|\b(?:he|hemos)\s+(?:pasado|pasao))\b(?:\s+\S+){0,3}?\s+a\s+[a-z]"
+)
 _ALREADY: Final = re.compile(
     rf"\b(?:{_past(*_PAYMENT_VERBS)})\b"
     rf"|\b(?:{_HABER})\s+hecho\s+(?:un|una)\s+(?:bizum|transferencia)\b"
     rf"|\b(?:{_MADE})\b"
+    rf"|{_PASSED_TO_SOMEBODY}"
 )
 
 # Money arriving, which is never an order to send any.

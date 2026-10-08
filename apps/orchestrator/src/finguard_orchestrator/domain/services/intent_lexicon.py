@@ -113,6 +113,17 @@ PHRASINGS: Final[dict[str, tuple[Phrasing, ...]]] = {
             "whole edit: one substitution from «cuanto» is «cuando», and reading «¿cuándo cobro "
             "la nómina?» as a balance would be a real figure about a different question",
         ),
+        # «¿Qué tengo en total?», «q tengo entre todo», «¿y qué tengo en total entre todas?»: the
+        # same question with «qué» for «cuánto» (validation fix 3, G2). Said as «bueno da igual. q
+        # tengo en total entre todo?» on 2026-10-08, it was the reply to an open question once and
+        # the net of the month's movements the next time — neither of them money held.
+        Phrasing(
+            r"\b(?:que|q)\s+(dinero\s+)?tengo\s+(en\s+total|entre\s+tod[oa]s?)\b",
+            like=("bueno da igual. q tengo en total entre todo?", "¿Qué tengo en total?"),
+            unlike=("¿Qué tengo que pagar este mes?", "¿Qué gastos tengo en total este mes?"),
+            why="«qué tengo» alone is also what is owed or what is pending, so the whole of it is "
+            "required: «en total» or «entre todo», the words that ask for every account",
+        ),
         Phrasing(r"\b(?:<how_much>)\s+dinero\s+dispongo\b", like=("¿De cuánto dinero dispongo?",)),
         Phrasing(
             r"\b(?:<how_much>)\s+(tengo\s+)?disponible\b",

@@ -1342,6 +1342,14 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, past_payment)
             return
 
+        another_person = await self._the_person_corrected(query)
+        if another_person is not None:
+            yield Stage("planned", answer_writer.plan_in_words(another_person))
+            yield Stage("querying")
+            answered = await self._answer(query, another_person)
+            yield replace(answered, plan_continues_conversation=True)
+            return
+
         named_subject = seam.READERS.select(query, among=_ON_A_NAMED_SUBJECT)
         if named_subject is not None:
             async for step in self._answering(named_subject, query, was):
@@ -2395,6 +2403,64 @@ class AskFinancialQuestionHandler:
         if person is None:
             return None
         return self._person_payment_plan(query, person, Direction.EXPENSE)
+
+    async def _the_person_corrected(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+        """«No, digo a Aitor» over the answer in view: the same question, about that person.
+
+        Validation fix 3, G1: said after the answer, it reached the model as a sentence of its own
+        and came back «Sigo sin tener claro el periodo» — the correction lost, and the window the
+        question had said with it. The whole turn has to be the correction and a person
+        (`_CORRECTS_THE_PERSON`), and the person has to be in this holder's directory, as every
+        person a plan names here is (R33): «no, digo a pepe» with no Pepe is nobody, and the turn
+        is read as it was before.
+
+        Only the person changes. The window, the measure and the direction stay — the direction
+        the answer had, or money sent when it had none (every movement, ALL) — and whatever made
+        the old subject someone else goes: a shop the person was misread as, a category, other
+        people. A Bizum question stays one.
+        """
+        said = _CORRECTS_THE_PERSON.fullmatch(_clean_turn(query.sentence))
+        was = query.conversation
+        focus = focus_of(was)
+        if (
+            said is None
+            or not was.at_rest
+            or not isinstance(focus, QueryFocus)
+            or not isinstance(focus.current, FinancialPlan)
+        ):
+            return None
+        try:
+            directory = await self._contacts.all_of(query.account_id)
+        except BankingUnavailableError:
+            return None
+        who = said.group("who")
+        person = payment_words.name_as_written(who, directory)
+        if person is None or set(who.split()) - set(spanish.folded(person).split()):
+            # A word the name does not have is something else said beside it, and this reads
+            # nothing but the person.
+            return None
+        base = focus.current
+        is_bizum = "TRANSFER_BIZUM" in base.categories
+        return replace(
+            base,
+            direction=Direction.EXPENSE if base.direction is Direction.ALL else base.direction,
+            categories=("TRANSFER_BIZUM",) if is_bizum else (),
+            excluded_categories=(),
+            merchants=(),
+            merchant_terms=(),
+            excluded_merchants=(),
+            counterparties=(person,),
+            excluded_counterparties=(),
+            counterparty_types=(CounterpartyType.PERSON,),
+            transaction_types=(TransactionType.BIZUM,) if is_bizum else (TransactionType.TRANSFER,),
+            group_by=(
+                GroupBy.NONE
+                if base.group_by in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY}
+                else base.group_by
+            ),
+            group_limit=None,
+            transaction_ids=(),
+        )
 
     def _person_payment_plan(
         self, query: AskFinancialQuestionQuery, person: str, direction: Direction
@@ -6580,6 +6646,16 @@ _AN_ELLIPSIS_OPENS: Final = frozenset({"y", "solo", "ahora", "en", "de"})
 _CORRECTS_THE_SUBJECT: Final = re.compile(
     r"^(?:(?:no|perdona|perdon)\s+)?"
     r"(?:digo|queria\s+decir|quise\s+decir|me\s+referia\s+a|me\s+refiero\s+a)\s+"
+)
+
+# The same correction, when what it names is somebody: «no, digo a Aitor», «quería decir a Aitor»,
+# «me refería a Aitor» (validation fix 3, G1). Read over `_clean_turn`, as the whole turn, so
+# «who» is every word after «a»; `_the_person_corrected` then asks the directory whether they are
+# one person's name, and nothing else.
+_CORRECTS_THE_PERSON: Final = re.compile(
+    r"(?:(?:no|perdona|perdon)\s+)?"
+    r"(?:digo|queria\s+decir|quise\s+decir|me\s+referia|me\s+refiero)\s+a\s+"
+    r"(?P<who>[a-z]+(?:\s+[a-z]+){0,2})"
 )
 
 # Every word such a turn may carry besides the category: the openers again, and the articles.
