@@ -1173,9 +1173,11 @@ def grouped_period_comparison(
                 difference, latest_answer.currency, latest_plan.metric
             )
             change = f"{sign}{difference_figure}"
+        # Each account's two periods in the order they happened, as the comparison's own text
+        # says them (validation fix 3, G7); the change is from the earlier to the later.
         lines.append(
-            f"  · {key}: {latest_window}, {latest_figure}; "
-            f"{earlier_window}, {earlier_figure}; {change}."
+            f"  · {key}: {earlier_window}, {earlier_figure}; "
+            f"{latest_window}, {latest_figure}; {change}."
         )
 
     concept = comparison_concept(latest_plan)

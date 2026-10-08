@@ -36,7 +36,12 @@ import re
 from typing import Final
 
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.services import account_words, payment_words, spanish
+from finguard_orchestrator.domain.services import (
+    account_words,
+    payment_words,
+    spanish,
+    window_words,
+)
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 
 # Questions about facts. Spanish marks these, and the mark is the signal — unlike the question mark,
@@ -101,23 +106,33 @@ def _past(*verbs: str) -> str:
 # action because of a complaint in front of it. The past that matters here belongs to the verb that
 # moves money, and only `hacer` needs its auxiliary spelled out — because "he hecho la compra" is
 # not a payment and "he hecho un bizum" is.
-#
-# «Pasar» is the one verb that moves money only when it is pointed at somebody (validation fix 3,
-# G1): «¿cuánto le he pasado a Aitor?», «le pasé 20 a Javi», «lo que he pasado a Marta». Asked on
-# 2026-10-08 it was nobody's — Aitor became a shop and the window the sentence said was asked for.
-# So not in `_PAYMENT_VERBS`, whose every form counts anywhere: «el mes pasado» is in every other
-# sentence, and «¿qué le ha pasado a Aitor?» is something that happened to him. The holder has to
-# be the one passing — a clitic and «pasé», or «he»/«hemos» and the participle — and a person has
-# to follow within a few words. «Pasao» is how the participle is said aloud, in this verb only.
-_PASSED_TO_SOMEBODY: Final = (
-    r"(?:\b(?:le|les)\s+pase|\b(?:he|hemos)\s+(?:pasado|pasao))\b(?:\s+\S+){0,3}?\s+a\s+[a-z]"
-)
 _ALREADY: Final = re.compile(
     rf"\b(?:{_past(*_PAYMENT_VERBS)})\b"
     rf"|\b(?:{_HABER})\s+hecho\s+(?:un|una)\s+(?:bizum|transferencia)\b"
     rf"|\b(?:{_MADE})\b"
-    rf"|{_PASSED_TO_SOMEBODY}"
 )
+
+# «Pasar» moves money only when it is pointed at somebody (validation fix 3, G1): «¿cuánto le he
+# pasado a Aitor?», «le pasé 20 a Javi», «lo que he pasado a Marta». Asked on 2026-10-08 it was
+# nobody's: Aitor became a shop, and the window the sentence said was asked for. So not in
+# `_PAYMENT_VERBS`, whose every form counts anywhere: «el mes pasado» is in every other sentence,
+# and «¿qué le ha pasado a Aitor?» is something that happened to him. The holder has to be the one
+# passing — a clitic and «pasé», or «he»/«hemos» and the participle — and nothing may come between
+# the verb and «a» but «ya» or an amount: «le he pasado el informe a Aitor» passed a report.
+# «Pasao» is how the participle is said aloud, in this verb only.
+#
+# Not in `_ALREADY` (fix round 1, I-1), which `is_payment` reads as "never an order": «he pasado a
+# ver a Javi, mándale 20 euros» is an order with a visit in front of it, and it stopped paying. Who
+# the money was passed to is read with the directory, right after the «a» (`the_person_paid`).
+_PASSED_TO: Final = re.compile(
+    r"\b(?:(?:le|les)\s+pase|(?:he|hemos)\s+(?:pasado|pasao))"
+    r"(?:\s+(?:ya|tambien|\d+(?:[.,]\d{1,2})?\s*(?:€|euros?|pavos)?))*"
+    r"\s+a\s+(?P<after>[a-z].*)$"
+)
+# What may follow the person and makes what was passed a thing, not money: «le he pasado ya a Aitor
+# lo del regalo». A window there is still the period of the money: «… a Aitor el mes pasado».
+_A_THING_AFTER_THE_PERSON: Final = frozenset("lo la las los el un una unos unas eso esto".split())
+_A_WORD: Final = re.compile(r"[a-z0-9]+")
 
 # Money arriving, which is never an order to send any.
 #
@@ -308,7 +323,50 @@ def describes_a_past_payment(sentence: str) -> bool:
     bizum" is equally past and is somebody else's payment.
     """
     folded = spanish.folded(sentence)
-    return bool(_ALREADY.search(folded)) and _RECEIVED.search(folded) is None
+    if _RECEIVED.search(folded) is not None:
+        return False
+    return bool(_ALREADY.search(folded)) or _passes_money(sentence, folded)
+
+
+def _passes_money(sentence: str, folded: str) -> bool:
+    """Whether the sentence says the holder passed money to somebody (`_PASSED_TO`) and orders
+    nothing beside it: «hazle un bizum a Javi como el que le pasé a Aitor» is an order."""
+    return _PASSED_TO.search(folded) is not None and not is_explicit_order(sentence)
+
+
+def the_person_paid(sentence: str, directory: tuple[Contact, ...]) -> str | None:
+    """Whom the holder says they paid, as much of the name as the sentence writes, in the
+    directory's casing; None when it names nobody the directory has.
+
+    With a payment verb in the past — «le mandé 20 a Marta» — anybody in the directory the sentence
+    names, as it has always been read (`payment_words.name_as_written`). With «pasar», only the
+    person right after its «a» (fix round 1, I-1): «hemos pasado a casa de Aitor» went somewhere,
+    and «hazle un bizum de 20 a Javi como el que le pasé a Aitor» was read as one person called
+    «Javi Aitor». A thing named after the person — «… a Aitor lo del regalo» — is what was passed,
+    and it is not money.
+    """
+    folded = spanish.folded(sentence)
+    if _ALREADY.search(folded) is not None:
+        return payment_words.name_as_written(sentence, directory)
+    passed = _PASSED_TO.search(folded)
+    if passed is None or not _passes_money(sentence, folded):
+        return None
+    after = passed.group("after")
+    person = payment_words.name_as_written(after, directory)
+    if person is None:
+        return None
+    words = _A_WORD.findall(after)
+    named = _A_WORD.findall(spanish.folded(person))
+    if words[: len(named)] != named:
+        return None
+    rest = words[len(named) :]
+    if (
+        rest
+        and rest[0] in _A_THING_AFTER_THE_PERSON
+        and window_words.window_in(" ".join(rest)) is None
+    ):
+        return None
+    return person
 
 
 def is_uncertain(sentence: str) -> bool:

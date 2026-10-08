@@ -42,6 +42,7 @@ from finguard_orchestrator.application.queries.financial_turn import (
     _query_for_reader,
     _same_window,
     _starts_new_financial_scope,
+    _the_pair_in_view,
     _window_of,
 )
 from finguard_orchestrator.application.queries.reader_registry import Claim
@@ -1406,7 +1407,7 @@ class AskFinancialQuestionHandler:
         )
         if continued is not None:
             yield Stage("querying")
-            compared = await self._compare_periods(query, continued)
+            compared = await self._the_pair_answered_as_before(query, continued)
             yield replace(compared, plan_continues_conversation=True)
             return
 
@@ -1421,7 +1422,7 @@ class AskFinancialQuestionHandler:
         )
         if isinstance(inherited, ComparisonPlan):
             yield Stage("querying")
-            compared = await self._compare_periods(query, inherited)
+            compared = await self._the_pair_answered_as_before(query, inherited)
             yield replace(compared, plan_continues_conversation=True)
             return
         if isinstance(inherited, FinancialPlan):
@@ -1879,6 +1880,21 @@ class AskFinancialQuestionHandler:
             yield Stage("planned", answer_writer.plan_in_words(by_the_year))
             yield Stage("querying")
             yield await self._answer(query, by_the_year)
+            return
+
+        months_said = self._the_months_the_reply_names(query)
+        if months_said is not None:
+            # «Junio y julio de 2026», «junio y julio, como antes» to «¿De qué periodo…?»: the open
+            # question over both months (validation fix 3, G5), never the last month alone and
+            # never «¿De qué año?» about a year the reply or the screen already says.
+            query = self._the_accounts_it_chose(query)
+            if isinstance(months_said, ComparisonPlan):
+                yield Stage("querying")
+                yield await self._compare_periods(query, months_said)
+                return
+            yield Stage("planned", answer_writer.plan_in_words(months_said))
+            yield Stage("querying")
+            yield await self._answer(query, months_said)
             return
 
         finished = self._finish_pending(query)
@@ -2399,7 +2415,7 @@ class AskFinancialQuestionHandler:
             directory = await self._contacts.all_of(query.account_id)
         except BankingUnavailableError:
             directory = ()
-        person = payment_words.name_as_written(query.sentence, directory)
+        person = payment_router.the_person_paid(query.sentence, directory)
         if person is None:
             return None
         return self._person_payment_plan(query, person, Direction.EXPENSE)
@@ -3099,10 +3115,19 @@ class AskFinancialQuestionHandler:
         if _asks_a_question_of_its_own(query):
             return None
         said = window_words.window_in(query.sentence, asked_for=Slot.YEAR, today=query.today)
+        in_view = query.conversation.last_plan
         if isinstance(said, RelativePeriod) and said.period is Period.THIS_YEAR:
             year = query.today.year
         elif isinstance(said, AbsoluteRange) and _is_whole_year(said):
             year = said.start.year
+        elif (
+            isinstance(in_view, FinancialPlan)
+            and (window := in_view.period or in_view.date_range) is not None
+            and window_words.the_same_window(query.sentence, window) is not None
+        ):
+            # «Como antes» (fix round 1, M-5): the year of the answer on screen, as a month said
+            # after an answer takes it (F2).
+            year = window_words.year_in_view(window, query.today)
         else:
             return None
         asked = _the_question_the_year_is_for(query.conversation, query.today)
@@ -3131,6 +3156,54 @@ class AskFinancialQuestionHandler:
         if len(plans) == 1:
             return plans[0]
         return ComparisonPlan.between(*plans) or _the_year_again(query.conversation, year)
+
+    def _the_months_the_reply_names(
+        self, query: AskFinancialQuestionQuery
+    ) -> FinancialPlan | ComparisonPlan | None:
+        """The open question over the months its reply names, in the year it gives or the one in
+        view (validation fix 3, G5).
+
+        Two shapes `_finish_pending` cannot complete with one window:
+
+        - months said with their year — «junio y julio de 2026», «entre junio y julio de 2026»
+          (`window_words.the_months_with_their_year`): `window_in` reads «julio de 2026» alone, so
+          the reply ran July and dropped June (comparar-meses 8). Both months are compared (R54);
+          a range word makes them one span;
+        - «como antes» — «junio y julio, como antes» (impro-comparar-meses 5), or alone with two
+          periods on screen: the months in the year of the window in view, or the pair in view
+          itself (`_the_windows_as_before`). The model asked «¿De qué año?» about the year the
+          answer on screen had said.
+
+        None when the reply is neither, names a month still to come, or the draft and a window do
+        not make a plan the verifier accepts: the reply is then read as it was before.
+        """
+        active = query.conversation.active
+        if (
+            not isinstance(active, FinancialClarification)
+            or active.awaiting not in {Slot.WINDOW, Slot.YEAR}
+            or not active.draft.needs_a_window
+            or _asks_a_question_of_its_own(query)
+        ):
+            return None
+        windows: tuple[window_words.Window, ...] = window_words.the_months_with_their_year(
+            query.sentence
+        ) or _the_windows_as_before(query)
+        if not windows or any(
+            isinstance(window, AbsoluteRange) and window.start > query.today for window in windows
+        ):
+            return None
+        try:
+            plans = [active.draft.with_window(window) for window in windows]
+        except InvalidValueError:
+            return None
+        if any(
+            plan_verifier.disagreement(query.sentence, plan, self._policy) is not None
+            for plan in plans
+        ):
+            return None
+        if len(plans) == 1:
+            return plans[0]
+        return ComparisonPlan.between(*plans)
 
     def _pending_continuation(self, query: AskFinancialQuestionQuery) -> ContinuationBase | None:
         """The validated fields behind an active clarification, completed as far as this turn can.
@@ -4034,6 +4107,28 @@ class AskFinancialQuestionHandler:
             )
         return replace(result, text=text)
 
+    async def _the_pair_answered_as_before(
+        self, query: AskFinancialQuestionQuery, pair: ComparisonPlan
+    ) -> AskFinancialQuestionResult:
+        """A patched pair, answered the way the answer it continues was (fix round 1, M-2).
+
+        After a percentage change the pair is still the base (G4), and what the holder is reading
+        is a percentage: «¿y de ocio?» or «2025» after it is the change between the patched sides,
+        computed as a `RatioPlan` like the one in view, never a plain comparison in its place. After
+        a comparison, a comparison. A pair a percentage cannot be taken over stays a comparison.
+        """
+        focus = focus_of(query.conversation)
+        if isinstance(focus, RatioFocus) and focus.value.kind is RatioKind.PERCENT_CHANGE:
+            try:
+                percentage = RatioPlan(
+                    part=pair.latest, whole=pair.earlier, kind=RatioKind.PERCENT_CHANGE
+                )
+            except InvalidValueError:
+                percentage = None
+            if percentage is not None:
+                return await self._answer_ratio(query, percentage)
+        return await self._compare_periods(query, pair)
+
     async def _compare_periods(
         self,
         query: AskFinancialQuestionQuery,
@@ -4147,17 +4242,11 @@ class AskFinancialQuestionHandler:
         remembered_comparison = ComparisonPlan.between(remembered_earlier, remembered_latest)
         assert remembered_comparison is not None  # execution only adds scope to a validated pair
         comparison_memory = query.conversation.answered_comparison(remembered_comparison)
+        # The rows, the groups and the chart's title in the text's order, the earlier period
+        # first (fix round 1, M-4): a chart that listed July above June under «En junio…; en
+        # julio…» read the comparison backwards. The plan line below keeps the later side first.
         if grouped_text is not None:
             comparison_visual_rows = (
-                *(
-                    VisualRow(
-                        dimension=group.key,
-                        value_minor=_visual_metric_value(latest, group),
-                        series=latest_window,
-                    )
-                    for group in latest_answer.groups
-                    if group.key != "total"
-                ),
                 *(
                     VisualRow(
                         dimension=group.key,
@@ -4167,19 +4256,33 @@ class AskFinancialQuestionHandler:
                     for group in earlier_answer.groups
                     if group.key != "total"
                 ),
+                *(
+                    VisualRow(
+                        dimension=group.key,
+                        value_minor=_visual_metric_value(latest, group),
+                        series=latest_window,
+                    )
+                    for group in latest_answer.groups
+                    if group.key != "total"
+                ),
             )
         else:
             comparison_visual_rows = (
-                VisualRow(dimension=latest_window, value_minor=latest_value),
                 VisualRow(dimension=earlier_window, value_minor=earlier_value),
+                VisualRow(dimension=latest_window, value_minor=latest_value),
             )
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
+            # The periods in the order they happened, earlier first (validation fix 3, G7): «junio
+            # vs julio» read «En julio…; en junio…» once the pair ran from June (F3). The groups
+            # and the chart follow it (fix round 1, M-4); the plan line and the stored pair keep
+            # the later side first, as they always have: the plan line travels back to the model in
+            # the turn history, which is pinned.
             text=(
                 grouped_text
                 or (
-                    f"{latest_window.capitalize()}: {latest_figure}; "
-                    f"{earlier_window}: {earlier_figure}. {conclusion}"
+                    f"{earlier_window.capitalize()}: {earlier_figure}; "
+                    f"{latest_window}: {latest_figure}. {conclusion}"
                 )
             )
             + (f"\n{scope_note}" if scope_note else ""),
@@ -4213,16 +4316,6 @@ class AskFinancialQuestionHandler:
                 [
                     *[
                         SpokenGroup(
-                            f"{group.key} · {latest_window}",
-                            group.total_minor,
-                            group.movement_count,
-                            _visual_metric_value(latest, group),
-                        )
-                        for group in latest_answer.groups
-                        if group.key != "total"
-                    ],
-                    *[
-                        SpokenGroup(
                             f"{group.key} · {earlier_window}",
                             group.total_minor,
                             group.movement_count,
@@ -4231,19 +4324,19 @@ class AskFinancialQuestionHandler:
                         for group in earlier_answer.groups
                         if group.key != "total"
                     ],
+                    *[
+                        SpokenGroup(
+                            f"{group.key} · {latest_window}",
+                            group.total_minor,
+                            group.movement_count,
+                            _visual_metric_value(latest, group),
+                        )
+                        for group in latest_answer.groups
+                        if group.key != "total"
+                    ],
                 ]
                 if grouped_text is not None
                 else [
-                    SpokenGroup(
-                        latest_window,
-                        (
-                            latest_value
-                            if latest.metric is Metric.PERIOD_AVERAGE
-                            else latest_answer.total_minor
-                        ),
-                        latest_answer.movement_count,
-                        latest_value,
-                    ),
                     SpokenGroup(
                         earlier_window,
                         (
@@ -4254,6 +4347,16 @@ class AskFinancialQuestionHandler:
                         earlier_answer.movement_count,
                         earlier_value,
                     ),
+                    SpokenGroup(
+                        latest_window,
+                        (
+                            latest_value
+                            if latest.metric is Metric.PERIOD_AVERAGE
+                            else latest_answer.total_minor
+                        ),
+                        latest_answer.movement_count,
+                        latest_value,
+                    ),
                 ]
             ),
             movements=[_spoken_movement(movement) for movement in movements],
@@ -4261,7 +4364,7 @@ class AskFinancialQuestionHandler:
                 rows=comparison_visual_rows,
                 metric="COMPARISON",
                 title=(
-                    f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"
+                    f"{answer_writer.describe(earlier)} frente a {answer_writer.describe(latest)}"
                 ),
             ),
         )
@@ -6669,25 +6772,44 @@ _CORRECTS_THE_PERSON: Final = re.compile(
 # past it would put two figures on a guess.
 _ELLIPSIS_WORDS: Final = _AN_ELLIPSIS_OPENS | {"el", "la", "los", "las"}
 
+# «Lo mismo pero de restaurantes», «y lo mismo pero en gasolina» (validation fix 3, G4): «lo mismo»
+# says the question in view is asked again and «pero» what changes in it, as sure a sign the turn
+# continues something as an opening «y». Said on 2026-10-08 over May and June in the supermarket
+# (comparar-mayo-junio 2), it reached the model and came back restaurants this month.
+_THE_SAME_BUT: Final = re.compile(r"^(?:y\s+)?lo\s+mismo\s+(?:pero\s+)?")
+
+# A filler said after the subject, which asks nothing: «¿y en gasolina q?», «¿y de salud que?»
+# (G4). The trailing «q» was the one word the every-token check below could not place, so «y en
+# gasolina q?» went to the model and lost both months (comparar-mayo-junio 6).
+_A_TRAILING_FILLER: Final = re.compile(r"\s+(?:q|que)$")
+
 
 def _the_category_an_ellipsis_names(sentence: str) -> str | None:
     """The one category «¿y en gasolina?» says, when saying it is the whole turn.
 
-    The opening (`_AN_ELLIPSIS_OPENS`), or a correction said before the category
-    (`_CORRECTS_THE_SUBJECT`), is the evidence the turn continues something; every other word has
-    to be the category's own or one of `_ELLIPSIS_WORDS`. «¿Cuánto gasté en gasolina?»
-    opens with a question and is one of its own, and «¿y cuánto en gasolina?» or «en gasolina en
-    agosto» say more than a category, so none of them is read here. Two categories are refused for
-    `_direct_period_comparison`'s reason: «¿y en gasolina y restaurantes?» over two windows is one
-    combined figure or two, and choosing would be a guess.
+    The opening (`_AN_ELLIPSIS_OPENS`), a correction said before the category
+    (`_CORRECTS_THE_SUBJECT`), «lo mismo pero» (`_THE_SAME_BUT`) or an exclamation is the evidence
+    the turn continues something; every other word has to be the category's own or one of
+    `_ELLIPSIS_WORDS`, and a trailing «q»/«que» (`_A_TRAILING_FILLER`) asks nothing. «¿Cuánto gasté
+    en gasolina?» opens with a question and is one of its own, and «¿y cuánto en gasolina?» or «en
+    gasolina en agosto» say more than a category, so none of them is read here. Two categories are
+    refused for `_direct_period_comparison`'s reason: «¿y en gasolina y restaurantes?» over two
+    windows is one combined figure or two, and choosing would be a guess.
+
+    A category said alone and exclaimed — «¡restaurantes!» — insists on the subject (G4): on
+    2026-10-08 it was said with May and June in restaurants on screen and was asked the period.
+    Said plainly, a bare category is left to the readers it always went to.
     """
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\s+", "", _clean_turn(sentence))
-    corrected = _CORRECTS_THE_SUBJECT.match(folded)
-    if corrected is not None:
-        # The correction opens the turn, so what follows it may be the category alone.
-        folded = folded[corrected.end() :]
+    folded = _A_TRAILING_FILLER.sub("", folded)
+    opened = _CORRECTS_THE_SUBJECT.match(folded) or _THE_SAME_BUT.match(folded)
+    if opened is not None:
+        # The correction or «lo mismo pero» opens the turn, so what follows may be the category
+        # alone.
+        folded = folded[opened.end() :]
     words = folded.split()
-    if not words or (corrected is None and words[0] not in _AN_ELLIPSIS_OPENS):
+    exclaimed = "!" in sentence or "¡" in sentence
+    if not words or (opened is None and not exclaimed and words[0] not in _AN_ELLIPSIS_OPENS):
         return None
     named = category_words.precisely_named_in(sentence)
     said = set(words) - category_words.words_named_in(sentence) - _ELLIPSIS_WORDS
@@ -6714,11 +6836,14 @@ def _the_comparison_continued(query: AskFinancialQuestionQuery) -> ComparisonPla
       follow-up reader's one-window view («¿y en agosto?»);
     - a pair `ComparisonPlan.between` refuses (`None`) is not a comparison, and the planner reads
       the turn as it always did rather than this inventing a second operand.
+
+    The pair is the one in view (`_the_pair_in_view`): a comparison's, or the one a percentage
+    change was taken over, which is still the base after «y eso en %?» (validation fix 3, G4).
     """
     was = query.conversation
-    focus = focus_of(was)
+    pair = _the_pair_in_view(was)
     if (
-        not isinstance(focus, ComparisonFocus)
+        pair is None
         or was.last_asked is not None
         or isinstance(was.active, FinancialClarification | AccountScopeClarification)
     ):
@@ -6759,8 +6884,8 @@ def _the_comparison_continued(query: AskFinancialQuestionQuery) -> ComparisonPla
     try:
         # `enforce` after the patch, as on every other path: a direction the turn states still
         # wins, and the kind a category names («¿y en el gimnasio?») applies to both sides too.
-        earlier = explicit_facts.enforce(patched(focus.value.earlier), facts)
-        latest = explicit_facts.enforce(patched(focus.value.latest), facts)
+        earlier = explicit_facts.enforce(patched(pair.earlier), facts)
+        latest = explicit_facts.enforce(patched(pair.latest), facts)
     except InvalidValueError:
         return None
     return ComparisonPlan.between(earlier, latest)
@@ -6808,6 +6933,36 @@ def _the_months_it_names(query: AskFinancialQuestionQuery) -> FinancialPlan | Co
         return None
     window = template.period or template.date_range
     assert window is not None  # a plan carries one of the two
+    year_said = window_words.a_year_alone(query.sentence)
+    if year_said is not None:
+        # «2026» after a comparison of August and September (validation fix 3, G5): the months in
+        # view, every side of them, in the year said — asked «¿De qué año?» instead on 2026-10-08.
+        # One shift for every side, from the later one (fix round 1, I-3): shifted each on its own,
+        # December 2025 and January 2026 moved to 2024 became December and January of 2024, the
+        # later month first, and «en porcentaje» then said «disminuyó» about a rise.
+        latest = sides[-1].date_range
+        if latest is None:
+            return None
+        shift = year_said - latest.end.year
+        moved = [_shifted_by(side, shift, query.today) for side in sides]
+        if any(side is None for side in moved):
+            return None
+        kept = [side for side in moved if side is not None]
+        return kept[0] if len(kept) == 1 else ComparisonPlan.between(*kept)
+    with_their_year = window_words.the_months_with_their_year(query.sentence)
+    if with_their_year:
+        # «Agosto y septiembre de 2026» (G5): those months, as said, never the last one alone —
+        # the follow-up reader reads «septiembre de 2026» as the window and drops August.
+        if any(said.start > query.today for said in with_their_year):
+            return None
+        said_whole = [replace(template, period=None, date_range=said) for said in with_their_year]
+        if len(said_whole) == 2:
+            return ComparisonPlan.between(*said_whole)
+        (one,) = said_whole
+        if window_words.window_in(query.sentence, today=query.today) == one.date_range:
+            # The one window the follow-up reader reads too, as it always did.
+            return None
+        return one
     months = window_words.months_alone(query.sentence)
     one_day = window_words.a_day_alone(query.sentence)
     if one_day is not None:
@@ -6877,6 +7032,66 @@ def _the_months_it_names(query: AskFinancialQuestionQuery) -> FinancialPlan | Co
             return None
         return one
     return ComparisonPlan.between(*named)
+
+
+def _the_windows_as_before(query: AskFinancialQuestionQuery) -> tuple[window_words.Window, ...]:
+    """What «como antes» names in a reply, with the answer before the question still on screen
+    (validation fix 3, G5).
+
+    Months said with it are in the year of the window in view, the last answer's
+    (`window_words.year_in_view`) — the year a month takes after an answer (F2). Said with no month,
+    it is the two periods in view when a comparison or its percentage is on screen; a single
+    window is `_finish_pending`'s, which has always read it (`the_same_window`).
+    """
+    was = query.conversation
+    in_view = was.last_plan
+    if not isinstance(in_view, FinancialPlan):
+        return ()
+    window = in_view.period or in_view.date_range
+    assert window is not None  # a plan carries one of the two
+    months = window_words.months_as_before(query.sentence)
+    if months:
+        year = window_words.year_in_view(window, query.today)
+        return tuple(
+            sorted(
+                (window_words.a_month_of(year, month, query.today) for month in months),
+                key=lambda month: month.start,
+            )
+        )
+    pair = _the_pair_in_view(was)
+    if pair is None or window_words.the_same_window(query.sentence, window) is None:
+        return ()
+    sides = (
+        pair.earlier.period or pair.earlier.date_range,
+        pair.latest.period or pair.latest.date_range,
+    )
+    return tuple(side for side in sides if side is not None)
+
+
+def _shifted_by(plan: FinancialPlan, shift: int, today: date) -> FinancialPlan | None:
+    """`plan` over the same months `shift` years away, for a year said alone over it (G5).
+
+    The caller computes one shift for every side it moves (I-3). Only a window of whole months —
+    one, or a run of them — has months to move; a named period («este año», «los últimos 30 días»)
+    or a span of days does not, and is left to be read as it was. Months that have not begun are no
+    window either: nothing has happened in them.
+    """
+    window = plan.date_range
+    if window is None or not _of_whole_months(window):
+        return None
+    start = date(window.start.year + shift, window.start.month, 1)
+    if start > today:
+        return None
+    end = window_words.whole_month(window.end.year + shift, window.end.month).end
+    return replace(plan, period=None, date_range=AbsoluteRange(start=start, end=end))
+
+
+def _of_whole_months(window: AbsoluteRange) -> bool:
+    """Whether a range starts on the first of a month and ends on the last day of one."""
+    return (
+        window.start.day == 1
+        and window.end == window_words.whole_month(window.end.year, window.end.month).end
+    )
 
 
 # How the year is asked again (`_the_year_again`), which is also how a turn that asked it again is

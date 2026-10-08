@@ -880,10 +880,11 @@ async def test_two_periods_can_be_compared_in_one_natural_sentence(
         ),
         (
             # The earlier year first since validation fix 1 (F3): it is the reference the change is
-            # read from. It was 2026 first, the reverse of the order the years were said in.
+            # read from. It was 2026 first, the reverse of the order the years were said in. And
+            # the text says it first since validation fix 3 (G7), so it opens the sentence.
             "Compara mis ingresos de 2025 con 2026",
             [date(2025, 1, 1), date(2026, 1, 1)],
-            "en 2025",
+            "En 2025",
             "en 2026",
         ),
     ],
@@ -1163,8 +1164,8 @@ async def test_a_direct_period_comparison_counts_movements_instead_of_money() ->
     assert planner.asked == 0
     assert len(ledger.plans) == 2
     assert all(plan.metric is Metric.COUNT for plan in ledger.plans)
-    assert "En julio de 2026: 12 movimientos" in answer.text
-    assert "junio de 2026: 9 movimientos" in answer.text
+    # The earlier month first in the text since validation fix 3 (G7).
+    assert "En junio de 2026: 9 movimientos; en julio de 2026: 12 movimientos." in answer.text
     assert "3 movimientos más en julio de 2026" in answer.text
     assert answer.total_minor is None
     assert isinstance(answer.conversation.last_plan, FinancialPlan)
@@ -1195,8 +1196,8 @@ async def test_a_direct_period_comparison_uses_the_mean_not_the_total() -> None:
 
     assert planner.asked == 0
     assert all(plan.metric is Metric.AVERAGE for plan in ledger.plans)
-    assert "En julio de 2026: 30,00 €" in answer.text
-    assert "junio de 2026: 20,00 €" in answer.text
+    # The earlier month first in the text since validation fix 3 (G7).
+    assert "En junio de 2026: 20,00 €; en julio de 2026: 30,00 €." in answer.text
     assert "importe medio por movimiento fue 10,00 € mayor" in answer.text
 
 
@@ -1230,11 +1231,10 @@ async def test_a_direct_period_comparison_preserves_the_calendar_average() -> No
     assert planner.asked == 0
     assert all(plan.metric is Metric.PERIOD_AVERAGE for plan in ledger.plans)
     assert all(plan.group_by is GroupBy.MONTH for plan in ledger.plans)
-    # The later year is written first since validation fix 1 (F3), as every comparison writes its
-    # `latest` side first: 2025 is now the reference, where the reverse of the order said made it
-    # 2026.
-    assert "En 2026: 500,00 €" in answer.text
-    assert "en 2025: 1.000,00 €" in answer.text
+    # 2025 is the reference since validation fix 1 (F3), where the reverse of the order said made
+    # it 2026; and the text says it first since validation fix 3 (G7), the earlier year opening
+    # the sentence as it opens the calendar.
+    assert "En 2025: 1.000,00 €; en 2026: 500,00 €." in answer.text
     assert "gasto medio mensual fue 500,00 € mayor en 2025" in answer.text
 
 

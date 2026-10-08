@@ -44,7 +44,9 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.planning_context import (
     BalanceFocus,
+    ComparisonFocus,
     QueryFocus,
+    RatioFocus,
     focus_of,
 )
 from finguard_orchestrator.domain.models.turn_analysis import (
@@ -62,7 +64,7 @@ from finguard_orchestrator.domain.value_objects.comparison_plan import Compariso
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
 )
-from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
 
 
 def _clean_turn(sentence: str) -> str:
@@ -427,3 +429,20 @@ def _window_of(plan: PlannedQuery | None) -> str | None:
 
 def _a_plan_is_in_view(query: AskFinancialQuestionQuery) -> bool:
     return isinstance(query.conversation.last_plan, FinancialPlan)
+
+
+def _the_pair_in_view(conversation: Conversation) -> ComparisonPlan | None:
+    """The two periods on screen: a comparison's pair, or the pair a percentage change was taken
+    over (validation fix 3, G4).
+
+    A percentage change is the same two reads with arithmetic on top (`RatioPlan` checks its
+    operands as a `ComparisonPlan` does), so after «y eso en %?» the comparison is still what the
+    holder is looking at. Read as no comparison, «¿y de ocio?» after it asked the period and lost
+    June and July both (impro-comparar-meses 4). `whole` is the earlier side, `part` the later.
+    """
+    focus = focus_of(conversation)
+    if isinstance(focus, ComparisonFocus):
+        return focus.value
+    if isinstance(focus, RatioFocus) and focus.value.kind is RatioKind.PERCENT_CHANGE:
+        return ComparisonPlan.between(focus.value.whole, focus.value.part)
+    return None

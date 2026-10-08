@@ -485,6 +485,28 @@ def the_window_answered_last(conversation: Conversation) -> window_words.Window 
     return plan.period or plan.date_range
 
 
+def _as_before_the_answer(sentence: str, conversation: Conversation, slot: Slot) -> bool:
+    """Whether the reply says the period is the one on screen — «junio y julio, como antes», or
+    «como antes» alone over a comparison or its percentage (validation fix 3, G5).
+
+    `the_window_answered_last` stops at one plan, because a pair is not one period; but «como
+    antes» still names what is on screen, and the handler completes the open question over it
+    (`_the_months_the_reply_names`). Not a reply, «como antes» over a comparison was narrowed to a
+    shop called «como antes».
+
+    To «¿De qué año?» (fix round 1, M-5) only «como antes» alone answers: the year of the window
+    on screen, for the months the question was asked about (`_the_months_the_year_completes`).
+    """
+    plan = conversation.last_plan
+    if not isinstance(plan, FinancialPlan):
+        return False
+    window = plan.period or plan.date_range
+    as_before = window_words.the_same_window(sentence, window) is not None
+    if slot is Slot.YEAR:
+        return as_before
+    return as_before or bool(window_words.months_as_before(sentence))
+
+
 def _what_it_fills(
     sentence: str, conversation: Conversation, analysis: TurnAnalysis, *, today: date
 ) -> frozenset[Slot]:
@@ -540,6 +562,7 @@ def _what_it_fills(
             and window_words.the_same_window(sentence, the_window_answered_last(conversation))
             is not None
         )
+        or _as_before_the_answer(sentence, conversation, window_slot)
     ):
         filled.add(window_slot)
     if Slot.ACCOUNT in holds and _names_an_account(sentence, conversation):
@@ -641,9 +664,18 @@ def arbitrate(
         return Arbitration(TurnType.ANSWER_PENDING, fills)
     patch = (
         the_patch_on_the_answer(sentence, conversation, today=today, just_paid=just_paid)
-        if analysis.intent in _A_PATCH_IS_READ_AS
+        if analysis.intent in _A_PATCH_IS_READ_AS or analysis.intent is Intent.LIST_CATEGORIES
         else None
     )
+    if analysis.intent is Intent.LIST_CATEGORIES and (
+        patch is None or patch.changed != {PatchField.GROUP_BY}
+    ):
+        # «Mejor por categoría» over an answer is the regroup, whatever the reading (validation fix
+        # 3, G8): the hybrid interpreter sends a catch-all naming «categor…» to the model, which
+        # called it LIST_CATEGORIES, and the catalogue answered instead of the answer by category.
+        # A breakdown said as the whole turn is all this takes from such a reading; anything else
+        # — «¿qué categorías hay?», or nothing in view to regroup — is the catalogue, as it was.
+        patch = None
     # «Mejor por categoría» opens like a correction and is not one: nothing in the answer was
     # wrong, and the correction path would ask «¿Qué debería cambiar…?» or re-plan a figure that
     # stood. A reading that calls it one is overruled by the shape; every other correction keeps

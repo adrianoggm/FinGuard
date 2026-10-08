@@ -326,6 +326,49 @@ _SHE_OR_HE: Final = frozenset({"ella", "el"})
 _PAUSES: Final = re.compile(r"[,;:¿?¡!.]")
 
 
+# Money between the holder and a person, said anywhere in a sentence rather than as the whole turn:
+# «¿cuánto me mandó Javi este año?», «¿cuánto le mandé este año?». The verbs of `_TO_ME` and
+# `_TO_THEM`; who, when said, is right after the verb, with or without «a».
+_MONEY_TO_ME: Final = re.compile(rf"\b{_TO_ME}\b")
+_MONEY_TO_THEM: Final = re.compile(rf"\b{_TO_THEM}\b")
+
+
+def asks_about_another_person(sentence: str, base: FinancialPlan) -> bool:
+    """Whether a question about money between the holder and somebody is about someone other than
+    the base's person, or about the money the other way (validation fix 3, fix round 1, I-4).
+
+    For the follow-up reader's window patch, which must not take such a question as «este año»
+    said of the answer in view: after Marta, «¿cuánto me mandó Javi este año?» ran Marta's sending
+    (P-7). Read as the turn-round shapes read it: «me mandó» is money that came, «le mandé» money
+    that went, and the person named after the verb is matched against the base's (`_the_person`).
+    So it is another person's when the money goes the other way from the base's, when the base is
+    about nobody in particular, or when the name said is not the base's person. «¿Cuánto le mandé
+    este año?» after Marta, or «¿cuánto me mandó este año?» after Javi's money, is still the base's
+    person this year. False for any sentence that is not about money between people.
+    """
+    spoken = " ".join(_PAUSES.sub(" ", spanish.folded(sentence)).split())
+    to_me = _MONEY_TO_ME.search(spoken)
+    said = to_me or _MONEY_TO_THEM.search(spoken)
+    if said is None:
+        return False
+    direction = Direction.INCOME if to_me is not None else Direction.EXPENSE
+    if base.direction in {Direction.EXPENSE, Direction.INCOME} and direction is not base.direction:
+        return True
+    if not base.counterparties:
+        return True
+    after = spoken[said.end() :].split()
+    if after[:1] == ["a"]:
+        after = after[1:]
+    who: list[str] = []
+    for word in after[:3]:
+        if word in _WINDOW_PATCH_WORDS or word in {"mi", "yo"}:
+            break
+        who.append(word)
+    if not who:
+        return False
+    return _the_person(" ".join(who), base.counterparties, answered_last=True) is None
+
+
 def grouping_in(sentence: str) -> GroupBy | None:
     """The breakdown a sentence asks for in this module's grouping words, wherever it says it.
 

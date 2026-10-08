@@ -232,3 +232,55 @@ def test_money_passed_is_a_question_of_its_own_while_another_waits(sentence: str
 
     assert answer["outcome"] == "PLANNED", answer["text"]
     _between_the_holder_and(stack, "Aitor", Direction.EXPENSE)
+
+
+# --- fix round 1, I-1: «pasar» never swallows an order, and needs the person right after «a» ---
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "he pasado a ver a Javi, mándale 20 euros",
+        "les pasé 10 a cada uno, ahora pásale 10 a Javi",
+        "pásale 20 a Javi",
+    ],
+)
+def test_an_order_beside_money_passed_is_still_an_order(sentence: str) -> None:
+    """At f73697b9 each of these previewed a payment to Javi; the «pasar» clause in front must not
+    make the order a statement about the past."""
+    assert payment_router.is_payment(sentence)
+    stack = episodes.a_stack()
+
+    answer = ask(stack, sentence, SETTLED)
+
+    assert answer["outcome"] == "AWAITING_CONFIRMATION", answer["text"]
+    assert answer["conversation"]["recipient"].startswith("Javi")
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "he pasado a ver a Aitor",
+        "hemos pasado a casa de aitor",
+        "le he pasado el informe a Aitor",
+        "le he pasado la factura a Javi este mes",
+        "le he pasado ya a aitor lo del regalo",
+    ],
+)
+def test_a_thing_passed_or_a_visit_is_no_person_query(sentence: str) -> None:
+    """Something handed over, or somewhere gone, with a contact named in it: the contact is not
+    whom money went to — neither a figure for them nor the period asked about payments to them."""
+    stack, answer = _after(sentence)
+
+    assert not any(plan.counterparties for plan in stack.ledger.plans)
+    assert "le has hecho a" not in answer["text"], answer["text"]
+
+
+def test_no_name_is_made_of_two_people() -> None:
+    """«Hazle un bizum de 20 a Javi como el que le pasé a Aitor» names Javi and Aitor, and «Javi
+    Aitor» is nobody."""
+    stack, answer = _after("hazle un bizum de 20 a Javi como el que le pasé a Aitor")
+
+    assert "Javi Aitor" not in answer["text"], answer["text"]
+    assert "le has hecho a" not in answer["text"], answer["text"]
+    assert not any(plan.counterparties == ("Javi Aitor",) for plan in stack.ledger.plans)

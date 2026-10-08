@@ -26,6 +26,7 @@ from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionQuery,
     _clean_turn,
     _same_window,
+    _the_pair_in_view,
 )
 from finguard_orchestrator.application.queries.reader_registry import Precondition, Reader
 from finguard_orchestrator.application.queries.readers.comparisons import (
@@ -33,6 +34,7 @@ from finguard_orchestrator.application.queries.readers.comparisons import (
     _direct_period_comparison,
 )
 from finguard_orchestrator.application.queries.readers.seam import _recogniser
+from finguard_orchestrator.application.queries.readers.windows import _the_earlier_first
 from finguard_orchestrator.domain.enums import (
     Direction,
     GroupBy,
@@ -40,7 +42,6 @@ from finguard_orchestrator.domain.enums import (
     Period,
 )
 from finguard_orchestrator.domain.models.planning_context import (
-    ComparisonFocus,
     PendingRatioFocus,
     QueryFocus,
     RatioFocus,
@@ -66,10 +67,21 @@ from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, Ra
 _RATIO_WORDS: Final = re.compile(r"\bporcentaje\b|\bque\s+parte\s+de\b|\bque\s+proporcion\s+de\b|%")
 
 
+# The percentage of the pair in view, asked as the whole turn: «en porcentaje», «¿cuánto es eso en
+# porcentaje?», and since validation fix 3 (G4) «y eso en %?», «en %», «¿y el porcentaje?» and
+# «¿cuánto en %?». Read over `_in_percent_words`, which spells «%» as the word: on 2026-10-08
+# «y eso en %?» was folded to «y eso en», matched nothing here, and was refused as a proportion
+# with no operands about the two figures the holder had just been shown.
 _PERCENT_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?(?:cuanto\s+(?:es|fue|supone)\s+eso\s+)?(?:en\s+)?porcentaje$"
+    r"^(?:y\s+)?(?:(?:cuanto\s+(?:es|fue|supone)\s+)?eso\s+|cuanto\s+)?(?:en\s+)?(?:el\s+)?"
+    r"porcentaje$"
     r"|^(?:y\s+)?(?:cual|cuanto)\s+fue\s+(?:la\s+)?(?:diferencia|variacion)\s+porcentual$"
 )
+
+
+def _in_percent_words(sentence: str) -> str:
+    """`_clean_turn`, with «%» said as «porcentaje» rather than dropped as punctuation."""
+    return _clean_turn(sentence.replace("%", " porcentaje "))
 
 
 _RATIO_WINDOW_REPLY: Final = re.compile(
@@ -130,7 +142,7 @@ def _ratio_request(query: AskFinancialQuestionQuery) -> RatioPlan | RatioDraft |
     ):
         return previous_ratio.with_window(facts.window)
 
-    if _PERCENT_FOLLOW_UP.fullmatch(cleaned):
+    if _PERCENT_FOLLOW_UP.fullmatch(_in_percent_words(query.sentence)):
         comparison = _stored_percentage_pair(query)
         if comparison is not None:
             return RatioPlan(
@@ -328,10 +340,15 @@ def _internal_movement_request(
 def _stored_percentage_pair(
     query: AskFinancialQuestionQuery,
 ) -> ComparisonPlan | None:
-    """The two compatible windows behind a bare "en porcentaje"."""
+    """The two compatible windows behind a bare "en porcentaje".
+
+    The pair in view first — a comparison's, or the one a percentage was already taken over, so
+    «en porcentaje» after «y eso en %?» is that percentage again (`_the_pair_in_view`).
+    """
+    pair = _the_pair_in_view(query.conversation)
+    if pair is not None:
+        return pair
     focus = focus_of(query.conversation)
-    if isinstance(focus, ComparisonFocus):
-        return focus.value
     if not isinstance(focus, QueryFocus):
         return None
     latest = focus.current
@@ -361,7 +378,11 @@ def _stored_percentage_pair(
     )
     if any(getattr(latest, field) != getattr(earlier, field) for field in scope):
         return None
-    return ComparisonPlan.between(earlier, latest)
+    # The two answers in the order their windows happened (fix round 1, M-3): June, then «¿y en
+    # mayo?», then «el porcentaje» is the change from May to June. Taken in the order they were
+    # answered, it ran from June to May and said its word about time running backwards.
+    first, second = _the_earlier_first(earlier, latest, query.today)
+    return ComparisonPlan.between(first, second)
 
 
 @_recogniser
@@ -404,7 +425,7 @@ def _asks_a_proportion(query: AskFinancialQuestionQuery) -> bool:
         return True
     folded = spanish.folded(query.sentence)
     return bool(
-        _PERCENT_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))
+        _PERCENT_FOLLOW_UP.fullmatch(_in_percent_words(query.sentence))
         or _RATIO_WORDS.search(folded)
         or financial_relationships.asks_savings_rate(query.sentence)
         or financial_relationships.asks_net_cash_flow(query.sentence)

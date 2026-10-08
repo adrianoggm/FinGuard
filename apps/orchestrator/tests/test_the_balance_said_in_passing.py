@@ -49,6 +49,7 @@ def _every_account() -> int:
         "¿Qué tengo en total?",
         "que tengo entre todo",
         "¿y qué tengo en total entre todas?",
+        "¿qué tengo en total entre todas mis cuentas?",
     ],
 )
 def test_said_while_the_period_waits_it_is_the_balance_and_the_question_goes(
@@ -96,6 +97,14 @@ def test_the_courtesy_in_front_is_no_reset() -> None:
         "¿cuánto gasté en total entre todo?",
         "¿qué tengo que pagar este mes?",
         "¿qué gastos tengo en total este mes?",
+        # Fix round 1, I-2: «en total» followed by a subject is that subject's total, not money
+        # held. Each of these became the balance when the phrasing was not anchored at the end.
+        "q tengo en total de nómina este año",
+        "¿qué tengo en total en suscripciones?",
+        "qué tengo en total pendiente de pagar",
+        "que tengo en total de deuda",
+        "¿qué tengo en total en recibos este mes?",
+        "que tengo en total entre todos los bizums",
     ],
 )
 def test_spending_and_what_is_owed_are_not_the_balance(sentence: str) -> None:

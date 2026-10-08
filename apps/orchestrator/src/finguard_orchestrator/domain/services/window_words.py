@@ -1160,6 +1160,75 @@ def months_alone(sentence: str) -> tuple[int, ...]:
     return months
 
 
+# Validation fix 3, G5: a year said over the months in view, and months said with their year.
+#
+# «2026» with nothing open after a comparison of August and September was asked «¿De qué año?»,
+# and «agosto y septiembre de 2026» answered September alone: `window_in` reads «septiembre de
+# 2026» as the window and drops the month said before it. The handler moves the months in view to a
+# year said alone, and takes months said with their year whole, from these.
+
+# A year and nothing else, said over an answer: «2026», «el 2025», «¿y del 2025?». Not «en 2025»,
+# which `window_in` already reads as the whole year — a window the follow-up reader puts in place of
+# the answer's, as it always has.
+_A_YEAR_SAID_ALONE: Final = re.compile(
+    r"(?:(?:y|pues|vale|bueno|entonces|no)\s+)*(?:(?:el|del|de)\s+)?(?:ano\s+)?(?P<year>20\d{2})"
+)
+# One year written beside the months, with what may introduce it.
+_THE_YEAR_WRITTEN: Final = re.compile(r"\b(?:(?:de|del|en)\s+)?(?:ano\s+)?(?P<year>20\d{2})\b")
+# The range words that make two months one span rather than a comparison, besides the words of
+# `_BESIDE_THE_MONTHS`.
+_A_SPAN_SAID: Final = frozenset("a al hasta desde entre total conjunto juntos sumando".split())
+# «Como antes», «los mismos meses»: the months said are the ones of the answer in view.
+_AS_BEFORE: Final = re.compile(r"\b(?:como|igual\s+que)\s+antes\b|\bl[oa]s\s+mism[oa]s\b")
+
+
+def a_year_alone(sentence: str) -> int | None:
+    """The year a whole turn is, when a year is all it says; else None (G5)."""
+    said = _A_YEAR_SAID_ALONE.fullmatch(spanish.folded(sentence).strip(" ¿?¡!.,"))
+    return int(said.group("year")) if said is not None else None
+
+
+def the_months_with_their_year(sentence: str) -> tuple[AbsoluteRange, ...]:
+    """The windows a whole turn of one or two months and the one year beside them names; empty
+    otherwise (G5).
+
+    «Agosto y septiembre de 2026» is both months, earliest first, which the caller compares (ruling
+    R54); «de agosto a septiembre de 2026», «entre agosto y septiembre de 2026» and «… en total»
+    are one span. Two years, a question, or anything but months, the year and the words that join
+    them is not this turn.
+    """
+    folded = spanish.folded(sentence)
+    years = _THE_YEAR_WRITTEN.findall(folded)
+    if len(years) != 1:
+        return ()
+    year = int(years[0])
+    words = _A_TOKEN.findall(_THE_YEAR_WRITTEN.sub(" ", folded))
+    months = tuple(dict.fromkeys(_MONTH_NUMBER[word] for word in words if word in _MONTH_NUMBER))
+    if not 1 <= len(months) <= 2 or any(
+        word not in _MONTH_NUMBER and word not in _BESIDE_THE_MONTHS and word not in _A_SPAN_SAID
+        for word in words
+    ):
+        return ()
+    if len(months) == 2 and _A_SPAN_SAID & set(words):
+        first, last = months
+        if last < first:
+            return ()
+        return (
+            AbsoluteRange(start=whole_month(year, first).start, end=whole_month(year, last).end),
+        )
+    return tuple(
+        sorted((whole_month(year, month) for month in months), key=lambda window: window.start)
+    )
+
+
+def months_as_before(sentence: str) -> tuple[int, ...]:
+    """`months_alone`, when the turn also says they are as before — «junio y julio, como antes»
+    — so their year is the one in view, which only the caller holds (G5); empty otherwise."""
+    if _AS_BEFORE.search(spanish.folded(sentence)) is None:
+        return ()
+    return months_alone(sentence)
+
+
 def months_without_a_year(sentence: str) -> tuple[int, ...]:
     """The months a sentence names with no year beside them, in the order it names them.
 
