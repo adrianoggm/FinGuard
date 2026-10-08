@@ -418,6 +418,8 @@ class Options(argparse.Namespace):
     timezone: str
     database: str
     max_age_days: int
+    provider_retries: int
+    provider_wait: float
 
 
 async def _ask(
@@ -515,6 +517,18 @@ async def _turn(
             "expect": expect,
         }, conversation
     body, seconds, error = await _ask(client, options, said, conversation)
+    # A hosted planner on a free tier answers 429 in bursts, and the service reports it as
+    # PROVIDER_ERROR. The turn is sent again with the conversation from before it, so a retry is
+    # the same turn, not a new one; the record says how many it took.
+    retried = 0
+    while (
+        retried < getattr(options, "provider_retries", 0)
+        and body is not None
+        and body.get("outcome") == "PROVIDER_ERROR"
+    ):
+        await asyncio.sleep(getattr(options, "provider_wait", 60.0))
+        retried += 1
+        body, seconds, error = await _ask(client, options, said, conversation)
     record = await record_of(
         options,
         name=name,
@@ -525,6 +539,8 @@ async def _turn(
         error=error,
         expect=expect,
     )
+    if retried:
+        record["provider_retries"] = retried
     # Echoed as a client echoes it: what came back, or what was sent when nothing came back.
     following = body.get("conversation") if body is not None else conversation
     return record, following
@@ -1225,6 +1241,18 @@ def main() -> int:
         type=int,
         default=1,
         help="how old the newest movement may be; more than 1 is recorded in the report",
+    )
+    common.add_argument(
+        "--provider-retries",
+        type=int,
+        default=0,
+        help="send a turn again this many times when it comes back PROVIDER_ERROR (a rate limit)",
+    )
+    common.add_argument(
+        "--provider-wait",
+        type=float,
+        default=60.0,
+        help="seconds to wait before each retry; a per-minute token limit refills in a minute",
     )
 
     parser = argparse.ArgumentParser(

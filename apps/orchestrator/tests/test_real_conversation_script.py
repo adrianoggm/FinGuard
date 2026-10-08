@@ -249,6 +249,42 @@ def test_a_figure_that_could_not_be_checked_is_an_error_and_fails_the_turn(
     assert report["figures"]["error"] == 1
 
 
+def test_a_rate_limited_turn_is_sent_again_with_the_conversation_from_before_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A free-tier provider answers 429 in bursts. With retries asked for, the same turn goes again
+    — same sentence, same conversation — and the record says it took one retry."""
+    before = {"workflow": None}
+    sent: list[tuple[str, object]] = []
+    answers = [
+        {"outcome": "PROVIDER_ERROR", "text": "No he podido pensar", "conversation": {"x": 1}},
+        {"outcome": "COURTESY", "text": "De nada.", "conversation": {"x": 2}},
+    ]
+
+    async def ask(_client: object, _options: object, said: str, conversation: object) -> Any:
+        sent.append((said, conversation))
+        return answers.pop(0), 0.1, None
+
+    async def no_wait(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(real, "_ask", ask)
+    monkeypatch.setattr(real.asyncio, "sleep", no_wait)
+    options = real.Options(
+        account=LAURA,
+        timezone="Europe/Madrid",
+        database="unused",
+        provider_retries=2,
+        provider_wait=0.0,
+    )
+    record, following = asyncio.run(
+        real._turn(None, options, name="a", turn=1, said="gracias", conversation=before)  # type: ignore[arg-type]
+    )
+    assert sent == [("gracias", before), ("gracias", before)]
+    assert record["outcome"] == "COURTESY" and record["provider_retries"] == 1
+    assert following == {"x": 2}
+
+
 def test_a_replay_that_crashes_keeps_every_turn_before_the_crash(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

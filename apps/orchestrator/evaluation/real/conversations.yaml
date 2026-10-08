@@ -455,3 +455,172 @@ conversations:
         expect:
           mechanism: reset
           want: Deja lo pendiente y lo dice en una frase; ni repite la consulta ni da una cifra.
+
+  - name: super-restaurantes-gasolina
+    goal: Comparar dos meses y después cambiar la categoría de la comparación.
+    turns:
+      - say: "gaste mas en el super en julio o en agosto?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Supermercado en julio frente a agosto de 2026, con las dos cifras y la diferencia, en
+            todas las cuentas.
+      - say: "y en restaurantes"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Restaurantes en julio frente a agosto de 2026 (mantiene los dos meses y cambia la
+            categoría).
+      - say: "no, digo gasolina"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Gasolina en julio frente a agosto de 2026: corrige la categoría y conserva la
+            comparación. Nunca un solo mes.
+      - say: "pero de julio y agosto"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Gasolina en julio frente a agosto de 2026, el año de la comparación; no pregunta el
+            año.
+      - say: "este año"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Si quedaba abierta la pregunta del año, «este año» la completa: gasolina en julio frente
+            a agosto de 2026. Nunca todo el gasto del año.
+      - say: "gasolina julio vs agosto"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: Gasolina en julio frente a agosto de 2026, con las dos cifras y la diferencia.
+      - say: "y de salud?"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Salud en julio frente a agosto de 2026 (mantiene los dos meses y cambia la categoría);
+            no pasa a este mes.
+      - say: "en julio y agosto como antes"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Salud en julio frente a agosto de 2026, los meses de antes; no pregunta el año.
+
+  - name: carmen-mandado-recibido
+    goal: >-
+      Saber cuánto le he enviado a alguien este mes, después cuánto me ha enviado esa persona a mí,
+      y luego algo totalmente distinto.
+    turns:
+      - say: "cuanto le he mandado a carmen este mes"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo enviado a Carmen este mes, en todas las cuentas y sin preguntar la cuenta. Si no hay
+            nada, lo dice.
+      - say: "Ampliar a tres meses"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: Lo enviado a Carmen en los últimos tres meses.
+      - say: "y ella a mi cuanto me ha pasado?"
+        expect:
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen («ella») en los mismos tres meses: la misma persona y ventana con
+            la dirección invertida; sin preguntar el periodo.
+      - say: "los mismos 3 meses"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen en los últimos tres meses: completa la pregunta del periodo si
+            quedaba abierta, o repite la misma consulta. Nunca «Sigo sin tener claro el periodo».
+      - say: "ultimos 3 meses"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen en los últimos 3 meses. Nunca todo el gasto de esos meses.
+      - say: "no, lo que me ha mandado carmen a mi"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo recibido de Carmen en los mismos tres meses; sin preguntar el periodo.
+      - say: "bueno nada. que suscripciones tengo?"
+        expect:
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Deja lo pendiente y dice qué suscripciones se le cobran (los comercios), diciendo la
+            ventana.
+
+  - name: suscripciones-dejalo
+    goal: Preguntar por las suscripciones, corregirse y después abandonar («olvídalo»).
+    turns:
+      - say: "cuanto gasto en suscripciones?"
+        expect:
+          mechanism: unnecessary_clarification
+          route: QUERY
+          want: >-
+            Suscripciones en lo que va de mes (o la ventana que asuma, diciéndola), en todas las
+            cuentas; sin preguntar la cuenta.
+      - say: "perdona, del mes pasado digo"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: Suscripciones el mes pasado (corrige la ventana y conserva el tema).
+      - say: "dejalo, da igual"
+        expect:
+          mechanism: reset
+          want: >-
+            Un acuse breve que deja lo anterior; no lo lee como una petición de cálculo ni da una
+            cifra.
+      - say: "que no, olvídalo"
+        expect:
+          mechanism: reset
+          want: >-
+            Deja lo anterior en una frase; ni «Eso no puedo calcularlo todavía» ni una cifra.
+      - say: "olvídalo"
+        expect:
+          mechanism: reset
+          want: Deja lo pendiente y lo dice en una frase; ni repite la consulta ni da una cifra.
+
+  - name: saldo-semana-anterior
+    goal: Saber el saldo de una cuenta, después lo gastado esta semana y luego «¿y la anterior?».
+    turns:
+      - say: "cuanto me queda en la corriente?"
+        expect:
+          mechanism: intent
+          route: BALANCE
+          want: El saldo de la Cuenta corriente.
+      - say: "y cuanto e gastado esta semana?"
+        expect:
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lo gastado esta semana pese a «e gastado», diciendo en qué cuentas; no repite el
+            saldo.
+      - say: "y la anterior?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Lo gastado la semana pasada: la misma consulta con la semana anterior; sin preguntar
+            el periodo.
+      - say: "la semana pasada"
+        expect:
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Lo gastado la semana pasada: completa la pregunta del periodo si quedaba abierta, o
+            repite la misma consulta.
