@@ -18,17 +18,22 @@ in view; and after a percentage the pair is still the base. The every-token chec
 with a window of its own, or a whole question, is not a patch.
 
 Driven over HTTP on the episodes stack, with a planner that loses the comparison as the local model
-did (`AsksForTheWindow`: no comparison is ever handed to it as a base, R27).
+did (`TheLocalModel`: no comparison is ever handed to it as a base, R27, and where the real model
+read the turn it returns what it returned).
 """
 
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from support.pending import SETTLED, ask, asking_for_the_window_stack
+from support.pending import SETTLED, AsksForTheWindow, ask, asking_for_the_window_stack
 
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.enums import Direction, Period
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
+from finguard_orchestrator.domain.models.planning_result import PlanningResult
+from finguard_orchestrator.domain.services import spanish
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
 MAY_AND_JUNE = "comparame el super de mayo con el de junio"
 JUNE_OR_JULY = "en q gaste mas en restaurantes, junio o julio?"
@@ -41,8 +46,29 @@ def _restore() -> Iterator[None]:
     app.dependency_overrides.clear()
 
 
+class TheLocalModel(AsksForTheWindow):
+    """What qwen2.5-coder:7b returned on 2026-10-08 where it read these turns (fix round 1): «vale y
+    lo mismo pero de restaurantes» was restaurants this month (comparar-mayo-junio 2), and «y en
+    gasolina q?» fuel last month (comparar-mayo-junio 6). Anything else is `AsksForTheWindow`'s,
+    which asks the period of a category said alone, as it did for «restaurantes!» (4)."""
+
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
+        folded = spanish.folded(sentence)
+        if "lo mismo pero" in folded or "gasolina q" in folded:
+            self.asked.append(sentence)
+            fuel = "gasolina" in folded
+            return PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.EXPENSE,
+                    period=RelativePeriod(Period.LAST_MONTH if fuel else Period.THIS_MONTH),
+                    categories=("TRANSPORT_FUEL",) if fuel else ("RESTAURANTS",),
+                )
+            )
+        return await super().plan(sentence, context=context)
+
+
 def _after(*turns: str) -> tuple[Any, dict[str, Any]]:
-    stack = asking_for_the_window_stack()
+    stack = asking_for_the_window_stack(planner=TheLocalModel())
     conversation: dict[str, Any] | None = SETTLED
     for turn in turns[:-1]:
         conversation = ask(stack, turn, conversation)["conversation"]

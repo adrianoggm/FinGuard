@@ -15,8 +15,9 @@ said with their year, as a reply or a follow-up, are those months (compared, R54
 a range word joins them); and «como antes» brings the year of the window in view, or that window
 itself when no month is said.
 
-Driven over HTTP on the episodes stack (today 2026-08-05), with a planner that asks the window and
-never reads the months (`AsksForTheWindow`), so only the deterministic reading can pass.
+Driven over HTTP on the episodes stack (today 2026-08-05), with a planner that answers as the local
+model did (`TheLocalModel`): «¿De qué año…?» for a bare year and for months said «como antes», and
+otherwise the window asked, never the months read. Only the deterministic reading can pass.
 """
 
 from collections.abc import Iterator
@@ -48,8 +49,30 @@ def _restore() -> Iterator[None]:
     app.dependency_overrides.clear()
 
 
+class TheLocalModel(AsksForTheWindow):
+    """What qwen2.5-coder:7b returned on 2026-10-08 (fix round 1): a bare «2026» after a comparison
+    was asked «¿De qué año te refieres? Por ejemplo, 2025 o el año pasado.» (comparar-meses 5), and
+    «junio y julio, como antes» «¿De qué año?» (impro-comparar-meses 5), each with the subject the
+    sentence named on the draft. Anything else is `AsksForTheWindow`'s."""
+
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
+        if window_words.a_year_alone(sentence) is None and not window_words.months_as_before(
+            sentence
+        ):
+            return await super().plan(sentence, context=context)
+        self.asked.append(sentence)
+        return PlanningResult.needs_clarification(
+            "¿De qué año te refieres? Por ejemplo, 2025 o el año pasado.",
+            FinancialPlanDraft(
+                direction=Direction.EXPENSE,
+                categories=tuple(category_words.precisely_named_in(sentence)),
+            ),
+            Slot.YEAR,
+        )
+
+
 def _after(*turns: str) -> tuple[Any, dict[str, Any]]:
-    stack = asking_for_the_window_stack()
+    stack = asking_for_the_window_stack(planner=TheLocalModel())
     conversation: dict[str, Any] | None = SETTLED
     for turn in turns[:-1]:
         conversation = ask(stack, turn, conversation)["conversation"]
