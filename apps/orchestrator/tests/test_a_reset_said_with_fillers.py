@@ -99,3 +99,36 @@ def test_what_is_not_only_reset_words_and_fillers_is_no_reset(sentence: str) -> 
 @pytest.mark.parametrize("sentence", SAID_WITH_FILLERS)
 def test_the_shapes_are_resets_to_the_lexicon_itself(sentence: str) -> None:
     assert is_a_reset(sentence)
+
+
+# --- round 2, M-2: what a filler reset does to money on its way ---------------------------------
+
+
+@pytest.mark.parametrize("sentence", SAID_WITH_FILLERS)
+def test_a_reset_with_fillers_over_a_preview_asks_the_confirmation_again(sentence: str) -> None:
+    """A preview waits for a yes or a no, and its gates answer first: the payment is asked about
+    again, nothing new is prepared, and nothing is confirmed or cancelled at the bank."""
+    stack = episodes.a_stack()
+    preview = ask(stack, "mándale 20 euros a Marta Solis Vega", SETTLED)
+    assert preview["outcome"] == "AWAITING_CONFIRMATION", preview["text"]
+
+    answer = ask(stack, sentence, preview["conversation"])
+
+    assert answer["outcome"] == "AWAITING_CONFIRMATION", answer["text"]
+    assert answer["conversation"]["workflow"] == "PAYMENT_CONFIRMATION"
+    assert len(stack.bank.prepared) == 1, "only the preview itself"
+    assert stack.bank.confirmed == [] and stack.bank.cancelled == []
+
+
+@pytest.mark.parametrize("sentence", SAID_WITH_FILLERS)
+def test_a_reset_with_fillers_drops_a_half_built_bizum(sentence: str) -> None:
+    """Nothing is staged until the amount is known, so the reset drops it and says so."""
+    stack = episodes.a_stack()
+    asked = ask(stack, "hazle un bizum a Marta Solis Vega", SETTLED)
+    assert asked["conversation"]["workflow"] == "PAYMENT_IN_PROGRESS", asked["text"]
+
+    answer = ask(stack, sentence, asked["conversation"])
+
+    assert answer["text"] == RESET_TEXT, answer["text"]
+    assert answer["conversation"]["workflow"] is None
+    assert stack.bank.prepared == []
