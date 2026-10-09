@@ -51,6 +51,7 @@ class PaymentDraft:
     # has already been made by the time it arrives. Resolved against the account's own directory
     # before it is used, because it comes back from a client like everything else here.
     recipient_contact_id: UUID | None = None
+    recipient_iban: str | None = None
     amount_minor: int | None = None
     currency: str = "EUR"
     concept: str | None = None
@@ -118,6 +119,7 @@ class PaymentDraft:
             recipient_contact_id=(
                 turn.recipient_contact_id if names_somebody_else else self.recipient_contact_id
             ),
+            recipient_iban=turn.recipient_iban or self.recipient_iban,
             amount_minor=turn.amount_minor if turn.amount_minor is not None else self.amount_minor,
             concept=turn.concept or self.concept,
             # A later turn only ever *names* a rail; it cannot un-name one. "200 euros" after
@@ -141,6 +143,7 @@ class PaymentDraft:
         return PaymentRequest(
             recipient_name=self.recipient_name,
             recipient_contact_id=self.recipient_contact_id,
+            recipient_iban=self.recipient_iban,
             amount_minor=self.amount_minor,
             currency=self.currency,
             concept=self.concept,

@@ -2,8 +2,9 @@
 
 What stays here and out of LangGraph: the version check, the turn reservation (idempotency), and
 the decision to resume, replay or refuse. The store's compare-and-set stays in the graph's commit
-nodes. Bizum preparation and confirmation run through the same graph and the existing guarded
-banking commands; transfers and bookings remain explicitly unavailable until migrated.
+nodes. Bizum, saved-contact transfers and transfers between the holder's own accounts run through
+the graph and existing guarded banking commands; transfers to typed bank details and bookings
+remain explicitly unavailable.
 
 - **New request** against the held version: reserved, then run from the start under a thread id
   made of the account, conversation, version and request id.
@@ -362,6 +363,14 @@ def _failed(error: DomainError) -> AskFinancialQuestionResult:
 
 
 def _unavailable(capability: str) -> AskFinancialQuestionResult:
+    if capability == "TRANSFER":
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text=(
+                "Solo puedo preparar transferencias a contactos bancarios guardados en este chat; "
+                "no puedo usar datos de cuenta nuevos."
+            ),
+        )
     explanations = {
         "CHART": "Todavía no puedo crear gráficos desde esta conversación.",
         "PAYMENT": "Los pagos aún no están disponibles en este flujo conversacional.",

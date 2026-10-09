@@ -25,6 +25,7 @@ __all__ = [
     "Operation",
     "Patch",
     "PrepareBizum",
+    "PrepareTransfer",
     "PrepareOwnTransfer",
     "PlanFields",
     "Reset",
@@ -146,6 +147,31 @@ class PrepareBizum:
 
 
 @dataclass(frozen=True)
+class PrepareTransfer:
+    """Start or continue a bank transfer to a saved contact.
+
+    The operation identifies the payment rail semantically. The amount and recipient still have
+    to be grounded in the utterance and the holder's contact list, and the deterministic payment
+    reader must independently find the word "transferencia" before banking is called.
+    """
+
+    recipient: str | None
+    amount_minor: int | None
+
+    def __post_init__(self) -> None:
+        if self.recipient is not None and (
+            not self.recipient.strip() or len(self.recipient) > MAX_RECIPIENT_NAME
+        ):
+            raise InvalidValueError("transfer recipient name is invalid")
+        if self.amount_minor is not None and (
+            isinstance(self.amount_minor, bool)
+            or not isinstance(self.amount_minor, int)
+            or not 0 < self.amount_minor <= MAX_PAYMENT_MINOR
+        ):
+            raise InvalidValueError("transfer amount must be a positive bounded integer")
+
+
+@dataclass(frozen=True)
 class PrepareOwnTransfer:
     """Request a guarded transfer to one of the holder's own accounts.
 
@@ -176,5 +202,6 @@ Operation = (
     | Delegate
     | Visualize
     | PrepareBizum
+    | PrepareTransfer
     | PrepareOwnTransfer
 )

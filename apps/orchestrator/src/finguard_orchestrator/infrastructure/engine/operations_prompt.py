@@ -66,26 +66,25 @@ A plan is a list of one-key fields, each at most once. In a patch, omitted field
 in a new ask, omitted fields are unspecified. Fields: direction EXPENSE/INCOME/ALL; window named
 period, counted LAST_N_DAYS or LAST_N_MONTHS with n, or inclusive ISO date range; categories and
 excluded_categories use listed keys; merchants/excluded_merchants are exact shop names;
-merchant_terms are corrected shop-name fragments for place types ("en el gimnasio" -> ["gimnasio"],
-omit articles); people/accounts are names as said ([] accounts means all); metric SUM/COUNT/AVERAGE/
+merchant_terms are fragments for place types ("en el gimnasio" -> ["gimnasio"]); people/accounts
+are names as said ([] accounts means all); metric SUM/COUNT/AVERAGE/
 PERIOD_AVERAGE/CUMULATIVE/FREQUENCY/RECURRENCE; group_by is a breakdown; limit is top N movements
 or groups. Do not set a limit unless asked for top N or for highest-spending months.
-clear_limit=true in a patch removes a prior limit when all results are requested; without it the
-limit stays. PERIOD_AVERAGE/CUMULATIVE require DAY/WEEK/MONTH grouping.
+On all-results requests,
+clear_limit=true removes a prior limit; otherwise it stays. PERIOD_AVERAGE/CUMULATIVE require
+DAY/WEEK/MONTH grouping.
 
 ## Operations
 Return {"operations":[...]} with 1-4 one-key operations, applied in order:
-ask(plan) starts a complete query; patch(target=focus|earlier|latest|pending, changes=plan) changes
-only listed fields; compare(shared, earlier, latest) compares windows; measure is $measures;
-select_operand keeps earlier/latest; reset starts over; restore_previous=N reruns the explicitly
-requested numbered history item (1=newest); balance(accounts) reads current money; clarify is
-WINDOW/SUBJECT/ACCOUNT/PERSON/OPERAND; smalltalk is GREETING/THANKS/IDENTITY/HELP;
-create_visualization=AUTO/BAR/LINE charts the last result; update_visualization=AUTO/BAR/LINE
-restyles the active chart without a bank call; prepare_bizum(recipient, amount_minor) starts or
-continues a draft (null means missing; never invent the amount);
-prepare_own_transfer(destination_account) starts or
-continues a transfer between the holder's accounts (null means no destination was named this turn);
-delegate is PAYMENT/TRANSFER/BOOKING/CHART/UNSUPPORTED.
+ask starts a complete query; patch changes listed fields on focus/earlier/latest/pending; compare
+compares windows; measure selects a metric; select_operand selects earlier/latest; reset clears;
+restore_previous=N reruns history (1=newest); balance reads accounts; clarify is
+WINDOW/SUBJECT/ACCOUNT/PERSON/OPERAND; smalltalk is GREETING/THANKS/IDENTITY/HELP.
+create_visualization/update_visualization choose AUTO/BAR/LINE for result/chart (no bank call);
+prepare_bizum(recipient, amount_minor) starts/continues Bizum; prepare_transfer(recipient,
+amount_minor) prepares a saved-contact transfer and requires "transferencia" in the sentence;
+null means missing; never invent amounts. prepare_own_transfer(destination_account) moves money
+between the holder's accounts. delegate is PAYMENT/TRANSFER/BOOKING/CHART/UNSUPPORTED.
 
 ## Examples
 $examples
@@ -113,8 +112,9 @@ periods chronologically. A follow-up patches or compares the current focus; peri
 change only its window. Use target pending only when the state shows an open question; with none
 open, a correction patches focus. Explicit "return to the previous query" restores history item 1.
 "All categories/movements" clears top-N. Explicit account names must populate accounts; [] means all
-accounts. Transfers/bookings delegate. Bizum uses prepare_bizum and only the amount explicitly said
-this turn. Visual operations stand alone; restyle a shown chart, otherwise create one.
+accounts. A saved-contact transfer uses prepare_transfer; Bizum uses prepare_bizum. Amounts must be
+said. Other transfers and bookings delegate. Visual operations stand alone; restyle a shown chart,
+otherwise create one.
 Operations JSON only.
 """)
 
@@ -334,6 +334,13 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             "",
             "Envía un bizum de 25 euros a Marta Solis Vega",
             _answer({"prepare_bizum": {"recipient": "Marta Solis Vega", "amount_minor": 2500}}),
+        ),
+        (
+            "",
+            "Haz una transferencia de 25 euros a Aitor Beltran Diaz",
+            _answer(
+                {"prepare_transfer": {"recipient": "Aitor Beltran Diaz", "amount_minor": 2500}}
+            ),
         ),
         (
             "a query",

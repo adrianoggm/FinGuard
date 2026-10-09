@@ -153,6 +153,9 @@ class PrepareChosenPaymentCommand(Command[PaymentAnswer]):
     idempotency_key: str
     rail: Rail = Rail.BIZUM
     recipient_contact_id: UUID | None = None
+    # Present only for transfers. Conversation code must supply an exact IBAN extracted from the
+    # user's own message and checked against that message; the model reader is not its source.
+    recipient_iban: str | None = None
 
 
 @dataclass(frozen=True)
@@ -361,6 +364,7 @@ class PrepareChosenPaymentHandler:
                 currency=command.currency,
                 rail=command.rail,
                 recipient_contact_id=command.recipient_contact_id,
+                recipient_iban=command.recipient_iban,
             )
         except InvalidValueError as refused:
             # A payment of nothing, a negative one, or one beyond the ceiling. The same value

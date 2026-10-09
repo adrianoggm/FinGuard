@@ -102,14 +102,16 @@ def still_missing(draft: PaymentDraft) -> str:
             return f"¿A quién le quieres enviar {amount}?"
         return "¿A quién le quieres enviar el dinero?"
     to = f" a {draft.recipient_name}" if draft.recipient_name else ""
-    return f"¿De cuánto quieres hacerle el bizum{to}?"
+    payment = "la transferencia" if draft.rail is Rail.TRANSFER else "el bizum"
+    return f"¿De cuánto quieres hacerle {payment}{to}?"
 
 
 def unsure(draft: PaymentDraft) -> str:
     """A useful answer when the user cannot fill the field the draft is waiting for."""
     if PaymentField.RECIPIENT in draft.missing:
         return f"No pasa nada. Puedo enseñarte tus contactos si quieres. {still_missing(draft)}"
-    return f"No pasa nada. {still_missing(draft)} También puedes cancelar el bizum."
+    payment = "la transferencia" if draft.rail is Rail.TRANSFER else "el bizum"
+    return f"No pasa nada. {still_missing(draft)} También puedes cancelar {payment}."
 
 
 def paused(draft: PaymentDraft) -> str:
@@ -174,6 +176,18 @@ def no_account_for(name: str) -> str:
     return (
         f"Tengo a {name} en tus contactos, pero no su número de cuenta, así que no puedo hacerle "
         f"una transferencia. Puedes darme la cuenta, o hacerle un bizum."
+    )
+
+
+def saved_contact_transfer_unavailable(name: str) -> str:
+    """Be honest when a saved contact cannot receive a transfer in the graph flow.
+
+    This graph accepts saved contacts only. It does not collect an IBAN from free text, so do not
+    invite the holder to supply one and then silently route it to another coordinator.
+    """
+    return (
+        f"{name} no tiene una cuenta bancaria guardada para transferencias. "
+        "No he preparado ningún pago. Puedes hacerle un Bizum o elegir un contacto con cuenta."
     )
 
 

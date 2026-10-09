@@ -240,7 +240,7 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 "required": ["shared", "earlier", "latest"],
                 "additionalProperties": False,
             }
-        elif name == "prepare_bizum":
+        elif name in {"prepare_bizum", "prepare_transfer"}:
             properties = field.get("properties", {})
             value = {
                 "type": "object",

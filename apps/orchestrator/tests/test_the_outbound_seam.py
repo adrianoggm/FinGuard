@@ -42,7 +42,7 @@ from finguard_orchestrator.application.queries.list_contacts import (
 )
 from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, get_query_bus
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, Rail
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
@@ -81,6 +81,7 @@ class Recorded:
     def __init__(self) -> None:
         self.request_ids: list[str | None] = []
         self.idempotency_keys: list[str | None] = []
+        self.bodies: list[dict[str, object]] = []
 
     @property
     def only_id(self) -> str | None:
@@ -110,7 +111,7 @@ def banking_answering(status: int = 200, body: object = None) -> Iterator[tuple[
             recorded.idempotency_keys.append(self.headers.get("Idempotency-Key"))
             length = int(self.headers.get("Content-Length") or 0)
             if length:
-                self.rfile.read(length)
+                recorded.bodies.append(json.loads(self.rfile.read(length)))
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(answer)))
@@ -455,6 +456,32 @@ async def test_a_payment_still_carries_its_idempotency_key_beside_the_id() -> No
 
     assert recorded.request_ids == ["turn-0042"]
     assert recorded.idempotency_keys == ["idem-key-1"]
+
+
+async def test_a_typed_transfer_iban_reaches_banking_as_the_destination() -> None:
+    with banking_answering() as (base_url, recorded):
+        with suppress(BankingUnavailableError, QueryRejectedError):
+            await HttpPayments(base_url=base_url, timeout_seconds=5.0).prepare(
+                PaymentRequest(
+                    recipient_name="Destinatario indicado",
+                    amount_minor=1000,
+                    currency="EUR",
+                    rail=Rail.TRANSFER,
+                    recipient_iban="ES9121000418450200051332",
+                ),
+                account_id=ACCOUNT,
+                key="idem-typed-iban",
+            )
+
+    assert recorded.bodies == [
+        {
+            "recipientName": "Destinatario indicado",
+            "recipientIban": "ES9121000418450200051332",
+            "amountMinor": 1000,
+            "currency": "EUR",
+            "rail": "TRANSFER",
+        }
+    ]
 
 
 # --- the two ends are the same header ----------------------------------------------------

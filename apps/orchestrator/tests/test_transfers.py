@@ -22,7 +22,7 @@ from finguard_orchestrator.application.commands.pay import (
     PreparePaymentHandler,
 )
 from finguard_orchestrator.domain.enums import PaymentOutcome, Rail
-from finguard_orchestrator.domain.errors import RecipientHasNoAccountError
+from finguard_orchestrator.domain.errors import InvalidValueError, RecipientHasNoAccountError
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.payment_reading import PaymentReading
 from finguard_orchestrator.domain.services import payment_words
@@ -86,6 +86,45 @@ def test_naming_a_rail_later_still_changes_it() -> None:
     started = PaymentDraft(recipient_name="Elena Marin", rail=Rail.BIZUM)
 
     assert started.filled_with(PaymentDraft(rail=Rail.TRANSFER)).rail is Rail.TRANSFER
+
+
+def test_typed_iban_is_only_a_transfer_destination() -> None:
+    request = PaymentRequest(
+        recipient_name="Destinatario indicado",
+        amount_minor=2_000,
+        currency="EUR",
+        rail=Rail.TRANSFER,
+        recipient_iban="ES9121000418450200051332",
+    )
+    assert request.recipient_iban == "ES9121000418450200051332"
+
+    with pytest.raises(InvalidValueError):
+        PaymentRequest(
+            recipient_name="Destinatario indicado",
+            amount_minor=2_000,
+            currency="EUR",
+            rail=Rail.BIZUM,
+            recipient_iban="ES9121000418450200051332",
+        )
+
+    with pytest.raises(InvalidValueError):
+        PaymentRequest(
+            recipient_name="Destinatario indicado",
+            amount_minor=2_000,
+            currency="EUR",
+            rail=Rail.TRANSFER,
+            recipient_iban="invalid",
+        )
+
+    assert payment_words.iban_in("IBAN ES91 2100 0418 4502 0005 1332") == (
+        "ES9121000418450200051332"
+    )
+    assert payment_words.amount_in("ES9121000418450200051332") is None
+    assert payment_words.amount_in("IBAN ES91 2100 0418 4502 0005 1333") is None
+    assert payment_words.iban_in("IBAN ES91 2100 0418 4502 0005 1332 20 euros") == (
+        "ES9121000418450200051332"
+    )
+    assert payment_words.amount_in("IBAN ES91 2100 0418 4502 0005 1332 20 euros") == 2_000
 
 
 # --- a contact who cannot be transferred to --------------------------------------------

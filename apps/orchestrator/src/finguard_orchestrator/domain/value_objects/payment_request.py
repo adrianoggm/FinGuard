@@ -41,6 +41,9 @@ class PaymentRequest:
     # display name are ever told apart. The name stays because it is what the sentence is checked
     # against and what the assistant says while the payment is being built.
     recipient_contact_id: UUID | None = None
+    # A recipient account supplied explicitly by the holder. It is never read from an LLM
+    # operation; conversational callers must ground it in the current user turn first.
+    recipient_iban: str | None = None
     # How the money leaves. Read from the sentence rather than from the model — see
     # `payment_words.rail_in` — so a rail is never something a decoder chose.
     rail: Rail = Rail.BIZUM
@@ -65,9 +68,28 @@ class PaymentRequest:
             # a rail without one would fall through to banking as a payment to nobody.
             if self.to_account_id is None:
                 raise InvalidValueError("an internal transfer needs one of your own accounts")
-            if self.recipient_name.strip() or self.recipient_contact_id is not None:
+            if (
+                self.recipient_name.strip()
+                or self.recipient_contact_id is not None
+                or self.recipient_iban is not None
+            ):
                 raise InvalidValueError("an internal transfer goes to an account, not to a person")
             return
+        if self.recipient_iban is not None:
+            if self.rail is not Rail.TRANSFER:
+                raise InvalidValueError("a typed account number is only a transfer destination")
+            if self.recipient_contact_id is not None:
+                raise InvalidValueError("a transfer uses a saved contact or a typed account")
+            if not 15 <= len(self.recipient_iban) <= 34:
+                raise InvalidValueError("a typed account number has an invalid length")
+            if (
+                not self.recipient_iban.isascii()
+                or not self.recipient_iban[:2].isalpha()
+                or not self.recipient_iban[2:4].isdigit()
+                or not self.recipient_iban[4:].isalnum()
+                or _iban_remainder(self.recipient_iban) != 1
+            ):
+                raise InvalidValueError("a typed account number must be alphanumeric")
         if self.to_account_id is not None:
             raise InvalidValueError("one of your own accounts is only an internal destination")
         if not self.recipient_name.strip():
@@ -80,3 +102,12 @@ class PaymentRequest:
             raise InvalidValueError(f"a concept is at most {MAX_CONCEPT} characters")
         if len(self.currency) != CURRENCY_LENGTH or not self.currency.isalpha():
             raise InvalidValueError(f"currency must be 3 letters, got {self.currency!r}")
+
+
+def _iban_remainder(compact: str) -> int:
+    rearranged = compact[4:] + compact[:4]
+    digits = "".join(
+        str(ord(character) - (ord("A") - 10)) if character.isalpha() else character
+        for character in rearranged
+    )
+    return int(digits) % 97

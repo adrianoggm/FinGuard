@@ -88,6 +88,7 @@ _CLASSES: Final[dict[str, type]] = {
         operations.Delegate,
         operations.Visualize,
         operations.PrepareBizum,
+        operations.PrepareTransfer,
         operations.PrepareOwnTransfer,
         PlanFields,
         RelativePeriod,

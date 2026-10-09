@@ -106,6 +106,7 @@ from finguard_orchestrator.domain.enums import (
 )
 from finguard_orchestrator.domain.errors import (
     AmbiguousRecipientError,
+    RecipientHasNoAccountError,
     RecipientNotFoundError,
 )
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
@@ -642,6 +643,7 @@ class Bank:
 
     def __init__(self) -> None:
         self.prepared: list[PaymentRequest] = []
+        self.no_transfer_contacts: set[uuid.UUID] = set()
         # The account each payment was prepared from, beside it: the credential's, which no
         # setting about what an analytics question means may move.
         self.sources: list[uuid.UUID] = []
@@ -651,6 +653,11 @@ class Bank:
     async def prepare(self, request: PaymentRequest, *, account_id: uuid.UUID, key: str):  # type: ignore[no-untyped-def]
         self.prepared.append(request)
         self.sources.append(account_id)
+        if (
+            request.rail is Rail.TRANSFER
+            and request.recipient_contact_id in self.no_transfer_contacts
+        ):
+            raise RecipientHasNoAccountError(request.recipient_name)
         if request.rail is Rail.INTERNAL:
             # An internal transfer names an account and nobody at all, so there is no recipient to
             # resolve. Banking snapshots the holder's own label for it onto the intent, which is why
@@ -683,12 +690,14 @@ class Bank:
         return PaymentPreview(
             intent_id=INTENT,
             recipient=who.display_name,
-            recipient_phone=who.phone,
+            recipient_phone=who.phone if request.rail is Rail.BIZUM else None,
             amount_minor=request.amount_minor,
             currency=request.currency,
             balance_before_minor=215_648,
             balance_after_minor=215_648 - request.amount_minor,
             expires_at=datetime(2026, 8, 5, 10, 5, tzinfo=UTC),
+            rail=request.rail,
+            recipient_iban="ES9121000418450200051332" if request.rail is Rail.TRANSFER else None,
         )
 
     async def confirm(self, *, account_id: uuid.UUID, intent_id: uuid.UUID) -> PaymentReceipt:

@@ -19,7 +19,10 @@ idempotency and compare-and-set version checks remain mandatory at the operation
 
 The graph's versioned conversation state is the source of truth. It includes the active financial
 plan, pending operation or clarification, recent turns, a bounded aggregate-only result artifact,
-and the verified chart specification/profile with result and chart versions. Its version-9 schema
+and the verified chart specification/profile with result and chart versions. Its canonical state
+schema is version 10, its LangGraph checkpoint schema is version 11, and the conversation graph
+version is `conversation/12`; these advance independently when their respective payloads or behavior
+change.
 also has typed slots for an unfinished payment draft or the exact bank-authored confirmation
 preview, so a later graph turn can resume from canonical state without reconstructing payment data
 from the client. Bizum preparation and confirmation now run in the same conversation graph. Mixed
@@ -41,7 +44,7 @@ and executes it against banking again, so displayed figures always come from a f
 The selected entry is moved to the active focus while the other entries remain navigable; when a
 later query replaces the active focus, it is added back to history. This allows revisiting a query
 after other queries or a process restart without preserving stale figures.
-Prior schema-5/6 state remains readable; the graph checkpoint version advances so paused workflows
+Prior schema-5 through schema-9 state remains readable; the graph version advances so paused workflows
 are not resumed under changed semantics.
 
 PostgreSQL is the durable store for graph checkpoints, canonical state, turn reservations and
@@ -84,15 +87,17 @@ is off; the web Bizum and own-account transfer tabs now enter the canonical chat
    concurrency, idempotency and schema migration together.
 3. Finish chart explanation, analytical regrouping and browser-level rendering. Visual-only edits
    must retain result lineage and make zero banking reads.
-4. Extend graph coverage to remaining transfer and booking flows, preserving banking authorization,
-   confirmation and idempotency checks.
+4. Extend graph coverage to transfers using newly typed bank details and booking flows, preserving
+   banking authorization, confirmation and idempotency checks. Saved-contact transfers now use the
+   existing guarded payment command through the graph.
 5. Remove legacy conversation coordination only after API and browser coverage of full
    multi-turn analytics, visuals and protected financial actions; then remove the rollout flag.
 
 Until each capability is migrated, it must be explicitly unavailable on the graph route or handled
 by a typed, non-linguistic adapter. It must never silently send the user's words to a legacy
-interpreter. The graph route prepares and confirms Bizum and own-account transfers in its own
-conversation checkpoint. External transfers and booking remain explicitly unavailable there. A
+interpreter. The graph route prepares and confirms Bizum, saved-contact transfers and own-account
+transfers in its own conversation checkpoint. Transfers to newly typed bank details and booking
+remain explicitly unavailable there. A
 payment/transfer/booking workflow echoed from a
 legacy session is refused without invoking either coordinator; its complete confirmation payload is
 preserved on the wire so this refusal cannot discard or accidentally confirm a staged payment. Such

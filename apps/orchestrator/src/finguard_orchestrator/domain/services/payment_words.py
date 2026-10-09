@@ -130,6 +130,38 @@ _TRAILING_FILLER: Final = re.compile(
 # wrong twice: an open set cannot be listed, and every unlisted spelling costs a whole conversation.
 _RAIL_LEXICON: Final = ("bizum", "transferencia")
 _WORD: Final = re.compile(r"[a-z]+")
+_IBAN: Final = re.compile(
+    r"(?<![A-Za-z0-9])((?:ES\d{2}(?:[ -]?\d{4}){5}|"
+    r"[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}))(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+
+
+def iban_in(sentence: str) -> str | None:
+    """Read one checksum-valid IBAN exactly as written by the user, never from model output."""
+    matches = tuple(_IBAN.finditer(sentence))
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    compact = re.sub(r"[ -]", "", match.group(1)).upper()
+    if not 15 <= len(compact) <= 34:
+        return None
+    rearranged = compact[4:] + compact[:4]
+    digits = "".join(
+        str(ord(char) - (ord("A") - 10)) if char.isalpha() else char for char in rearranged
+    )
+    if int(digits) % 97 != 1:
+        return None
+    return compact
+
+
+def mentions_iban(sentence: str) -> bool:
+    folded = spanish.folded(sentence)
+    return "iban" in folded or bool(_IBAN.search(sentence))
+
+
+def _without_iban_candidate(sentence: str) -> str:
+    return _IBAN.sub(" ", sentence)
 
 
 def names_a_rail(sentence: str) -> bool:
@@ -199,6 +231,7 @@ def amount_in(sentence: str) -> int | None:
     The first figure wins. "15 euros de los 100 que le debo" is a payment of 15 — reading the
     largest or the last would both be defensible, and neither is what the sentence says first.
     """
+    sentence = _without_iban_candidate(sentence)
     if _NOT_AN_AMOUNT.search(sentence):
         return None
 
@@ -226,6 +259,7 @@ def mentions_amount(sentence: str) -> bool:
     # A currency marker distinguishes a too-large amount from a phone number. `amount_in` then
     # refuses it on the configured ceiling, while this predicate prevents silently reusing a
     # previous amount in a pending draft.
+    sentence = _without_iban_candidate(sentence)
     if _EXPLICIT_CURRENCY_AMOUNT.search(sentence):
         return True
     if _NOT_AN_AMOUNT.search(sentence):
@@ -488,3 +522,8 @@ _A_TRANSFER: Final = re.compile(
 def rail_in(sentence: str) -> Rail:
     """The rail this sentence asks for. BIZUM unless it names a transfer."""
     return Rail.TRANSFER if _A_TRANSFER.search(spanish.folded(sentence)) else Rail.BIZUM
+
+
+def names_transfer(sentence: str) -> bool:
+    """Whether this turn explicitly names a bank transfer rail."""
+    return _A_TRANSFER.search(spanish.folded(sentence)) is not None

@@ -73,6 +73,11 @@ class HttpPayments:
         recipient: dict[str, object]
         if request.to_account_id is not None:
             recipient = {"toAccountId": str(request.to_account_id)}
+        elif request.recipient_iban is not None:
+            recipient = {
+                "recipientName": request.recipient_name,
+                "recipientIban": request.recipient_iban,
+            }
         elif request.recipient_contact_id is not None:
             recipient = {"recipientContactId": str(request.recipient_contact_id)}
         else:

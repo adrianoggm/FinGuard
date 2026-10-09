@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from finguard_orchestrator.application.graph import codec
-from finguard_orchestrator.domain.engine.operations import Ask
+from finguard_orchestrator.domain.engine.operations import Ask, PrepareTransfer
 from finguard_orchestrator.domain.engine.state import (
     ActiveQueryResult,
     DialogueState,
@@ -78,7 +78,15 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
     candidates = (uuid4(), uuid4())
     draft_state = DialogueState(
         uuid4(),
-        payment=PaymentDraftPending(PaymentDraft(amount_minor=2_600), candidates),
+        payment=PaymentDraftPending(
+            PaymentDraft(
+                recipient_name="Aitor Beltran Diaz",
+                amount_minor=2_600,
+                rail=Rail.TRANSFER,
+                recipient_iban="ES9121000418450200051332",
+            ),
+            candidates,
+        ),
     )
     confirmation_state = DialogueState(
         uuid4(), payment=PaymentConfirmationPending(preview, "workflow-opaque-123")
@@ -90,6 +98,7 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
     assert draft_restored == draft_state
     assert isinstance(draft_restored.payment, PaymentDraftPending)
     assert draft_restored.payment.candidate_contact_ids == candidates
+    assert draft_restored.payment.draft.recipient_iban == "ES9121000418450200051332"
     assert confirmation_restored == confirmation_state
     assert confirmation_restored.payment is not None
     assert confirmation_restored.payment.preview.intent_id == intent_id
@@ -146,6 +155,7 @@ def test_structured_operations_round_trip_dates_and_closed_enum_values() -> None
                 categories=("RESTAURANTS",),
             )
         ),
+        PrepareTransfer("Aitor Beltran Diaz", 1_200),
     )
 
     decoded = codec.loads(codec.dumps(operations))

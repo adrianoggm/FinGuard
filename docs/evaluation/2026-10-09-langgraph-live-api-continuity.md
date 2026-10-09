@@ -37,5 +37,6 @@ different fingerprint.
 
 This is a direct API check, not a browser rendering run. Existing browser evidence for Vega rendering
 and chart restyling is recorded in `2026-10-09-langgraph-browser-smoke.md`. The live stack's build SHA
-was unknown, this was a single seeded conversation, and the full conversation corpus, external
-transfers and bookings remain unverified or unmigrated.
+was unknown and this was a single seeded conversation. Saved-contact transfer preparation is now
+covered by graph tests but has not had a live banking or browser run. Transfers to newly typed bank
+details and bookings remain unmigrated; the full conversation corpus is also outstanding.

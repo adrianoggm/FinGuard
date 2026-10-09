@@ -43,6 +43,7 @@ from finguard_orchestrator.domain.engine.operations import (
     PlanFields,
     PrepareBizum,
     PrepareOwnTransfer,
+    PrepareTransfer,
     RestorePrevious,
     Visualize,
 )
@@ -61,6 +62,7 @@ from finguard_orchestrator.domain.enums import (
     PaymentOutcome,
     Period,
     PlanningOutcome,
+    Rail,
 )
 from finguard_orchestrator.domain.errors import BankingUnavailableError, NotAuthorisedError
 from finguard_orchestrator.domain.models.conversation import Workflow
@@ -811,7 +813,10 @@ async def test_a_money_flow_is_refused_without_bank_reads_or_execution(to: Any) 
 
     assert answer.result is not None and answer.delegate_to is None
     assert answer.state.version == 1
-    assert "aún no están disponibles" in answer.result.text
+    if to == "TRANSFER":
+        assert "contactos bancarios guardados" in answer.result.text
+    else:
+        assert "disponibles" in answer.result.text
     assert world.ledger.ran == []
     assert world.assessor.seen == []
 
@@ -1161,6 +1166,104 @@ async def test_conversation_graph_prepares_and_resumes_bizum_on_one_checkpoint()
         account_id=ACCOUNT,
         workflow=Workflow.PAYMENT_CONFIRMATION,
     )
+
+
+@pytest.mark.asyncio
+async def test_graph_prepares_a_grounded_contact_transfer_and_requires_explicit_refusal() -> None:
+    world = World((PrepareTransfer("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+
+    preview = await world.ask(
+        sentence="Haz una transferencia de 20 euros a Aitor Beltran Diaz",
+        request_id="prepare-transfer",
+        caller_scopes=scopes,
+    )
+
+    assert preview.result is not None
+    assert preview.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert preview.state.version == 1
+    assert isinstance(preview.state.payment, PaymentConfirmationPending)
+    assert bank.prepared[0].rail is Rail.TRANSFER
+    assert bank.prepared[0].recipient_contact_id == UUID(int=8)
+    assert preview.state.payment.preview.recipient_iban == "ES9121000418450200051332"
+    assert bank.confirmed == []
+
+    refused = await world.ask(
+        conversation_id=preview.state.conversation_id,
+        version=preview.state.version,
+        sentence="no",
+        request_id="cancel-transfer",
+        caller_scopes=scopes,
+    )
+
+    assert refused.result is not None
+    assert refused.result.outcome == PaymentOutcome.CANCELLED.value
+    assert refused.state.version == 2
+    assert bank.cancelled == [INTENT]
+    assert bank.confirmed == []
+
+
+@pytest.mark.asyncio
+async def test_transfer_operation_cannot_change_a_bizum_sentence_into_a_transfer() -> None:
+    world = World((PrepareTransfer("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+
+    answer = await world.ask(
+        sentence="Haz un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="mismatched-transfer-rail",
+        caller_scopes=frozenset({"payments:prepare"}),
+    )
+
+    assert answer.result is not None
+    assert answer.result.outcome == PlanningOutcome.INVALID_DOMAIN.value
+    assert bank.prepared == [] and bank.confirmed == []
+
+
+@pytest.mark.asyncio
+async def test_transfer_to_contact_without_saved_account_refuses_without_claiming_iban_input() -> (
+    None
+):
+    world = World((PrepareTransfer("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+    bank.no_transfer_contacts.add(UUID(int=8))
+
+    answer = await world.ask(
+        sentence="Haz una transferencia de 20 euros a Aitor Beltran Diaz",
+        request_id="transfer-without-saved-account",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert answer.result is not None
+    assert "no tiene una cuenta bancaria guardada" in answer.result.text
+    assert "No he preparado ningún pago." in answer.result.text
+    assert answer.state.version == 1
+    assert answer.state.payment is None
+    assert bank.prepared[0].rail is Rail.TRANSFER
+    assert bank.confirmed == [] and bank.cancelled == []
+
+
+@pytest.mark.asyncio
+async def test_graph_uses_user_typed_iban_for_a_transfer_to_a_known_contact() -> None:
+    world = World((PrepareTransfer("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+    bank.no_transfer_contacts.add(UUID(int=8))
+
+    answer = await world.ask(
+        sentence=(
+            "Haz una transferencia de 20 euros a Aitor Beltran Diaz, "
+            "IBAN ES91 2100 0418 4502 0005 1332"
+        ),
+        request_id="typed-iban-transfer",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert answer.result is not None
+    assert answer.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert bank.prepared[0].rail is Rail.TRANSFER
+    assert bank.prepared[0].recipient_iban == "ES9121000418450200051332"
+    assert bank.prepared[0].recipient_contact_id is None
+    assert bank.confirmed == []
 
 
 @pytest.mark.asyncio

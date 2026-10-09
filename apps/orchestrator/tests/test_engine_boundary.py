@@ -224,7 +224,7 @@ def test_the_graph_limits_sentence_uses_and_normalizes_confirmation_before_check
         "payment_input.amount(...)",
         "payment_input.destination_candidates(...)",
         "payment_input.mentions_amount(...)",
-        "payment_input.resolve_bizum_draft(...)",
+        "payment_input.resolve_contact_payment_draft(...)",
     ]
 
 

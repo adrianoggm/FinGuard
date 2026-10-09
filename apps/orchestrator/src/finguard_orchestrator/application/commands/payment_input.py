@@ -7,8 +7,9 @@ payment flows and never calls banking; those remain in the graph and existing co
 from dataclasses import dataclass
 from uuid import UUID
 
-from finguard_orchestrator.domain.engine.operations import PrepareBizum
+from finguard_orchestrator.domain.engine.operations import PrepareBizum, PrepareTransfer
 from finguard_orchestrator.domain.engine.state import OwnTransferDraftPending
+from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.models.account_summary import Holding
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.services import account_words, payment_words
@@ -49,36 +50,56 @@ def mentions_amount(sentence: str) -> bool:
 
 
 @dataclass(frozen=True)
-class BizumDraftResolution:
+class ContactPaymentDraftResolution:
     draft: PaymentDraft
     candidate_contact_ids: tuple[UUID, ...] = ()
     rejected: bool = False
 
 
-def resolve_bizum_draft(
+def resolve_contact_payment_draft(
     sentence: str,
-    operation: PrepareBizum,
+    operation: PrepareBizum | PrepareTransfer,
     contacts: tuple[Contact, ...],
     *,
     previous: PaymentDraft | None = None,
     candidate_contact_ids: tuple[UUID, ...] = (),
-) -> BizumDraftResolution:
+) -> ContactPaymentDraftResolution:
     """Merge only slots explicit in this utterance into a saved draft.
 
-    The typed operation selects Bizum and may restate either slot. Closed readers bind the amount
-    and contact to the user's words and account directory. The model cannot resolve two matching
-    contacts or supply a value that was not spoken or already in the draft.
+    The typed operation selects Bizum or bank transfer. A transfer rail must also be present in
+    this utterance, except when continuing an already grounded transfer draft. Closed readers bind
+    the amount and contact to the user's words and account directory. The model cannot resolve two
+    matching contacts or supply a value that was not spoken or already in the draft.
     """
     prior = previous or PaymentDraft()
+    rail = Rail.TRANSFER if isinstance(operation, PrepareTransfer) else Rail.BIZUM
+    if (
+        previous is not None
+        and previous.rail is not rail
+        and not payment_words.names_a_rail(sentence)
+    ):
+        return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
+    if payment_words.names_a_rail(sentence) and payment_words.rail_in(sentence) is not rail:
+        return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
+    if (
+        rail is Rail.TRANSFER
+        and not payment_words.names_transfer(sentence)
+        and (previous is None or previous.rail is not Rail.TRANSFER)
+    ):
+        return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
     amount_minor = payment_words.amount_in(sentence)
+    spoken_iban = payment_words.iban_in(sentence)
+    if payment_words.mentions_iban(sentence) and spoken_iban is None:
+        return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
+    recipient_iban = spoken_iban or prior.recipient_iban
     if payment_words.mentions_amount(sentence) and amount_minor is None:
-        return BizumDraftResolution(prior, candidate_contact_ids, rejected=True)
+        return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
     if amount_minor is not None and operation.amount_minor not in (None, amount_minor):
-        return BizumDraftResolution(prior, candidate_contact_ids, rejected=True)
+        return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
     if amount_minor is None:
         amount_minor = prior.amount_minor
         if operation.amount_minor is not None and operation.amount_minor != amount_minor:
-            return BizumDraftResolution(prior, candidate_contact_ids, rejected=True)
+            return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
 
     spoken = payment_words.contacts_in(sentence, contacts)
     if candidate_contact_ids:
@@ -97,29 +118,30 @@ def resolve_bizum_draft(
         if operation.recipient is not None and (
             len(modeled) != 1 or modeled[0].contact_id != contact.contact_id
         ):
-            return BizumDraftResolution(prior, candidate_contact_ids, rejected=True)
+            return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
     elif operation.recipient is not None:
         if len(modeled) != 1 or prior.recipient_contact_id != modeled[0].contact_id:
-            return BizumDraftResolution(prior, candidate_contact_ids, rejected=True)
+            return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
         contact = modeled[0]
     elif prior.recipient_contact_id is not None:
         contact = next((c for c in contacts if c.contact_id == prior.recipient_contact_id), None)
         if contact is None:
-            return BizumDraftResolution(prior, candidate_contact_ids, rejected=True)
+            return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
 
     if operation.recipient is not None and contact is None and not candidates:
         # An unknown name cannot be passed to banking for a fuzzy guess.
-        return BizumDraftResolution(prior, candidate_contact_ids, rejected=True)
+        return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
 
     draft = PaymentDraft(
         recipient_name=contact.display_name if contact else None,
         recipient_contact_id=contact.contact_id if contact else None,
+        recipient_iban=recipient_iban,
         amount_minor=amount_minor,
         currency=prior.currency,
         concept=prior.concept,
-        rail=prior.rail,
+        rail=rail,
     )
-    return BizumDraftResolution(
+    return ContactPaymentDraftResolution(
         draft,
         tuple(candidate.contact_id for candidate in candidates),
     )

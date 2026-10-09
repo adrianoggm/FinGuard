@@ -27,6 +27,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Patch,
     PlanFields,
     PrepareBizum,
+    PrepareTransfer,
     Reset,
     RestorePrevious,
     SelectOperand,
@@ -603,6 +604,7 @@ def test_operations_are_keyed_by_their_name() -> None:
         "create_visualization",
         "update_visualization",
         "prepare_bizum",
+        "prepare_transfer",
         "prepare_own_transfer",
     ]
 
@@ -625,6 +627,24 @@ def test_bizum_is_a_typed_prepare_operation_with_a_bounded_integer_amount() -> N
     with pytest.raises(UnreadableError):
         read(
             '{"operations":[{"prepare_bizum":{"recipient":"Marta","amount_minor":0}}]}',
+            CATALOGUE,
+        )
+
+
+def test_bank_transfer_is_a_separate_typed_prepare_operation() -> None:
+    assert read(
+        '{"operations":[{"prepare_transfer":{"recipient":"Aitor Beltran Diaz",'
+        '"amount_minor":1200}}]}',
+        CATALOGUE,
+    ) == (PrepareTransfer("Aitor Beltran Diaz", 1_200),)
+    assert read(
+        '{"operations":[{"prepare_transfer":{"recipient":"Aitor Beltran Diaz",'
+        '"amount_minor":null}}]}',
+        CATALOGUE,
+    ) == (PrepareTransfer("Aitor Beltran Diaz", None),)
+    with pytest.raises(UnreadableError):
+        read(
+            '{"operations":[{"prepare_transfer":{"recipient":"Aitor","amount_minor":0}}]}',
             CATALOGUE,
         )
 

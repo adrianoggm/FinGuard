@@ -146,6 +146,8 @@ class RecipientHasNoAccountError(DomainError):
     actually missing — an account number — is a thing they can supply.
     """
 
+    code = "contact_has_no_account"
+
     def __init__(self, name: str) -> None:
         super().__init__(f"no account number saved for {name}")
         self.name = name

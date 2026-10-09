@@ -73,6 +73,7 @@ from finguard_orchestrator.domain.engine.operations import (
     PlanFields,
     PrepareBizum,
     PrepareOwnTransfer,
+    PrepareTransfer,
     Reset,
     SelectOperand,
     Visualize,
@@ -134,7 +135,7 @@ logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "conversation/11"
+GRAPH_VERSION: Final = "conversation/12"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
 STATE_SCHEMA_VERSION: Final = 11
 MAX_BANK_EXECUTIONS: Final = 3
@@ -289,18 +290,20 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
             }
         return {"status": "inspect"}
     ops = codec.loads(state["ops"])
-    payments = tuple(op for op in ops if isinstance(op, (PrepareBizum, PrepareOwnTransfer)))
+    contact_payments = (PrepareBizum, PrepareTransfer)
+    payments = tuple(op for op in ops if isinstance(op, (*contact_payments, PrepareOwnTransfer)))
     if payments:
         analytics_ops = (Ask, Patch, Compare, ChangeMeasure, SelectOperand, Reset, Balance)
         if len(payments) != 1 or any(
-            not isinstance(op, (*analytics_ops, PrepareBizum, PrepareOwnTransfer)) for op in ops
+            not isinstance(op, (*analytics_ops, *contact_payments, PrepareOwnTransfer))
+            for op in ops
         ):
             return {"status": "payment", "refused": [*state.get("refused", []), "composition"]}
         if Scope.PAYMENTS_PREPARE.value not in runtime.context.caller_scopes:
             raise NotAuthorisedError(
                 f"this credential is not allowed {Scope.PAYMENTS_PREPARE.value}"
             )
-        if all(isinstance(op, (PrepareBizum, PrepareOwnTransfer)) for op in ops):
+        if all(isinstance(op, (*contact_payments, PrepareOwnTransfer)) for op in ops):
             return {"status": "payment"}
     visual = next((op for op in ops if isinstance(op, Visualize)), None)
     if visual is not None:
@@ -474,7 +477,10 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
         )
         canonical = replace(canonical, active_result=active_result)
     remembered = canonical.remembered(DialogueTurn(said=ctx.sentence, answered=in_words))
-    if any(isinstance(op, (PrepareBizum, PrepareOwnTransfer)) for op in codec.loads(state["ops"])):
+    if any(
+        isinstance(op, (PrepareBizum, PrepareTransfer, PrepareOwnTransfer))
+        for op in codec.loads(state["ops"])
+    ):
         # A mixed analytics/payment turn has one canonical commit. Keep the bounded typed result in
         # the graph checkpoint while payment preparation runs so a retry never repeats the query.
         ctx.cache["result"] = result
@@ -499,7 +505,7 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
 
 
 async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
-    """Ground the model's typed Bizum against the sentence and holder contacts before asking the
+    """Ground a typed contact payment against the sentence and holder contacts before asking the
     existing guarded command handler for a bank-authored preview. No command here can confirm."""
     ctx = runtime.context
     account_id = UUID(state["account_id"])
@@ -538,12 +544,14 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
                 ctx,
                 current,
                 base_result,
-                "Termina o cancela el Bizum pendiente antes de iniciar otra operación de pago.",
+                "Termina o cancela el pago pendiente antes de iniciar otra operación de pago.",
             )
         return await _prepare_own_transfer(state, ctx, current, base_result, own_transfer)
-    op = next((item for item in operations if isinstance(item, PrepareBizum)), None)
+    op = next(
+        (item for item in operations if isinstance(item, (PrepareBizum, PrepareTransfer))), None
+    )
     if op is None:
-        raise RuntimeError("payment node reached without a PrepareBizum operation")
+        raise RuntimeError("payment node reached without a contact payment operation")
     if current.own_transfer is not None:
         return await _finish_payment_without_command(
             state,
@@ -554,7 +562,7 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
         )
     contacts = await ctx.ports.contacts.all_of(account_id)
     previous_payment = current.payment if isinstance(current.payment, PaymentDraftPending) else None
-    resolved = payment_input.resolve_bizum_draft(
+    resolved = payment_input.resolve_contact_payment_draft(
         ctx.sentence,
         op,
         contacts,
@@ -567,8 +575,10 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
         return await _finish_payment_without_command(
             state,
             ctx,
-            "No he podido verificar el importe y el destinatario en tu mensaje y tus contactos. "
-            "Indica un Bizum con un importe y un contacto reconocible.",
+            "No he podido verificar el importe, el destinatario y el tipo de pago "
+            "en tu mensaje "
+            "y tus contactos. Indica el importe, un contacto reconocible y si quieres hacer un "
+            "Bizum o una transferencia.",
             current,
             base_result,
         )
@@ -619,15 +629,21 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
     command = PrepareChosenPaymentCommand(
         account_id=account_id,
         recipient_name=recipient.display_name,
-        recipient_contact_id=recipient.contact_id,
+        recipient_contact_id=(None if resolved.draft.recipient_iban else recipient.contact_id),
+        recipient_iban=resolved.draft.recipient_iban,
         amount_minor=resolved.draft.amount_minor,
         currency=resolved.draft.currency,
-        idempotency_key=f"conversation-bizum:{state['turn_id']}",
-        rail=Rail.BIZUM,
+        idempotency_key=f"conversation-payment:{state['turn_id']}",
+        rail=resolved.draft.rail,
     )
     answer = await ctx.ports.commands.dispatch(command)
     if not isinstance(answer, PaymentAnswer):
         raise TypeError("payment preparation returned an unexpected answer")
+    if answer.reason == "contact_has_no_account" and resolved.draft.rail is Rail.TRANSFER:
+        answer = replace(
+            answer,
+            text=payment_writer.saved_contact_transfer_unavailable(recipient.display_name),
+        )
     pending = (
         PaymentConfirmationPending(answer.preview, ctx.thread_id)
         if answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
@@ -1234,7 +1250,8 @@ def _after_presentation(state: TurnGraphState) -> str:
     return (
         "prepare_payment"
         if any(
-            isinstance(op, (PrepareBizum, PrepareOwnTransfer)) for op in codec.loads(state["ops"])
+            isinstance(op, (PrepareBizum, PrepareTransfer, PrepareOwnTransfer))
+            for op in codec.loads(state["ops"])
         )
         else END
     )
@@ -1331,7 +1348,7 @@ async def _transition(state: TurnGraphState, ctx: GraphContext) -> Transition:
         ops = tuple(
             _without_merchant_grouping(op)
             for op in codec.loads(state["ops"])
-            if not isinstance(op, (PrepareBizum, PrepareOwnTransfer))
+            if not isinstance(op, (PrepareBizum, PrepareTransfer, PrepareOwnTransfer))
         )
         current = await _canonical(state, ctx)
         ctx.cache["transition"] = apply_guarded(current, ops, ctx.today, await _grounds(state, ctx))

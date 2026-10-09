@@ -94,6 +94,7 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
         "create_visualization",
         "update_visualization",
         "prepare_bizum",
+        "prepare_transfer",
         "prepare_own_transfer",
     }
     assert all(variant["additionalProperties"] is False for variant in operation_variants)
@@ -116,6 +117,9 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
     }
     assert bizum["required"] == ["recipient", "amount_minor"]
     assert bizum["additionalProperties"] is False
+
+    transfer = operations["prepare_transfer"]
+    assert transfer == bizum
 
     own_transfer = operations["prepare_own_transfer"]
     assert own_transfer == {"anyOf": [{"type": "string"}, {"type": "null"}]}
@@ -162,7 +166,7 @@ async def test_complete_sends_gemini_schema_and_bearer_key(
     sent_schema = endpoint.request["json"]["response_format"]["json_schema"]["schema"]
     assert "$defs" not in sent_schema
     operations = sent_schema["properties"]["operations"]["items"]["anyOf"]
-    assert len(operations) == 15
+    assert len(operations) == 16
     patch = next(v["properties"]["patch"] for v in operations if "patch" in v["properties"])
     assert "changes" in patch["properties"]
 
