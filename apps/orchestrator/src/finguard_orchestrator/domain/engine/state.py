@@ -182,10 +182,19 @@ class ActiveQueryResult:
     period_start: date | None = None
     period_end: date | None = None
     result_version: int = 1
+    comparison: ComparisonPlan | None = None
+    comparison_groups: tuple[tuple[Group, ...], tuple[Group, ...]] | None = None
 
     def __post_init__(self) -> None:
         if len(self.groups) > 100 or any(len(group.key) > 256 for group in self.groups):
             raise ValueError("active query result exceeds its bounded artifact size")
+        if self.comparison_groups is not None and any(
+            len(side) > 100 or any(len(group.key) > 256 for group in side)
+            for side in self.comparison_groups
+        ):
+            raise ValueError("active comparison result exceeds its bounded artifact size")
+        if (self.comparison is None) != (self.comparison_groups is None):
+            raise ValueError("comparison plan and aggregates must be stored together")
 
 
 @dataclass(frozen=True)

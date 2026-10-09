@@ -1603,3 +1603,42 @@ async def test_a_comparison_explains_decreases_without_calling_them_increases(
     assert "por menos compras" in text
     assert "Comercios en los que gastas m\u00e1s" not in text
     assert world.assessor.seen == []
+
+
+async def test_explained_comparison_can_be_charted_and_restyled_without_another_bank_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(FIGURES, JUNE, (Group("Mercadona", 20_000, 4), Group("Dia", 8_000, 3)))
+    monkeypatch.setitem(FIGURES, JULY, (Group("Mercadona", 10_000, 2),))
+    world = World(
+        BY_MERCHANT, (Visualize("ACTIVE_RESULT", "BAR"),), (Visualize("ACTIVE_CHART", "LINE"),)
+    )
+
+    answer = await world.ask(sentence="comparison explanation")
+    read_count = len(world.ledger.ran)
+    chart = await world.ask(
+        conversation_id=answer.state.conversation_id,
+        version=answer.state.version,
+        request_id="comparison-chart",
+        sentence="muestramelo en un grafico",
+    )
+    restyled = await world.ask(
+        conversation_id=chart.state.conversation_id,
+        version=chart.state.version,
+        request_id="comparison-lines",
+        sentence="cambialo a lineas",
+    )
+
+    assert chart.result is not None and chart.result.visual_dataset is not None
+    rows = chart.result.visual_dataset.rows
+    assert {(row.dimension, row.series, row.value_minor) for row in rows} == {
+        ("Mercadona", "del 2026-06-01 al 2026-06-30, gastos", 20_000),
+        ("Dia", "del 2026-06-01 al 2026-06-30, gastos", 8_000),
+        ("Mercadona", "del 2026-07-01 al 2026-07-31, gastos", 10_000),
+    }
+    assert restyled.result is not None and restyled.result.visual_decision is not None
+    assert restyled.result.visual_decision.spec.mark == "line"
+    assert len(world.ledger.ran) == read_count
+    assert chart.state.active_result is not None
+    assert chart.state.active_result.comparison is not None
+    assert chart.state.active_result.comparison_groups is not None

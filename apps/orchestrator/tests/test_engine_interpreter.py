@@ -819,6 +819,19 @@ def test_prompt_includes_the_month_named_comparison_follow_up_example() -> None:
     assert '"compare"' in prompt
 
 
+def test_prompt_shows_explicit_account_scope_and_restore_of_the_previous_query() -> None:
+    prompt = build_prompt(
+        "Cuanto he gastado este mes en mi cuenta corriente",
+        EMPTY,
+        today=TODAY,
+        categories=CATEGORIES,
+    )
+
+    assert '"accounts":["Cuenta corriente"]' in prompt
+    assert "vuelve a la consulta anterior" in prompt.lower()
+    assert '"restore_previous":1' in prompt
+
+
 def test_prompt_fits_the_budget() -> None:
     """The longest sentence read, over the largest state: within 9,000 characters, and the repair
     of its longest refused answer within 10,500, so prompt and answer fit a 4096-token window."""

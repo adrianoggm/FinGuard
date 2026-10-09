@@ -134,9 +134,9 @@ logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "conversation/10"
+GRAPH_VERSION: Final = "conversation/11"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
-STATE_SCHEMA_VERSION: Final = 10
+STATE_SCHEMA_VERSION: Final = 11
 MAX_BANK_EXECUTIONS: Final = 3
 MAX_MODEL_CALLS: Final = 3
 # A backstop under the budgets: one step per read, and plan, validate and assess per loop.
@@ -185,6 +185,7 @@ class TurnGraphState(TypedDict, total=False):
     # The earlier window by merchant, kept between its read and the latest one's: [merchant,
     # total, count] per merchant, its total and its currency. Emptied once the latest is read.
     earlier_groups: list[list[Any]]
+    comparison_groups: list[list[list[Any]]]
     earlier_total: int
     earlier_currency: str
     # Per changed merchant: [merchant, earlier total, earlier count, latest total, latest count,
@@ -350,6 +351,10 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
         "status": "executed",
         "bank_calls": _bank_calls(state, ctx),
         "earlier_groups": [],
+        "comparison_groups": [
+            state["earlier_groups"],
+            [[g.key, g.total_minor, g.movement_count] for g in now.groups],
+        ],
         "changes": [
             [
                 c.merchant,
@@ -449,6 +454,23 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
             )
             if all(len(group.key) <= 256 for group in groups)
             else None
+        )
+        canonical = replace(canonical, active_result=active_result)
+    elif moved.work is not None and "changes" in state:
+        assert isinstance(moved.work.plan, ComparisonPlan)
+        earlier_groups, latest_groups = state.get("comparison_groups", [[], []])
+        latest_plan = moved.work.plan.latest
+        prior = tuple(Group(*group) for group in earlier_groups[:100])
+        latest = tuple(Group(*group) for group in latest_groups[:100])
+        active_result = ActiveQueryResult(
+            plan=latest_plan,
+            currency=state["currency"],
+            total_minor=state["totals"][1],
+            movement_count=sum(group.movement_count for group in latest),
+            groups=latest,
+            result_version=state["expected_version"] + 1,
+            comparison=moved.work.plan,
+            comparison_groups=(prior, latest),
         )
         canonical = replace(canonical, active_result=active_result)
     remembered = canonical.remembered(DialogueTurn(said=ctx.sentence, answered=in_words))
@@ -1030,40 +1052,61 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
     else:
         plan = artifact.plan
         groups = artifact.groups
-        rows = tuple(
-            VisualRow(
-                (
-                    category_words.name_of(group.key)
-                    if plan.group_by is GroupBy.CATEGORY
-                    else group.key
-                ),
-                group.movement_count
-                if plan.metric in {Metric.COUNT, Metric.FREQUENCY}
-                else group.total_minor,
+        if artifact.comparison is not None and artifact.comparison_groups is not None:
+            earlier_plan, latest_plan = artifact.comparison.earlier, artifact.comparison.latest
+            earlier_label = answer_writer.plan_in_words(earlier_plan)
+            latest_label = answer_writer.plan_in_words(latest_plan)
+            rows = tuple(
+                VisualRow(group.key, group.total_minor, earlier_label)
+                for group in artifact.comparison_groups[0]
+            ) + tuple(
+                VisualRow(group.key, group.total_minor, latest_label)
+                for group in artifact.comparison_groups[1]
             )
-            for group in groups
-        )
-        if not rows:
-            rows = (VisualRow("total", artifact.total_minor),)
-        window = (
-            plan.date_range
-            if plan.date_range is not None
-            else AbsoluteRange(artifact.period_start, artifact.period_end)
-            if artifact.period_start is not None and artifact.period_end is not None
-            else None
-        )
+            dataset_metric = "COMPARISON"
+            dataset_title = f"{earlier_label} frente a {latest_label}, por comercio"
+            profile_group_by = GroupBy.MERCHANT.value
+            profile_metric = plan.metric.value
+            plan_window = None
+        else:
+            rows = tuple(
+                VisualRow(
+                    (
+                        category_words.name_of(group.key)
+                        if plan.group_by is GroupBy.CATEGORY
+                        else group.key
+                    ),
+                    group.movement_count
+                    if plan.metric in {Metric.COUNT, Metric.FREQUENCY}
+                    else group.total_minor,
+                )
+                for group in groups
+            )
+            if not rows:
+                rows = (VisualRow("total", artifact.total_minor),)
+            dataset_metric = plan.metric.value
+            dataset_title = answer_writer.describe(plan)
+            profile_group_by = plan.group_by.value
+            profile_metric = plan.metric.value
+            plan_window = (
+                plan.date_range
+                if plan.date_range is not None
+                else AbsoluteRange(artifact.period_start, artifact.period_end)
+                if artifact.period_start is not None and artifact.period_end is not None
+                else None
+            )
         dataset = VisualDataset(
             rows=rows,
-            metric=plan.metric.value,
-            title=answer_writer.describe(plan),
-            window=window,
+            metric=dataset_metric,
+            title=dataset_title,
+            window=plan_window,
         )
         profile = visual_profile_of(
             dataset,
             total_minor=artifact.total_minor,
-            group_by=plan.group_by.value,
+            group_by=profile_group_by,
             plan_limited=plan.group_limit is not None,
-            plan_metric=plan.metric.value,
+            plan_metric=profile_metric,
         )
         if ctx.ports.visual_policy is None:
             raise RuntimeError("the graph visual policy is not configured")
@@ -1093,8 +1136,8 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
             direction=plan.direction.value,
             period=plan.period.period.value if plan.period is not None else None,
             n=plan.period.n if plan.period is not None else None,
-            start=window.start.isoformat() if window is not None else None,
-            end=window.end.isoformat() if window is not None else None,
+            start=plan_window.start.isoformat() if plan_window is not None else None,
+            end=plan_window.end.isoformat() if plan_window is not None else None,
             categories=list(plan.categories),
             merchants=list(plan.merchants),
             merchant_terms=list(plan.merchant_terms),
@@ -1102,11 +1145,14 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
             metric=plan.metric.value,
             group_limit=plan.group_limit,
         )
+        visual_words = (
+            dataset.title if artifact.comparison is not None else answer_writer.plan_in_words(plan)
+        )
         if decision is None:
             result = AskFinancialQuestionResult(
                 outcome=PlanningOutcome.PLANNED.value,
                 text="La consulta no tiene suficientes grupos para dibujar un gráfico útil.",
-                plan_in_words=answer_writer.plan_in_words(plan),
+                plan_in_words=visual_words,
                 plan_context=spoken_plan,
                 currency=artifact.currency,
                 total_minor=artifact.total_minor,
@@ -1118,8 +1164,8 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
         else:
             result = AskFinancialQuestionResult(
                 outcome=PlanningOutcome.PLANNED.value,
-                text=f"Aquí tienes el desglose de {answer_writer.plan_in_words(plan)}.",
-                plan_in_words=answer_writer.plan_in_words(plan),
+                text=f"Aquí tienes el desglose de {visual_words}.",
+                plan_in_words=visual_words,
                 plan_context=spoken_plan,
                 currency=artifact.currency,
                 total_minor=artifact.total_minor,

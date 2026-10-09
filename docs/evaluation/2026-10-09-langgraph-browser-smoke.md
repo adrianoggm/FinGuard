@@ -150,3 +150,32 @@ contained the correct example, but its example selector omitted it. The selector
 example while staying inside the maximum prompt budget. The interpreter tests cover its inclusion;
 the Chrome/GPT-OSS comparison above exercises the corrected path. Groq's token quota remains the
 limiting factor for a full hosted-model conversation.
+
+The subsequent eight-turn Chrome run exposed two more interpretation misses: an explicit "Cuenta
+corriente" was dropped on a new ask, and "vuelve a la consulta anterior" was treated as ambiguous
+when a comparison was on screen. The prompt now demonstrates both typed operations and states these
+two mappings directly. It keeps the prior month, ranking, comparison, chart and Bizum examples while
+remaining within the existing prompt-size tests. After rebuilding the isolated runtime with local
+Qwen 3.5 9B, Chrome verified: a new Cuenta corriente query; a merchant breakdown preserving that
+account; a September comparison preserving it; and restoration of the prior merchant query without
+a clarification. No browser errors occurred.
+
+## Comparison result to chart continuity (2026-10-09)
+
+The explanation turn previously cleared `active_result`, so asking for a chart immediately after
+“why did it change?” failed. The graph now retains the typed comparison plan and both bounded,
+bank-authored merchant aggregate sets in the canonical result. This contains no movement ledger.
+Chart creation builds two series from those aggregates; visual style edits reuse the same result.
+The canonical state schema advanced to version 10 (reading version 9 remains supported), and the
+graph checkpoint version advanced to 11.
+
+Focused tests: 76 graph turn and codec tests passed; Ruff and mypy passed. A new graph test confirms
+the comparison renders both period series, a bar chart can be restyled to lines, and neither visual
+turn triggers another banking read.
+
+Chrome exercised the same three turns against the seeded banking API and isolated PostgreSQL. The
+explanation produced increases and decreases by merchant. “Show me a chart” rendered a grouped
+two-period chart (Vega SVG present); “change it to lines” changed the SVG from 1 rectangle mark to
+8 line marks and 0 rectangles. No browser JavaScript errors occurred. The local Ollama model was
+used for this browser pass because Groq returned HTTP 429 with a provider-specified reset over 20
+minutes away. The Groq-backed full conversation therefore remains unverified in this pass.
