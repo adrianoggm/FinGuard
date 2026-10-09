@@ -5,22 +5,29 @@ models validate what comes back. A shape written twice is two shapes the first t
 changes.
 
 The models are a projection of `domain/engine/operations.py` and nothing more: one object per
-operation, keyed by `op`, each closed (`additionalProperties: false`), with every enum the domain
-has and every list bounded by the domain's own ceiling. Categories are closed too, to the keys
-this deployment has, so an invented one is unreachable for a decoder that honours the schema and
-refused for one that does not.
+operation, each closed (`additionalProperties: false`), with every enum the domain has and every
+list bounded by the domain's own ceiling. Categories are closed too, to the keys this deployment
+has, so an invented one is unreachable for a decoder that honours the schema and refused for one
+that does not.
 
-**A plan is a list of the fields said, not an object of every field** (ruling R14). Each item is
-`{"field": F, "value": V}`, closed, with `value` typed by `field`; a field not listed is not said,
-and a patch keeps it. An object with every field as a key was tried first, with `null` for what
-was not said: under a decoder that must write every key, qwen2.5-coder:7b filled three to
-twenty-six unsaid fields per answer (a patch «¿y en ocio?» also moved July to the last month),
-where the same prompt with this list filled none. Nothing is optional in the schema either way,
-because strict decoders (Groq's `json_schema`) refuse an optional key: here nothing has to be.
+**Every union is externally tagged** (ruling R24): a branch is an object with one key, its name,
+so `{"ask": [...]}`, `{"measure": "COUNT"}`, `{"window": {"named": "LAST_MONTH"}}`. Groq's
+strict `json_schema` tells `anyOf` branches apart by their key sets alone and refused the schema
+while they were told apart by a value (`{"op": "ask", ...}`, `{"field": ..., "value": ...}`,
+two windows both keyed `period`): `keyset_required_overlap`. Read back, each union is decided by
+that one key, so a refusal names the branch the model meant and not every branch it did not.
+
+**A plan is a list of the fields said, not an object of every field** (ruling R14): one
+single-key item per field, and a field not listed is not said, so a patch keeps it. An object
+with every field as a key was tried first, with `null` for what was not said: under a decoder
+that must write every key, qwen2.5-coder:7b filled three to twenty-six unsaid fields per answer
+(a patch «¿y en ocio?» also moved July to the last month), where the same prompt with this list
+filled none. Nothing is optional in the schema either way, because strict decoders refuse an
+optional key: here nothing has to be.
 
 **A window has three closed shapes**: a named period, a counted period (`LAST_N_DAYS`,
 `LAST_N_MONTHS`) with its `n`, and a date range. An `n` on a named period is not a value the
-decoder can reach, which it was while `n` was one nullable key on every period.
+decoder can reach.
 """
 
 import dataclasses
@@ -33,7 +40,9 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
+    Tag,
     ValidationError,
     ValidationInfo,
     WithJsonSchema,
@@ -144,109 +153,127 @@ class _Closed(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+def _only_key(value: Any) -> str | None:
+    """Which branch of an externally tagged union `value` is: its key. A value with more than one
+    key is read by its first and refused for the rest, which says what is extra."""
+    return next(iter(value), None) if isinstance(value, dict) else None
+
+
 # --- windows ----------------------------------------------------------------------------------
 
 
-class NamedWindow(_Closed):
-    period: NamedPeriod
-
-    def as_window(self) -> RelativePeriod:
-        return RelativePeriod(self.period)
-
-
-class CountedWindow(_Closed):
+class Counted(_Closed):
     period: CountedPeriod
     n: Annotated[int, Field(ge=1, le=MAX_PERIOD_DAYS)]
 
-    def as_window(self) -> RelativePeriod:
-        return RelativePeriod(self.period, self.n)
 
-
-class DatedWindow(_Closed):
+class DateRange(_Closed):
     start: date
     end: date
 
+
+class NamedWindow(_Closed):
+    named: NamedPeriod
+
+    def as_window(self) -> RelativePeriod:
+        return RelativePeriod(self.named)
+
+
+class CountedWindow(_Closed):
+    counted: Counted
+
+    def as_window(self) -> RelativePeriod:
+        return RelativePeriod(self.counted.period, self.counted.n)
+
+
+class RangeWindow(_Closed):
+    range: DateRange
+
     def as_window(self) -> AbsoluteRange:
-        return AbsoluteRange(self.start, self.end)
+        return AbsoluteRange(self.range.start, self.range.end)
 
 
-# --- the fields of a plan, one item per field said --------------------------------------------
+Window = Annotated[
+    Annotated[NamedWindow, Tag("named")]
+    | Annotated[CountedWindow, Tag("counted")]
+    | Annotated[RangeWindow, Tag("range")],
+    Discriminator(_only_key),
+]
+
+
+# --- the fields of a plan, one single-key item per field said ---------------------------------
 
 
 class DirectionItem(_Closed):
-    field: Literal["direction"]
-    value: Direction
+    direction: Direction
 
 
 class WindowItem(_Closed):
-    field: Literal["window"]
-    value: NamedWindow | CountedWindow | DatedWindow
+    window: Window
 
 
 class CategoriesItem(_Closed):
-    field: Literal["categories"]
-    value: Categories
+    categories: Categories
 
 
 class MerchantsItem(_Closed):
-    field: Literal["merchants"]
-    value: Names
+    merchants: Names
 
 
 class PeopleItem(_Closed):
-    field: Literal["people"]
-    value: Names
+    people: Names
 
 
 class AccountsItem(_Closed):
-    field: Literal["accounts"]
-    value: AccountNames
+    accounts: AccountNames
 
 
 class ExcludedCategoriesItem(_Closed):
-    field: Literal["excluded_categories"]
-    value: Categories
+    excluded_categories: Categories
 
 
 class ExcludedMerchantsItem(_Closed):
-    field: Literal["excluded_merchants"]
-    value: Names
+    excluded_merchants: Names
 
 
 class MetricItem(_Closed):
-    field: Literal["metric"]
-    value: Metric
+    metric: Metric
 
 
 class GroupByItem(_Closed):
-    field: Literal["group_by"]
-    value: GroupBy
+    group_by: GroupBy
 
 
 class LimitItem(_Closed):
-    field: Literal["limit"]
-    value: Annotated[int, Field(ge=1, le=MAX_RANK)]
+    limit: Annotated[int, Field(ge=1, le=MAX_RANK)]
 
 
 FieldItem = Annotated[
-    DirectionItem
-    | WindowItem
-    | CategoriesItem
-    | MerchantsItem
-    | PeopleItem
-    | AccountsItem
-    | ExcludedCategoriesItem
-    | ExcludedMerchantsItem
-    | MetricItem
-    | GroupByItem
-    | LimitItem,
-    Field(discriminator="field"),
+    Annotated[DirectionItem, Tag("direction")]
+    | Annotated[WindowItem, Tag("window")]
+    | Annotated[CategoriesItem, Tag("categories")]
+    | Annotated[MerchantsItem, Tag("merchants")]
+    | Annotated[PeopleItem, Tag("people")]
+    | Annotated[AccountsItem, Tag("accounts")]
+    | Annotated[ExcludedCategoriesItem, Tag("excluded_categories")]
+    | Annotated[ExcludedMerchantsItem, Tag("excluded_merchants")]
+    | Annotated[MetricItem, Tag("metric")]
+    | Annotated[GroupByItem, Tag("group_by")]
+    | Annotated[LimitItem, Tag("limit")],
+    Discriminator(_only_key),
 ]
+
+
+def _said(item: FieldItem) -> tuple[str, Any]:
+    """The item's field and its value as `PlanFields` holds it."""
+    (name,) = type(item).model_fields
+    value = getattr(item, name)
+    return name, value.as_window() if isinstance(item, WindowItem) else value
 
 
 def _once_each(items: tuple[FieldItem, ...]) -> tuple[FieldItem, ...]:
     """A field said twice is two answers to one question, and keeping either is a guess."""
-    said = [item.field for item in items]
+    said = [name for name, _ in map(_said, items)]
     repeated = sorted({name for name in said if said.count(name) > 1})
     if repeated:
         raise ValueError(f"each field at most once; repeated: {', '.join(repeated)}")
@@ -257,47 +284,53 @@ Fields = Annotated[tuple[FieldItem, ...], Field(max_length=MAX_FIELDS), AfterVal
 
 
 def _plan_fields(items: tuple[FieldItem, ...]) -> PlanFields:
-    said: dict[str, Any] = {
-        item.field: item.value.as_window() if isinstance(item, WindowItem) else item.value
-        for item in items
-    }
+    said: dict[str, Any] = dict(map(_said, items))
     return replace(PlanFields(), **said)
 
 
-# --- operations -------------------------------------------------------------------------------
+# --- operations, each keyed by its name -------------------------------------------------------
 
 
-class AskOp(_Closed):
-    op: Literal["ask"]
-    fields: Fields
-
-    def as_operation(self) -> Ask:
-        return Ask(_plan_fields(self.fields))
-
-
-class PatchOp(_Closed):
-    op: Literal["patch"]
+class PatchBody(_Closed):
     target: Target
     changes: Fields
 
-    def as_operation(self) -> Patch:
-        return Patch(self.target, _plan_fields(self.changes))
 
-
-class CompareOp(_Closed):
-    op: Literal["compare"]
+class CompareBody(_Closed):
     shared: Fields
     earlier: Fields
     latest: Fields
 
+
+class Nothing(_Closed):
+    """What a reset says beyond its name."""
+
+
+class AskOp(_Closed):
+    ask: Fields
+
+    def as_operation(self) -> Ask:
+        return Ask(_plan_fields(self.ask))
+
+
+class PatchOp(_Closed):
+    patch: PatchBody
+
+    def as_operation(self) -> Patch:
+        return Patch(self.patch.target, _plan_fields(self.patch.changes))
+
+
+class CompareOp(_Closed):
+    compare: CompareBody
+
     def as_operation(self) -> Compare:
+        sides = self.compare
         return Compare(
-            _plan_fields(self.shared), _plan_fields(self.earlier), _plan_fields(self.latest)
+            _plan_fields(sides.shared), _plan_fields(sides.earlier), _plan_fields(sides.latest)
         )
 
 
 class MeasureOp(_Closed):
-    op: Literal["measure"]
     measure: Measure
 
     def as_operation(self) -> ChangeMeasure:
@@ -305,66 +338,61 @@ class MeasureOp(_Closed):
 
 
 class SelectOperandOp(_Closed):
-    op: Literal["select_operand"]
-    which: Side
+    select_operand: Side
 
     def as_operation(self) -> SelectOperand:
-        return SelectOperand(self.which)
+        return SelectOperand(self.select_operand)
 
 
 class ResetOp(_Closed):
-    op: Literal["reset"]
+    reset: Nothing
 
     def as_operation(self) -> Reset:
         return Reset()
 
 
 class BalanceOp(_Closed):
-    op: Literal["balance"]
-    accounts: AccountNames = ()
+    balance: AccountNames
 
     def as_operation(self) -> Balance:
-        return Balance(self.accounts)
+        return Balance(self.balance)
 
 
 class ClarifyOp(_Closed):
-    op: Literal["clarify"]
-    missing: Missing
-    about: Name | None = None
+    # What is missing and nothing else: a name to quote comes from grounding (ruling R21), so
+    # there is no field for the model to write one in.
+    clarify: Missing
 
     def as_operation(self) -> Clarify:
-        # A blank name is no name: quoted back, it would ask about nothing.
-        return Clarify(self.missing, (self.about or "").strip() or None)
+        return Clarify(self.clarify)
 
 
 class SmalltalkOp(_Closed):
-    op: Literal["smalltalk"]
-    kind: Courtesy
+    smalltalk: Courtesy
 
     def as_operation(self) -> Smalltalk:
-        return Smalltalk(self.kind)
+        return Smalltalk(self.smalltalk)
 
 
 class DelegateOp(_Closed):
-    op: Literal["delegate"]
-    to: Elsewhere
+    delegate: Elsewhere
 
     def as_operation(self) -> Delegate:
-        return Delegate(self.to)
+        return Delegate(self.delegate)
 
 
 AnyOp = Annotated[
-    AskOp
-    | PatchOp
-    | CompareOp
-    | MeasureOp
-    | SelectOperandOp
-    | ResetOp
-    | BalanceOp
-    | ClarifyOp
-    | SmalltalkOp
-    | DelegateOp,
-    Field(discriminator="op"),
+    Annotated[AskOp, Tag("ask")]
+    | Annotated[PatchOp, Tag("patch")]
+    | Annotated[CompareOp, Tag("compare")]
+    | Annotated[MeasureOp, Tag("measure")]
+    | Annotated[SelectOperandOp, Tag("select_operand")]
+    | Annotated[ResetOp, Tag("reset")]
+    | Annotated[BalanceOp, Tag("balance")]
+    | Annotated[ClarifyOp, Tag("clarify")]
+    | Annotated[SmalltalkOp, Tag("smalltalk")]
+    | Annotated[DelegateOp, Tag("delegate")],
+    Discriminator(_only_key),
 ]
 
 
@@ -384,8 +412,8 @@ def schema_for(categories: Collection[str]) -> dict[str, Any]:
 def _portable(node: Any, categories: tuple[str, ...]) -> Any:
     """`node` said in the subset every constrained decoder here takes.
 
-    `oneOf` becomes `anyOf` (the branches are disjoint on `op` and on `field`, so they mean the
-    same), `const` becomes a one-value `enum`, `format: date` becomes the pattern of one (a
+    `oneOf` becomes `anyOf` (each branch has its own one key, so they mean the same), `const`
+    becomes a one-value `enum`, `format: date` becomes the pattern of one (a
     format is a hint to some decoders and unknown to others; the reader still refuses a 30th of
     February, which no pattern can), and the annotations no decoder needs go: `title`,
     `default`, `discriminator`, and `description`, which pydantic fills from the enums' docstrings
@@ -412,8 +440,12 @@ def _portable(node: Any, categories: tuple[str, ...]) -> Any:
             said["pattern"] = _ISO_DATE
         else:
             said[key] = _portable(value, categories)
-    if "properties" in said:
+    if said.get("properties"):
         said["required"] = list(said["properties"])
+    elif "properties" in said:
+        # An object with no keys (a reset's `{}`) is closed by `additionalProperties` alone:
+        # Groq reads an empty `properties` as missing and refuses a `required` beside it.
+        del said["properties"]
     return said
 
 

@@ -150,8 +150,8 @@ def answer(*ops: dict[str, Any]) -> str:
 
 
 def items(**fields: Any) -> list[dict[str, Any]]:
-    """A plan as the decoder writes it: one item per field said."""
-    return [{"field": name, "value": value} for name, value in fields.items()]
+    """A plan as the decoder writes it: one single-key item per field said."""
+    return [{name: value} for name, value in fields.items()]
 
 
 async def interpreted(
@@ -164,9 +164,10 @@ async def interpreted(
 
 # --- every operation the schema allows reads back as its dataclass ----------------------------
 
+JUNE_SAID = {"start": "2026-06-01", "end": "2026-06-30"}
 EVERY_FIELD = {
     "direction": "EXPENSE",
-    "window": {"period": "LAST_N_DAYS", "n": 30},
+    "window": {"counted": {"period": "LAST_N_DAYS", "n": 30}},
     "categories": ["RESTAURANTS"],
     "merchants": ["Bar Lumbre"],
     "people": ["Lucía"],
@@ -179,7 +180,7 @@ EVERY_FIELD = {
 }
 PARSED: list[tuple[dict[str, Any], Operation]] = [
     (
-        {"op": "ask", "fields": items(**EVERY_FIELD)},
+        {"ask": items(**EVERY_FIELD)},
         Ask(
             PlanFields(
                 direction=Direction.EXPENSE,
@@ -197,33 +198,30 @@ PARSED: list[tuple[dict[str, Any], Operation]] = [
         ),
     ),
     (
-        {
-            "op": "patch",
-            "target": "earlier",
-            "changes": items(window={"start": "2026-06-01", "end": "2026-06-30"}),
-        },
+        {"patch": {"target": "earlier", "changes": items(window={"range": JUNE_SAID})}},
         Patch("earlier", PlanFields(window=JUNE)),
     ),
     (
         # An empty list is said, and means none: «en todas las cuentas».
-        {"op": "patch", "target": "pending", "changes": items(accounts=[])},
+        {"patch": {"target": "pending", "changes": items(accounts=[])}},
         Patch("pending", PlanFields(accounts=())),
     ),
     (
-        {"op": "patch", "target": "focus", "changes": items(window={"period": "LAST_MONTH"})},
+        {"patch": {"target": "focus", "changes": items(window={"named": "LAST_MONTH"})}},
         Patch("focus", PlanFields(window=RelativePeriod(Period.LAST_MONTH))),
     ),
     (
         # A patch that names nothing reads as one; the transition decides what it means.
-        {"op": "patch", "target": "focus", "changes": []},
+        {"patch": {"target": "focus", "changes": []}},
         Patch("focus", PlanFields()),
     ),
     (
         {
-            "op": "compare",
-            "shared": items(direction="EXPENSE", categories=["LEISURE"]),
-            "earlier": items(window={"start": "2026-06-01", "end": "2026-06-30"}),
-            "latest": items(window={"start": "2026-07-01", "end": "2026-07-31"}),
+            "compare": {
+                "shared": items(direction="EXPENSE", categories=["LEISURE"]),
+                "earlier": items(window={"range": JUNE_SAID}),
+                "latest": items(window={"range": {"start": "2026-07-01", "end": "2026-07-31"}}),
+            }
         },
         Compare(
             shared=PlanFields(direction=Direction.EXPENSE, categories=("LEISURE",)),
@@ -231,16 +229,17 @@ PARSED: list[tuple[dict[str, Any], Operation]] = [
             latest=PlanFields(window=JULY),
         ),
     ),
-    ({"op": "measure", "measure": "SHARE"}, ChangeMeasure(Measure.SHARE)),
-    ({"op": "select_operand", "which": "latest"}, SelectOperand("latest")),
-    ({"op": "reset"}, Reset()),
-    ({"op": "balance", "accounts": ["Cuenta corriente"]}, Balance(("Cuenta corriente",))),
-    ({"op": "balance", "accounts": []}, Balance(())),
-    ({"op": "clarify", "missing": "PERSON", "about": "Rocío"}, Clarify(Missing.PERSON, "Rocío")),
-    ({"op": "clarify", "missing": "WINDOW", "about": None}, Clarify(Missing.WINDOW)),
-    ({"op": "clarify", "missing": "OPERAND", "about": "  "}, Clarify(Missing.OPERAND)),
-    ({"op": "smalltalk", "kind": "THANKS"}, Smalltalk("THANKS")),
-    ({"op": "delegate", "to": "TRANSFER"}, Delegate("TRANSFER")),
+    ({"measure": "SHARE"}, ChangeMeasure(Measure.SHARE)),
+    ({"select_operand": "latest"}, SelectOperand("latest")),
+    ({"reset": {}}, Reset()),
+    ({"balance": ["Cuenta corriente"]}, Balance(("Cuenta corriente",))),
+    ({"balance": []}, Balance(())),
+    # What a clarification asks for and nothing else: a name to quote comes from grounding
+    # (ruling R21), so there is no field for the model to write one in.
+    ({"clarify": "PERSON"}, Clarify(Missing.PERSON)),
+    ({"clarify": "WINDOW"}, Clarify(Missing.WINDOW)),
+    ({"smalltalk": "THANKS"}, Smalltalk("THANKS")),
+    ({"delegate": "TRANSFER"}, Delegate("TRANSFER")),
 ]
 
 
@@ -255,8 +254,8 @@ async def test_each_op_parses_to_its_dataclass(said: dict[str, Any], expected: O
 async def test_several_operations_keep_their_order() -> None:
     ops, _ = await interpreted(
         answer(
-            {"op": "patch", "target": "focus", "changes": items(categories=["HEALTH"])},
-            {"op": "measure", "measure": "COUNT"},
+            {"patch": {"target": "focus", "changes": items(categories=["HEALTH"])}},
+            {"measure": "COUNT"},
         )
     )
 
@@ -270,16 +269,16 @@ async def test_several_operations_keep_their_order() -> None:
 
 
 async def test_malformed_output_becomes_clarify() -> None:
-    ops, provider = await interpreted("esto no es JSON", '{"operations": [{"op": "reset",')
+    ops, provider = await interpreted("esto no es JSON", '{"operations": [{"reset":')
 
     assert ops == (Clarify(Missing.SUBJECT),)
     assert len(provider.prompts) == 2
 
 
 async def test_one_repair_then_success() -> None:
-    rejected = answer({"op": "forecast", "months": 3})
+    rejected = answer({"forecast": {"months": 3}})
 
-    ops, provider = await interpreted(rejected, answer({"op": "reset"}))
+    ops, provider = await interpreted(rejected, answer({"reset": {}}))
 
     assert ops == (Reset(),)
     first, repair = provider.prompts
@@ -291,28 +290,34 @@ async def test_one_repair_then_success() -> None:
 
 
 UNEXPRESSIBLE = [
-    answer({"op": "forecast", "months": 3}),
-    answer({"op": "ask", "fields": items(window={"period": "NEXT_MONTH"})}),
-    answer({"op": "measure", "measure": "RATIO"}),
-    answer({"op": "reset", "because": "sí"}),
-    answer(*[{"op": "reset"}] * (MAX_OPERATIONS + 1)),
+    answer({"forecast": {"months": 3}}),
+    answer({"ask": items(window={"named": "NEXT_MONTH"})}),
+    answer({"measure": "RATIO"}),
+    answer({"reset": {"because": "sí"}}),
+    answer({"reset": {}, "measure": "COUNT"}),
+    answer({}),
+    answer(*[{"reset": {}}] * (MAX_OPERATIONS + 1)),
     answer(),
-    answer({"op": "ask", "fields": items(categories=["COMPRAS_VARIAS"])}),
-    answer({"op": "ask", "fields": items(limit=0)}),
-    # The dense shape this replaced: an object of fields is not a list of them.
-    answer({"op": "ask", "fields": {"direction": "EXPENSE"}}),
-    answer({"op": "ask", "fields": [{"field": "colour", "value": "red"}]}),
-    answer({"op": "ask", "fields": [{"field": "direction", "value": "EXPENSE", "why": "x"}]}),
-    # A field said twice is two answers to one question.
-    answer({"op": "ask", "fields": items(direction="EXPENSE") + items(direction="INCOME")}),
-    answer({"op": "ask", "fields": items(direction="EXPENSE") * (MAX_FIELDS + 1)}),
+    answer({"ask": items(categories=["COMPRAS_VARIAS"])}),
+    answer({"ask": items(limit=0)}),
+    # The shapes this replaced: keyed by `op`, an object of fields, an item keyed by `field`.
+    answer({"op": "reset"}),
+    answer({"ask": {"direction": "EXPENSE"}}),
+    answer({"ask": [{"field": "direction", "value": "EXPENSE"}]}),
+    answer({"ask": [{"colour": "red"}]}),
+    # One field per item, and a field said twice is two answers to one question.
+    answer({"ask": [{"direction": "EXPENSE", "categories": ["HEALTH"]}]}),
+    answer({"ask": items(direction="EXPENSE") + items(direction="INCOME")}),
+    answer({"ask": items(direction="EXPENSE") * (MAX_FIELDS + 1)}),
     # A named period takes no n, and a counted one cannot do without it.
-    answer({"op": "ask", "fields": items(window={"period": "LAST_MONTH", "n": 1})}),
-    answer({"op": "ask", "fields": items(window={"period": "LAST_N_DAYS"})}),
+    answer({"ask": items(window={"named": "LAST_N_DAYS"})}),
+    answer({"ask": items(window={"counted": {"period": "LAST_MONTH", "n": 1}})}),
+    answer({"ask": items(window={"counted": {"period": "LAST_N_DAYS"}})}),
+    answer({"ask": items(window={"named": "LAST_MONTH", "range": JUNE_SAID})}),
     # Shapes the schema allows and the domain refuses.
-    answer({"op": "ask", "fields": items(window={"period": "LAST_N_MONTHS", "n": 30})}),
-    answer({"op": "ask", "fields": items(window={"start": "2026-07-31", "end": "2026-07-01"})}),
-    answer({"op": "ask", "fields": items(window={"start": "2026-02-30", "end": "2026-03-01"})}),
+    answer({"ask": items(window={"counted": {"period": "LAST_N_MONTHS", "n": 30}})}),
+    answer({"ask": items(window={"range": {"start": "2026-07-31", "end": "2026-07-01"}})}),
+    answer({"ask": items(window={"range": {"start": "2026-02-30", "end": "2026-03-01"}})}),
     "[]",
     "",
 ]
@@ -326,21 +331,18 @@ async def test_what_the_schema_cannot_express_becomes_clarify(said: str) -> None
     assert len(provider.prompts) == 2
 
 
-def test_the_repair_says_what_is_wrong_before_which_shapes_did_not_fit() -> None:
-    """A window is three shapes, and a range with an impossible day fails all three: the two it is
-    not say "extra" and "missing", the one it nearly is says the day is wrong. Measured on
-    qwen2.5-coder:7b: told only the first four (all from the shapes it was not), it gave up and
-    asked back a question it had answered."""
+def test_the_repair_says_what_is_wrong_first() -> None:
+    """Measured on qwen2.5-coder:7b: told only problems from the window shapes a range was not, it
+    gave up and asked back a question it had answered. Each union is read by its one key now, so
+    the problem is the range's own: its day."""
     with pytest.raises(UnreadableError) as refused:
         read(
-            answer(
-                {"op": "ask", "fields": items(window={"start": "2026-02-01", "end": "2026-02-29"})}
-            ),
+            answer({"ask": items(window={"range": {"start": "2026-02-01", "end": "2026-02-29"}})}),
             CATALOGUE,
         )
 
     first = refused.value.problem.split("; ")[0]
-    assert "DatedWindow.end" in first
+    assert "range.end" in first
     assert "day value is outside expected range" in first
 
 
@@ -348,7 +350,7 @@ def test_a_refused_category_is_not_quoted_back() -> None:
     """The problem goes to the log and into the repair prompt; what the model wrote there is not
     the reader's to repeat."""
     with pytest.raises(UnreadableError) as refused:
-        read(answer({"op": "ask", "fields": items(categories=["COMPRAS_VARIAS"])}), CATALOGUE)
+        read(answer({"ask": items(categories=["COMPRAS_VARIAS"])}), CATALOGUE)
 
     assert "categories" in refused.value.problem
     assert "COMPRAS_VARIAS" not in refused.value.problem
@@ -360,14 +362,16 @@ MARKER = "SENTENCIASECRETA"
 @pytest.mark.parametrize(
     "echo",
     [
-        answer({"op": MARKER}),
-        answer({"op": "reset", MARKER: 1}),
-        answer({"op": "ask", "fields": [{"field": MARKER, "value": 1}]}),
-        answer({"op": "ask", "fields": items(categories=[MARKER])}),
-        answer({"op": "clarify", "missing": MARKER, "about": None}),
+        answer({MARKER: {}}),
+        answer({"reset": {MARKER: 1}}),
+        answer({"reset": {}, MARKER: 1}),
+        answer({"ask": [{MARKER: 1}]}),
+        answer({"ask": items(window={MARKER: "LAST_MONTH"})}),
+        answer({"ask": items(categories=[MARKER])}),
+        answer({"clarify": MARKER}),
         MARKER,
     ],
-    ids=["op", "extra key", "field", "category", "enum", "not json"],
+    ids=["op", "extra key", "second key", "field", "window", "category", "enum", "not json"],
 )
 async def test_no_model_text_reaches_a_log(echo: str, caplog: pytest.LogCaptureFixture) -> None:
     """What the model wrote can be the person's sentence echoed back. The repair may quote it,
@@ -402,7 +406,7 @@ async def test_a_provider_failure_on_the_repair_raises_too() -> None:
 
 
 async def test_the_provider_gets_the_settings_and_the_schema() -> None:
-    _, provider = await interpreted(answer({"op": "reset"}))
+    _, provider = await interpreted(answer({"reset": {}}))
 
     (call,) = provider.calls
     assert call["model"] == "a-model"
@@ -467,8 +471,12 @@ def test_the_schema_is_closed() -> None:
         # Only keywords every constrained decoder here takes (Ollama's grammar, Groq's strict
         # json_schema); anything else is said in these or not at all.
         assert set(node) <= PORTABLE_KEYWORDS, set(node) - PORTABLE_KEYWORDS
-    dated = schema["$defs"]["DatedWindow"]["properties"]
+    dated = schema["$defs"]["DateRange"]["properties"]
     assert dated["start"] == dated["end"] == {"pattern": ISO_DATE, "type": "string"}
+    # An object with no keys says so without `properties` or `required`: Groq reads an empty
+    # `properties` as missing and refuses the `required` beside it.
+    assert schema["$defs"]["Nothing"] == {"additionalProperties": False, "type": "object"}
+    assert all(node.get("properties", True) for node in nodes(schema))
     operations = schema["properties"]["operations"]
     assert (operations["minItems"], operations["maxItems"]) == (1, MAX_OPERATIONS)
     assert all("maxItems" in node for node in nodes(schema) if node.get("type") == "array")
@@ -516,38 +524,78 @@ def test_every_domain_value_is_reachable_through_the_schema(values: list[str]) -
 
 @pytest.mark.parametrize("measure", list(Measure))
 async def test_every_measure_reads_back(measure: Measure) -> None:
-    ops, _ = await interpreted(answer({"op": "measure", "measure": measure.value}))
+    ops, _ = await interpreted(answer({"measure": measure.value}))
 
     assert ops == (ChangeMeasure(measure),)
 
 
+def resolved(node: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    while "$ref" in node:
+        node = schema["$defs"][node["$ref"].split("/")[-1]]
+    return node
+
+
+def keys_of(union: dict[str, Any], schema: dict[str, Any]) -> list[str]:
+    """The one key of each branch of an externally tagged union."""
+    branches = [resolved(branch, schema) for branch in union["anyOf"]]
+    assert all(len(branch["required"]) == 1 for branch in branches)
+    return [branch["required"][0] for branch in branches]
+
+
+def test_every_union_tells_its_branches_apart_by_their_keys() -> None:
+    """Groq's strict mode tells `anyOf` branches apart by key sets alone, and refuses a schema
+    where a key one branch requires appears in another (`keyset_required_overlap`). Keyed by a
+    value (`"op": "ask"`), every branch had the same keys and Groq refused the schema."""
+    schema = schema_for(CATALOGUE)
+    unions = [node for node in nodes(schema) if "anyOf" in node]
+
+    assert unions
+    for union in unions:
+        branches = [resolved(branch, schema) for branch in union["anyOf"]]
+        for one in branches:
+            for other in branches:
+                if one is not other:
+                    assert not set(one.get("required", ())) & set(other.get("properties", {}))
+
+
+def test_operations_are_keyed_by_their_name() -> None:
+    schema = schema_for(CATALOGUE)
+
+    assert keys_of(schema["properties"]["operations"]["items"], schema) == [
+        "ask",
+        "patch",
+        "compare",
+        "measure",
+        "select_operand",
+        "reset",
+        "balance",
+        "clarify",
+        "smalltalk",
+        "delegate",
+    ]
+
+
 def test_a_plan_is_a_closed_list_of_the_fields_it_says() -> None:
     schema = schema_for(CATALOGUE)
-    fields = schema["$defs"]["AskOp"]["properties"]["fields"]
+    fields = schema["$defs"]["AskOp"]["properties"]["ask"]
 
     assert fields["type"] == "array"
     assert fields["maxItems"] == MAX_FIELDS == len(dataclasses.fields(PlanFields))
-    branches = [schema["$defs"][ref["$ref"].split("/")[-1]] for ref in fields["items"]["anyOf"]]
-    # One item shape per field PlanFields has, each {"field", "value"} and nothing else.
-    assert [branch["properties"]["field"]["enum"] for branch in branches] == [
-        [field.name] for field in dataclasses.fields(PlanFields)
-    ]
-    assert all(branch["required"] == ["field", "value"] for branch in branches)
+    # One single-key item per field PlanFields has, in its order.
+    assert keys_of(fields["items"], schema) == [f.name for f in dataclasses.fields(PlanFields)]
 
 
 def test_a_window_has_three_closed_shapes() -> None:
     schema = schema_for(CATALOGUE)
-    window = schema["$defs"]["WindowItem"]["properties"]["value"]["anyOf"]
-    shapes = [schema["$defs"][ref["$ref"].split("/")[-1]] for ref in window]
+    window = schema["$defs"]["WindowItem"]["properties"]["window"]
 
-    assert [shape["required"] for shape in shapes] == [
-        ["period"],
-        ["period", "n"],
-        ["start", "end"],
-    ]
-    named, counted, _ = shapes
-    assert set(named["properties"]["period"]["enum"]).isdisjoint(PERIODS_NEEDING_COUNT)
-    assert set(counted["properties"]["period"]["enum"]) == PERIODS_NEEDING_COUNT
+    assert keys_of(window, schema) == ["named", "counted", "range"]
+    named, counted, dated = (resolved(branch, schema) for branch in window["anyOf"])
+    assert set(named["properties"]["named"]["enum"]).isdisjoint(PERIODS_NEEDING_COUNT)
+    counted_body = resolved(counted["properties"]["counted"], schema)
+    assert counted_body["required"] == ["period", "n"]
+    assert set(counted_body["properties"]["period"]["enum"]) == PERIODS_NEEDING_COUNT
+    assert resolved(dated["properties"]["range"], schema)["required"] == ["start", "end"]
 
 
 def conforms(value: Any, schema: dict[str, Any], root: dict[str, Any]) -> bool:
@@ -563,7 +611,7 @@ def conforms(value: Any, schema: dict[str, Any], root: dict[str, Any]) -> bool:
         case "object":
             return (
                 isinstance(value, dict)
-                and list(value) == schema["required"]
+                and list(value) == schema.get("required", [])
                 and all(conforms(value[key], schema["properties"][key], root) for key in value)
             )
         case "array":
@@ -698,7 +746,7 @@ def test_prompt_fits_the_budget() -> None:
 
 
 async def test_a_sentence_too_long_is_asked_back_without_a_model_call() -> None:
-    provider = Provider(answer({"op": "reset"}))
+    provider = Provider(answer({"reset": {}}))
 
     longer = await interpreter(provider).interpret(LONGEST + "?", EMPTY, today=TODAY)
     longest = await interpreter(provider).interpret(LONGEST, EMPTY, today=TODAY)
@@ -891,7 +939,7 @@ def test_the_selected_accounts_are_shown_by_name(names: dict[UUID, str], shown: 
 
 
 async def test_the_interpreter_shows_the_names_it_is_given() -> None:
-    provider = Provider(answer({"op": "reset"}))
+    provider = Provider(answer({"reset": {}}))
 
     await interpreter(provider).interpret(
         "¿y eso?", a_busy_state(), today=TODAY, account_names=NAMES

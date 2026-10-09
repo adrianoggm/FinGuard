@@ -473,16 +473,15 @@ def test_a_rejected_directory_read_is_answered_honestly_and_saves_nothing(route:
 ASKS_RESTAURANTS_IN_JULY = {
     "operations": [
         {
-            "op": "ask",
-            "fields": [
-                {"field": "direction", "value": "EXPENSE"},
-                {"field": "categories", "value": ["RESTAURANTS"]},
-                {"field": "window", "value": {"start": "2026-07-01", "end": "2026-07-31"}},
-            ],
+            "ask": [
+                {"direction": "EXPENSE"},
+                {"categories": ["RESTAURANTS"]},
+                {"window": {"range": {"start": "2026-07-01", "end": "2026-07-31"}}},
+            ]
         }
     ]
 }
-DELEGATES_THE_PAYMENT = {"operations": [{"op": "delegate", "to": "PAYMENT"}]}
+DELEGATES_THE_PAYMENT = {"operations": [{"delegate": "PAYMENT"}]}
 
 
 def an_adapter(*answers: object) -> LlmTurnOperations:

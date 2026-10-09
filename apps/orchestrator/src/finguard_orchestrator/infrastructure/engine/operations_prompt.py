@@ -59,13 +59,13 @@ Today is $today ($weekday).
 $glossary
 
 ## Plan fields
-A plan is a list of {"field": F, "value": V} items, one per field said, each field at most \
-once. A field not listed is not said.
+A plan is a list of one-key items such as {"direction": "EXPENSE"}, one per field said, each \
+field at most once. A field not listed is not said.
 - direction: EXPENSE (money out), INCOME (money in) or ALL (both).
-- window: {"period": P} with P one of $periods; {"period": "LAST_N_DAYS" or "LAST_N_MONTHS", \
-"n": N}; or {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"} for named months, years or dates. A \
-month said by its name is always a start and end covering that whole month; without a year it is \
-its latest occurrence already begun, one of these, latest first: $months.
+- window: {"named": P} with P one of $periods; {"counted": {"period": "LAST_N_DAYS" or \
+"LAST_N_MONTHS", "n": N}}; or {"range": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}} for named \
+months, years or dates. A month said by its name is always a range covering that whole month; \
+without a year it is its latest occurrence already begun, one of these, latest first: $months.
 - categories, excluded_categories: category keys from the list above, nothing else.
 - merchants, excluded_merchants: shop names as written.
 - people: contact names as written.
@@ -77,24 +77,24 @@ repeat). PERIOD_AVERAGE and CUMULATIVE need group_by DAY, WEEK or MONTH.
 - limit: N for the N largest movements, or the N largest groups with a group_by.
 
 ## Operations
-Answer {"operations": [...]}: one to four, applied in order.
-- ask {fields}: a new question, complete in itself; nothing is kept from the screen. A window \
+Answer {"operations": [...]}: one to four, applied in order, each an object whose one key is the \
+operation.
+- {"ask": plan}: a new question, complete in itself; nothing is kept from the screen. A window \
 not said is not listed, and the person is asked for it.
-- patch {target, changes}: change the fields listed. target: focus (what is on screen), \
-earlier or latest (one side of a comparison), or pending (an open question).
-- compare {shared, earlier, latest}: one question over two windows; shared is what both sides \
-have, and what nothing names comes from the screen.
-- measure {measure}: show the screen as $measures. PERCENT_CHANGE: the change between the \
-sides of a comparison; SHARE: the part the screen is of its total.
-- select_operand {which}: keep one side of a comparison: earlier or latest.
-- reset {}: start again.
-- balance {accounts}: the money there is now; [] for every account.
-- clarify {missing, about}: you cannot tell what the turn means. missing: WINDOW (when), SUBJECT \
-(what), ACCOUNT, PERSON (who) or OPERAND (which side, or which two); about: the word you could \
-not place, or null.
-- smalltalk {kind}: GREETING, THANKS, IDENTITY (who you are) or HELP (what you can do).
-- delegate {to}: PAYMENT, TRANSFER, BOOKING, CHART (a chart or graph) or UNSUPPORTED (what no \
-operation can say, such as a forecast).
+- {"patch": {"target": T, "changes": plan}}: change the fields listed. T: focus (what is on \
+screen), earlier or latest (one side of a comparison), or pending (an open question).
+- {"compare": {"shared": plan, "earlier": plan, "latest": plan}}: one question over two \
+windows; shared is what both sides have, and what nothing names comes from the screen.
+- {"measure": M}: show the screen as $measures. PERCENT_CHANGE: the change between the sides of \
+a comparison; SHARE: the part the screen is of its total.
+- {"select_operand": "earlier" or "latest"}: keep one side of a comparison.
+- {"reset": {}}: start again.
+- {"balance": [account names]}: the money there is now; [] for every account.
+- {"clarify": M}: you cannot tell what the turn means. M: WINDOW (when), SUBJECT (what), \
+ACCOUNT, PERSON (who) or OPERAND (which side, or which two).
+- {"smalltalk": K}: K is GREETING, THANKS, IDENTITY (who you are) or HELP (what you can do).
+- {"delegate": D}: D is PAYMENT, TRANSFER, BOOKING, CHART (a chart or graph) or UNSUPPORTED \
+(what no operation can say, such as a forecast).
 
 ## Examples
 $examples
@@ -162,30 +162,28 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             f"¿Cuánto pagué de alquiler en {_MONTH_NAMES[month - 1]}?",
             _answer(
                 {
-                    "op": "ask",
-                    "fields": _items(
+                    "ask": _items(
                         direction="EXPENSE",
-                        window={"start": start.isoformat(), "end": end.isoformat()},
+                        window={"range": {"start": start.isoformat(), "end": end.isoformat()}},
                         categories=["HOUSING_RENT"],
-                    ),
+                    )
                 }
             ),
         ),
         (
             "a query",
             "Ahora solo lo del súper",
-            _answer(
-                {"op": "patch", "target": "focus", "changes": _items(categories=["GROCERIES"])}
-            ),
+            _answer({"patch": {"target": "focus", "changes": _items(categories=["GROCERIES"])}}),
         ),
         (
             "an open question asking for WINDOW",
             "Los tres últimos meses",
             _answer(
                 {
-                    "op": "patch",
-                    "target": "pending",
-                    "changes": _items(window={"period": "LAST_N_MONTHS", "n": 3}),
+                    "patch": {
+                        "target": "pending",
+                        "changes": _items(window={"counted": {"period": "LAST_N_MONTHS", "n": 3}}),
+                    }
                 }
             ),
         ),
@@ -194,53 +192,51 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             "¿Cobré más en marzo o en abril de 2025?",
             _answer(
                 {
-                    "op": "compare",
-                    "shared": _items(direction="INCOME"),
-                    "earlier": _items(window={"start": "2025-03-01", "end": "2025-03-31"}),
-                    "latest": _items(window={"start": "2025-04-01", "end": "2025-04-30"}),
+                    "compare": {
+                        "shared": _items(direction="INCOME"),
+                        "earlier": _items(
+                            window={"range": {"start": "2025-03-01", "end": "2025-03-31"}}
+                        ),
+                        "latest": _items(
+                            window={"range": {"start": "2025-04-01", "end": "2025-04-30"}}
+                        ),
+                    }
                 }
             ),
         ),
         (
             "a comparison",
             "¿Y en tanto por ciento cuánto ha cambiado?",
-            _answer({"op": "measure", "measure": "PERCENT_CHANGE"}),
+            _answer({"measure": "PERCENT_CHANGE"}),
         ),
-        (
-            "a comparison",
-            "Quédate solo con el más reciente",
-            _answer({"op": "select_operand", "which": "latest"}),
-        ),
-        ("", "Empecemos de cero", _answer({"op": "reset"})),
+        ("a comparison", "Quédate solo con el más reciente", _answer({"select_operand": "latest"})),
+        ("", "Empecemos de cero", _answer({"reset": {}})),
         (
             "",
             "¿Qué saldo tengo en la cuenta de ahorro?",
-            _answer({"op": "balance", "accounts": ["cuenta de ahorro"]}),
+            _answer({"balance": ["cuenta de ahorro"]}),
         ),
-        (
-            "nothing",
-            "¿Y lo otro?",
-            _answer({"op": "clarify", "missing": "SUBJECT", "about": None}),
-        ),
-        ("", "Buenas tardes", _answer({"op": "smalltalk", "kind": "GREETING"})),
-        ("", "Envíale 25 euros a mi hermana", _answer({"op": "delegate", "to": "PAYMENT"})),
+        ("nothing", "¿Y lo otro?", _answer({"clarify": "SUBJECT"})),
+        ("", "Buenas tardes", _answer({"smalltalk": "GREETING"})),
+        ("", "Envíale 25 euros a mi hermana", _answer({"delegate": "PAYMENT"})),
         (
             "a query",
             "El trimestre pasado, y en número de compras",
             _answer(
                 {
-                    "op": "patch",
-                    "target": "focus",
-                    "changes": _items(window={"period": "LAST_QUARTER"}),
+                    "patch": {
+                        "target": "focus",
+                        "changes": _items(window={"named": "LAST_QUARTER"}),
+                    }
                 },
-                {"op": "measure", "measure": "COUNT"},
+                {"measure": "COUNT"},
             ),
         ),
     )
 
 
 def _items(**fields: object) -> list[dict[str, object]]:
-    return [{"field": name, "value": value} for name, value in fields.items()]
+    return [{name: value} for name, value in fields.items()]
 
 
 def _answer(*operations: dict[str, object]) -> str:
