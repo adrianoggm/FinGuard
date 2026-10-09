@@ -797,16 +797,59 @@ def test_share_of_a_comparison_asks_which_side() -> None:
     [
         None,
         BalanceFocus(),
-        RatioFocus(RatioPlan(plan(JULY, ["RESTAURANTS"]), plan(JULY, []), RatioKind.SHARE)),
+        RatioFocus(
+            RatioPlan(
+                replace(plan(JULY, []), direction=Direction.INCOME),
+                plan(JULY, []),
+                RatioKind.SAVINGS_RATE,
+            )
+        ),
     ],
-    ids=["nothing", "balance", "share"],
+    ids=["nothing", "balance", "savings-rate"],
 )
-def test_a_measure_with_no_query_or_pair_on_screen_is_clarify(focus: Focus | None) -> None:
+def test_a_measure_with_no_figure_on_screen_to_return_to_is_clarify(focus: Focus | None) -> None:
     s = replace(EMPTY, focus=focus)
 
     t = apply(s, [ChangeMeasure(Measure.COUNT)], today=TODAY, grounds=G)
 
     assert t == Transition(s, None, Clarify(Missing.SUBJECT))
+
+
+@pytest.mark.parametrize(
+    ("measure", "metric"), [(Measure.AMOUNT, Metric.SUM), (Measure.COUNT, Metric.COUNT)]
+)
+def test_a_figure_after_a_share_is_its_part_with_that_metric(
+    measure: Measure, metric: Metric
+) -> None:
+    # «En euros» after «¿qué porcentaje de mis gastos fue en restaurantes?»: the restaurants
+    # figure for the same window, which is what the share was built from.
+    part = plan(JULY, ["RESTAURANTS"])
+    s = state_with(RatioFocus(RatioPlan(part, plan(JULY, []), RatioKind.SHARE)))
+
+    t = apply(s, [ChangeMeasure(measure)], today=TODAY, grounds=G)
+
+    figure = replace(part, metric=metric)
+    assert t == Transition(replace(s, focus=QueryFocus(figure)), Work("QUERY", figure), None)
+
+
+def test_euros_after_a_percentage_change_held_as_a_ratio_is_the_pair_again() -> None:
+    # No transition leaves a percentage change as a `RatioFocus` (it is a `ComparisonFocus` with
+    # that measure, see `test_amount_after_a_percentage_shows_the_comparison_again`), but a state
+    # that holds one still returns to its two figures rather than asking.
+    change = RatioPlan(
+        part=plan(JULY, ["RESTAURANTS"]),
+        whole=plan(JUNE, ["RESTAURANTS"]),
+        kind=RatioKind.PERCENT_CHANGE,
+    )
+    s = state_with(RatioFocus(change))
+
+    t = apply(s, [ChangeMeasure(Measure.AMOUNT)], today=TODAY, grounds=G)
+
+    assert t == Transition(
+        replace(s, focus=ComparisonFocus(pair(JUNE, JULY), Measure.AMOUNT)),
+        Work("COMPARE", pair(JUNE, JULY)),
+        None,
+    )
 
 
 # --- SelectOperand ---------------------------------------------------------------------------

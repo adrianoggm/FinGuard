@@ -299,6 +299,19 @@ def _measured(state: DialogueState, measure: Measure, today: date) -> Applied:
         if measure is Measure.SHARE:
             return _on_ratio(state, _share_of(focus.plan))
         return _on_query(state, _patched(focus.plan, PlanFields(metric=_METRIC_OF[measure]), today))
+    if isinstance(focus, RatioFocus) and measure in _METRIC_OF:
+        # «En euros» after a percentage goes back to the figures it was built from: the part of a
+        # share, the pair of a change. No transition leaves a change in a `RatioFocus`, but a
+        # state holding one is answered the same way rather than asked about.
+        to_metric = PlanFields(metric=_METRIC_OF[measure])
+        ratio = focus.ratio
+        if ratio.kind is RatioKind.SHARE:
+            return _on_query(state, _patched(ratio.part, to_metric, today))
+        if ratio.kind is RatioKind.PERCENT_CHANGE:
+            pair = _paired(
+                _patched(ratio.whole, to_metric, today), _patched(ratio.part, to_metric, today)
+            )
+            return _on_pair(state, pair, percent=False)
     raise _CannotApplyError(Missing.SUBJECT)
 
 
