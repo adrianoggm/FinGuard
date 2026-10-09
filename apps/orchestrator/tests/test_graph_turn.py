@@ -1586,3 +1586,20 @@ async def test_own_transfer_bank_outage_keeps_draft_and_reuses_idempotency_key()
     assert recovered.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
     assert len(bank.keys) == 2 and bank.keys[0] == bank.keys[1]
     assert len(bank.prepared) == 1 and bank.prepared[0].amount_minor == 7_500
+
+
+async def test_a_comparison_explains_decreases_without_calling_them_increases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(FIGURES, JUNE, (Group("Mercadona", 20_000, 4),))
+    monkeypatch.setitem(FIGURES, JULY, (Group("Mercadona", 10_000, 2),))
+    world = World(BY_MERCHANT)
+
+    answer = await world.ask(sentence="comparison explanation")
+
+    text = text_of(answer)
+    assert "Comercios en los que gastas menos" in text
+    assert "Mercadona" in text and "200,00" in text and "100,00" in text
+    assert "por menos compras" in text
+    assert "Comercios en los que gastas m\u00e1s" not in text
+    assert world.assessor.seen == []

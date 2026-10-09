@@ -50,6 +50,10 @@ class Explanation(StrEnum):
     # Neither: the same number of purchases or fewer, and a mean that rose by less than the
     # threshold. The total rose, but by too little to say it was one or the other.
     CANNOT_TELL = "CANNOT_TELL"
+    FEWER_PURCHASES = "FEWER_PURCHASES"
+    LOWER_AMOUNTS = "LOWER_AMOUNTS"
+    BOTH_DECREASE = "BOTH_DECREASE"
+    DECREASE_UNCLEAR = "DECREASE_UNCLEAR"
 
 
 class Finding(StrEnum):
@@ -69,6 +73,7 @@ class MerchantChange:
     latest_total: int
     latest_count: int
     explanation: Explanation
+    decreased: bool = False
 
     @property
     def rise(self) -> int:
@@ -82,15 +87,18 @@ class Inspection:
     finding: Finding | None
 
 
-def risen(earlier: QueryAnswer, latest: QueryAnswer) -> tuple[MerchantChange, ...]:
-    """The merchants whose spending rose from `earlier` to `latest`, largest rise first."""
+def changed(earlier: QueryAnswer, latest: QueryAnswer) -> tuple[MerchantChange, ...]:
+    """Merchants with a different total, largest absolute change first."""
     before = _by_merchant(earlier)
+    after = _by_merchant(latest)
     changes = []
-    for merchant, now in _by_merchant(latest).items():
+    for merchant in before.keys() | after.keys():
+        now = after.get(merchant, Group(merchant, 0, 0))
         then = before.get(merchant, Group(merchant, 0, 0))
         total_then, total_now = abs(then.total_minor), abs(now.total_minor)
-        if total_now <= total_then:
+        if total_now == total_then:
             continue
+        decreased = total_now < total_then
         changes.append(
             MerchantChange(
                 merchant,
@@ -98,11 +106,23 @@ def risen(earlier: QueryAnswer, latest: QueryAnswer) -> tuple[MerchantChange, ..
                 then.movement_count,
                 total_now,
                 now.movement_count,
-                explained(total_then, then.movement_count, total_now, now.movement_count),
+                explained_change(
+                    total_then,
+                    then.movement_count,
+                    total_now,
+                    now.movement_count,
+                    decreased=decreased,
+                ),
+                decreased,
             )
         )
-    changes.sort(key=lambda change: (-change.rise, change.merchant))
+    changes.sort(key=lambda change: (-abs(change.rise), change.merchant))
     return tuple(changes[:MAX_NAMED])
+
+
+def risen(earlier: QueryAnswer, latest: QueryAnswer) -> tuple[MerchantChange, ...]:
+    """Return only increases for callers that specifically need them."""
+    return tuple(change for change in changed(earlier, latest) if not change.decreased)
 
 
 def _by_merchant(answer: QueryAnswer) -> dict[str, Group]:
@@ -127,13 +147,34 @@ def explained(total_then: int, count_then: int, total_now: int, count_now: int) 
     return Explanation.CANNOT_TELL
 
 
+def explained_change(
+    total_then: int, count_then: int, total_now: int, count_now: int, *, decreased: bool
+) -> Explanation:
+    if not decreased:
+        return explained(total_then, count_then, total_now, count_now)
+    if count_now == 0:
+        return Explanation.FEWER_PURCHASES
+    fewer = count_now < count_then
+    lower = count_then > 0 and (
+        total_now * count_then * 100 <= total_then * count_now * (100 - MEAN_RISE_PERCENT)
+    )
+    if fewer and lower:
+        return Explanation.BOTH_DECREASE
+    if fewer:
+        return Explanation.FEWER_PURCHASES
+    if lower:
+        return Explanation.LOWER_AMOUNTS
+    return Explanation.DECREASE_UNCLEAR
+
+
 def worth_inspecting(changes: tuple[MerchantChange, ...]) -> tuple[str, ...]:
     """The merchants a single large purchase could explain: those whose mean rose. The allow-list
     of the one follow-up operation the graph runs, decided here and never by the model."""
     return tuple(
         change.merchant
         for change in changes
-        if change.explanation in (Explanation.HIGHER_AMOUNTS, Explanation.BOTH)
+        if not change.decreased
+        and change.explanation in (Explanation.HIGHER_AMOUNTS, Explanation.BOTH)
     )
 
 
@@ -167,8 +208,15 @@ def answer_text(
             f"{money(latest_total, currency)} ahora."
         ]
     else:
-        lines = [f"Comercios en los que gastas más {windows}:"]
-        lines += [_change_line(change, currency) for change in changes]
+        increases = tuple(change for change in changes if not change.decreased)
+        decreases = tuple(change for change in changes if change.decreased)
+        lines = []
+        if increases:
+            lines.append(f"Comercios en los que gastas m\u00e1s {windows}:")
+            lines += [_change_line(change, currency) for change in increases]
+        if decreases:
+            lines.append(f"Comercios en los que gastas menos {windows}:")
+            lines += [_change_line(change, currency) for change in decreases]
         lines += [_inspection_line(inspection, currency) for inspection in inspections]
     if partial:
         lines.append("No he investigado más: he llegado al límite de consultas de esta pregunta.")
@@ -193,6 +241,17 @@ def _explanation(change: MerchantChange, currency: str) -> str:
         f"{answer_writer.money(_mean(change.latest_total, change.latest_count), currency)}"
     )
     match change.explanation:
+        case Explanation.FEWER_PURCHASES:
+            return f"por menos compras ({counts})"
+        case Explanation.LOWER_AMOUNTS:
+            return f"por importes menores (media de {means}; {counts})"
+        case Explanation.BOTH_DECREASE:
+            return f"por menos compras ({counts}) y por importes menores (media de {means})"
+        case Explanation.DECREASE_UNCLEAR:
+            return (
+                "baja, sin poder atribuirlo a menos compras o menor importe "
+                f"({counts}; media de {means})"
+            )
         case Explanation.BOTH:
             return f"por más compras ({counts}) y por importes mayores (media de {means})"
         case Explanation.MORE_PURCHASES:

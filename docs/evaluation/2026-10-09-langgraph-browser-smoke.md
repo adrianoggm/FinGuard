@@ -90,11 +90,10 @@ schema sent `prepare_bizum` as an empty object, so Gemini returned no recipient 
 adapter now preserves both required fields while the canonical reader still validates the full
 operation schema. `test_gemini_provider.py` covers that wire shape.
 
-**Known analysis boundary:** comparing September with the partial month of October showed lower
-total spending in October. The answer to `¿A qué se debe esa diferencia?` listed merchants whose
-spending rose in October, so it did not explain the overall decrease. The investigation capability
-currently models increases only; it needs symmetric decrease attribution before general “why did
-the difference happen?” questions can be considered covered.
+**Known analysis boundary at the time of this run:** comparing September with the partial month of
+October showed lower total spending in October, while the then-current investigation only reported
+increases. The graph follow-up below adds symmetric merchant decreases attributed to purchase count
+and average amount. This correction has focused graph tests but has not yet had a browser rerun.
 
 Focused verification after these changes: 219 tests passed, one PostgreSQL integration test was
 skipped because its optional test database is unset, and four prompt-size budget cases were
@@ -129,3 +128,25 @@ August → July → June → restore August → category breakdown → restore A
 the isolated orchestrator, it restored July from the same conversation and returned 1.895,97 EUR.
 The history survives a process restart, keeps the account selection, and each restore performs a
 fresh bank read.
+
+## Month comparison follow-up with GPT-OSS 120B (2026-10-09)
+
+Rebuilt the isolated `finguard-graph-test` Compose project and exercised the real web client in
+headless Chrome, with the graph enabled, the seeded banking database, and Groq `openai/gpt-oss-120b`.
+The conversation asked for September expenses in Cuenta corriente, October expenses, and then
+`Y comparado con septiembre?`. GPT-OSS returned the comparison between September and the month to
+date, retained Cuenta corriente, and reported the 1.066,94 EUR difference. Chrome reported no
+JavaScript errors.
+
+This run also reached Groq's token-per-minute limit: an intervening follow-up and subsequent
+turns returned FinGuard's provider-unavailable response. The API logs recorded HTTP 429 and reset
+metadata without logging prompts or credentials. Therefore this verifies the named-month comparison
+and account continuity in the browser, but not a complete ten-turn run or the explanation and chart
+turns under the hosted model.
+
+The browser run with local Qwen 3.5 9B had first shown that a small model could ask which windows to
+compare even though October was active and September was in history. The operations prompt already
+contained the correct example, but its example selector omitted it. The selector now includes that
+example while staying inside the maximum prompt budget. The interpreter tests cover its inclusion;
+the Chrome/GPT-OSS comparison above exercises the corrected path. Groq's token quota remains the
+limiting factor for a full hosted-model conversation.

@@ -68,7 +68,9 @@ canonical version advance. External transfers and booking still have no graph wo
 
 The graph may call one model repeatedly within explicit turn budgets. It is not a multi-agent
 system. Nodes are adapters to existing financial contracts, validators and renderers, not new
-copies of their business rules.
+copies of their business rules. Comparison explanations report both increases and decreases by
+merchant. Decreases are attributed only to bank-reported purchase counts and average amounts;
+the large-purchase inspection remains limited to increases it can establish.
 
 ## Migration sequence
 

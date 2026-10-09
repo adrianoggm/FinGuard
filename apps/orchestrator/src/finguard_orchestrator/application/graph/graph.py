@@ -12,7 +12,7 @@ presenter and canonical store. The turn reservation and version check remain out
 
 **What the checkpoint holds** (the graph state, written after every node): the graph and schema
 versions, the turn's request id, account and conversation, the version it was made against, the
-validated operations, the execution status and counters, and per risen merchant the two totals and
+validated operations, the execution status and counters, and per changed merchant the two totals and
 counts. Not the sentence, not a prompt, not a credential and no movement but the one inspected
 (its amount and date). The sentence, the ports and the per-invocation cache travel in the runtime
 context, which LangGraph never checkpoints.
@@ -134,9 +134,9 @@ logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "conversation/9"
+GRAPH_VERSION: Final = "conversation/10"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
-STATE_SCHEMA_VERSION: Final = 9
+STATE_SCHEMA_VERSION: Final = 10
 MAX_BANK_EXECUTIONS: Final = 3
 MAX_MODEL_CALLS: Final = 3
 # A backstop under the budgets: one step per read, and plan, validate and assess per loop.
@@ -187,9 +187,9 @@ class TurnGraphState(TypedDict, total=False):
     earlier_groups: list[list[Any]]
     earlier_total: int
     earlier_currency: str
-    # Per risen merchant: [merchant, earlier total, earlier count, latest total, latest count,
-    # explanation]; and both windows' totals with their currency.
-    risen: list[list[Any]]
+    # Per changed merchant: [merchant, earlier total, earlier count, latest total, latest count,
+    # explanation, decreased]; and both windows' totals with their currency.
+    changes: list[list[Any]]
     totals: list[int]
     currency: str
     # Per inspected merchant: [merchant, largest amount or None, its ISO datetime or None].
@@ -345,12 +345,12 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
     )
     if then.currency != now.currency and not then.is_empty and not now.is_empty:
         raise MixedCurrenciesError(f"{then.currency} and {now.currency}")
-    changes = investigation.risen(then, now)
+    changes = investigation.changed(then, now)
     return {
         "status": "executed",
         "bank_calls": _bank_calls(state, ctx),
         "earlier_groups": [],
-        "risen": [
+        "changes": [
             [
                 c.merchant,
                 c.earlier_total,
@@ -358,6 +358,7 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
                 c.latest_total,
                 c.latest_count,
                 c.explanation.value,
+                c.decreased,
             ]
             for c in changes
         ],
@@ -370,7 +371,7 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
 async def assess_result(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     """The assessment's separate structured call, only when banking's answer leaves a cause a
     single purchase could explain, and only within the model budget."""
-    if "risen" not in state:
+    if "changes" not in state:
         return {}
     candidates = _may_inspect(state)
     if not candidates and not state.get("inspected"):
@@ -410,7 +411,7 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
         assert not isinstance(moved.reply, Delegate)
         result = presenter.replied(moved.reply, moved.state, names, today=ctx.today)
         in_words = result.text
-    elif "risen" in state:
+    elif "changes" in state:
         result = _investigated(state, moved.work, names)
         in_words = result.plan_in_words or ""
     else:
@@ -1405,8 +1406,8 @@ async def _inspect(state: TurnGraphState, work: Work, ctx: GraphContext) -> Turn
 
 def _changes(state: TurnGraphState) -> tuple[MerchantChange, ...]:
     return tuple(
-        MerchantChange(name, e_total, e_count, l_total, l_count, Explanation(cause))
-        for name, e_total, e_count, l_total, l_count, cause in state.get("risen", [])
+        MerchantChange(name, e_total, e_count, l_total, l_count, Explanation(cause), decreased)
+        for name, e_total, e_count, l_total, l_count, cause, decreased in state.get("changes", [])
     )
 
 
@@ -1439,6 +1440,7 @@ def _summary(state: TurnGraphState, candidates: tuple[str, ...]) -> Investigatio
         risen=tuple(
             MerchantSummary(c.merchant, c.explanation, c.earlier_count, c.latest_count)
             for c in _changes(state)
+            if not c.decreased
         ),
         inspected=tuple(inspected),
         may_inspect=candidates,

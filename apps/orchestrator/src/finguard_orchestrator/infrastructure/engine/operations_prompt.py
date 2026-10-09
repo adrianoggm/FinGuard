@@ -251,7 +251,7 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             ),
         ),
         (
-            "a comparison of expenses over the previous two complete months, grouped by category",
+            "an expense comparison by category",
             "¿A qué se debe la diferencia?",
             _answer(
                 {
@@ -284,22 +284,8 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
                 {
                     "compare": {
                         "shared": _items(direction="EXPENSE", group_by="CATEGORY"),
-                        "earlier": _items(
-                            window={
-                                "range": {
-                                    "start": date(october_start.year, 9, 1).isoformat(),
-                                    "end": date(october_start.year, 9, 30).isoformat(),
-                                }
-                            }
-                        ),
-                        "latest": _items(
-                            window={
-                                "range": {
-                                    "start": october_start.isoformat(),
-                                    "end": october_end.isoformat(),
-                                }
-                            }
-                        ),
+                        "earlier": _items(window={"named": "LAST_MONTH"}),
+                        "latest": _items(window={"named": "THIS_MONTH"}),
                     }
                 }
             ),
@@ -472,7 +458,10 @@ def _prompt_examples(today: date) -> tuple[tuple[str, str, str], ...]:
             }
         ),
     )
-    selected = [all_examples[index] for index in (0, 1, 3, 7, 16, 18)]
+    # Keep the exact month-reference comparison example. It is the bridge from a prior query to a
+    # comparison; without it a small model may ask for both windows even when one is on screen and
+    # the other is in history. Keep the month ranking, comparison, visual and payment examples too.
+    selected = [all_examples[index] for index in (0, 3, 7, 8, 16, 18)]
     selected.insert(2, category_breakdown)
     return tuple(selected)
 

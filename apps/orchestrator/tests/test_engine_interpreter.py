@@ -809,6 +809,16 @@ def test_prompt_maps_last_year_to_a_rolling_twelve_month_window() -> None:
     assert "not a date range" in prompt
 
 
+def test_prompt_includes_the_month_named_comparison_follow_up_example() -> None:
+    prompt = build_prompt(
+        "Â¿Y comparado con septiembre?", EMPTY, today=TODAY, categories=CATEGORIES
+    )
+
+    assert "an October expenses query, grouped by category" in prompt
+    assert "comparado con septiembre" in prompt
+    assert '"compare"' in prompt
+
+
 def test_prompt_fits_the_budget() -> None:
     """The longest sentence read, over the largest state: within 9,000 characters, and the repair
     of its longest refused answer within 10,500, so prompt and answer fit a 4096-token window."""
