@@ -234,7 +234,9 @@ def _patched_focus(state: DialogueState, op: Patch, today: date, grounds: Ground
         if focus.ratio.kind is RatioKind.SHARE:
             # A new subject is a new part of the same whole; patching the whole too would make it
             # a share of itself. Everything else (window, direction) moves both.
-            whole_changes = replace(changes, categories=None, merchants=None, people=None)
+            whole_changes = replace(
+                changes, categories=None, merchants=None, merchant_terms=None, people=None
+            )
         part = _patched(focus.ratio.part, changes, today)
         whole = _patched(focus.ratio.whole, whole_changes, today)
         if not isinstance(part, FinancialPlan) or not isinstance(whole, FinancialPlan):
@@ -338,13 +340,13 @@ def _share_of(plan: Plan) -> RatioPlan:
     if not isinstance(plan, FinancialPlan) or not _has_subject(plan):
         # Without a subject the part is the whole, and a share of itself says nothing.
         raise _CannotApplyError(Missing.SUBJECT)
-    whole = replace(plan, categories=(), merchants=(), counterparties=())
+    whole = replace(plan, categories=(), merchants=(), merchant_terms=(), counterparties=())
     return RatioPlan(part=plan, whole=whole, kind=RatioKind.SHARE)
 
 
 def _has_subject(plan: FinancialPlan) -> bool:
     """Whether the plan narrows to something a share can be a part of."""
-    return bool(plan.categories or plan.merchants or plan.counterparties)
+    return bool(plan.categories or plan.merchants or plan.merchant_terms or plan.counterparties)
 
 
 # --- what a work puts on screen ---------------------------------------------------------------
@@ -462,6 +464,7 @@ _MOVES: Final[dict[str, frozenset[str]]] = {
     "window": frozenset({"period", "date_range"}),
     "categories": frozenset({"categories"}),
     "merchants": frozenset({"merchants"}),
+    "merchant_terms": frozenset({"merchant_terms"}),
     "people": frozenset({"counterparties"}),
     "accounts": frozenset(),  # the scope, which is not in the plan
     "excluded_categories": frozenset({"excluded_categories"}),
@@ -488,6 +491,7 @@ def _fields_of(plan: Plan) -> PlanFields:
         window=plan.period or plan.date_range,
         categories=plan.categories,
         merchants=plan.merchants,
+        merchant_terms=plan.merchant_terms,
         excluded_categories=plan.excluded_categories,
         excluded_merchants=plan.excluded_merchants,
     )
@@ -524,6 +528,7 @@ def _built(said: PlanFields, today: date) -> Plan:
             categories=said.categories or (),
             excluded_categories=said.excluded_categories or (),
             merchants=said.merchants or (),
+            merchant_terms=said.merchant_terms or (),
             excluded_merchants=said.excluded_merchants or (),
             rank=said.limit,
         )
@@ -534,6 +539,7 @@ def _built(said: PlanFields, today: date) -> Plan:
         categories=said.categories or (),
         excluded_categories=said.excluded_categories or (),
         merchants=said.merchants or (),
+        merchant_terms=said.merchant_terms or (),
         excluded_merchants=said.excluded_merchants or (),
         counterparties=said.people or (),
         metric=said.metric or Metric.SUM,

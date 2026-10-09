@@ -26,6 +26,7 @@ import {
   type Wallet,
 } from "./api";
 import { categoryName, day, glyph, money } from "./format";
+import { displayText } from "./displayText";
 
 const WINDOWS = [
   [30, "30 días"],
@@ -203,7 +204,7 @@ function ChargeList({ cardId, days }: { cardId: string; days: number }) {
                 {glyph(charge.category)}
               </span>
               <span className="what">
-                <strong>{charge.merchant_name ?? charge.description}</strong>
+                <strong>{displayText(charge.merchant_name ?? charge.description)}</strong>
                 <small>
                   {day(charge.occurred_at)} · {categoryName(charge.category)}
                 </small>

@@ -26,6 +26,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { ask, createVoiceClient, newAttempt, saveMetric, validateVoiceAnswer, type Answer, type ConversationState, type MetricSource } from "./api";
 import { day, ibanGroups, money, outgoing, signed } from "./format";
+import { displayText } from "./displayText";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 import { Chart, chartTitle } from "./Chart";
@@ -755,11 +756,11 @@ export function AnswerEvidence({ answer }: { answer: Answer }) {
       {answer.plan && (
         <details>
           <summary>Ver la consulta</summary>
-          <p className="plan">{answer.plan}</p>
+          <p className="plan">{displayText(answer.plan)}</p>
         </details>
       )}
       {answer.movements.length > 0 && (
-        <details>
+        <details open>
           <summary>
             Ver los movimientos
             {answer.movement_count !== null && answer.movements.length < answer.movement_count
@@ -770,7 +771,7 @@ export function AnswerEvidence({ answer }: { answer: Answer }) {
             {answer.movements.map((movement, index) => (
               <li key={index}>
                 <span>{day(movement.occurred_at)}</span>
-                <span>{movement.merchant_name ?? movement.description}</span>
+                <span>{displayText(movement.merchant_name ?? movement.description)}</span>
                 <span className={outgoing(movement) ? "out" : "in"}>
                   {signed(
                     outgoing(movement)

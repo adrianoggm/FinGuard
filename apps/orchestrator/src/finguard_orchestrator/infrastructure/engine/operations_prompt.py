@@ -67,7 +67,10 @@ field at most once. A field not listed is not said.
 months, years or dates. A month said by its name is always a range covering that whole month; \
 without a year it is its latest occurrence already begun, one of these, latest first: $months.
 - categories, excluded_categories: category keys from the list above, nothing else.
-- merchants, excluded_merchants: shop names as written.
+- merchants, excluded_merchants: exact shop names.
+- merchant_terms: fragments the shop name must contain; use this for a type of place rather than
+  an exact named shop (for example, "en el gimnasio" becomes merchant_terms ["gimnasio"]). Correct
+  obvious spelling mistakes in a search fragment and omit articles such as "el" or "la".
 - people: contact names as written.
 - accounts: account names as written; [] means every account again.
 - metric: SUM (how much), COUNT (how many), AVERAGE (per movement), PERIOD_AVERAGE (per day, \
@@ -483,6 +486,7 @@ def _fields_of(plan: FinancialPlan | TopMovements) -> PlanFields:
         window=plan.period or plan.date_range,
         categories=plan.categories or None,
         merchants=plan.merchants or None,
+        merchant_terms=plan.merchant_terms or None,
         excluded_categories=plan.excluded_categories or None,
         excluded_merchants=plan.excluded_merchants or None,
     )

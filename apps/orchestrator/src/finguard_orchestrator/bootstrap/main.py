@@ -101,6 +101,7 @@ from finguard_orchestrator.infrastructure.llm.counting_provider import (
     calls_so_far,
 )
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
+from finguard_orchestrator.infrastructure.llm.gemini import GEMINI, GeminiProvider
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
 from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
     OpenAiCompatibleProvider,
@@ -232,6 +233,15 @@ def create_app() -> FastAPI:
             base_url=settings.groq_base_url,
             timeout_seconds=settings.groq_timeout_seconds,
             reasoning_headroom=settings.groq_reasoning_headroom,
+        )
+    if (gemini_key := settings.gemini_api_key) is not None:
+        # Gemini uses Google's OpenAI-compatible endpoint. Its large nested operation schema is
+        # projected to a shallow wire schema by GeminiProvider; LlmTurnOperations then validates
+        # the complete response against the canonical Pydantic schema before execution.
+        builders[GEMINI] = lambda: GeminiProvider(
+            api_key=gemini_key.get_secret_value(),
+            base_url=settings.gemini_base_url,
+            timeout_seconds=settings.gemini_timeout_seconds,
         )
     if (cf_token := settings.cloudflare_api_token) is not None and (
         cf_account := settings.cloudflare_account_id

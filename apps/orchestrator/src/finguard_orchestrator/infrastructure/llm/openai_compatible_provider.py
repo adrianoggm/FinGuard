@@ -162,11 +162,11 @@ class OpenAiCompatibleProvider:
                     "llm.provider_rate_limited provider=%s retry_after=%s "
                     "remaining_requests=%s reset_requests=%s remaining_tokens=%s reset_tokens=%s",
                     self.name,
-                    limits["retry-after"],
-                    limits["x-ratelimit-remaining-requests"],
-                    limits["x-ratelimit-reset-requests"],
-                    limits["x-ratelimit-remaining-tokens"],
-                    limits["x-ratelimit-reset-tokens"],
+                    limits.get("retry-after", "unknown"),
+                    limits.get("x-ratelimit-remaining-requests", "unknown"),
+                    limits.get("x-ratelimit-reset-requests", "unknown"),
+                    limits.get("x-ratelimit-remaining-tokens", "unknown"),
+                    limits.get("x-ratelimit-reset-tokens", "unknown"),
                 )
                 details = "; ".join(f"{name}={value}" for name, value in limits.items() if value)
                 reason = f"HTTP {status}" + (f" ({details})" if details else "")

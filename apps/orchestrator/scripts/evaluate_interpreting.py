@@ -90,6 +90,7 @@ from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter impo
 from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import (  # noqa: E402
     cloudflare_workers_ai,
 )
+from finguard_orchestrator.infrastructure.llm.gemini import GeminiProvider  # noqa: E402
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import (  # noqa: E402
     OllamaLlmProvider,
 )
@@ -146,8 +147,8 @@ async def main() -> int:
     parser.add_argument(
         "--provider",
         default="ollama",
-        choices=["ollama", "groq", "cloudflare"],
-        help="ollama runs locally; groq and cloudflare need a token in .env and send every "
+        choices=["ollama", "groq", "gemini", "cloudflare"],
+        help="ollama runs locally; hosted providers need credentials in .env and send every "
         "corpus sentence over the internet",
     )
     parser.add_argument(
@@ -191,6 +192,15 @@ async def main() -> int:
             base_url=args.base_url or settings.groq_base_url,
             timeout_seconds=settings.groq_timeout_seconds,
             reasoning_headroom=settings.groq_reasoning_headroom,
+        )
+    elif args.provider == "gemini":
+        if settings.gemini_api_key is None:
+            print("ORCHESTRATOR_GEMINI_API_KEY is not set - see .env.defaults", file=sys.stderr)
+            return 2
+        provider = GeminiProvider(
+            api_key=settings.gemini_api_key.get_secret_value(),
+            base_url=args.base_url or settings.gemini_base_url,
+            timeout_seconds=settings.gemini_timeout_seconds,
         )
     elif args.provider == "cloudflare":
         # Both halves, the same rule the composition root applies: the account id is not a

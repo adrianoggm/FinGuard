@@ -90,6 +90,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import cloudflare_workers_ai
+from finguard_orchestrator.infrastructure.llm.gemini import GeminiProvider
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
 from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
     OpenAiCompatibleProvider,
@@ -519,6 +520,14 @@ def build_provider(
             base_url=base_url or settings.groq_base_url,
             timeout_seconds=timeout_seconds or settings.groq_timeout_seconds,
             reasoning_headroom=settings.groq_reasoning_headroom,
+        )
+    if name == "gemini":
+        if settings.gemini_api_key is None:
+            raise ValueError("ORCHESTRATOR_GEMINI_API_KEY is not set - see .env.defaults")
+        return GeminiProvider(
+            api_key=settings.gemini_api_key.get_secret_value(),
+            base_url=base_url or settings.gemini_base_url,
+            timeout_seconds=timeout_seconds or settings.gemini_timeout_seconds,
         )
     if name == "cloudflare":
         if settings.cloudflare_api_token is None or settings.cloudflare_account_id is None:
@@ -1472,8 +1481,8 @@ def main() -> int:
     parser.add_argument(
         "--provider",
         default="ollama",
-        choices=("ollama", "groq", "cloudflare"),
-        help="ollama runs locally; groq and cloudflare require credentials in .env and send "
+        choices=("ollama", "groq", "gemini", "cloudflare"),
+        help="ollama runs locally; hosted providers require credentials in .env and send "
         "every evaluated sentence over the internet",
     )
     parser.add_argument("--limit", type=int, default=None, help="run only the first N cases")

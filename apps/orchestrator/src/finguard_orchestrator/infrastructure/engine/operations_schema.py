@@ -220,6 +220,10 @@ class MerchantsItem(_Closed):
     merchants: Names
 
 
+class MerchantTermsItem(_Closed):
+    merchant_terms: Names
+
+
 class PeopleItem(_Closed):
     people: Names
 
@@ -253,6 +257,7 @@ FieldItem = Annotated[
     | Annotated[WindowItem, Tag("window")]
     | Annotated[CategoriesItem, Tag("categories")]
     | Annotated[MerchantsItem, Tag("merchants")]
+    | Annotated[MerchantTermsItem, Tag("merchant_terms")]
     | Annotated[PeopleItem, Tag("people")]
     | Annotated[AccountsItem, Tag("accounts")]
     | Annotated[ExcludedCategoriesItem, Tag("excluded_categories")]

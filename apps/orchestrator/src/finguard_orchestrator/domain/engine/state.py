@@ -90,6 +90,7 @@ class PlanFields:
     window: RelativePeriod | AbsoluteRange | None = None
     categories: tuple[str, ...] | None = None
     merchants: tuple[str, ...] | None = None
+    merchant_terms: tuple[str, ...] | None = None
     people: tuple[str, ...] | None = None
     accounts: tuple[str, ...] | None = None
     excluded_categories: tuple[str, ...] | None = None

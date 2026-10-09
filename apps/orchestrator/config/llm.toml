@@ -61,6 +61,29 @@ model = "echo-2"
 # provider = "groq"
 # model = "openai/gpt-oss-120b"
 
+# Google Gemini's OpenAI-compatible endpoint. Set ORCHESTRATOR_GEMINI_API_KEY in `.env` before
+# enabling an entry. The conversation interpreter sends Gemini a shallow operation schema because
+# its endpoint rejects FinGuard's deeply nested schema; the full typed reader validates every
+# result before execution. Model availability and schema behavior vary: verify each model before
+# using it for evaluations. 3.5 Flash Lite passed a synthetic FinGuard query. Gemma 4 31B is
+# listed for experimentation, but its initial request failed; it is not a validated choice yet.
+# [[models]]
+# alias = "gemini"
+# provider = "gemini"
+# model = "gemini-3.5-flash-lite"
+# [[models]]
+# alias = "gemini-3.1-lite"
+# provider = "gemini"
+# model = "gemini-3.1-flash-lite"
+# [[models]]
+# alias = "gemini-3.5-flash"
+# provider = "gemini"
+# model = "gemini-3.5-flash"
+# [[models]]
+# alias = "gemma-4-31b"
+# provider = "gemini"
+# model = "gemma-4-31b-it"
+
 # Cloudflare Workers AI. The same adapter as `groq` above with a different base URL, which is
 # the whole of what a second OpenAI-compatible vendor costs.
 #

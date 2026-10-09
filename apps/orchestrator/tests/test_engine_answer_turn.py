@@ -139,7 +139,7 @@ class ByWindow(Ledger):
         answer = await super().run(plan, movements=movements, **rest)
         if plan.date_range in self.currencies:
             answer = replace(answer, currency=self.currencies[plan.date_range])
-        subject = plan.categories or plan.merchants or plan.counterparties
+        subject = plan.categories or plan.merchants or plan.merchant_terms or plan.counterparties
         if self._whole is not None and not subject:
             figure: tuple[int, int] | None = self._whole
         else:
@@ -248,6 +248,15 @@ async def test_a_query_runs_and_becomes_the_focus() -> None:
     sentence, _, names = rig.interpreter.seen[0]
     assert sentence == "¿cuánto gasté en restaurantes en julio?"
     assert names == {h.account_id: h.display_name for h in HOLDINGS}
+
+
+async def test_a_merchant_term_matches_a_family_of_shops() -> None:
+    rig = a_rig((Ask(spending(window=JULY, merchant_terms=("gimnasio",))),))
+
+    turn = await rig.say("¿cuánto he gastado en el gimnasio este año?")
+
+    assert rig.ledger.plans == [ran(JULY, merchant_terms=("gimnasio",))]
+    assert turn.state.focus == QueryFocus(asked(JULY, merchant_terms=("gimnasio",)))
 
 
 async def test_a_follow_up_patch_keeps_the_window() -> None:

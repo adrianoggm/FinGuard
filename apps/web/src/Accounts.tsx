@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { movements as fetchMovements, type Movements, type Summary } from "./api";
 import type { Tab } from "./tabs";
+import { displayText } from "./displayText";
 import {
   accountGlyph,
   accountName,
@@ -294,7 +295,7 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
                 {glyph(movement.category)}
               </span>
               <span className="what">
-                <strong>{movement.merchant_name ?? movement.description}</strong>
+                <strong>{displayText(movement.merchant_name ?? movement.description)}</strong>
                 <small>
                   {day(movement.occurred_at)} · {categoryName(movement.category)}
                   {/* Only where it changes what somebody would do: their own label, or none yet.

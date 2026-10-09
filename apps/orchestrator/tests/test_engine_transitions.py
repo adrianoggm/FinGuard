@@ -41,7 +41,6 @@ from finguard_orchestrator.domain.engine.state import (
     Scope,
 )
 from finguard_orchestrator.domain.engine.transitions import (
-    InvariantViolationError,
     Transition,
     Work,
     apply,
@@ -1087,18 +1086,17 @@ def test_a_compare_that_names_a_grouping_it_cannot_keep_is_clarify() -> None:
 # --- The invariant ---------------------------------------------------------------------------
 
 
-def test_a_patch_that_would_move_an_unnamed_field_raises_invariant_violation() -> None:
-    # `merchant_terms` is a plan field no operation can carry, so rebuilding the plan from fields
-    # would lose it: exactly the silent widening the invariant is there to catch.
+def test_a_patch_keeps_an_unnamed_merchant_term() -> None:
     base = plan(JULY, ["RESTAURANTS"], merchant_terms=("bet",))
 
-    with pytest.raises(InvariantViolationError, match="merchant_terms"):
-        apply(
-            state_with(QueryFocus(base)),
-            [Patch("focus", PlanFields(categories=("LEISURE",)))],
-            today=TODAY,
-            grounds=G,
-        )
+    transition = apply(
+        state_with(QueryFocus(base)),
+        [Patch("focus", PlanFields(categories=("LEISURE",)))],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert transition.state.focus == QueryFocus(plan(JULY, ["LEISURE"], merchant_terms=("bet",)))
 
 
 # --- Several operations in one turn (Review Focus 1) -----------------------------------------

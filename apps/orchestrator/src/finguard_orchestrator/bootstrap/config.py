@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # Compose reads that same file, so there is one place for it whichever way this is started.
     groq_api_key: SecretStr | None = None
 
+    # --- hosted inference (Gemini) -------------------------------------------------
+    # The key stays in the ignored `.env`; Gemini is registered only when it is present.
+    gemini_api_key: SecretStr | None = None
+
     # --- hosted inference (Cloudflare Workers AI) -------------------------------------
     #
     # A second registration of the same protocol rather than a second adapter — see
@@ -130,6 +134,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "groq_api_key",
+        "gemini_api_key",
         "cloudflare_api_token",
         "cloudflare_account_id",
         "visual_planner_provider",
@@ -184,6 +189,12 @@ class Settings(BaseSettings):
     # purpose. It buys nothing on a non-reasoning model and it is the difference between working
     # and not on a reasoning one.
     groq_reasoning_headroom: int = 2048
+
+    # Gemini's OpenAI-compatible endpoint. The adapter sends a shallow operation schema because
+    # Google's decoder rejects FinGuard's deeply nested full schema; the full Pydantic reader
+    # validates every field before a transition or bank query can run.
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    gemini_timeout_seconds: float = 60.0
 
     # The API root the account path is hung off. A default for the same reason Groq's base URL
     # is one — the endpoint is the vendor's, not the deployment's — and a field at all so a
