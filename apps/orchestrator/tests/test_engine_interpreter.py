@@ -29,13 +29,16 @@ from finguard_orchestrator.domain.engine.operations import (
     Smalltalk,
 )
 from finguard_orchestrator.domain.engine.state import (
+    BalanceFocus,
     ComparisonFocus,
     DialogueState,
     DialogueTurn,
+    Focus,
     Measure,
     Missing,
     Pending,
     QueryFocus,
+    RatioFocus,
     Scope,
 )
 from finguard_orchestrator.domain.enums import (
@@ -57,6 +60,8 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
 from finguard_orchestrator.infrastructure.engine.operations_prompt import (
     MAX_SENTENCE,
@@ -67,6 +72,7 @@ from finguard_orchestrator.infrastructure.engine.operations_prompt import (
 from finguard_orchestrator.infrastructure.engine.operations_schema import (
     MAX_FIELDS,
     MAX_OPERATIONS,
+    UnreadableError,
     read,
     schema_for,
 )
@@ -316,6 +322,16 @@ async def test_what_the_schema_cannot_express_becomes_clarify(said: str) -> None
 
     assert ops == (Clarify(Missing.SUBJECT),)
     assert len(provider.prompts) == 2
+
+
+def test_a_refused_category_is_not_quoted_back() -> None:
+    """The problem goes to the log and into the repair prompt; what the model wrote there is not
+    the reader's to repeat."""
+    with pytest.raises(UnreadableError) as refused:
+        read(answer({"op": "ask", "fields": items(categories=["COMPRAS_VARIAS"])}), CATALOGUE)
+
+    assert "categories" in refused.value.problem
+    assert "COMPRAS_VARIAS" not in refused.value.problem
 
 
 async def test_a_provider_failure_raises_interpretation_failed() -> None:
@@ -731,6 +747,61 @@ def test_the_state_says_what_is_on_screen_what_is_open_and_where() -> None:
     assert "WINDOW" in state
     assert "Farmacia Sol" in state
     assert "2 selected accounts" in state
+
+
+RESTAURANTS_JULY = FinancialPlan(Direction.EXPENSE, date_range=JULY, categories=("RESTAURANTS",))
+
+
+@pytest.mark.parametrize(
+    ("focus", "names", "shown"),
+    [
+        (
+            QueryFocus(
+                TopMovements(
+                    Direction.EXPENSE,
+                    period=RelativePeriod(Period.LAST_MONTH),
+                    categories=("RESTAURANTS",),
+                    rank=3,
+                )
+            ),
+            {},
+            "On screen: a ranking of movements: direction EXPENSE; "
+            "window LAST_MONTH = 2026-09-01..2026-09-30; categories RESTAURANTS; limit 3",
+        ),
+        (
+            RatioFocus(
+                RatioPlan(
+                    part=RESTAURANTS_JULY,
+                    whole=FinancialPlan(Direction.EXPENSE, date_range=JULY),
+                    kind=RatioKind.SHARE,
+                )
+            ),
+            {},
+            "On screen: a SHARE ratio: part direction EXPENSE; window 2026-07-01..2026-07-31; "
+            "categories RESTAURANTS; metric SUM; whole direction EXPENSE; "
+            "window 2026-07-01..2026-07-31; metric SUM",
+        ),
+        (BalanceFocus(()), {}, "On screen: the balance of every account"),
+        (BalanceFocus((UUID(int=3),)), {}, "On screen: the balance of 1 selected account"),
+        (
+            BalanceFocus((UUID(int=3), UUID(int=4))),
+            {},
+            "On screen: the balance of 2 selected accounts",
+        ),
+        (BalanceFocus((UUID(int=3),)), {UUID(int=3): "Hucha"}, "On screen: the balance of Hucha"),
+    ],
+    ids=["ranking", "share", "balance-all", "balance-1", "balance-2", "balance-named"],
+)
+def test_every_focus_renders(focus: Focus, names: dict[UUID, str], shown: str) -> None:
+    prompt = build_prompt(
+        "hola",
+        DialogueState(UUID(int=1), focus=focus),
+        today=TODAY,
+        categories=CATEGORIES,
+        account_names=names,
+    )
+
+    assert shown + "\n" in prompt
 
 
 NAMES = {UUID(int=11): "Cuenta corriente", UUID(int=12): "Hucha"}

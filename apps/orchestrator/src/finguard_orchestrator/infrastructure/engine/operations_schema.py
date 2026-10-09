@@ -94,7 +94,9 @@ _ISO_DATE: Final = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 def _in_catalogue(name: str, info: ValidationInfo) -> str:
     catalogue = (info.context or {}).get(_CATALOGUE)
     if catalogue is not None and name not in catalogue:
-        raise ValueError(f"{name!r} is not a category key")
+        # Not quoted back: the problem is logged and sent to the model, and the value is the
+        # model's text, which this module has no business repeating.
+        raise ValueError("not a category key from the list")
     return name
 
 
