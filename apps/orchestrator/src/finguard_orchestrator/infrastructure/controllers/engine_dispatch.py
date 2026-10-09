@@ -15,8 +15,9 @@ exactly as it always did whenever that call returns None:
   does not support): it saved nothing, so its focus is intact when the conversation comes back.
 
 Every other turn is the engine's, answered with the same `QuestionResponse` wire shape. Its
-`conversation` carries the engine's conversation id and version, plus a set-aside payment draft
-when one was echoed, and nothing else: the analytics memory is the engine's own, server-side, and
+`conversation` carries the engine's conversation id and version, plus what it must not drop: a
+set-aside payment draft, and a gym search's sealed offers in the conversation they were sealed for.
+Nothing else: the analytics memory is the engine's own, server-side, and
 the rules route's would be stale beside it. A turn the
 engine hands over comes back holding that id and version, because the rules route builds every
 answer from the conversation it was given and the mapper carries `version` through unchanged.
@@ -30,8 +31,9 @@ someone else's id, simply starts again under a new id (ruling R27).
 `X-FinGuard-Engine: rules|model` names the engine that answered the turn (a delegated turn is the
 rules route's), and `X-FinGuard-Model-Calls` the model calls the request made, counted by the
 provider wrapper (`counting_provider`). On the stream the headers leave before the first frame:
-exact for the engine, which answers before streaming, and for the rules route only up to that
-point, since its planner runs inside the stream. The measurement runner reads the JSON route.
+the engine has answered by then, so its count is exact; the rules route's planner runs inside the
+stream, so a rules answer there carries no count at all rather than a partial one. The measurement
+runner reads the JSON route, where both are exact.
 """
 
 import json
@@ -71,7 +73,8 @@ logger = logging.getLogger(__name__)
 
 ENGINE_HEADER: Final = "X-FinGuard-Engine"
 MODEL_CALLS_HEADER: Final = "X-FinGuard-Model-Calls"
-_QUESTION_ROUTES: Final = frozenset({"/v1/questions", "/v1/questions/stream"})
+_STREAM_ROUTE: Final = "/v1/questions/stream"
+_QUESTION_ROUTES: Final = frozenset({"/v1/questions", _STREAM_ROUTE})
 # A payment the rules route set aside to answer a question: the fields that hold it, echoed back
 # unchanged by an engine answer so the draft survives the turns the engine takes.
 _SET_ASIDE: Final = ("workflow", "payment", "candidates", "awaiting", "suspended")
@@ -151,10 +154,20 @@ async def try_engine(
 
 def _carrying(echoed: ConversationPayload | None, answer: QuestionResponse) -> QuestionResponse:
     """The engine's answer, holding what it must hand back untouched from the echoed conversation:
-    a payment the rules route set aside (only that workflow reaches the engine)."""
-    if echoed is None or echoed.workflow is None or answer.conversation is None:
+    a payment the rules route set aside (only that workflow reaches the engine), and the sealed
+    offers of a gym search while the conversation is still the one they were sealed for (M-3)."""
+    if echoed is None or answer.conversation is None:
         return answer
-    carried = {field: getattr(echoed, field) for field in _SET_ASIDE}
+    carried: dict[str, object] = {}
+    if echoed.workflow is not None:
+        carried.update({field: getattr(echoed, field) for field in _SET_ASIDE})
+    if (
+        echoed.activity_offers is not None
+        and answer.conversation.conversation_id == echoed.conversation_id
+    ):
+        carried["activity_offers"] = echoed.activity_offers
+    if not carried:
+        return answer
     conversation = answer.conversation.model_copy(update=carried)
     return answer.model_copy(update={"conversation": conversation})
 
@@ -265,7 +278,10 @@ class _Reported:
                     if message["type"] == "http.response.start":
                         headers = MutableHeaders(scope=message)
                         headers.append(ENGINE_HEADER, answered.by)
-                        headers.append(MODEL_CALLS_HEADER, str(calls.count))
+                        # The rules route streams its planner's calls after this message leaves:
+                        # no count there rather than a partial one (M-5).
+                        if answered.by == "model" or scope["path"] != _STREAM_ROUTE:
+                            headers.append(MODEL_CALLS_HEADER, str(calls.count))
                     await send(message)
 
                 await self.app(scope, receive, reported)

@@ -159,8 +159,9 @@ class Turn:
         return conversation
 
     @property
-    def engine(self) -> tuple[str, str]:
-        return self.headers["x-finguard-engine"], self.headers["x-finguard-model-calls"]
+    def engine(self) -> tuple[str, str | None]:
+        """Who answered, and the model calls, or None where none is reported (M-5)."""
+        return self.headers["x-finguard-engine"], self.headers.get("x-finguard-model-calls")
 
 
 def post(
@@ -227,10 +228,12 @@ def test_flag_off_keeps_rules_byte_identical(route: str) -> None:
 
         assert response.status_code == 200
         assert hashlib.sha256(response.content).hexdigest() == pinned, response.text
+        # The stream's headers leave before the rules route's planner runs: no count rather
+        # than a partial one (M-5).
         assert (
             response.headers["x-finguard-engine"],
-            response.headers["x-finguard-model-calls"],
-        ) == ("rules", "0")
+            response.headers.get("x-finguard-model-calls"),
+        ) == ("rules", None if route == STREAM_ROUTE else "0")
         frames = [
             json.loads(line.removeprefix("data: "))
             for line in response.text.splitlines()
@@ -516,9 +519,10 @@ def test_headers_report_engine_and_model_calls(route: str) -> None:
 
     assert answered.body["outcome"] == "PLANNED"
     assert answered.engine == ("model", "1")
-    # The engine's call is counted on the turn the rules route went on to answer.
+    # The engine's call is counted on the turn the rules route went on to answer; on the stream
+    # that route's own calls come after the headers, so no count is sent at all (M-5).
     assert delegated.body["outcome"] == "AWAITING_CONFIRMATION"
-    assert delegated.engine == ("rules", "1")
+    assert delegated.engine == ("rules", None if route == STREAM_ROUTE else "1")
 
 
 def test_the_rules_engine_reports_its_own_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -724,3 +728,28 @@ def test_a_pair_on_screen_is_handed_over_as_the_last_comparison() -> None:
     assert handed == ComparisonPlan(
         replace(pair.earlier, across_accounts=True), replace(pair.latest, across_accounts=True)
     )
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_searchs_offers_ride_through_an_engine_answer_in_the_same_conversation(
+    route: str,
+) -> None:
+    """M-3: the sealed offers of a gym search are bound to the conversation id; an engine answer in
+    that same conversation hands them back, so a later booking still finds them."""
+    stack = a_stack()
+    engine_on(stack, Scripted(RESTAURANTS_IN_JULY, AND_IN_LEISURE, AND_IN_LEISURE))
+    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
+    offers = {"slots": [], "agent_names": [], "contexts": [], "token": "o1.abc.def"}
+
+    same = post(stack, route, "¿y en ocio?", {**first.conversation, "activity_offers": offers})
+    elsewhere = post(
+        stack,
+        route,
+        "¿y en ocio?",
+        {"conversation_id": str(UUID(int=99)), "activity_offers": offers},
+    )
+
+    assert same.conversation["activity_offers"] == offers
+    # A new conversation: offers sealed for another id would never verify, so none ride along.
+    assert elsewhere.conversation["conversation_id"] != str(UUID(int=99))
+    assert elsewhere.conversation["activity_offers"] is None
