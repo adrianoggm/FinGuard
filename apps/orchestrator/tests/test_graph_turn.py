@@ -30,11 +30,18 @@ from finguard_orchestrator.domain.engine.operations import (
     Compare,
     Delegate,
     Operation,
+    Patch,
     PlanFields,
+    Visualize,
 )
-from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState
+from finguard_orchestrator.domain.engine.state import (
+    ComparisonFocus,
+    DialogueState,
+    DialogueTurn,
+    QueryFocus,
+)
 from finguard_orchestrator.domain.engine.transitions import apply
-from finguard_orchestrator.domain.enums import Direction, GroupBy
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
@@ -48,13 +55,24 @@ from finguard_orchestrator.domain.ports.turn_operations import (
     NO_ACCOUNT_NAMES,
     InterpretationFailedError,
 )
-from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, FinancialPlan
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.dto.llm_dto import ChartVisualizationResponse
 from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
 from finguard_orchestrator.infrastructure.graph.llm_assessor import LlmInvestigationAssessor
 from finguard_orchestrator.infrastructure.graph.memory_turn_reservations import (
     MemoryTurnReservations,
 )
+from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
 
 TODAY = date(2026, 8, 5)
 JUNE = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
@@ -68,6 +86,9 @@ BY_MERCHANT = (
     ),
 )
 GROCERIES_IN_JULY = (Ask(PlanFields(direction=Direction.EXPENSE, window=JULY)),)
+MERCHANT_BREAKDOWN_IN_JULY = (
+    Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, group_by=GroupBy.MERCHANT)),
+)
 # June against July. Amazon rose by both, Cepsa by bigger amounts, Mercadona by more purchases.
 FIGURES: dict[AbsoluteRange, tuple[Group, ...]] = {
     JUNE: (Group("Mercadona", 10_000, 4), Group("Amazon", 5_000, 1), Group("Cepsa", 6_000, 2)),
@@ -185,6 +206,13 @@ class World:
             Directory(),
             Contacts(),
             frozenset({"GROCERIES", "RESTAURANTS"}),
+            visual_policy=VisualPlanningPolicy(
+                model=None,
+                fallback=DeterministicVisualPlanner(),
+                verifier=verify,
+                mode="deterministic",
+                budget_seconds=1,
+            ),
             count_calls=self.calls,
         )
         return GraphTurnHandler(ports, self.reservations, self.saver)
@@ -228,6 +256,40 @@ async def test_the_current_engine_refuses_a_comparison_by_merchant() -> None:
     moved = apply(DialogueState(UUID(int=1)), BY_MERCHANT, today=TODAY, grounds=grounds)
 
     assert moved.work is None and moved.reply is not None
+
+
+def test_typed_period_patch_keeps_the_active_merchant_and_category_filters() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=1),
+        categories=("SUBSCRIPTIONS",),
+        merchant_terms=("gimnasio",),
+    )
+    current = DialogueState(
+        UUID(int=1),
+        focus=QueryFocus(plan),
+        turns=(DialogueTurn("gastos en gimnasio", "59,80 euros"),),
+    )
+
+    operations = (
+        Patch(
+            "focus",
+            PlanFields(window=AbsoluteRange(date(2026, 10, 1), date(2026, 10, 31))),
+        ),
+    )
+    moved = apply(
+        current,
+        operations,
+        today=date(2026, 10, 9),
+        grounds=Grounds(frozenset({"SUBSCRIPTIONS"}), (), ()),
+    )
+
+    assert isinstance(moved.state.focus, QueryFocus)
+    updated = moved.state.focus.plan
+    assert isinstance(updated, FinancialPlan)
+    assert updated.date_range == AbsoluteRange(date(2026, 10, 1), date(2026, 10, 31))
+    assert updated.categories == ("SUBSCRIPTIONS",)
+    assert updated.merchant_terms == ("gimnasio",)
 
 
 async def test_it_names_the_risen_merchants_with_their_cause_and_inspects_one() -> None:
@@ -644,15 +706,119 @@ async def test_a_checkpoint_from_another_graph_version_is_not_resumed(
 
 
 @pytest.mark.parametrize("to", ["PAYMENT", "TRANSFER", "BOOKING"])
-async def test_a_money_flow_leaves_the_graph_unsaved_and_unread(to: Any) -> None:
+async def test_a_money_flow_is_refused_without_bank_reads_or_execution(to: Any) -> None:
     world = World((Delegate(to),))
 
     answer = await world.ask(sentence="Hazme una transferencia de 50 euros a Marta")
 
-    assert answer.result is None and answer.delegate_to == to
-    assert answer.state.version == 0
+    assert answer.result is not None and answer.delegate_to is None
+    assert answer.state.version == 1
+    assert "aún no están disponibles" in answer.result.text
     assert world.ledger.ran == []
     assert world.assessor.seen == []
+
+
+async def test_chart_operation_reuses_the_prior_banking_result_and_keeps_continuity() -> None:
+    world = World(
+        MERCHANT_BREAKDOWN_IN_JULY,
+        (Visualize("ACTIVE_RESULT", "AUTO"),),
+        (Visualize("ACTIVE_CHART", "LINE"),),
+        GROCERIES_IN_JULY,
+    )
+
+    query = await world.ask(request_id="query-1", sentence="gastos por comercio en julio")
+    reads_after_query = len(world.ledger.ran)
+    chart = await world.ask(
+        conversation_id=query.state.conversation_id,
+        version=query.state.version,
+        request_id="visual-1",
+        sentence="muéstramelo en un gráfico",
+    )
+    replay = await world.ask(
+        conversation_id=query.state.conversation_id,
+        version=query.state.version,
+        request_id="visual-1",
+        sentence="muéstramelo en un gráfico",
+    )
+    reads_after_chart = len(world.ledger.ran)
+    restyled = await world.ask(
+        conversation_id=chart.state.conversation_id,
+        version=chart.state.version,
+        request_id="visual-2",
+        sentence="cámbialo a líneas",
+    )
+    reads_after_restyle = len(world.ledger.ran)
+    next_turn = await world.ask(
+        conversation_id=restyled.state.conversation_id,
+        version=restyled.state.version,
+        request_id="query-2",
+    )
+
+    assert chart == replay
+    assert chart.result is not None and chart.result.visual_decision is not None
+    assert chart.result.visual_dataset is not None
+    rendered = question_to_dto(chart.result)
+    assert isinstance(rendered.visualization, ChartVisualizationResponse)
+    assert restyled.result is not None and restyled.result.visual_decision is not None
+    assert restyled.result.visual_decision.spec.mark == "line"
+    assert reads_after_chart == reads_after_query
+    assert chart.state.active_result == query.state.active_result
+    assert chart.state.active_visual is not None
+    assert chart.state.active_visual.version == 1
+    assert chart.state.active_visual.result_version == query.state.active_result.result_version
+    assert restyled.state.active_visual is not None
+    assert restyled.state.active_visual.version == 2
+    assert restyled.state.active_visual.result_version == chart.state.active_visual.result_version
+    restored = graph_turn.codec.loads_state(graph_turn.codec.dumps_state(restyled.state))
+    assert restored == restyled.state
+    assert reads_after_restyle == reads_after_query
+    assert chart.state.version == 2
+    assert restyled.state.version == 3
+    assert next_turn.state.version == 4
+    assert next_turn.result is not None
+    assert len(world.interpreter.sentences) == 4
+
+
+async def test_category_chart_uses_human_readable_labels() -> None:
+    class CategoryLedger(MerchantLedger):
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self._fail()
+            self.ran.append(plan)
+            return QueryAnswer(
+                "EUR",
+                12_000,
+                3,
+                groups=(Group("HOUSING_RENT", 10_000, 1), Group("GROCERIES", 2_000, 2)),
+            )
+
+    world = World(
+        (
+            Ask(
+                PlanFields(
+                    direction=Direction.EXPENSE,
+                    window=JULY,
+                    group_by=GroupBy.CATEGORY,
+                )
+            ),
+        ),
+        (Visualize("ACTIVE_RESULT", "BAR"),),
+    )
+    world.ledger = CategoryLedger()
+    world.handler = world.build()
+    query = await world.ask(sentence="gastos por categoría en julio")
+    chart = await world.ask(
+        conversation_id=query.state.conversation_id,
+        version=query.state.version,
+        request_id="category-chart",
+        sentence="muéstramelo en un gráfico de barras",
+    )
+
+    assert chart.result is not None and chart.result.visual_dataset is not None
+    assert [row.dimension for row in chart.result.visual_dataset.rows] == [
+        "alquiler",
+        "supermercado",
+    ]
+    assert [row.value_minor for row in chart.result.visual_dataset.rows] == [10_000, 2_000]
 
 
 async def test_an_ordinary_question_is_answered_as_the_engine_answers_it() -> None:
@@ -678,7 +844,13 @@ async def test_an_ordinary_question_is_answered_as_the_engine_answers_it() -> No
     )
 
     assert answer.result == control.result
-    assert replace(answer.state, conversation_id=control.state.conversation_id) == control.state
+    # The graph keeps a bounded bank aggregate in its canonical state for native chart operations;
+    # the legacy adapter remains frozen and has no such reusable artifact yet.
+    assert (
+        replace(answer.state, conversation_id=control.state.conversation_id, active_result=None)
+        == control.state
+    )
+    assert answer.state.active_result is not None
     assert world.assessor.seen == []
 
 

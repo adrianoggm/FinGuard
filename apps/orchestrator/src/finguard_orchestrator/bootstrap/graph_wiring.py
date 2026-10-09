@@ -1,13 +1,8 @@
-"""The investigation graph's composition (Task 8), loaded only when `conversation_graph=on`.
+"""Composition of the unified conversation graph and its injected persistence ports."""
 
-The same interpreter, store kind and banking adapters as the model engine, plus the assessor on the
-planner's provider and model, the turn reservations and LangGraph's in-memory checkpointer. Every
-one of those three keeps its state in this process: a restart loses checkpoints and reservations,
-and two replicas would not see each other's. That is the experiment's honest scope, not a
-deployment.
-"""
+from typing import Any
 
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from finguard_orchestrator.application.graph.graph import GraphPorts
 from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
@@ -15,14 +10,13 @@ from finguard_orchestrator.bootstrap.config import Settings
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
+from finguard_orchestrator.domain.ports.dialogue_store import DialogueStorePort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_operations import TurnOperationsPort
-from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
+from finguard_orchestrator.domain.ports.turn_reservations import TurnReservationsPort
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.infrastructure.graph.llm_assessor import LlmInvestigationAssessor
-from finguard_orchestrator.infrastructure.graph.memory_turn_reservations import (
-    MemoryTurnReservations,
-)
 from finguard_orchestrator.infrastructure.llm.counting_provider import calls_so_far
 
 
@@ -34,6 +28,10 @@ def graph_engine(
     accounts: AccountSummaryPort,
     account_directory: AccountDirectoryPort,
     contacts: ContactDirectoryPort,
+    store: DialogueStorePort,
+    reservations: TurnReservationsPort,
+    checkpointer: BaseCheckpointSaver[Any],
+    visual_policy: VisualPlanningPolicy | None = None,
 ) -> GraphTurnHandler:
     ports = GraphPorts(
         interpreter,
@@ -43,12 +41,13 @@ def graph_engine(
             temperature=settings.engine_temperature,
             max_output_tokens=settings.engine_max_output_tokens,
         ),
-        MemoryDialogueStore(),
+        store,
         banking,
         accounts,
         account_directory,
         contacts,
         frozenset(settings.categories),
+        visual_policy=visual_policy,
         count_calls=calls_so_far,
     )
-    return GraphTurnHandler(ports, MemoryTurnReservations(), InMemorySaver())
+    return GraphTurnHandler(ports, reservations, checkpointer)

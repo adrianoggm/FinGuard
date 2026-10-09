@@ -36,6 +36,11 @@ def get_ask_handler(request: Request) -> AskFinancialQuestionHandler:
     return handler
 
 
+def get_payment_workflow(request: Request) -> object | None:
+    """The durable LangGraph payment pause/resume adapter, when graph mode is enabled."""
+    return request.app.state.payment_workflow
+
+
 async def authenticated_caller(
     request: Request, authorization: Annotated[str | None, Header()] = None
 ) -> Caller:

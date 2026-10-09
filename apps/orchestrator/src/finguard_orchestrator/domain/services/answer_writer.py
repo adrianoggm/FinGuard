@@ -1106,7 +1106,16 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         return f"{head}{inert_note}"
 
     visible = ranked_groups if ranked_groups is not None else answer.groups
-    shown = visible[:MAX_SPOKEN_GROUPS]
+    # Month and category breakdowns are commonly the answer itself ("cuánto gasté cada mes",
+    # "desglosa todas las categorías"). Truncating those to five and saying "y 4 más" hides the
+    # requested data even though banking returned it and the evidence panel has it. Keep the
+    # compact chat cap for potentially long merchant/account lists, but show every requested
+    # calendar bucket and category.
+    shown = (
+        visible
+        if plan.group_by in {GroupBy.MONTH, GroupBy.CATEGORY}
+        else visible[:MAX_SPOKEN_GROUPS]
+    )
     lines = "\n".join(
         f"  · {_group_name(group.key, plan)}: {_figure(group, answer, plan.metric)}"
         for group in shown

@@ -1920,7 +1920,9 @@ async def ask(
     field that could carry one.
     """
     # The model-led engine, when it is switched on and the turn is its own (`engine_dispatch`).
-    answered = await engine_dispatch.try_engine(engine, request, who, today, metric_tokens)
+    answered = await engine_dispatch.try_engine(
+        engine, request, who, today, metric_tokens, request_id=attempt
+    )
     if answered is not None:
         return answered
     key = attempt
@@ -2183,7 +2185,7 @@ async def ask_streaming(
     """
     # The same seam as the question route's, streamed (`engine_dispatch`).
     streamed = await engine_dispatch.try_engine_streaming(
-        engine, request, who, today, metric_tokens
+        engine, request, who, today, metric_tokens, request_id=attempt
     )
     if streamed is not None:
         return streamed

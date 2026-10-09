@@ -58,6 +58,9 @@ class ConfirmPaymentRequest(_Payload):
 
     reply: str = Field(min_length=1, max_length=MAX_REPLY_LENGTH)
     preview: PreviewPayload | None = None
+    # Required by LangGraph deployments to resume the account-scoped checkpoint created by the
+    # preparation request. Legacy deployments ignore it.
+    workflow_id: str | None = Field(default=None, max_length=200)
 
 
 class PaymentResponse(_Payload):
@@ -71,6 +74,7 @@ class PaymentResponse(_Payload):
     outcome: str
     text: str
     intent_id: str | None = None
+    workflow_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     recipient: str | None = None
     # Which rail, and where it went. Exactly one of the two identifiers is filled and `rail` says
     # which — a Bizum names a person by phone, a transfer names the account. The account is whole

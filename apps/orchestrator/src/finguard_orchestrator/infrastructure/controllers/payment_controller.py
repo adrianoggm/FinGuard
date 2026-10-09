@@ -15,7 +15,7 @@ that was neither yes nor no: those are turns in a conversation, not HTTP failure
 had to read status codes to continue talking would be a client that stops talking.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends
 from finguard_orchestrator.application import CommandBus
 from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
+    PaymentAnswer,
     PrepareChosenPaymentCommand,
     PrepareOwnTransferCommand,
     PreparePaymentCommand,
@@ -30,9 +31,12 @@ from finguard_orchestrator.application.commands.pay import (
 from finguard_orchestrator.bootstrap.dependencies import (
     attempt_key,
     get_command_bus,
+    get_payment_workflow,
     payments_enabled,
     requires,
 )
+from finguard_orchestrator.domain.enums import PaymentOutcome
+from finguard_orchestrator.domain.services.payment_writer import no_longer_live
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.payment_dto import (
@@ -45,6 +49,9 @@ from finguard_orchestrator.infrastructure.dto.payment_dto import (
 from finguard_orchestrator.infrastructure.mappers import payment_mapper
 
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
+# Keep the graph optional at the HTTP boundary without importing LangGraph on deployments
+# where the feature is off. The dependency returns the concrete adapter only when wired.
+Workflow = Annotated[Any, Depends(get_payment_workflow)]
 MayPrepare = Annotated[Caller, Depends(requires(Scope.PAYMENTS_PREPARE))]
 MayConfirm = Annotated[Caller, Depends(requires(Scope.PAYMENTS_CONFIRM))]
 
@@ -62,6 +69,7 @@ async def prepare(
     who: MayPrepare,
     commands: Commands,
     attempt: Attempt,
+    workflow: Workflow,
 ) -> PaymentResponse:
     """Answers with what the user is being asked to approve, and moves nothing.
 
@@ -69,12 +77,15 @@ async def prepare(
     one. It is the header banking requires, and it is optional here only so a client written before
     it keeps working — `attempt_key` says what that costs.
     """
-    answer = await commands.dispatch(
-        PreparePaymentCommand(
-            sentence=request.sentence,
-            account_id=who.account_id,
-            idempotency_key=attempt,
-        )
+    command = PreparePaymentCommand(
+        sentence=request.sentence,
+        account_id=who.account_id,
+        idempotency_key=attempt,
+    )
+    answer = (
+        await workflow.prepare(command, account_id=who.account_id)
+        if workflow is not None
+        else await commands.dispatch(command)
     )
     return payment_mapper.answer_to_dto(answer)
 
@@ -85,6 +96,7 @@ async def prepare_chosen(
     who: MayPrepare,
     commands: Commands,
     attempt: Attempt,
+    workflow: Workflow,
 ) -> PaymentResponse:
     """The form path: a contact picked from the list, an amount typed in a field.
 
@@ -96,14 +108,17 @@ async def prepare_chosen(
     Declared before `/{intent_id}/confirm` would not matter — "chosen" is not a UUID, so the two
     cannot collide — but it reads in the order the flow happens.
     """
-    answer = await commands.dispatch(
-        PrepareChosenPaymentCommand(
-            account_id=who.account_id,
-            recipient_name=request.recipient_name,
-            amount_minor=request.amount_minor,
-            currency=request.currency,
-            idempotency_key=attempt,
-        )
+    command = PrepareChosenPaymentCommand(
+        account_id=who.account_id,
+        recipient_name=request.recipient_name,
+        amount_minor=request.amount_minor,
+        currency=request.currency,
+        idempotency_key=attempt,
+    )
+    answer = (
+        await workflow.prepare(command, account_id=who.account_id)
+        if workflow is not None
+        else await commands.dispatch(command)
     )
     return payment_mapper.answer_to_dto(answer)
 
@@ -114,6 +129,7 @@ async def prepare_own_transfer(
     who: MayPrepare,
     commands: Commands,
     attempt: Attempt,
+    workflow: Workflow,
 ) -> PaymentResponse:
     """A preview, like every other payment, and confirmed through the same route.
 
@@ -127,21 +143,28 @@ async def prepare_own_transfer(
     Declared before `/{intent_id}/confirm` for readability only: "between-accounts" is not a UUID,
     so the two cannot collide.
     """
-    answer = await commands.dispatch(
-        PrepareOwnTransferCommand(
-            account_id=who.account_id,
-            to_account_id=request.to_account_id,
-            amount_minor=request.amount_minor,
-            currency=request.currency,
-            idempotency_key=attempt,
-        )
+    command = PrepareOwnTransferCommand(
+        account_id=who.account_id,
+        to_account_id=request.to_account_id,
+        amount_minor=request.amount_minor,
+        currency=request.currency,
+        idempotency_key=attempt,
+    )
+    answer = (
+        await workflow.prepare(command, account_id=who.account_id)
+        if workflow is not None
+        else await commands.dispatch(command)
     )
     return payment_mapper.answer_to_dto(answer)
 
 
 @payments_router.post("/{intent_id}/confirm", summary="Answer a preview")
 async def confirm(
-    intent_id: UUID, request: ConfirmPaymentRequest, who: MayConfirm, commands: Commands
+    intent_id: UUID,
+    request: ConfirmPaymentRequest,
+    who: MayConfirm,
+    commands: Commands,
+    workflow: Workflow,
 ) -> PaymentResponse:
     """The reply is the user's own words and is read deterministically — a model never decides that
     somebody agreed.
@@ -149,12 +172,29 @@ async def confirm(
     A reply that is neither yes nor no comes back as AWAITING_CONFIRMATION with the question again.
     That is the same outcome the preview had, on purpose: the state of the world did not change.
     """
-    answer = await commands.dispatch(
-        ConfirmPaymentCommand(
-            reply=request.reply,
-            account_id=who.account_id,
-            intent_id=intent_id,
-            preview=payment_mapper.preview_to_domain(request.preview) if request.preview else None,
+    if workflow is not None:
+        if request.workflow_id is None:
+            answer = PaymentAnswer(
+                outcome=PaymentOutcome.REFUSED.value,
+                text=no_longer_live(),
+                intent_id=intent_id,
+            )
+        else:
+            answer = await workflow.confirm(
+                workflow_id=request.workflow_id,
+                account_id=who.account_id,
+                intent_id=intent_id,
+                reply=request.reply,
+            )
+    else:
+        answer = await commands.dispatch(
+            ConfirmPaymentCommand(
+                reply=request.reply,
+                account_id=who.account_id,
+                intent_id=intent_id,
+                preview=(
+                    payment_mapper.preview_to_domain(request.preview) if request.preview else None
+                ),
+            )
         )
-    )
     return payment_mapper.answer_to_dto(answer)

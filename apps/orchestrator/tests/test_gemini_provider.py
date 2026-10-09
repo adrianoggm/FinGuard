@@ -90,6 +90,8 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
         "clarify",
         "smalltalk",
         "delegate",
+        "create_visualization",
+        "update_visualization",
     }
     assert all(variant["additionalProperties"] is False for variant in operation_variants)
     assert all(len(variant["properties"]) == 1 for variant in operation_variants)
@@ -146,7 +148,7 @@ async def test_complete_sends_gemini_schema_and_bearer_key(
     sent_schema = endpoint.request["json"]["response_format"]["json_schema"]["schema"]
     assert "$defs" not in sent_schema
     operations = sent_schema["properties"]["operations"]["items"]["anyOf"]
-    assert len(operations) == 10
+    assert len(operations) == 12
     patch = next(v["properties"]["patch"] for v in operations if "patch" in v["properties"])
     assert "changes" in patch["properties"]
 

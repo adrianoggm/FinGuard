@@ -41,10 +41,11 @@ dependencies = [
     # and `import httpx` raises ModuleNotFoundError here. The outbound span goes through the client
     # factory in infrastructure/banking/client.py, which was built for it.
     "opentelemetry-instrumentation-fastapi>=0.65b0,<1",
-    # The Task 8 experiment only (application/graph): the investigation graph behind
-    # ORCHESTRATOR_CONVERSATION_GRAPH, off by default. It brings langchain-core, langsmith and
-    # plain `httpx` with it; nothing outside that package imports any of them.
+    # The conversation graph and its PostgreSQL checkpoint saver. The feature remains behind
+    # ORCHESTRATOR_CONVERSATION_GRAPH until full API and browser coverage is complete.
     "langgraph>=1.2.14",
+    "langgraph-checkpoint-postgres>=3,<4",
+    "psycopg[binary]>=3.2",
 ]
 
 [dependency-groups]

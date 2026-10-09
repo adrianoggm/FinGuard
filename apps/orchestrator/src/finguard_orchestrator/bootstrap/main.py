@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
@@ -170,20 +172,59 @@ def create_app() -> FastAPI:
     # is a stream nothing can parse.
     logging_settings = get_settings()
     configure_logging(level=logging_settings.log_level, as_json=logging_settings.log_json)
+    graph_factory: Callable[[object, object, object], AnswerTurnHandler] | None = None
 
     @asynccontextmanager
     async def lifespan(service: FastAPI) -> AsyncIterator[None]:
         pool = None
-        if settings.metrics_enabled and settings.database_url:
+        if (
+            settings.metrics_enabled or settings.conversation_graph == "on"
+        ) and settings.database_url:
             import asyncpg
 
             pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=5)
+        if settings.metrics_enabled and pool is not None:
             service.state.metrics_repository = PostgresSavedMetricRepository(
                 pool, settings.metrics_max_saved
             )
+        saver_context = None
+        saver_open = False
         try:
+            if settings.conversation_graph == "on":
+                if not settings.database_url or graph_factory is None:
+                    raise ValueError("conversation_graph=on requires DATABASE_URL")
+                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+                from finguard_orchestrator.application.graph.payment_workflow import (
+                    PaymentWorkflowGraph,
+                )
+                from finguard_orchestrator.infrastructure.engine.postgres_dialogue_store import (
+                    PostgresDialogueStore,
+                )
+                from finguard_orchestrator.infrastructure.graph.postgres_turn_reservations import (
+                    PostgresTurnReservations,
+                )
+
+                # LangGraph owns checkpoint recovery; application state retains its separate
+                # versioned CAS and request reservation records in the assistant schema.
+                postgres_url = settings.database_url.replace(
+                    "postgresql+asyncpg://", "postgresql://", 1
+                )
+                saver_context = AsyncPostgresSaver.from_conn_string(postgres_url)
+                checkpointer = await saver_context.__aenter__()
+                saver_open = True
+                await checkpointer.setup()
+                dialogue_store = PostgresDialogueStore(pool)
+                service.state.engine = graph_factory(
+                    dialogue_store, PostgresTurnReservations(pool), checkpointer
+                )
+                service.state.payment_workflow = PaymentWorkflowGraph(
+                    service.state.command_bus, dialogue_store, checkpointer
+                )
             yield
         finally:
+            if saver_context is not None and saver_open:
+                await saver_context.__aexit__(None, None, None)
             if pool is not None:
                 await pool.close()
 
@@ -202,10 +243,23 @@ def create_app() -> FastAPI:
     )
 
     settings = get_settings()
+    if settings.conversation_graph == "on" and sys.platform == "win32":
+        # psycopg's async connection requires selector-based IO on native Windows. Uvicorn
+        # creates its loop after importing this module, so choose it here, before startup.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        else:
+            raise RuntimeError(
+                "conversation_graph must be configured before starting the Windows event loop"
+            )
     if settings.metrics_enabled and (
         not settings.database_url or not settings.metrics_signing_keys
     ):
         raise ValueError("metrics_enabled requires DATABASE_URL and METRICS_SIGNING_KEYS")
+    if settings.conversation_graph == "on" and not settings.database_url:
+        raise ValueError("conversation_graph=on requires DATABASE_URL")
     catalogue = settings.catalogue()
     # The registry builds providers with no arguments; the one that needs configuration
     # gets it here, in the only place allowed to know what the deployment looks like.
@@ -605,23 +659,29 @@ def create_app() -> FastAPI:
             max_output_tokens=settings.engine_max_output_tokens,
             categories={key: category_words.name_of(key) for key in settings.categories},
         )
-        engine = AnswerTurnHandler(
-            operations,
-            # Single instance only: a restart forgets every conversation (see the store).
-            MemoryDialogueStore(),
-            banking,
-            accounts,
-            account_directory,
-            contacts,
-            frozenset(settings.categories),
-            count_calls=calls_so_far,
-        )
-        if settings.conversation_graph == "on":
-            # The Task 8 experiment answers the engine's turns instead, with the same interpreter
-            # and adapters. Imported here so that with the graph off nothing of it is loaded.
-            from finguard_orchestrator.bootstrap.graph_wiring import graph_engine
+        if settings.conversation_graph != "on":
+            engine = AnswerTurnHandler(
+                operations,
+                # Single instance only: a restart forgets every conversation (see the store).
+                MemoryDialogueStore(),
+                banking,
+                accounts,
+                account_directory,
+                contacts,
+                frozenset(settings.categories),
+                count_calls=calls_so_far,
+            )
+    if settings.conversation_graph == "on":
+        if settings.conversation_engine != "model":
+            raise ValueError(
+                "conversation_graph=on requires ORCHESTRATOR_CONVERSATION_ENGINE=model"
+            )
+        from finguard_orchestrator.bootstrap.graph_wiring import graph_engine
 
-            engine = graph_engine(  # type: ignore[assignment]
+        def build_graph(
+            store: object, reservations: object, checkpointer: object
+        ) -> AnswerTurnHandler:
+            return graph_engine(
                 settings,
                 operations,
                 planner_provider,
@@ -629,8 +689,15 @@ def create_app() -> FastAPI:
                 accounts,
                 account_directory,
                 contacts,
-            )
+                store,  # type: ignore[arg-type]
+                reservations,  # type: ignore[arg-type]
+                checkpointer,  # type: ignore[arg-type]
+                visual_policy,
+            )  # type: ignore[return-value]
+
+        graph_factory = build_graph
     app.state.engine = engine
+    app.state.payment_workflow = None
 
     # Before the routers, because a rejected preflight never reaches one. The web client cannot
     # call this service at all without it: a browser refuses a cross-origin request unless the

@@ -29,6 +29,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Reset,
     SelectOperand,
     Smalltalk,
+    Visualize,
 )
 from finguard_orchestrator.domain.engine.state import (
     BalanceFocus,
@@ -492,6 +493,27 @@ def test_categories_are_the_catalogue_keys_only() -> None:
     assert all(found == list(CATALOGUE) for found in category_enums)
 
 
+@pytest.mark.parametrize(
+    ("shape", "expected"),
+    [
+        (
+            {"create_visualization": "AUTO"},
+            Visualize("ACTIVE_RESULT", "AUTO"),
+        ),
+        (
+            {"update_visualization": "LINE"},
+            Visualize("ACTIVE_CHART", "LINE"),
+        ),
+    ],
+)
+def test_visual_operations_are_typed_and_closed(
+    shape: dict[str, object], expected: Visualize
+) -> None:
+    payload = json.dumps({"operations": [shape]})
+
+    assert read(payload, CATALOGUE) == (expected,)
+
+
 def literal(cls: type, field: str) -> list[str]:
     return list(typing.get_args(typing.get_type_hints(cls)[field]))
 
@@ -572,6 +594,8 @@ def test_operations_are_keyed_by_their_name() -> None:
         "clarify",
         "smalltalk",
         "delegate",
+        "create_visualization",
+        "update_visualization",
     ]
 
 

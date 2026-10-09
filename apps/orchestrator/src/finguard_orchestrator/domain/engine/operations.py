@@ -95,6 +95,14 @@ class Delegate:
     to: Literal["PAYMENT", "TRANSFER", "BOOKING", "CHART", "UNSUPPORTED"]
 
 
+@dataclass(frozen=True)
+class Visualize:
+    """A first-class visual operation over the last query result or current chart."""
+
+    target: Literal["ACTIVE_RESULT", "ACTIVE_CHART"]
+    style: Literal["AUTO", "BAR", "LINE"] = "AUTO"
+
+
 Operation = (
     Ask
     | Patch
@@ -106,4 +114,5 @@ Operation = (
     | Clarify
     | Smalltalk
     | Delegate
+    | Visualize
 )

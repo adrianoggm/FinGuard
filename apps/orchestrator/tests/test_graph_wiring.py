@@ -23,6 +23,11 @@ def test_the_graph_is_off_by_default_and_as_shipped() -> None:
 def built(monkeypatch: pytest.MonkeyPatch, engine: str, graph: str) -> object:
     monkeypatch.setenv("ORCHESTRATOR_CONVERSATION_ENGINE", engine)
     monkeypatch.setenv("ORCHESTRATOR_CONVERSATION_GRAPH", graph)
+    monkeypatch.setenv("ORCHESTRATOR_DATABASE_URL", "postgresql://test:test@127.0.0.1/test")
+    monkeypatch.setenv(
+        "ORCHESTRATOR_DEV_TOKENS",
+        '["test-token-long-enough:test-holder:00000000-0000-0000-0000-000000000001"]',
+    )
     monkeypatch.setenv("ORCHESTRATOR_ENGINE_MODEL", "")
     get_settings.cache_clear()
     try:
@@ -42,26 +47,14 @@ def test_with_the_graph_off_the_model_engine_is_the_measured_one(
 def test_with_the_graph_on_the_model_engine_answers_through_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
-    from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
-    from finguard_orchestrator.infrastructure.graph.llm_assessor import LlmInvestigationAssessor
-    from finguard_orchestrator.infrastructure.llm.counting_provider import (
-        CountingProvider,
-        calls_so_far,
-    )
-
-    engine = built(monkeypatch, "model", "on")
-
-    assert isinstance(engine, GraphTurnHandler)
-    ports = engine._ports  # noqa: SLF001
-    assert isinstance(ports.interpreter, LlmTurnOperations)
-    assert isinstance(ports.assessor, LlmInvestigationAssessor)
-    assert isinstance(ports.assessor._provider, CountingProvider)  # noqa: SLF001
-    assert ports.count_calls is calls_so_far
+    # Stores and the checkpointer are opened in lifespan and remain open for requests.
+    # App construction must not silently fall back to an in-memory graph.
+    assert built(monkeypatch, "model", "on") is None
 
 
 def test_the_graph_needs_the_model_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert built(monkeypatch, "rules", "on") is None
+    with pytest.raises(ValueError, match="requires ORCHESTRATOR_CONVERSATION_ENGINE=model"):
+        built(monkeypatch, "rules", "on")
 
 
 @pytest.mark.parametrize("graph", ["off", "on"])
@@ -75,6 +68,10 @@ def test_the_app_loads_langgraph_only_with_the_graph_on(graph: str) -> None:
     )
     env = {**os.environ, "ORCHESTRATOR_CONVERSATION_ENGINE": "model"}
     env["ORCHESTRATOR_CONVERSATION_GRAPH"] = graph
+    env["ORCHESTRATOR_DATABASE_URL"] = "postgresql://test:test@127.0.0.1/test"
+    env["ORCHESTRATOR_DEV_TOKENS"] = (
+        '["test-token-long-enough:test-holder:00000000-0000-0000-0000-000000000001"]'
+    )
 
     done = subprocess.run(
         [sys.executable, "-c", probe],

@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import ValidationError
 from support.episodes import (
     INTENT,
@@ -29,6 +30,8 @@ from support.episodes import (
 )
 
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
+from finguard_orchestrator.application.graph.graph import GraphPorts
+from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.bootstrap.config import Settings, get_settings
 from finguard_orchestrator.bootstrap.dependencies import authenticated_caller
 from finguard_orchestrator.bootstrap.main import app, create_app
@@ -38,14 +41,21 @@ from finguard_orchestrator.domain.engine.operations import (
     Operation,
     Patch,
     PlanFields,
+    Visualize,
 )
 from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
-from finguard_orchestrator.domain.enums import Direction
+from finguard_orchestrator.domain.enums import Direction, GroupBy
 from finguard_orchestrator.domain.errors import QueryRejectedError
 from finguard_orchestrator.domain.models.account_summary import Holding
 from finguard_orchestrator.domain.models.conversation import Conversation, FinancialClarification
+from finguard_orchestrator.domain.models.query_answer import Group
 from finguard_orchestrator.domain.ports.turn_operations import NO_ACCOUNT_NAMES
 from finguard_orchestrator.domain.services import category_words
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -58,6 +68,9 @@ from finguard_orchestrator.infrastructure.controllers import engine_dispatch
 from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
 from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
+from finguard_orchestrator.infrastructure.graph.memory_turn_reservations import (
+    MemoryTurnReservations,
+)
 from finguard_orchestrator.infrastructure.llm.counting_provider import (
     CountingProvider,
     calls_so_far,
@@ -371,6 +384,31 @@ def test_payment_is_delegated_and_focus_survives(route: str) -> None:
     # The engine's memory is its own, server-side: none of the rules route's rides beside it.
     assert (patched.conversation["last_plan"], patched.conversation["turns"]) == (None, [])
     assert patched.engine[0] == "model"
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_authoritative_graph_never_falls_back_for_legacy_payment_workflow(route: str) -> None:
+    """A stale payment preview must not reach the legacy confirmation handler in graph mode."""
+    stack = a_stack()
+    preview = post(stack, route, "hazle un bizum de 20 euros a Marta Solis Vega")
+    assert preview.body["outcome"] == "AWAITING_CONFIRMATION"
+
+    class AuthoritativeGraph:
+        authoritative = True
+
+        async def answer(self, *_: object, **__: object) -> object:
+            raise AssertionError("legacy workflow must be refused before graph invocation")
+
+    app.state.engine = AuthoritativeGraph()
+    refused = post(stack, route, "sí", preview.conversation)
+
+    assert refused.status == 200
+    assert refused.body["outcome"] == "INVALID_DOMAIN"
+    assert "No puedo continuarla ni ejecutarla" in refused.body["text"]
+    assert refused.conversation["workflow"] == "PAYMENT_CONFIRMATION"
+    assert refused.conversation["intent_id"] == preview.conversation["intent_id"]
+    assert stack.bank.confirmed == []
+    assert refused.engine == ("model", "0")
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -710,6 +748,63 @@ def test_a_chart_of_what_is_on_screen_is_drawn_from_the_engines_plan(
     assert charted.engine[0] == "rules"
     assert handed == [ran("RESTAURANTS")]
     assert charted.conversation["conversation_id"] == first.conversation["conversation_id"]
+
+
+def test_graph_visual_operations_render_and_restyle_over_http_without_bank_reads() -> None:
+    stack = a_stack(account_scope_default="all")
+    stack.ledger.groups_for_next_turn = (
+        Group("Alimentación", 30_000, 3),
+        Group("Restaurantes", 18_000, 2),
+        Group("Transporte", 9_000, 1),
+    )
+    operations = Scripted(
+        (Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, group_by=GroupBy.CATEGORY)),),
+        (Visualize("ACTIVE_RESULT", "AUTO"),),
+        (Visualize("ACTIVE_CHART", "LINE"),),
+    )
+
+    class UnusedAssessor:
+        async def assess(self, _: object) -> object:
+            raise AssertionError("this read-only chart conversation needs no investigation")
+
+    stack_engine = GraphTurnHandler(
+        GraphPorts(
+            operations,
+            UnusedAssessor(),  # type: ignore[arg-type]
+            MemoryDialogueStore(),
+            stack.ledger,  # type: ignore[arg-type]
+            Accounts(),  # type: ignore[arg-type]
+            Directory(),  # type: ignore[arg-type]
+            Contacts(),  # type: ignore[arg-type]
+            CATEGORIES,
+            visual_policy=VisualPlanningPolicy(
+                model=None,
+                fallback=DeterministicVisualPlanner(),
+                verifier=verify,
+                mode="deterministic",
+                budget_seconds=1,
+            ),
+            count_calls=calls_so_far,
+        ),
+        MemoryTurnReservations(),
+        InMemorySaver(),
+    )
+    app.state.engine = stack_engine
+
+    queried = post(stack, JSON_ROUTE, "desglosa gastos por categorías de julio")
+    bank_reads = len(stack.ledger.ran)
+    created = post(stack, JSON_ROUTE, "enséñamelo en un gráfico", queried.conversation)
+    restyled = post(stack, JSON_ROUTE, "cámbialo a líneas", created.conversation)
+
+    assert queried.status == created.status == restyled.status == 200
+    assert created.body["visualization"]["kind"] == "chart"
+    assert created.body["visualization"]["spec"]["mark"]["type"] == "bar"
+    assert restyled.body["visualization"]["kind"] == "chart"
+    assert restyled.body["visualization"]["spec"]["mark"]["type"] == "line"
+    assert created.conversation["version"] == 2
+    assert restyled.conversation["version"] == 3
+    assert len(stack.ledger.ran) == bank_reads
+    assert created.engine[0] == restyled.engine[0] == "model"
 
 
 def test_a_pair_on_screen_is_handed_over_as_the_last_comparison() -> None:

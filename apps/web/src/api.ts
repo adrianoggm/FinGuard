@@ -381,6 +381,8 @@ export type Answer = {
   text: string;
   question: string | null;
   intent_id: string | null;
+  /** Account-scoped LangGraph checkpoint handle for resuming a bank preview. */
+  workflow_id?: string | null;
   plan: string | null;
   // Present with a question back: the reading that question interrupted. Echoed on the next turn
   // so the reply finishes the plan instead of starting a new one.
@@ -750,11 +752,15 @@ export async function* ask(
  * somebody agreed, and that decision belongs to the service, which reads the words against an
  * allow-list. "Sí pero mándale 30" is not a yes, and it has to reach the place that knows that.
  */
-export async function confirm(intentId: string, reply: string): Promise<Answer> {
+export async function confirm(
+  intentId: string,
+  reply: string,
+  workflowId?: string | null,
+): Promise<Answer> {
   const response = await fetch(`${BASE}/v1/payments/${intentId}/confirm`, {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({ reply }),
+    body: JSON.stringify({ reply, ...(workflowId ? { workflow_id: workflowId } : {}) }),
   });
   if (!response.ok) await readError(response);
   const body = await response.json();
@@ -764,6 +770,7 @@ export async function confirm(intentId: string, reply: string): Promise<Answer> 
     text: body.text,
     question: null,
     intent_id: body.intent_id ?? null,
+    workflow_id: body.workflow_id ?? null,
     plan: null,
     // The confirmation endpoints answer about a payment, not about a conversation: by this point
     // it is complete and either done or refused, so nothing is left open. The chat's own state is
@@ -928,6 +935,7 @@ export async function transferBetweenAccounts(
     text: body.text,
     question: null,
     intent_id: body.intent_id ?? null,
+    workflow_id: body.workflow_id ?? null,
     plan: null,
     conversation: null,
     currency: body.currency ?? null,
@@ -960,6 +968,7 @@ export async function payChosen(
     text: body.text,
     question: null,
     intent_id: body.intent_id ?? null,
+    workflow_id: body.workflow_id ?? null,
     plan: null,
     // The confirmation endpoints answer about a payment, not about a conversation: by this point
     // it is complete and either done or refused, so nothing is left open. The chat's own state is

@@ -447,11 +447,10 @@ class Settings(BaseSettings):
     # Zero for the planner's reason: an interpretation that varies between identical turns cannot
     # be measured.
     engine_temperature: float = Field(default=0.0, ge=0)
-    # The Task 8 experiment: the model engine's turns through a bounded LangGraph investigation
-    # (`application/graph`), which can also answer «¿en qué comercios gasto más que antes, y por
-    # qué?» in up to three bank reads and three model calls. Only with `conversation_engine=model`;
-    # `off` by default, and with `off` nothing of the graph is built or imported by the routes. Its
-    # checkpoints are in memory: durability is unproven, so this is never a production setting.
+    # Migration switch: graph turns use PostgreSQL for canonical state, idempotency reservations
+    # and LangGraph checkpoints. It requires `conversation_engine=model` and DATABASE_URL. It is
+    # off until visual, payment and full-conversation coverage is complete; unsupported graph
+    # operations are returned explicitly and never reinterpreted by the legacy route.
     conversation_graph: Literal["off", "on"] = "off"
 
     # What a spending or income question means when it names no account and the conversation has

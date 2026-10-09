@@ -1,5 +1,10 @@
 # LLM Conversation Engine (phase 1): Implementation Plan
 
+> **Architecture update (2026-10-09):** ADR-013 now makes LangGraph the single target
+> conversation orchestrator. This phase-1 plan remains historical evaluation context; Task 8's
+> isolated read-only experiment and keep-the-old-engine-as-control recommendation are superseded.
+> Do not add new capabilities to the legacy coordinator.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a sibling conversation engine behind `ORCHESTRATOR_CONVERSATION_ENGINE=model`. An LLM turns each analytics turn into typed operations; pure code applies them to a canonical, versioned state, validates and authorises them, and executes them through the existing banking contracts. Then measure it against the rules engine on a frozen regression set and a frozen generalization set.

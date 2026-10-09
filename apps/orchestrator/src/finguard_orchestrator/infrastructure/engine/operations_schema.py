@@ -70,6 +70,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Reset,
     SelectOperand,
     Smalltalk,
+    Visualize,
 )
 from finguard_orchestrator.domain.engine.state import Measure, Missing
 from finguard_orchestrator.domain.enums import (
@@ -393,6 +394,23 @@ class DelegateOp(_Closed):
         return Delegate(self.delegate)
 
 
+VisualStyle = Literal["AUTO", "BAR", "LINE"]
+
+
+class CreateVisualizationOp(_Closed):
+    create_visualization: VisualStyle
+
+    def as_operation(self) -> Visualize:
+        return Visualize("ACTIVE_RESULT", self.create_visualization)
+
+
+class UpdateVisualizationOp(_Closed):
+    update_visualization: VisualStyle
+
+    def as_operation(self) -> Visualize:
+        return Visualize("ACTIVE_CHART", self.update_visualization)
+
+
 AnyOp = Annotated[
     Annotated[AskOp, Tag("ask")]
     | Annotated[PatchOp, Tag("patch")]
@@ -403,7 +421,9 @@ AnyOp = Annotated[
     | Annotated[BalanceOp, Tag("balance")]
     | Annotated[ClarifyOp, Tag("clarify")]
     | Annotated[SmalltalkOp, Tag("smalltalk")]
-    | Annotated[DelegateOp, Tag("delegate")],
+    | Annotated[DelegateOp, Tag("delegate")]
+    | Annotated[CreateVisualizationOp, Tag("create_visualization")]
+    | Annotated[UpdateVisualizationOp, Tag("update_visualization")],
     Discriminator(_only_key),
 ]
 

@@ -30,6 +30,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Reset,
     SelectOperand,
     Smalltalk,
+    Visualize,
 )
 from finguard_orchestrator.domain.engine.state import (
     ComparisonFocus,
@@ -130,12 +131,18 @@ def apply(
             # The turn belongs to another flow, and the conversation must be exactly as it was
             # when that flow hands it back.
             return Transition(state, None, op)
+        if isinstance(op, Visualize):
+            # The legacy route accepts the operation through its existing chart adapter. The
+            # LangGraph route intercepts it earlier and executes it against canonical artifacts.
+            return Transition(state, None, Delegate("CHART"))
         if isinstance(op, Clarify):
             # Only what it asks for (ruling R21). A name to quote comes from grounding, which
             # found it in the holder's catalogues; from the model it is free text, and quoting
             # it would show the person the model's words, a figure among them.
             return Transition(resting, None, Clarify(op.missing))
         op = _fill_pending(current, op)
+        if isinstance(op, (Smalltalk, Delegate, Visualize, Clarify)):
+            raise InvariantViolationError("non-domain operation escaped transition dispatch")
         try:
             current, work = _applied(current, op, today, grounds)
         except _CannotApplyError as question:

@@ -104,7 +104,12 @@ a comparison; SHARE: the part the screen is of its total.
 - {"clarify": M}: you cannot tell what the turn means. M: WINDOW (when), SUBJECT (what), \
 ACCOUNT, PERSON (who) or OPERAND (which side, or which two).
 - {"smalltalk": K}: K is GREETING, THANKS, IDENTITY (who you are) or HELP (what you can do).
-- {"delegate": D}: D is PAYMENT, TRANSFER, BOOKING, CHART (a chart or graph) or UNSUPPORTED \
+- {"create_visualization": S}: create a chart or KPI from the last financial result; \
+  S is AUTO, BAR or LINE.
+- {"update_visualization": S}: restyle the active chart over the same result; S is \
+  AUTO, BAR or LINE. A visual-only change never calls the bank.
+- {"delegate": D}: D is PAYMENT, TRANSFER, BOOKING, UNSUPPORTED, or CHART only for \
+  compatibility; prefer the typed visualization operations above for all chart requests. \
 (what no operation can say, such as a forecast).
 
 ## Examples
@@ -144,6 +149,10 @@ clarify; use the default windows above. Clarify only when the comparison itself 
 the comparison so each merchant's totals and movement counts can be checked.
 - A turn that only makes sense against what is on screen is patch, compare, measure or \
 select_operand, not ask; resolve references to other periods against the dates shown.
+- If the last answer was a query and the person says only a new period (for example "y en octubre",
+  "¿y el mes pasado?" or "¿y este año?"), patch focus with only the new window. Keep its direction,
+  categories, merchant names or fragments, accounts, metric and grouping unchanged. Never turn a
+  period-only follow-up into a new category ranking or a broader query.
 - Use target pending only when the state shows an open question; with none open, a correction \
 patches focus.
 - When you cannot tell what the turn refers to, answer clarify. Asking is better than guessing.
@@ -151,6 +160,8 @@ patches focus.
   with that window. Do not start a new ask or ask again what to consult.
 - When a patch asks for all categories, merchants or other groups after a top-N result, include
   clear_limit true. The absent limit field means keep the current limit.
+- Choose update_visualization only when an active chart is shown and the person changes its style;
+  otherwise create_visualization. A visual operation must be the only operation in the turn.
 """)
 
 # What a month is called, to write the one example that says a month without its year.
@@ -187,6 +198,9 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
     latest_start = date(latest_end.year, latest_end.month, 1)
     earlier_end = latest_start - timedelta(days=1)
     earlier_start = date(earlier_end.year, earlier_end.month, 1)
+    october_year = today.year if today.month >= 10 else today.year - 1
+    october_start = date(october_year, 10, 1)
+    october_end = date(october_year, 10, monthrange(october_year, 10)[1])
     return (
         (
             "",
@@ -202,9 +216,23 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             ),
         ),
         (
-            "a query",
-            "Ahora solo lo del súper",
-            _answer({"patch": {"target": "focus", "changes": _items(categories=["GROCERIES"])}}),
+            "a last-month query for expenses at shops whose name contains gimnasio",
+            "?Y en octubre?",
+            _answer(
+                {
+                    "patch": {
+                        "target": "focus",
+                        "changes": _items(
+                            window={
+                                "range": {
+                                    "start": october_start.isoformat(),
+                                    "end": october_end.isoformat(),
+                                }
+                            }
+                        ),
+                    }
+                }
+            ),
         ),
         (
             "a category breakdown limited to its top group",
@@ -325,6 +353,16 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
         ),
         ("nothing", "¿Y lo otro?", _answer({"clarify": "SUBJECT"})),
         ("", "Buenas tardes", _answer({"smalltalk": "GREETING"})),
+        (
+            "a category breakdown with an active financial result",
+            "Enséñamelo en un gráfico",
+            _answer({"create_visualization": "AUTO"}),
+        ),
+        (
+            "an active bar chart from the last result",
+            "Cámbialo a líneas",
+            _answer({"update_visualization": "LINE"}),
+        ),
         ("", "Envíale 25 euros a mi hermana", _answer({"delegate": "PAYMENT"})),
         (
             "a query",
@@ -457,6 +495,18 @@ def _clipped(text: str, limit: int) -> str:
 
 def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
     lines = [f"On screen: {_focus(state.focus, today, names)}"]
+    if state.active_result is not None:
+        lines.append(
+            "Reusable bank result: the last answered financial query is available as bounded "
+            "aggregates; a visual restyle can reuse it without another bank query."
+        )
+    if state.active_visual is not None:
+        lines.append(
+            "Active visualization: "
+            f"{state.active_visual.spec.mark}, chart version {state.active_visual.version}, "
+            f"from result version {state.active_visual.result_version}; it can be restyled "
+            "without changing the financial query."
+        )
     if state.pending is None:
         lines.append("Open question: none")
     else:

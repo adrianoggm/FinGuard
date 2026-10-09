@@ -797,7 +797,10 @@ export function AnswerEvidence({ answer }: { answer: Answer }) {
         </details>
       )}
       {isBreakdown(answer) && (
-        <details>
+        <details open={
+          answer.conversation?.last_plan?.group_by === "MONTH" ||
+          answer.conversation?.last_plan?.group_by === "CATEGORY"
+        }>
           <summary>{answer.visualization ? "Ver los datos" : "Ver el desglose"}</summary>
         <ul className="groups">
           {answer.groups.map((group) => (

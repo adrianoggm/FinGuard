@@ -41,7 +41,6 @@ from langgraph.runtime import Runtime
 from langgraph.types import Checkpointer
 
 from finguard_orchestrator.application.engine import presenter
-from finguard_orchestrator.application.engine.answer_turn import apply_guarded
 from finguard_orchestrator.application.engine.executor import (
     Executed,
     MixedCurrenciesError,
@@ -49,16 +48,31 @@ from finguard_orchestrator.application.engine.executor import (
     RankingRun,
     execute,
 )
+from finguard_orchestrator.application.engine.transition_guard import apply_guarded
 from finguard_orchestrator.application.graph import codec, investigation
 from finguard_orchestrator.application.graph.investigation import Explanation, MerchantChange
-from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
+from finguard_orchestrator.application.queries.financial_turn import (
+    AskFinancialQuestionResult,
+    SpokenPlan,
+)
 from finguard_orchestrator.domain.engine.grounding import Grounds
-from finguard_orchestrator.domain.engine.operations import Compare, Delegate, Operation
-from finguard_orchestrator.domain.engine.state import DialogueState, DialogueTurn
+from finguard_orchestrator.domain.engine.operations import Compare, Delegate, Operation, Visualize
+from finguard_orchestrator.domain.engine.state import (
+    ActiveQueryResult,
+    ActiveVisual,
+    DialogueState,
+    DialogueTurn,
+)
 from finguard_orchestrator.domain.engine.transitions import Transition, Work
 from finguard_orchestrator.domain.enums import GroupBy, Metric, PlanningOutcome
 from finguard_orchestrator.domain.errors import DomainError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
+from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
+    Mark,
+    VisualDataset,
+    VisualRow,
+)
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
@@ -74,18 +88,20 @@ from finguard_orchestrator.domain.ports.investigation_assessor import (
     Stop,
 )
 from finguard_orchestrator.domain.ports.turn_operations import TurnOperationsPort
-from finguard_orchestrator.domain.services import answer_writer
+from finguard_orchestrator.domain.services import answer_writer, category_words
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
+from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, FinancialPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "investigation/3"
+GRAPH_VERSION: Final = "conversation/4"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
-STATE_SCHEMA_VERSION: Final = 3
+STATE_SCHEMA_VERSION: Final = 4
 MAX_BANK_EXECUTIONS: Final = 3
 MAX_MODEL_CALLS: Final = 3
 # A backstop under the budgets: one step per read, and plan, validate and assess per loop.
@@ -103,6 +119,7 @@ Status = Literal[
     "loaded",
     "planned",
     "delegated",
+    "visualize",
     "replied",
     "canonical",
     "investigate",
@@ -156,6 +173,7 @@ class GraphPorts:
     accounts: AccountDirectoryPort
     contacts: ContactDirectoryPort
     categories: frozenset[str]
+    visual_policy: VisualPlanningPolicy | None = None
     count_calls: Callable[[], int] = lambda: 0
 
 
@@ -224,9 +242,13 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
                 "refused": [*state.get("refused", []), reason],
             }
         return {"status": "inspect"}
+    ops = codec.loads(state["ops"])
+    visual = next((op for op in ops if isinstance(op, Visualize)), None)
+    if visual is not None:
+        return {"status": "visualize"}
     moved = await _transition(state, runtime.context)
     if isinstance(moved.reply, Delegate):
-        return {"status": "delegated"}
+        return {"status": "visualize" if moved.reply.to == "CHART" else "delegated"}
     if moved.work is None:
         return {"status": "replied"}
     investigating = moved.work.kind == "COMPARE" and _by_merchant(codec.loads(state["ops"]))
@@ -337,6 +359,7 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
         # An ordinary turn reads and answers in this one step, as the engine does: there is no
         # earlier read to keep. Its port calls are counted, not capped (the measured engine's work).
         run = await _execute(moved.work, state, ctx)
+        ctx.cache["run"] = run
         result = presenter.answered(
             run,
             scope=moved.work.account_ids,
@@ -344,13 +367,212 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
             reporting_timezone=ctx.reporting_timezone,
         )
         in_words = result.plan_in_words or ""
+    canonical = moved.state
+    # Keep the bounded aggregate answer available for later graph visualization operations.
+    # Movement evidence remains in the response and is never copied into dialogue state.
+    final_run = ctx.cache.get("run")
+    if moved.work is not None:
+        # Do not let a chart request after a different kind of answer accidentally visualize an
+        # older query. A completed query below installs its new bounded result.
+        canonical = replace(canonical, active_result=None, active_visual=None)
+    if isinstance(final_run, QueryRun):
+        groups = final_run.answer.groups[:100]
+        active_result = (
+            ActiveQueryResult(
+                plan=final_run.plan,
+                currency=final_run.answer.currency,
+                total_minor=final_run.answer.total_minor,
+                movement_count=final_run.answer.movement_count,
+                groups=groups,
+                period_start=final_run.answer.period_start,
+                period_end=final_run.answer.period_end,
+                result_version=state["expected_version"] + 1,
+            )
+            if all(len(group.key) <= 256 for group in groups)
+            else None
+        )
+        canonical = replace(canonical, active_result=active_result)
     saved = await ctx.ports.store.save(
-        moved.state.remembered(DialogueTurn(said=ctx.sentence, answered=in_words)),
+        canonical.remembered(DialogueTurn(said=ctx.sentence, answered=in_words)),
         account_id=UUID(state["account_id"]),
         expected_version=state["expected_version"],
     )
     ctx.cache["result"], ctx.cache["saved"] = result, saved
     return {"status": "committed", "bank_calls": _bank_calls(state, ctx)}
+
+
+async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
+    """Render the active aggregate through the native graph path; no banking or legacy dispatch."""
+    ctx = runtime.context
+    current = await _canonical(state, ctx)
+    artifact = current.active_result
+    operations = codec.loads(state["ops"])
+    visual_ops = tuple(op for op in operations if isinstance(op, Visualize))
+    visual_op = visual_ops[0] if len(visual_ops) == 1 and len(operations) == 1 else None
+    if visual_ops and visual_op is None:
+        result = AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text="La visualización debe solicitarse como una operación independiente.",
+        )
+        saved = await ctx.ports.store.save(
+            current.remembered(DialogueTurn(ctx.sentence, result.text)),
+            account_id=UUID(state["account_id"]),
+            expected_version=state["expected_version"],
+        )
+        ctx.cache["result"], ctx.cache["saved"] = result, saved
+        return {"status": "committed"}
+    if visual_op is None:
+        visual_op = Visualize(
+            "ACTIVE_CHART" if current.active_visual is not None else "ACTIVE_RESULT", "AUTO"
+        )
+    if visual_op.target == "ACTIVE_CHART" and current.active_visual is None:
+        result = AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text="Todavía no hay un gráfico activo que pueda cambiar. Primero crea uno.",
+        )
+    elif artifact is None:
+        result = AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text="Primero necesito una consulta con resultados para poder crear el gráfico.",
+        )
+    else:
+        plan = artifact.plan
+        groups = artifact.groups
+        rows = tuple(
+            VisualRow(
+                (
+                    category_words.name_of(group.key)
+                    if plan.group_by is GroupBy.CATEGORY
+                    else group.key
+                ),
+                group.movement_count
+                if plan.metric in {Metric.COUNT, Metric.FREQUENCY}
+                else group.total_minor,
+            )
+            for group in groups
+        )
+        if not rows:
+            rows = (VisualRow("total", artifact.total_minor),)
+        window = (
+            plan.date_range
+            if plan.date_range is not None
+            else AbsoluteRange(artifact.period_start, artifact.period_end)
+            if artifact.period_start is not None and artifact.period_end is not None
+            else None
+        )
+        dataset = VisualDataset(
+            rows=rows,
+            metric=plan.metric.value,
+            title=answer_writer.describe(plan),
+            window=window,
+        )
+        profile = visual_profile_of(
+            dataset,
+            total_minor=artifact.total_minor,
+            group_by=plan.group_by.value,
+            plan_limited=plan.group_limit is not None,
+            plan_metric=plan.metric.value,
+        )
+        if ctx.ports.visual_policy is None:
+            raise RuntimeError("the graph visual policy is not configured")
+        before = ctx.ports.count_calls()
+        decision = await ctx.ports.visual_policy.decide(ctx.sentence, profile, DEFAULT_PRESENTATION)
+        ctx.cache["visual_model_calls"] = max(0, ctx.ports.count_calls() - before)
+        if decision is not None and visual_op.style != "AUTO":
+            mark: Mark = "line" if visual_op.style == "LINE" else "bar"
+            if profile.metric == "RATIO_SHARE" and mark == "line":
+                decision = None
+            else:
+                styled = replace(decision.spec, mark=mark, stack=None)
+                if styled.valid_for(profile.field_names()):
+                    decision = replace(
+                        decision,
+                        spec=styled,
+                        source="patch",
+                        fallback_reason=None,
+                        accepted=True,
+                        proposed=True,
+                        valid=True,
+                        proposed_spec=styled,
+                    )
+                else:
+                    decision = None
+        spoken_plan = SpokenPlan(
+            direction=plan.direction.value,
+            period=plan.period.period.value if plan.period is not None else None,
+            n=plan.period.n if plan.period is not None else None,
+            start=window.start.isoformat() if window is not None else None,
+            end=window.end.isoformat() if window is not None else None,
+            categories=list(plan.categories),
+            merchants=list(plan.merchants),
+            merchant_terms=list(plan.merchant_terms),
+            group_by=plan.group_by.value,
+            metric=plan.metric.value,
+            group_limit=plan.group_limit,
+        )
+        if decision is None:
+            result = AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PLANNED.value,
+                text="La consulta no tiene suficientes grupos para dibujar un gráfico útil.",
+                plan_in_words=answer_writer.plan_in_words(plan),
+                plan_context=spoken_plan,
+                currency=artifact.currency,
+                total_minor=artifact.total_minor,
+                movement_count=artifact.movement_count,
+                explicit_visualization=True,
+                visual_dataset=dataset,
+                metric_definition=plan,
+            )
+        else:
+            result = AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PLANNED.value,
+                text=f"Aquí tienes el desglose de {answer_writer.plan_in_words(plan)}.",
+                plan_in_words=answer_writer.plan_in_words(plan),
+                plan_context=spoken_plan,
+                currency=artifact.currency,
+                total_minor=artifact.total_minor,
+                movement_count=artifact.movement_count,
+                explicit_visualization=True,
+                visual_dataset=dataset,
+                visual_decision=decision,
+                metric_definition=plan,
+            )
+    canonical = current
+    if (
+        result.visual_decision is not None
+        and result.visual_dataset is not None
+        and artifact is not None
+    ):
+        previous = current.active_visual
+        visual_version = (
+            previous.version + 1
+            if previous is not None and previous.result_version == artifact.result_version
+            else 1
+        )
+        canonical = replace(
+            current,
+            active_visual=ActiveVisual(
+                artifact.result_version,
+                visual_version,
+                result.visual_decision.spec,
+                result.visual_decision.profile,
+            ),
+        )
+    else:
+        canonical = replace(
+            current,
+            active_visual=(current.active_visual if visual_op.target == "ACTIVE_CHART" else None),
+        )
+    saved = await ctx.ports.store.save(
+        canonical.remembered(DialogueTurn(ctx.sentence, result.plan_in_words or result.text)),
+        account_id=UUID(state["account_id"]),
+        expected_version=state["expected_version"],
+    )
+    ctx.cache["result"], ctx.cache["saved"] = result, saved
+    return {
+        "status": "committed",
+        "model_calls": state.get("model_calls", 0) + ctx.cache.get("visual_model_calls", 0),
+    }
 
 
 # --- routing --------------------------------------------------------------------------------------
@@ -360,6 +582,8 @@ def _after_validation(state: TurnGraphState) -> str:
     match state["status"]:
         case "delegated":
             return END
+        case "visualize":
+            return "visualize_and_commit"
         case "replied" | "refused" | "canonical":
             return "present_and_commit"
         case _:
@@ -383,11 +607,14 @@ def build(checkpointer: Checkpointer) -> CompiledStateGraph[Any, Any, Any, Any]:
     graph.add_node("execute_read_only", execute_read_only)
     graph.add_node("assess_result", assess_result)
     graph.add_node("present_and_commit", present_and_commit)
+    graph.add_node("visualize_and_commit", visualize_and_commit)
     graph.add_edge(START, "load_and_reserve")
     graph.add_edge("load_and_reserve", "plan")
     graph.add_edge("plan", "validate_and_apply")
     graph.add_conditional_edges(
-        "validate_and_apply", _after_validation, ["execute_read_only", "present_and_commit", END]
+        "validate_and_apply",
+        _after_validation,
+        ["execute_read_only", "present_and_commit", "visualize_and_commit", END],
     )
     graph.add_conditional_edges(
         "execute_read_only", _after_execution, ["execute_read_only", "assess_result"]

@@ -1,9 +1,9 @@
 """One turn through the investigation graph, with the guarantees the graph does not own.
 
-What stays here and out of LangGraph (Task 8 brief): the version check, the turn's reservation
-(idempotency) and the decision to resume, replay or refuse. The store's compare-and-set stays in
-the presenter node, and money flows leave before any of it (a `Delegate` ends the graph, saved
-nothing, and the dispatch hands the turn to the rules route that guards it).
+What stays here and out of LangGraph: the version check, the turn reservation (idempotency), and
+the decision to resume, replay or refuse. The store's compare-and-set stays in the presenter node.
+Money operations are explicitly unavailable in this graph slice: they execute no banking command,
+record the refusal as a turn, and cannot fall through to a second language interpreter.
 
 - **New request** against the held version: reserved, then run from the start under a thread id
   made of the account, conversation, version and request id.
@@ -15,9 +15,9 @@ nothing, and the dispatch hands the turn to the rules route that guards it).
 - **A checkpoint from another graph or schema version** is not resumed: it is dropped and the
   turn runs again from the start, which is safe because everything before the save is a read.
 
-The checkpointer is whatever the composition root passes. In this experiment it is LangGraph's
-in-memory saver: a restart loses every checkpoint, so **durability is unproven** and no crash
-recovery is claimed (see the Task 8 report).
+The checkpointer is injected by the composition root. Production graph mode uses LangGraph's
+PostgreSQL saver; in-memory saver instances are for tests only. Canonical dialogue state and turn
+reservations are stored separately with their own schema versions, account scope and CAS rules.
 """
 
 import asyncio
@@ -32,8 +32,8 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from finguard_orchestrator.application.engine import presenter
-from finguard_orchestrator.application.engine.answer_turn import EngineAnswer
 from finguard_orchestrator.application.engine.executor import MixedCurrenciesError
+from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.application.graph import codec
 from finguard_orchestrator.application.graph import graph as investigation_graph
 from finguard_orchestrator.application.graph.graph import (
@@ -47,7 +47,8 @@ from finguard_orchestrator.application.graph.graph import (
 )
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.engine.operations import Delegate
-from finguard_orchestrator.domain.engine.state import DialogueState
+from finguard_orchestrator.domain.engine.state import DialogueState, DialogueTurn
+from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import (
     BankingUnavailableError,
     DomainError,
@@ -93,6 +94,9 @@ class _Turn:
 class GraphTurnHandler:
     """Answers a turn as `AnswerTurnHandler.answer` does, through the investigation graph."""
 
+    supports_idempotency = True
+    authoritative = True
+
     def __init__(
         self,
         ports: GraphPorts,
@@ -133,9 +137,9 @@ class GraphTurnHandler:
         }
         context = GraphContext(sentence, today, reporting_timezone, self._ports)
 
-        def unsaved(result: Any, delegate_to: str | None = None) -> EngineAnswer:
+        def unsaved(result: AskFinancialQuestionResult) -> EngineAnswer:
             calls = self._ports.count_calls() - calls_before
-            return EngineAnswer(result, turn.held, delegate_to, calls, _ms(started))
+            return EngineAnswer(result, turn.held, None, calls, _ms(started))
 
         answer: EngineAnswer | None = None
         closed = False
@@ -151,7 +155,22 @@ class GraphTurnHandler:
             if final.get("status") == "delegated":
                 ops = codec.loads(final["ops"])
                 delegate = next(op for op in ops if isinstance(op, Delegate))
-                return unsaved(None, delegate.to)
+                result = _unavailable(delegate.to)
+                saved = await self._ports.store.save(
+                    turn.held.remembered(DialogueTurn(sentence, result.text)),
+                    account_id=turn.key.account_id,
+                    expected_version=turn.key.expected_version,
+                )
+                answer = EngineAnswer(
+                    result,
+                    saved,
+                    None,
+                    self._ports.count_calls() - calls_before,
+                    _ms(started),
+                )
+                await self._reservations.done(turn.key, turn.request_id, answer)
+                closed = True
+                return answer
             answer = EngineAnswer(
                 context.cache["result"],
                 context.cache["saved"],
@@ -282,6 +301,20 @@ def _failed(error: DomainError) -> AskFinancialQuestionResult:
             ),
         )
     return presenter.failed(error)
+
+
+def _unavailable(capability: str) -> AskFinancialQuestionResult:
+    explanations = {
+        "CHART": "Todavía no puedo crear gráficos desde esta conversación.",
+        "PAYMENT": "Los pagos aún no están disponibles en este flujo conversacional.",
+        "TRANSFER": "Las transferencias aún no están disponibles en este flujo conversacional.",
+        "BOOKING": "Las reservas aún no están disponibles en este flujo conversacional.",
+        "UNSUPPORTED": "Todavía no puedo resolver esa operación desde esta conversación.",
+    }
+    return AskFinancialQuestionResult(
+        outcome=PlanningOutcome.INVALID_DOMAIN.value,
+        text=explanations.get(capability, explanations["UNSUPPORTED"]),
+    )
 
 
 def _thread(turn: _Turn) -> str:

@@ -103,6 +103,12 @@ class PaymentAnswer:
     balance_after_minor: int | None = None
     expires_at: str | None = None
     transaction_id: UUID | None = None
+    # The exact bank response, retained internally so a graph checkpoint can resume the explicit
+    # confirmation without rebuilding security-relevant details from the client echo.
+    preview: PaymentPreview | None = None
+    # Opaque workflow handle used only to resume the graph checkpoint. It is not authorization;
+    # the payment endpoints independently require their prepare/confirm scopes.
+    workflow_id: str | None = None
     # Why it was refused, for the log and the evaluation. Never the sentence the user reads.
     reason: str | None = None
     # Present while the payment is still being built: what the client echoes back so the next reply
@@ -289,6 +295,7 @@ async def _previewed(
         concept=request.concept,
         balance_after_minor=preview.balance_after_minor,
         expires_at=preview.expires_at.isoformat(),
+        preview=preview,
     )
 
 

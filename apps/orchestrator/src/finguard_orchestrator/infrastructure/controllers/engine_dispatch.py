@@ -14,6 +14,10 @@ exactly as it always did whenever that call returns None:
 - **the engine delegates** (`Delegate`: a payment, a transfer, a booking, a chart, or a turn it
   does not support): it saved nothing, so its focus is intact when the conversation comes back.
 
+The unified graph mode is authoritative: it turns currently unmigrated operations into an explicit,
+versioned response and never hands their sentence to the legacy route. The compatibility behavior
+above applies only to the older model engine while graph mode is off.
+
 Every other turn is the engine's, answered with the same `QuestionResponse` wire shape. Its
 `conversation` carries the engine's conversation id and version, plus what it must not drop: a
 set-aside payment draft, and a gym search's sealed offers in the conversation they were sealed for.
@@ -52,7 +56,6 @@ from starlette.datastructures import MutableHeaders
 
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
-from finguard_orchestrator.domain.constants import MAX_PROMPT_LENGTH
 from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import QueryRejectedError
@@ -78,7 +81,26 @@ _STREAM_ROUTE: Final = "/v1/questions/stream"
 _QUESTION_ROUTES: Final = frozenset({"/v1/questions", _STREAM_ROUTE})
 # A payment the rules route set aside to answer a question: the fields that hold it, echoed back
 # unchanged by an engine answer so the draft survives the turns the engine takes.
-_SET_ASIDE: Final = ("workflow", "payment", "candidates", "awaiting", "suspended")
+_SET_ASIDE: Final = (
+    "workflow",
+    "awaiting",
+    "payment",
+    "candidates",
+    "suspended",
+    "transfer_to",
+    "transfer_amount_minor",
+    "intent_id",
+    "recipient",
+    "amount_minor",
+    "currency",
+    "concept",
+    "rail",
+    "recipient_iban",
+    "booking_id",
+    "booking_slot",
+    "booking_agent_name",
+    "booking_context_id",
+)
 # The directory and the contacts are read before the sentence is: a refusal there means the turn
 # was never interpreted, so it must not say it was («He entendido la pregunta…»).
 _UNREAD: Final = "No he podido leer tus cuentas y tus contactos: el banco ha rechazado la consulta."
@@ -113,26 +135,52 @@ async def try_engine(
     who: Caller,
     today: date,
     metric_tokens: MetricTokenCodec,
+    request_id: str | None = None,
 ) -> QuestionResponse | None:
     """The engine's answer to this turn, or None for the rules route to answer it.
 
     A version other than the held one raises `StaleDialogueError` out of here, before anything
     ran; `register` writes the 409."""
     echoed = question.conversation
-    if engine is None or (echoed is not None and _owned_by_the_rules(echoed)):
+    if engine is None:
         return None
+    if echoed is not None and _owned_by_the_rules(echoed):
+        if not getattr(engine, "authoritative", False):
+            return None
+        # A workflow opened by the legacy coordinator is not part of the graph's canonical state.
+        # Never route its reply back to that coordinator while graph mode is authoritative: in
+        # particular, a stale "sí" must not confirm a payment through the old command handler.
+        _answered_by("model")
+        refused = AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text=(
+                "Esta operación pertenece a una conversación iniciada con el flujo anterior. "
+                "No puedo continuarla ni ejecutarla desde el nuevo flujo; conserva la sesión "
+                "para resolverla en el mismo flujo que la inició."
+            ),
+        )
+        held = Conversation(
+            conversation_id=echoed.conversation_id,
+            version=echoed.version,
+        )
+        return _carrying(echoed, _on_the_wire(refused, held, who, metric_tokens))
     conversation_id = echoed.conversation_id if echoed is not None else None
     version = echoed.version if echoed is not None else None
     # Whatever the engine answers, refuses or fails with is the engine's, until it hands over.
     _answered_by("model")
     try:
+        answer_kwargs: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "version": version,
+            "account_id": who.account_id,
+            "today": today,
+            "reporting_timezone": who.reporting_timezone,
+        }
+        if getattr(engine, "supports_idempotency", False):
+            answer_kwargs["request_id"] = request_id
         turn = await engine.answer(
             question.question,
-            conversation_id=conversation_id,
-            version=version,
-            account_id=who.account_id,
-            today=today,
-            reporting_timezone=who.reporting_timezone,
+            **answer_kwargs,
         )
     except QueryRejectedError:
         # The handler catches a bank that is down, not one that refuses: answered here, and
@@ -144,6 +192,27 @@ async def try_engine(
         return _carrying(echoed, _on_the_wire(unread, held, who, metric_tokens))
     if turn.result is None:
         logger.info("engine.delegated to=%s", turn.delegate_to)
+        if getattr(engine, "authoritative", False):
+            # The unified graph must never send its unresolved operation back through a
+            # second natural-language planner. Until the capability has a graph node, make
+            # that boundary visible to the user and leave canonical state/version untouched.
+            explanations = {
+                "CHART": "Todavía no puedo crear gráficos desde esta conversación.",
+                "PAYMENT": "Los pagos aún no están disponibles en este flujo conversacional.",
+                "TRANSFER": (
+                    "Las transferencias aún no están disponibles en este flujo conversacional."
+                ),
+                "BOOKING": "Las reservas aún no están disponibles en este flujo conversacional.",
+                "UNSUPPORTED": "Todavía no puedo resolver esa operación desde esta conversación.",
+            }
+            unavailable = AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text=explanations.get(turn.delegate_to or "", explanations["UNSUPPORTED"]),
+            )
+            held = Conversation(
+                conversation_id=turn.state.conversation_id, version=turn.state.version
+            )
+            return _carrying(echoed, _on_the_wire(unavailable, held, who, metric_tokens))
         _answered_by("rules")
         if turn.delegate_to == "CHART":
             _hand_over_the_screen(question, turn.state)
@@ -179,16 +248,8 @@ def _hand_over_the_screen(question: QuestionRequest, state: DialogueState) -> No
     plan or the pair it answered last, read from the same accounts the engine read it from. The
     rules route's chart code is not touched; only the context it is handed is."""
     focus, accounts = state.focus, state.scope.account_ids
-    # The engine delegates chart rendering before changing its state. The rules route needs the
-    # financial question that produced this focus, plus an explicit chart request, to execute the
-    # existing bank query and renderer. Forwarding only the follow-up ("¿me lo enseñas?") makes
-    # the legacy route plan it as a new unsupported question; forwarding the typed focus below
-    # preserves the exact query context it should continue.
-    if state.turns:
-        source_question = state.turns[-1].said.strip()
-        chart_request = f"{source_question} en un gráfico"
-        if source_question and len(chart_request) <= MAX_PROMPT_LENGTH:
-            question.question = chart_request
+    # The renderer receives typed context. The user's visual request is never rewritten as a new
+    # natural-language financial question for another planner.
     screen: dict[str, object]
     if isinstance(focus, QueryFocus):
         screen = {"last_plan": conversation_mapper.plan_payload(_read_from(focus.plan, accounts))}
@@ -229,12 +290,13 @@ async def try_engine_streaming(
     who: Caller,
     today: date,
     metric_tokens: MetricTokenCodec,
+    request_id: str | None = None,
 ) -> StreamingResponse | None:
     """`try_engine` for the streaming route: one stage, then the answer, in the route's frames.
 
     The engine answers before the stream starts, because a turn it delegates has to be streamed
     by the rules route instead, and that cannot be known until it has answered."""
-    answer = await try_engine(engine, question, who, today, metric_tokens)
+    answer = await try_engine(engine, question, who, today, metric_tokens, request_id)
     if answer is None:
         return None
 

@@ -79,7 +79,7 @@ export function Transfer({ summary, onPaid }: Props) {
     const intent = held?.answer.intent_id;
     if (!intent || busy) return;
     setBusy(true);
-    const next = await replied(() => confirm(intent, said), {
+    const next = await replied(() => confirm(intent, said, held.answer.workflow_id), {
       reply: said,
       standing: held.answer,
       noun: "traspaso",

@@ -28,23 +28,19 @@ by trying ids.
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import date
 from uuid import UUID, uuid4
 
 from finguard_orchestrator.application.engine import presenter
 from finguard_orchestrator.application.engine.executor import MixedCurrenciesError, execute
+from finguard_orchestrator.application.engine.transition_guard import apply_guarded
+from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.engine.grounding import Grounds
-from finguard_orchestrator.domain.engine.operations import Clarify, Delegate, Operation
-from finguard_orchestrator.domain.engine.state import DialogueState, DialogueTurn, Missing
-from finguard_orchestrator.domain.engine.transitions import (
-    InvariantViolationError,
-    Transition,
-    apply,
-)
+from finguard_orchestrator.domain.engine.operations import Delegate
+from finguard_orchestrator.domain.engine.state import DialogueState, DialogueTurn
 from finguard_orchestrator.domain.errors import (
     BankingUnavailableError,
     InvalidValueError,
@@ -64,18 +60,6 @@ logger = logging.getLogger(__name__)
 
 # What the bank can answer instead of figures. Each is answered honestly and saves nothing.
 _UNANSWERED = (BankingUnavailableError, QueryRejectedError, MixedCurrenciesError, InvalidValueError)
-
-
-@dataclass(frozen=True)
-class EngineAnswer:
-    """`result` is None exactly when `delegate_to` names the flow that owns this turn. `state` is
-    the state as saved, or as loaded when nothing was saved."""
-
-    result: AskFinancialQuestionResult | None
-    state: DialogueState
-    delegate_to: str | None
-    model_calls: int
-    stages_ms: dict[str, int]
 
 
 class AnswerTurnHandler:
@@ -111,7 +95,11 @@ class AnswerTurnHandler:
         account_id: UUID,
         today: date,
         reporting_timezone: str,
+        request_id: str | None = None,
     ) -> EngineAnswer:
+        # Only the graph stores durable turn idempotency; this adapter accepts the shared
+        # invocation contract while retaining its existing in-memory behavior.
+        del request_id
         calls_before = self._count_calls()
         stages = _Stages()
         held = await self._held(conversation_id, account_id)
@@ -190,19 +178,6 @@ class AnswerTurnHandler:
             self._accounts.all_of(account_id), self._contacts.all_of(account_id)
         )
         return Grounds(self._categories, holdings, contacts)
-
-
-def apply_guarded(
-    state: DialogueState, ops: Sequence[Operation], today: date, grounds: Grounds
-) -> Transition:
-    """`apply`, with its one escaping error turned into a question back (ruling R3). That error
-    means a transition broke a rule it exists to keep: a bug here, not the model's, so it is logged
-    as one and the person is asked rather than answered from a plan nobody checked."""
-    try:
-        return apply(state, ops, today=today, grounds=grounds)
-    except InvariantViolationError as broken:
-        logger.error("engine.invariant_violation detail=%s", broken)
-        return Transition(state, None, Clarify(Missing.SUBJECT))
 
 
 class _Stages:

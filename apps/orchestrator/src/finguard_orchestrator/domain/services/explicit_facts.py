@@ -559,9 +559,10 @@ def reshaped[P: FinancialPlan | FinancialPlanDraft](
 
     Unchanged is the answer of last resort, and `enforce` argues why it is the right one.
     """
-    for group_limit in (plan.group_limit, None):
+    group_limit = plan.group_limit if group_by is plan.group_by else None
+    for candidate_limit in (group_limit, None):
         try:
-            return replace(plan, group_by=group_by, metric=metric, group_limit=group_limit)
+            return replace(plan, group_by=group_by, metric=metric, group_limit=candidate_limit)
         except InvalidValueError:
             continue
     return plan

@@ -201,8 +201,19 @@ def test_the_graph_hands_the_sentence_to_the_interpreter_and_the_remembered_turn
 
     # The fingerprint binds a request id to its sentence (R45): `_fingerprint` hashes its bytes
     # (`sentence.encode`), and the hash is compared for equality, never read for what it says.
-    assert in_handler == ["GraphContext(...)", "_fingerprint(...)", "sentence.encode"]
-    assert in_nodes == ["DialogueTurn(said=)", "ctx.ports.interpreter.interpret(...)"]
+    assert in_handler == [
+        "DialogueTurn(...)",
+        "GraphContext(...)",
+        "_fingerprint(...)",
+        "sentence.encode",
+    ]
+    assert in_nodes == [
+        "DialogueTurn(...)",
+        "DialogueTurn(...)",
+        "DialogueTurn(said=)",
+        "ctx.ports.interpreter.interpret(...)",
+        "ctx.ports.visual_policy.decide(...)",
+    ]
 
 
 def test_no_other_graph_module_takes_a_sentence() -> None:

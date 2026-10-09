@@ -25,7 +25,7 @@ from support.episodes import (
     Ledger,
 )
 
-from finguard_orchestrator.application.engine import answer_turn
+from finguard_orchestrator.application.engine import transition_guard
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler, EngineAnswer
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
@@ -801,7 +801,7 @@ async def test_an_invariant_violation_is_logged_and_asked_back(
     def broken(*_: object, **__: object) -> object:
         raise InvariantViolationError("a patch moved categories without naming it")
 
-    monkeypatch.setattr(answer_turn, "apply", broken)
+    monkeypatch.setattr(transition_guard, "apply", broken)
     with caplog.at_level(logging.ERROR):
         turn = await rig.say("¿cuánto en restaurantes en julio?")
 

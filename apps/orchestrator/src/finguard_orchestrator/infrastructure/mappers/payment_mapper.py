@@ -20,6 +20,7 @@ def answer_to_dto(answer: PaymentAnswer) -> PaymentResponse:
         outcome=answer.outcome,
         text=answer.text,
         intent_id=str(answer.intent_id) if answer.intent_id else None,
+        workflow_id=answer.workflow_id,
         recipient=answer.recipient,
         rail=answer.rail,
         recipient_phone=answer.recipient_phone,
