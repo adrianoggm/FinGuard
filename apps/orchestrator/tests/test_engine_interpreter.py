@@ -7,6 +7,8 @@ operations, and what happens when that answer cannot be read.
 
 import dataclasses
 import json
+import logging
+import traceback
 import typing
 from datetime import date
 from typing import Any
@@ -324,6 +326,24 @@ async def test_what_the_schema_cannot_express_becomes_clarify(said: str) -> None
     assert len(provider.prompts) == 2
 
 
+def test_the_repair_says_what_is_wrong_before_which_shapes_did_not_fit() -> None:
+    """A window is three shapes, and a range with an impossible day fails all three: the two it is
+    not say "extra" and "missing", the one it nearly is says the day is wrong. Measured on
+    qwen2.5-coder:7b: told only the first four (all from the shapes it was not), it gave up and
+    asked back a question it had answered."""
+    with pytest.raises(UnreadableError) as refused:
+        read(
+            answer(
+                {"op": "ask", "fields": items(window={"start": "2026-02-01", "end": "2026-02-29"})}
+            ),
+            CATALOGUE,
+        )
+
+    first = refused.value.problem.split("; ")[0]
+    assert "DatedWindow.end" in first
+    assert "day value is outside expected range" in first
+
+
 def test_a_refused_category_is_not_quoted_back() -> None:
     """The problem goes to the log and into the repair prompt; what the model wrote there is not
     the reader's to repeat."""
@@ -332,6 +352,43 @@ def test_a_refused_category_is_not_quoted_back() -> None:
 
     assert "categories" in refused.value.problem
     assert "COMPRAS_VARIAS" not in refused.value.problem
+
+
+MARKER = "SENTENCIASECRETA"
+
+
+@pytest.mark.parametrize(
+    "echo",
+    [
+        answer({"op": MARKER}),
+        answer({"op": "reset", MARKER: 1}),
+        answer({"op": "ask", "fields": [{"field": MARKER, "value": 1}]}),
+        answer({"op": "ask", "fields": items(categories=[MARKER])}),
+        answer({"op": "clarify", "missing": MARKER, "about": None}),
+        MARKER,
+    ],
+    ids=["op", "extra key", "field", "category", "enum", "not json"],
+)
+async def test_no_model_text_reaches_a_log(echo: str, caplog: pytest.LogCaptureFixture) -> None:
+    """What the model wrote can be the person's sentence echoed back. The repair may quote it,
+    because it goes back to the model; a log record keeps only error types and where they were."""
+    caplog.set_level(logging.DEBUG)
+
+    ops, provider = await interpreted(echo)
+
+    assert ops == (Clarify(Missing.SUBJECT),)
+    assert MARKER in provider.prompts[1][len(provider.prompts[0]) :]
+    assert caplog.records
+    assert all(MARKER not in record.getMessage() for record in caplog.records)
+
+
+async def test_no_provider_text_reaches_the_failure() -> None:
+    """A hosted runtime's error can carry the generation it refused."""
+    with pytest.raises(InterpretationFailedError) as failed:
+        await interpreted(ProviderFailedError("scripted", f"failed_generation: {MARKER}"))
+
+    assert MARKER not in "".join(traceback.format_exception(failed.value))
+    assert "ProviderFailedError" in str(failed.value)
 
 
 async def test_a_provider_failure_raises_interpretation_failed() -> None:
@@ -717,12 +774,20 @@ def test_pending_is_only_for_a_question_the_state_shows_open() -> None:
 
 
 def test_a_window_not_begun_is_unsupported() -> None:
-    """Nothing has happened in it yet, and the bank cannot say what will."""
+    """Nothing has happened in it yet, and the bank cannot say what will. A rule, read last, and
+    one that says where the latest-begun reading of a month stops: at a month said by its name,
+    which a turn pointing ahead of today is not."""
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
-    fields = prompt[prompt.index("## Plan fields") : prompt.index("## Operations")]
+    fields = " ".join(
+        prompt[prompt.index("## Plan fields") : prompt.index("## Operations")].split()
+    )
+    rules = " ".join(prompt[prompt.index("## Rules") :].split())
 
-    assert "A window that has not begun cannot be asked: delegate UNSUPPORTED." in " ".join(
-        fields.split()
+    assert "cannot be asked" not in fields
+    assert (
+        "- A window that has not begun cannot be asked: delegate UNSUPPORTED. The latest begun "
+        "reading is only for a month said by its name; a turn pointing ahead of today asks about "
+        "a window that has not begun." in rules
     )
 
 
@@ -835,12 +900,33 @@ async def test_the_interpreter_shows_the_names_it_is_given() -> None:
     assert "Accounts: Cuenta corriente, Hucha" in provider.prompts[0]
 
 
-def test_the_budget_holds_with_the_accounts_named() -> None:
-    prompt = build_prompt(
-        LONGEST, a_busy_state(), today=TODAY, categories=CATEGORIES, account_names=NAMES
-    )
+THREE = (UUID(int=11), UUID(int=12), UUID(int=13))
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        {},
+        {account: f"Cuenta de ahorro para la casa {i}"[:30] for i, account in enumerate(THREE)},
+        {
+            account: (f"Cuenta {i} " + "con un nombre muy largo " * 7)[:140]
+            for i, account in enumerate(THREE)
+        },
+    ],
+    ids=["no names", "three of 30", "three of 140"],
+)
+def test_the_budget_holds_with_the_accounts_named(names: dict[UUID, str]) -> None:
+    """Names are the bank's data and can be as long as an account name may be, so each is clipped
+    like a quoted turn, and the largest prompt still fits."""
+    state = dataclasses.replace(a_busy_state(), scope=Scope(THREE))
+
+    prompt = build_prompt(LONGEST, state, today=TODAY, categories=CATEGORIES, account_names=names)
+    repair = prompt + repair_note("x" * 5_000, "y" * 5_000)
+    accounts = next(line for line in prompt.splitlines() if line.startswith("Accounts: "))
 
     assert len(prompt) <= 9_000
+    assert len(repair) <= 10_500
+    assert all(len(name) <= 40 for name in accounts.removeprefix("Accounts: ").split(", "))
 
 
 @pytest.mark.parametrize(

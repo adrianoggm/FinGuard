@@ -65,8 +65,7 @@ once. A field not listed is not said.
 - window: {"period": P} with P one of $periods; {"period": "LAST_N_DAYS" or "LAST_N_MONTHS", \
 "n": N}; or {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"} for named months, years or dates. A \
 month said by its name is always a start and end covering that whole month; without a year it is \
-its latest occurrence already begun, one of these, latest first: $months. A window that has not \
-begun cannot be asked: delegate UNSUPPORTED.
+its latest occurrence already begun, one of these, latest first: $months.
 - categories, excluded_categories: category keys from the list above, nothing else.
 - merchants, excluded_merchants: shop names as written.
 - people: contact names as written.
@@ -118,6 +117,9 @@ SENTENCE>>>
 - Answer only with operations. Never compute or write an amount: the bank gives every figure.
 - In a patch, list only the fields the turn changes. A field not listed keeps its value.
 - Paying, sending money, transfers and bookings are always delegate.
+- A window that has not begun cannot be asked: delegate UNSUPPORTED. The latest begun reading is \
+only for a month said by its name; a turn pointing ahead of today asks about a window that has \
+not begun.
 - A turn that only makes sense against what is on screen is patch, compare, measure or \
 select_operand, not ask; resolve references to other periods against the dates shown.
 - Use target pending only when the state shows an open question; with none open, a correction \
@@ -275,10 +277,14 @@ MAX_SENTENCE: Final = 1_200
 
 # How much of one past turn is quoted: an old turn only has to say what it was about, and eight of
 # them quoted at length would be most of the prompt. Measured on the largest state (eight long
-# turns, a comparison, an open question) with the longest sentence: at 120 a side that prompt was
-# 10,120 characters.
-_SAID_CHARACTERS: Final = 80
-_ANSWERED_CHARACTERS: Final = 60
+# turns, a comparison, an open question, three accounts named) with the longest sentence: at 120
+# a side that prompt was 10,120 characters, and at 80 and 60 with three 140-character account
+# names it was 9,348.
+_SAID_CHARACTERS: Final = 64
+_ANSWERED_CHARACTERS: Final = 48
+# An account's name is the bank's data, as long as the bank lets it be; it only has to be told
+# apart from the others.
+_ACCOUNT_CHARACTERS: Final = 40
 _REJECTED_CHARACTERS: Final = 600
 _PROBLEM_CHARACTERS: Final = 400
 
@@ -372,7 +378,7 @@ def _accounts(ids: tuple[UUID, ...], names: Mapping[UUID, str]) -> str:
     if not ids:
         return "every account"
     if all(account in names for account in ids):
-        return ", ".join(names[account] for account in ids)
+        return ", ".join(_clipped(names[account], _ACCOUNT_CHARACTERS) for account in ids)
     return f"{len(ids)} selected account{'s' if len(ids) > 1 else ''}"
 
 

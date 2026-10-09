@@ -88,12 +88,13 @@ class LlmTurnOperations:
         try:
             return read(answer, self._categories)
         except UnreadableError as refused:
-            logger.warning("engine.operations_refused problem=%s", refused.problem)
+            # The log gets types and paths; only the model, asked again, gets what it wrote.
+            logger.warning("engine.operations_refused problem=%s", refused.logged)
             answer = await self._complete(prompt + repair_note(answer, refused.problem))
         try:
             return read(answer, self._categories)
         except UnreadableError as refused_again:
-            logger.warning("engine.operations_unreadable problem=%s", refused_again.problem)
+            logger.warning("engine.operations_unreadable problem=%s", refused_again.logged)
             return (Clarify(Missing.SUBJECT),)
 
     async def _complete(self, prompt: str) -> str:
@@ -108,5 +109,9 @@ class LlmTurnOperations:
             )
         except Exception as failed:
             # Whatever the adapter raised, the turn has no reading; the handler needs one error to
-            # report it by, not one per runtime.
-            raise InterpretationFailedError(f"the interpreter's model failed: {failed}") from failed
+            # report it by, not one per runtime. Named by its type and nothing else, and not
+            # chained: a hosted runtime's error can carry the generation it refused, which can be
+            # the person's sentence, and a traceback logged upstream would print it.
+            raise InterpretationFailedError(
+                f"the interpreter's model failed: {type(failed).__name__}"
+            ) from None

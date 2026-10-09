@@ -38,6 +38,7 @@ from pydantic import (
     ValidationInfo,
     WithJsonSchema,
 )
+from pydantic_core import ErrorDetails
 
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORIES,
@@ -82,6 +83,8 @@ MAX_FIELDS: Final = len(dataclasses.fields(PlanFields))
 # How many validation problems a repair quotes back. The first few say what to fix; the rest of a
 # failed union is the same mistake seen from every branch.
 _MAX_PROBLEMS: Final = 4
+# The pydantic error types a union reports for the shapes a value is not, listed after the rest.
+_SHAPE_MISFITS: Final = frozenset({"extra_forbidden", "missing", "too_short"})
 
 # Where the catalogue goes: the validation context while reading, a marker in the schema until
 # `schema_for` swaps it for the catalogue's keys.
@@ -418,11 +421,17 @@ def _portable(node: Any, categories: tuple[str, ...]) -> Any:
 
 
 class UnreadableError(Exception):
-    """An answer that is not operations. `problem` is said to the model when it is asked again."""
+    """An answer that is not operations, said twice.
 
-    def __init__(self, problem: str) -> None:
-        super().__init__(problem)
+    `problem` is said to the model when it is asked again, and may quote what the model wrote.
+    `logged` is for logs and is the exception's own message: error types and where they were,
+    never a value, because what the model wrote can be the person's sentence echoed back.
+    """
+
+    def __init__(self, problem: str, logged: str) -> None:
+        super().__init__(logged)
         self.problem = problem
+        self.logged = logged
 
 
 def read(answer: str, categories: Collection[str]) -> tuple[Operation, ...]:
@@ -439,13 +448,32 @@ def read(answer: str, categories: Collection[str]) -> tuple[Operation, ...]:
         )
         return tuple(op.as_operation() for op in said.operations)
     except ValidationError as invalid:
-        raise UnreadableError(_problems(invalid)) from invalid
+        errors = _first_problems(invalid)
+        raise UnreadableError(
+            "; ".join(f"{_where(error)}: {error['msg']}" for error in errors),
+            "; ".join(f"{_where(error, logged=True)}: {error['type']}" for error in errors),
+        ) from None
     except InvalidValueError as refused:
-        raise UnreadableError(str(refused)) from refused
+        raise UnreadableError(str(refused), "the domain refused a value") from None
 
 
-def _problems(invalid: ValidationError) -> str:
-    return "; ".join(
-        f"{'.'.join(str(part) for part in error['loc']) or 'answer'}: {error['msg']}"
-        for error in invalid.errors(include_url=False)[:_MAX_PROBLEMS]
+def _first_problems(invalid: ValidationError) -> list[ErrorDetails]:
+    """The first few problems, what is wrong before which shapes did not fit.
+
+    A value that fits none of a union's shapes is reported once per shape, and the shapes it is not
+    only say a key is extra or missing (or, after an item fails, that its list is now too short).
+    The shape it nearly is says what is actually wrong, and that is the one worth sending back.
+    """
+    errors = sorted(
+        invalid.errors(include_url=False), key=lambda error: error["type"] in _SHAPE_MISFITS
     )
+    return errors[:_MAX_PROBLEMS]
+
+
+def _where(error: ErrorDetails, *, logged: bool = False) -> str:
+    """The error's path. Every part of it is ours (keys, indices, tags, shape names) except the
+    key an extra-key error is about, which the model wrote and a log does not repeat."""
+    path = [str(part) for part in error["loc"]]
+    if logged and error["type"] == "extra_forbidden" and path:
+        path[-1] = "<extra key>"
+    return ".".join(path) or "answer"

@@ -227,6 +227,10 @@ def _patched_focus(state: DialogueState, op: Patch, today: date, grounds: Ground
         whole = _patched(focus.ratio.whole, whole_changes, today)
         if not isinstance(part, FinancialPlan) or not isinstance(whole, FinancialPlan):
             raise _CannotApplyError(Missing.SUBJECT)
+        if focus.ratio.kind is RatioKind.SHARE and not _has_subject(part):
+            # A patch that emptied the subject left the part equal to the whole: «100 %» would be
+            # a share of itself, as in `_share_of`.
+            raise _CannotApplyError(Missing.SUBJECT)
         return _on_ratio(state, RatioPlan(part=part, whole=whole, kind=focus.ratio.kind))
     raise _CannotApplyError(Missing.SUBJECT)
 
@@ -319,13 +323,16 @@ def _share_of(plan: Plan) -> RatioPlan:
     """«¿Qué porcentaje de mis gastos fue en restaurantes?»: the plan on screen as the part, and
     the same question without its subject as the whole. Exclusions, window and direction stay on
     both, because they say what the whole is."""
-    if not isinstance(plan, FinancialPlan) or not (
-        plan.categories or plan.merchants or plan.counterparties
-    ):
+    if not isinstance(plan, FinancialPlan) or not _has_subject(plan):
         # Without a subject the part is the whole, and a share of itself says nothing.
         raise _CannotApplyError(Missing.SUBJECT)
     whole = replace(plan, categories=(), merchants=(), counterparties=())
     return RatioPlan(part=plan, whole=whole, kind=RatioKind.SHARE)
+
+
+def _has_subject(plan: FinancialPlan) -> bool:
+    """Whether the plan narrows to something a share can be a part of."""
+    return bool(plan.categories or plan.merchants or plan.counterparties)
 
 
 # --- what a work puts on screen ---------------------------------------------------------------

@@ -508,6 +508,25 @@ def test_a_subject_patch_on_a_share_changes_the_part_only() -> None:
 
 
 @pytest.mark.parametrize(
+    "changes",
+    [
+        PlanFields(categories=()),
+        PlanFields(categories=(), merchants=(), people=()),
+    ],
+    ids=["categories", "every-subject-field"],
+)
+def test_emptying_a_shares_subject_asks_for_one(changes: PlanFields) -> None:
+    # Without a subject the part is the whole, and «100 %» would be a share of itself: a figure
+    # nobody asked for. Asked back, as `_share_of` does for a query with no subject.
+    share = RatioPlan(part=plan(JULY, ["RESTAURANTS"]), whole=plan(JULY, []), kind=RatioKind.SHARE)
+    s = state_with(RatioFocus(share))
+
+    t = apply(s, [Patch("focus", changes)], today=TODAY, grounds=G)
+
+    assert t == Transition(s, None, Clarify(Missing.SUBJECT))
+
+
+@pytest.mark.parametrize(
     ("changes", "moved"),
     [
         (PlanFields(window=JUNE), {"date_range": JUNE}),
