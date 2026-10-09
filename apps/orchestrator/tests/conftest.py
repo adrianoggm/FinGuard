@@ -11,6 +11,7 @@ settings object is built on first use and cached.
 
 import os
 from collections import Counter
+from pathlib import Path
 
 from families import FAMILIES, UNMAPPED, family_of
 
@@ -21,6 +22,33 @@ TEST_HOLDER = "ES-TEST"
 TEST_ACCOUNT = "11111111-1111-1111-1111-111111111111"
 
 os.environ.setdefault("ORCHESTRATOR_DEV_TOKENS", f'["{TEST_TOKEN}:{TEST_HOLDER}:{TEST_ACCOUNT}"]')
+
+# Ruling R30: the suite is the same on every tree. A developer's `.env` is read after
+# `.env.defaults` and wins, and one that switched the engine to `model` on `groq` once sent the
+# suite's sentences to a hosted model. The process environment wins over both files, so every
+# setting that chooses an engine, a model or something hosted to call is pinned here to its
+# shipped value, and the hosted credentials to blank, which means "no such provider". A test about
+# a different deployment sets its own with `monkeypatch.setenv`, as before.
+_SHIPPED = Path(__file__).resolve().parents[1] / ".env.defaults"
+_PINNED = (
+    "CONVERSATION_ENGINE",
+    "ENGINE_MODEL",
+    "ENGINE_MAX_OUTPUT_TOKENS",
+    "ENGINE_TEMPERATURE",
+    "PLANNER_PROVIDER",
+    "PLANNER_MODEL",
+    "TURN_INTERPRETER",
+    "VISUAL_PLANNER",
+    "VISUAL_PLANNER_PROVIDER",
+    "VISUAL_PLANNER_MODEL",
+    "A2A_GATEWAY_URL",
+)
+for _line in _SHIPPED.read_text(encoding="utf-8").splitlines():
+    _key, _, _value = _line.partition("=")
+    if _key.removeprefix("ORCHESTRATOR_") in _PINNED and _key.startswith("ORCHESTRATOR_"):
+        os.environ[_key] = _value
+for _secret in ("GROQ_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
+    os.environ[f"ORCHESTRATOR_{_secret}"] = ""
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):

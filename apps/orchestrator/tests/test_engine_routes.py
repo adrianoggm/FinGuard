@@ -552,3 +552,33 @@ async def test_outside_a_request_nothing_is_counted() -> None:
     assert await provider.complete("x", model="m", temperature=0.0, max_output_tokens=8) == "a"
     assert calls_so_far() == 0
     assert provider.name == "canned"
+
+
+# --- what a handed-over turn hands back ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_delegated_compound_read_keeps_the_engine_conversation(route: str) -> None:
+    """R25: a compound read is the rules route's, and its later clauses are read in a context
+    built for them; that context must still be the engine's conversation, or the next engine turn
+    starts a new one."""
+    stack = a_stack()
+    interpreter = Scripted(RESTAURANTS_IN_JULY, (Delegate("UNSUPPORTED"),), AND_IN_LEISURE)
+    engine_on(stack, interpreter)
+    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
+    engine_id = first.conversation["conversation_id"]
+
+    compound = post(stack, route, "Cuanto gaste este mes y cuanto ingrese?", first.conversation)
+    followed = post(stack, route, "¿y en ocio?", compound.conversation)
+
+    assert compound.body["outcome"] == "COMPOUND"
+    assert compound.engine[0] == "rules"
+    assert (compound.conversation["conversation_id"], compound.conversation["version"]) == (
+        engine_id,
+        1,
+    )
+    assert followed.body["outcome"] == "PLANNED"
+    assert (followed.conversation["conversation_id"], followed.conversation["version"]) == (
+        engine_id,
+        2,
+    )

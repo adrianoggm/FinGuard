@@ -392,9 +392,26 @@ if (answered := await engine_dispatch.try_engine(request, body, who, today)) is 
 
   Commit the runs and the report.
 
-### Task 8: Capability-addition exercise (engine only)
+### Task 8: LangGraph capability-addition experiment (read-only)
 
-- [ ] **Step 1:** Pick one analytic capability that the bank contract already supports but neither engine exposes today. The implementer finds it from `FinancialPlan` fields and `GroupBy`/`Metric` values that the rules engine's readers never produce, for example a weekday grouping or a daily average if the bank supports them. Record which one and why.
-- [ ] **Step 2:** Add it to the engine only: schema, prompt, transitions/executor if needed, and tests. Record the diff size per file.
-- [ ] **Step 3:** Add 3 conversations that use it to a new file `evaluation/engine/capability/conversations.yaml`. Run them on the model engine and judge them.
-- [ ] **Step 4:** Append the diff size and the results to the report, and commit.
+**Question:** Does a small LangGraph StateGraph make a new multi-step analytic capability cheaper to add and safer to recover, or does it merely move FinGuard's orchestration rules into graph nodes?
+
+This is an isolated experiment after Task 7 has been recorded. Keep the current engine as the control. Put the graph behind a separate opt-in flag; the default remains the measured engine. Reuse its canonical operations, grounding, transition validation, banking ports, and presenter. LangGraph owns sequencing and the bounded loop only. It does not own financial authorization, version checks, idempotency, or the canonical conversation store.
+
+**Graph shape:** `load_and_reserve → plan → validate_and_apply → execute_read_only → assess_result → (plan | present_and_commit)`.
+The planner makes a Structured Outputs request. FinGuard executes the typed operation through existing ports. If the result needs investigation, the graph makes a separate Structured Outputs request with a bounded, value-minimized result summary; it never combines Structured Outputs and tool calling in one Groq request. The assessment can ask for another allow-listed read-only operation or stop. Cap the experiment at three banking executions and three model calls per user turn; exceeding either limit returns a grounded partial answer or a clarification. Delegated money flows leave this graph and keep their existing preview, confirmation, authorization, and idempotency path.
+
+**State and recovery rules:**
+- Treat `DialogueState` plus its existing version as canonical. A checkpoint is an execution-resume record, not a competing conversation store.
+- Give each submitted turn a stable request/idempotency key. Atomically reserve `(account_id, conversation_id, expected_version, request_id)` before model or bank work. A duplicate request returns/resumes that turn; a different request against the same version gets the existing stale-version response. Keep the final compare-and-set.
+- Checkpoint only after deterministic boundaries. Persist the graph/protocol version, state schema version, turn id, account scope, validated operations, and execution status. Store the minimum result needed for assessment; do not checkpoint prompts, credentials, or unrestricted banking payloads.
+- Make read-only execution resumable without silently advancing conversation state twice. Do not route a payment, transfer, booking, or other mutation through the graph in this task.
+- Use a durable PostgreSQL checkpointer only if its transaction/retention behavior can be verified in this experiment. Otherwise mark durability as unproven and do not claim crash recovery; do not let an in-memory checkpointer stand in for the production persistence requirement.
+- Keep an explicit iteration budget and allow-list in deterministic code. The LLM may request the next semantic operation; it cannot bypass grounding, state transitions, scope, or authorization.
+
+- [ ] **Step 1:** Pick one read-only question that requires result-dependent investigation, such as «¿en qué comercios gasto más que antes y se debe a más compras o a importes mayores?». Verify the banking contracts provide the needed aggregate and movement evidence. Write down answerable claims, the allowed follow-up operations, the iteration budget, and what must remain unknown when the bank data cannot establish a cause.
+- [ ] **Step 2:** Record the baseline implementation and per-file code size for the same capability using the existing orchestration. Do not change Tasks 6/7 runs or their report results.
+- [ ] **Step 3:** Add the opt-in LangGraph StateGraph in the orchestrator. Reuse existing domain/application components through thin adapters; avoid a second domain model and avoid copying existing validation into nodes. Use Groq-compatible separate structured planning calls. Add tests for loop termination, malformed/unauthorized operations, no unsupported numeric claims, provider/bank failure recovery, duplicate request, stale concurrent turn, checkpoint resume, and graph/schema version mismatch.
+- [ ] **Step 4:** Add at least 3 capability conversations to `evaluation/engine/capability/conversations.yaml`; run the same cases through the current engine and graph, blind-judge them, and record correct answers, continuity, unsupported claims, model calls/tokens, latency, retries/recovery, and failures.
+- [ ] **Step 5:** Compare total code added by responsibility (graph orchestration, adapters, validation, persistence/concurrency, tests) and identify which existing orchestration logic was removed. Report whether LangGraph reduced specialized coordination code, the recovery behavior actually demonstrated, and production gaps including durable checkpointing, idempotency, retention, and migration. Keep Task 7's phase-1 success decision separate.
+- [ ] **Step 6:** Append the experiment and its limitations to the report, then commit the experiment and report.

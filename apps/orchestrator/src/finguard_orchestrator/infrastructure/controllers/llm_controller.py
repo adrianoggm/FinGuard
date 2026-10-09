@@ -1388,6 +1388,10 @@ def _window_only_context(answered: Conversation) -> Conversation | None:
     if plan is None:
         return None
     return Conversation(
+        # The same conversation, only narrower: a clause read here answers into it, and a
+        # context with no identifier or version handed the turn back as a new conversation.
+        conversation_id=answered.conversation_id,
+        version=answered.version,
         last_plan=FinancialPlan(
             direction=Direction.ALL,
             period=plan.period,
