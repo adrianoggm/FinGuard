@@ -78,6 +78,13 @@ week or month), CUMULATIVE (running total), FREQUENCY (how often) or RECURRENCE 
 repeat). PERIOD_AVERAGE and CUMULATIVE need group_by DAY, WEEK or MONTH.
 - group_by, a breakdown: $group_by.
 - limit: N for the N largest movements, or the N largest groups with a group_by.
+- clear_limit: true only in a patch when the person asks to see all groups or all movements
+  instead of a previous top-N. Omitting limit keeps the existing limit; it does not remove it.
+  Never use clear_limit on a new ask.
+- "el ultimo ano" means a rolling LAST_N_MONTHS window with n=12. If the person asks which months
+  had the most spending, include group_by MONTH; asking for the period must not discard that intent.
+- If they ask which months had the most spending without naming a count, use limit 3; those groups
+  are ranked by total spent, highest first.
 
 ## Operations
 Answer {"operations": [...]}: one to four, applied in order, each an object whose one key is the \
@@ -140,6 +147,10 @@ select_operand, not ask; resolve references to other periods against the dates s
 - Use target pending only when the state shows an open question; with none open, a correction \
 patches focus.
 - When you cannot tell what the turn refers to, answer clarify. Asking is better than guessing.
+- When the open question asks for WINDOW and the person replies with only a period, patch pending
+  with that window. Do not start a new ask or ask again what to consult.
+- When a patch asks for all categories, merchants or other groups after a top-N result, include
+  clear_limit true. The absent limit field means keep the current limit.
 """)
 
 # What a month is called, to write the one example that says a month without its year.
@@ -194,6 +205,28 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             "a query",
             "Ahora solo lo del súper",
             _answer({"patch": {"target": "focus", "changes": _items(categories=["GROCERIES"])}}),
+        ),
+        (
+            "a category breakdown limited to its top group",
+            "Muestra todas las categorias, no solo la primera",
+            _answer({"patch": {"target": "focus", "changes": _items(clear_limit=True)}}),
+        ),
+        (
+            "",
+            "Cuales son los meses con mas gastos?",
+            _answer({"ask": _items(direction="EXPENSE", group_by="MONTH", limit=3)}),
+        ),
+        (
+            "an open question asking for WINDOW; already said expenses by month",
+            "En el ultimo ano",
+            _answer(
+                {
+                    "patch": {
+                        "target": "pending",
+                        "changes": _items(window={"counted": {"period": "LAST_N_MONTHS", "n": 12}}),
+                    }
+                }
+            ),
         ),
         (
             "an open question asking for WINDOW",

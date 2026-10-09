@@ -14,6 +14,7 @@ makes.
 """
 
 from datetime import datetime, timedelta
+from fractions import Fraction
 from typing import Final
 
 from finguard_orchestrator.domain.enums import (
@@ -978,6 +979,21 @@ def _singular(kind: str) -> str:
     return kind[:-1] if kind.endswith("s") else kind
 
 
+def ordered_groups(answer: QueryAnswer, plan: FinancialPlan) -> tuple[Group, ...]:
+    """Rank requested month buckets while ordinary timelines stay chronological."""
+    if plan.group_limit is None or plan.group_by is not GroupBy.MONTH:
+        return answer.groups
+
+    def score(group: Group) -> int | Fraction:
+        if plan.metric is Metric.COUNT:
+            return group.movement_count
+        if plan.metric is Metric.AVERAGE:
+            return Fraction(group.total_minor, max(group.movement_count, 1))
+        return group.total_minor
+
+    return tuple(sorted(answer.groups, key=lambda group: (-score(group), group.key)))
+
+
 def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     """Takes the plan, not just the window, because the metric decides what the answer
     *is*.
@@ -1013,11 +1029,13 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         return f"No he encontrado movimientos{about} {window}. Puedes {next_step}."
 
     noun = "movimiento" if answer.movement_count == 1 else "movimientos"
-    ranked_groups = answer.groups[: plan.group_limit] if plan.group_limit is not None else None
+    groups = ordered_groups(answer, plan)
+    ranked_groups = groups[: plan.group_limit] if plan.group_limit is not None else None
     if plan.group_limit is not None:
         count = len(ranked_groups or ())
         dimension = {
             GroupBy.CATEGORY: "categoría" if count == 1 else "categorías",
+            GroupBy.MONTH: "mes" if count == 1 else "meses",
             GroupBy.MERCHANT: "comercio" if count == 1 else "comercios",
             GroupBy.COUNTERPARTY: "contraparte" if count == 1 else "contrapartes",
             GroupBy.ACCOUNT: "cuenta" if count == 1 else "cuentas",

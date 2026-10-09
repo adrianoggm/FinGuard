@@ -105,7 +105,7 @@ def test_the_context_the_client_echoes_back_survives_the_round_trip() -> None:
 def test_the_previous_plan_is_described_by_us_not_quoted() -> None:
     text = instructions(prompt(previous=LAST_MONTH))
 
-    assert "It was answered with this plan: el mes pasado, expense" in text
+    assert "It was answered with this plan: el mes pasado, gastos" in text
 
 
 def test_a_forced_patch_tells_the_model_the_sentence_belongs_to_the_context() -> None:
@@ -130,7 +130,7 @@ def test_a_category_this_deployment_does_not_have_never_reaches_the_prompt() -> 
 
     line = instructions(prompt(previous=forged)).split("this plan: ")[1].split("\n")[0]
 
-    assert line == "el mes pasado, expense, groceries"
+    assert line == "el mes pasado, gastos, supermercado"
 
 
 def test_every_word_of_the_previous_section_comes_from_a_closed_set() -> None:
@@ -181,27 +181,29 @@ def test_every_word_of_the_previous_section_comes_from_a_closed_set() -> None:
         "del",
         "al",
         "por",
-        "expense",
-        "income",
-        "all",
-        "count",
-        "average",
+        "ingresos",
+        "y",
+        "número",
+        "movimientos",
+        "importe",
+        "medio",
+        "movimiento",
         "frecuencia",
         "gastos",
         "recurrentes",
         "acumulado",
         "media",
         "periodo",
-        "day",
-        "week",
-        "month",
-        "category",
-        "merchant",
-        "counterparty",
-        "account",
+        "día",
+        "categoría",
+        "comercio",
+        "contraparte",
+        "cuenta",
         "2026-01-01",
         "2026-01-31",
-        "groceries/transport_fuel/restaurants",
+        "supermercado",
+        "gasolina",
+        "restaurantes",
     }
 
     for plan in windows:

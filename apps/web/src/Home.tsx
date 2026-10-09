@@ -30,6 +30,7 @@ import {
   signed,
   spendable,
 } from "./format";
+import { displayText } from "./displayText";
 import { accountTab, type Tab } from "./tabs";
 
 type Props = {
@@ -261,7 +262,7 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
                 {glyph(movement.category)}
               </span>
               <span className="what">
-                <strong>{movement.merchant_name ?? movement.description}</strong>
+                <strong>{displayText(movement.merchant_name ?? movement.description)}</strong>
                 <small>
                   {day(movement.occurred_at)} · {categoryName(movement.category)}
                 </small>

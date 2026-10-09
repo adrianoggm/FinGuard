@@ -135,6 +135,7 @@ def apply(
             # found it in the holder's catalogues; from the model it is free text, and quoting
             # it would show the person the model's words, a figure among them.
             return Transition(resting, None, Clarify(op.missing))
+        op = _fill_pending(current, op)
         try:
             current, work = _applied(current, op, today, grounds)
         except _CannotApplyError as question:
@@ -153,6 +154,44 @@ def apply(
             # become what is on screen either.
             current = resting
     return Transition(current, work, None if work else courtesy)
+
+
+def _fill_pending(state: DialogueState, op: Operation) -> Operation:
+    """Route a typed answer to an open clarification into its saved draft.
+
+    Models sometimes describe a short clarification reply as a new ask (or a focus patch).
+    The operation still identifies the field the person supplied; when it supplies only the
+    field that the open question requested, applying it to the pending draft is unambiguous.
+    Complete new asks remain new asks.
+    """
+    pending = state.pending
+    if pending is None:
+        return op
+    if isinstance(op, Ask):
+        changes = op.fields
+    elif isinstance(op, Patch) and op.target == "focus":
+        changes = op.changes
+    else:
+        return op
+    fields = changes.named()
+    if pending.missing is Missing.WINDOW:
+        expected = frozenset({"window"})
+        fills_gap = fields == expected
+    elif pending.missing is Missing.SUBJECT:
+        subject = frozenset({"direction", "categories", "merchants", "merchant_terms", "people"})
+        expected = subject | {"group_by", "metric", "limit"}
+        fills_gap = bool(fields & subject) and fields <= expected
+    elif pending.missing is Missing.ACCOUNT:
+        expected = frozenset({"accounts"})
+        fills_gap = bool(fields) and fields <= expected
+    elif pending.missing is Missing.PERSON:
+        expected = frozenset({"people"})
+        fills_gap = bool(fields) and fields <= expected
+    else:
+        fills_gap = False
+    if fills_gap:
+        return Patch("pending", changes)
+    return op
 
 
 def _applied(
@@ -194,6 +233,8 @@ def _applied(
 
 
 def _asked(state: DialogueState, said: PlanFields, today: date, grounds: Grounds) -> Applied:
+    if said.clear_limit:
+        raise _CannotApplyError(Missing.SUBJECT)
     grounded = ground(said, grounds)
     if isinstance(grounded, Unknown):
         raise _CannotApplyError(
@@ -472,6 +513,7 @@ _MOVES: Final[dict[str, frozenset[str]]] = {
     "metric": frozenset({"metric"}),
     "group_by": frozenset({"group_by"}),
     "limit": frozenset({"group_limit", "rank"}),
+    "clear_limit": frozenset({"group_limit", "rank"}),
 }
 
 

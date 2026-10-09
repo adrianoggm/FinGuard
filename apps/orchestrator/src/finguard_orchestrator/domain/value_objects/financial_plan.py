@@ -163,8 +163,10 @@ class FinancialPlan:
         }:
             raise InvalidValueError("CUMULATIVE requires DAY, WEEK or MONTH grouping")
         if self.group_limit is not None:
-            if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
-                raise InvalidValueError("groupLimit requires a non-temporal grouping")
+            if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK}:
+                raise InvalidValueError(
+                    "groupLimit requires a category, merchant or month grouping"
+                )
             if not 1 <= self.group_limit <= MAX_GROUP_ROWS:
                 raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_ROWS}")
         check_filters(
@@ -255,8 +257,10 @@ class FinancialPlanDraft:
         }:
             raise InvalidValueError(f"{self.metric} requires DAY, WEEK or MONTH grouping")
         if self.group_limit is not None:
-            if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
-                raise InvalidValueError("groupLimit requires a non-temporal grouping")
+            if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK}:
+                raise InvalidValueError(
+                    "groupLimit requires a category, merchant or month grouping"
+                )
             if not 1 <= self.group_limit <= MAX_GROUP_ROWS:
                 raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_ROWS}")
         # The window is the one invariant a draft relaxes. Everything else is checked exactly as

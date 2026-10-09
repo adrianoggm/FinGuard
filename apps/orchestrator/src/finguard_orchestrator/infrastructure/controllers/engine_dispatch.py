@@ -52,6 +52,7 @@ from starlette.datastructures import MutableHeaders
 
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
+from finguard_orchestrator.domain.constants import MAX_PROMPT_LENGTH
 from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import QueryRejectedError
@@ -178,6 +179,16 @@ def _hand_over_the_screen(question: QuestionRequest, state: DialogueState) -> No
     plan or the pair it answered last, read from the same accounts the engine read it from. The
     rules route's chart code is not touched; only the context it is handed is."""
     focus, accounts = state.focus, state.scope.account_ids
+    # The engine delegates chart rendering before changing its state. The rules route needs the
+    # financial question that produced this focus, plus an explicit chart request, to execute the
+    # existing bank query and renderer. Forwarding only the follow-up ("¿me lo enseñas?") makes
+    # the legacy route plan it as a new unsupported question; forwarding the typed focus below
+    # preserves the exact query context it should continue.
+    if state.turns:
+        source_question = state.turns[-1].said.strip()
+        chart_request = f"{source_question} en un gráfico"
+        if source_question and len(chart_request) <= MAX_PROMPT_LENGTH:
+            question.question = chart_request
     screen: dict[str, object]
     if isinstance(focus, QueryFocus):
         screen = {"last_plan": conversation_mapper.plan_payload(_read_from(focus.plan, accounts))}

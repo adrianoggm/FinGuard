@@ -252,6 +252,10 @@ class LimitItem(_Closed):
     limit: Annotated[int, Field(ge=1, le=MAX_RANK)]
 
 
+class ClearLimitItem(_Closed):
+    clear_limit: Literal[True]
+
+
 FieldItem = Annotated[
     Annotated[DirectionItem, Tag("direction")]
     | Annotated[WindowItem, Tag("window")]
@@ -264,7 +268,8 @@ FieldItem = Annotated[
     | Annotated[ExcludedMerchantsItem, Tag("excluded_merchants")]
     | Annotated[MetricItem, Tag("metric")]
     | Annotated[GroupByItem, Tag("group_by")]
-    | Annotated[LimitItem, Tag("limit")],
+    | Annotated[LimitItem, Tag("limit")]
+    | Annotated[ClearLimitItem, Tag("clear_limit")],
     Discriminator(_only_key),
 ]
 
@@ -290,6 +295,8 @@ Fields = Annotated[tuple[FieldItem, ...], Field(max_length=MAX_FIELDS), AfterVal
 
 def _plan_fields(items: tuple[FieldItem, ...]) -> PlanFields:
     said: dict[str, Any] = dict(map(_said, items))
+    if said.get("clear_limit") and said.get("limit") is not None:
+        raise InvalidValueError("a limit cannot be set and cleared in one operation")
     return replace(PlanFields(), **said)
 
 

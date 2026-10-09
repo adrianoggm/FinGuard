@@ -25,7 +25,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ask, createVoiceClient, newAttempt, saveMetric, validateVoiceAnswer, type Answer, type ConversationState, type MetricSource } from "./api";
-import { day, ibanGroups, money, outgoing, signed } from "./format";
+import { categoryName, day, ibanGroups, money, outgoing, signed } from "./format";
 import { displayText } from "./displayText";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
@@ -859,7 +859,8 @@ export function groupLabel(key: string): string {
       return new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", year: "numeric" }).format(date);
     }
   }
-  return key;
+  const category = categoryName(key);
+  return category === "Otros" ? key : category;
 }
 
 function message(failure: unknown): string {

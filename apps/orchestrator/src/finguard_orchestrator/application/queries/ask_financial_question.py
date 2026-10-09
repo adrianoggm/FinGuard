@@ -8269,6 +8269,8 @@ def _answered(
     """
     if plan.metric is Metric.CUMULATIVE:
         answer = cumulative_calculator.accumulate(answer, plan.group_by)
+    if plan.group_limit is not None and plan.group_by is GroupBy.MONTH:
+        answer = replace(answer, groups=answer_writer.ordered_groups(answer, plan))
     # "¿Cuándo me ingresan la nómina?" ran the right query and was reported as a total. The
     # question decides which sentence the same figures become, so the reading happens here rather
     # than in the writer — a writer that inspected the question would be a writer with a parser

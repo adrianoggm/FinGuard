@@ -103,7 +103,8 @@ def _query(run: QueryRun, reporting_timezone: str) -> AskFinancialQuestionResult
         text = answer_writer.write(answer, plan)
     # A top-N of groups is answered about those N, so the figures beside it are theirs too.
     limited = plan.group_limit is not None
-    groups = answer.groups[: plan.group_limit] if limited else answer.groups
+    ordered = answer_writer.ordered_groups(answer, plan)
+    groups = ordered[: plan.group_limit] if limited else ordered
     return AskFinancialQuestionResult(
         outcome=_PLANNED,
         text=text,

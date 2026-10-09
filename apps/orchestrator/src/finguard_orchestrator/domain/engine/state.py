@@ -98,6 +98,7 @@ class PlanFields:
     metric: Metric | None = None
     group_by: GroupBy | None = None
     limit: int | None = None
+    clear_limit: bool | None = None
 
     def named(self) -> frozenset[str]:
         """The fields that were said."""
@@ -109,9 +110,13 @@ class PlanFields:
 
     def merged(self, changes: "PlanFields") -> "PlanFields":
         """These fields with every field `changes` names replaced, and no other."""
-        return dataclasses.replace(
-            self, **{name: getattr(changes, name) for name in changes.named()}
-        )
+        updates = {
+            name: getattr(changes, name) for name in changes.named() if name != "clear_limit"
+        }
+        if changes.clear_limit:
+            updates["limit"] = None
+        updates["clear_limit"] = None
+        return dataclasses.replace(self, **updates)
 
 
 @dataclass(frozen=True)
