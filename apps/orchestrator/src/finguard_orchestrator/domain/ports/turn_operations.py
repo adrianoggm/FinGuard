@@ -9,12 +9,18 @@ screen: «¿y en julio?» moves the window of a query, moves both sides of a com
 question asked back.
 """
 
+from collections.abc import Mapping
 from datetime import date
-from typing import Protocol, runtime_checkable
+from types import MappingProxyType
+from typing import Final, Protocol, runtime_checkable
+from uuid import UUID
 
 from finguard_orchestrator.domain.engine.operations import Operation
 from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.errors import DomainError
+
+# No names known: the selected accounts are shown as a count.
+NO_ACCOUNT_NAMES: Final[Mapping[UUID, str]] = MappingProxyType({})
 
 
 class InterpretationFailedError(DomainError):
@@ -31,7 +37,16 @@ class InterpretationFailedError(DomainError):
 @runtime_checkable
 class TurnOperationsPort(Protocol):
     async def interpret(
-        self, sentence: str, state: DialogueState, *, today: date
+        self,
+        sentence: str,
+        state: DialogueState,
+        *,
+        today: date,
+        account_names: Mapping[UUID, str] = NO_ACCOUNT_NAMES,
     ) -> tuple[Operation, ...]:
-        """What the turn does, as one to four operations applied in order. Never empty."""
+        """What the turn does, as one to four operations applied in order. Never empty.
+
+        `account_names` names the holder's accounts by id, so the accounts the state selects are
+        shown by name (ruling R15). The state holds only ids; without names they are a count.
+        """
         ...

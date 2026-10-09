@@ -28,6 +28,7 @@ from dataclasses import replace
 from datetime import date, timedelta
 from string import Template
 from typing import Final
+from uuid import UUID
 
 from finguard_orchestrator.domain.engine.operations import PlanFields
 from finguard_orchestrator.domain.engine.state import (
@@ -40,6 +41,7 @@ from finguard_orchestrator.domain.engine.state import (
     RatioFocus,
 )
 from finguard_orchestrator.domain.enums import PERIODS_NEEDING_COUNT, GroupBy, Period
+from finguard_orchestrator.domain.ports.turn_operations import NO_ACCOUNT_NAMES
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -48,9 +50,8 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 _TEMPLATE: Final = Template("""\
-You read one turn of a Spanish conversation with a personal banking assistant and write what the \
-turn asks for as operations. Code applies them to the conversation and asks the bank, so you \
-never answer the question yourself.
+You write one turn of a Spanish banking conversation as operations. Code applies them and asks \
+the bank; you never answer the question yourself.
 
 Today is $today ($weekday).
 
@@ -71,31 +72,30 @@ begun cannot be asked: delegate UNSUPPORTED.
 - people: contact names as written.
 - accounts: account names as written; [] means every account again.
 - metric: SUM (how much), COUNT (how many), AVERAGE (per movement), PERIOD_AVERAGE (per day, \
-week or month, with that group_by), CUMULATIVE (running total, with a day, week or month \
-group_by), FREQUENCY (how often) or RECURRENCE (which charges repeat).
+week or month), CUMULATIVE (running total), FREQUENCY (how often) or RECURRENCE (which charges \
+repeat). PERIOD_AVERAGE and CUMULATIVE need group_by DAY, WEEK or MONTH.
 - group_by, a breakdown: $group_by.
-- limit: N for the N largest movements, or the N largest groups when there is a group_by.
+- limit: N for the N largest movements, or the N largest groups with a group_by.
 
 ## Operations
-Answer {"operations": [...]} with one to four operations, applied in order.
+Answer {"operations": [...]}: one to four, applied in order.
 - ask {fields}: a new question, complete in itself; nothing is kept from the screen. A window \
 not said is not listed, and the person is asked for it.
-- patch {target, changes}: change only the fields in changes; everything else stays. target: \
-focus (what is on screen), earlier or latest (one side of a comparison), or pending (the reply \
-to an open question).
-- compare {shared, earlier, latest}: one question over two windows. shared is what both sides \
-have; what nothing names is taken from the screen.
-- measure {measure}: show the screen as $measures. PERCENT_CHANGE is the change between the two \
-sides of a comparison; SHARE is the part the screen is of its total.
+- patch {target, changes}: change the fields listed. target: focus (what is on screen), \
+earlier or latest (one side of a comparison), or pending (an open question).
+- compare {shared, earlier, latest}: one question over two windows; shared is what both sides \
+have, and what nothing names comes from the screen.
+- measure {measure}: show the screen as $measures. PERCENT_CHANGE: the change between the \
+sides of a comparison; SHARE: the part the screen is of its total.
 - select_operand {which}: keep one side of a comparison: earlier or latest.
 - reset {}: start again.
 - balance {accounts}: the money there is now; [] for every account.
 - clarify {missing, about}: you cannot tell what the turn means. missing: WINDOW (when), SUBJECT \
-(what), ACCOUNT (which account), PERSON (who) or OPERAND (which side, or which two to compare); \
-about: the word you could not place, or null.
+(what), ACCOUNT, PERSON (who) or OPERAND (which side, or which two); about: the word you could \
+not place, or null.
 - smalltalk {kind}: GREETING, THANKS, IDENTITY (who you are) or HELP (what you can do).
-- delegate {to}: PAYMENT, TRANSFER, BOOKING, CHART (a chart or graph) or UNSUPPORTED (a \
-question no operation can say, such as a forecast).
+- delegate {to}: PAYMENT, TRANSFER, BOOKING, CHART (a chart or graph) or UNSUPPORTED (what no \
+operation can say, such as a forecast).
 
 ## Examples
 $examples
@@ -188,17 +188,6 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             ),
         ),
         (
-            "a comparison",
-            "El primero ponlo en agosto de 2025",
-            _answer(
-                {
-                    "op": "patch",
-                    "target": "earlier",
-                    "changes": _items(window={"start": "2025-08-01", "end": "2025-08-31"}),
-                }
-            ),
-        ),
-        (
             "",
             "¿Cobré más en marzo o en abril de 2025?",
             _answer(
@@ -278,18 +267,32 @@ _MARKERS: Final = (
 
 _WEEKDAYS: Final = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
-# How much of one past turn is quoted, each side. Eight turns of a long sentence would otherwise be
-# most of the prompt, and an old turn only has to say what it was about. At 160 the largest state
-# (eight long turns, a comparison, an open question) put the prompt at exactly 9,000 characters.
-_TURN_CHARACTERS: Final = 120
+# The longest sentence read (ruling R16). Longer is not a turn of a conversation but a document, and
+# the budget below is what keeps a prompt, its repair and the answer inside a 4096-token window: at
+# about 3.5 characters a token, 9,000 characters of prompt is some 2,600 tokens, a repair at most
+# 10,500 some 3,000, and the answer up to 600 more.
+MAX_SENTENCE: Final = 1_200
+
+# How much of one past turn is quoted: an old turn only has to say what it was about, and eight of
+# them quoted at length would be most of the prompt. Measured on the largest state (eight long
+# turns, a comparison, an open question) with the longest sentence: at 120 a side that prompt was
+# 10,120 characters.
+_SAID_CHARACTERS: Final = 80
+_ANSWERED_CHARACTERS: Final = 60
 _REJECTED_CHARACTERS: Final = 600
 _PROBLEM_CHARACTERS: Final = 400
 
 
 def build_prompt(
-    sentence: str, state: DialogueState, *, today: date, categories: Mapping[str, str]
+    sentence: str,
+    state: DialogueState,
+    *,
+    today: date,
+    categories: Mapping[str, str],
+    account_names: Mapping[UUID, str] = NO_ACCOUNT_NAMES,
 ) -> str:
-    """The whole prompt. `categories` maps each catalogue key to its short Spanish name."""
+    """The whole prompt. `categories` maps each catalogue key to its short Spanish name;
+    `account_names` names the holder's accounts, so the selected ones are shown by name."""
     return _TEMPLATE.substitute(
         today=today.isoformat(),
         weekday=_WEEKDAYS[today.weekday()],
@@ -299,7 +302,7 @@ def build_prompt(
         months=", ".join(_months_begun(today)),
         measures=", ".join(m.value for m in Measure),
         examples="\n".join(_example(*example) for example in examples(today)),
-        state=_fenced(_state(state, today)),
+        state=_fenced(_state(state, today, account_names)),
         sentence=_fenced(sentence),
     )
 
@@ -343,8 +346,8 @@ def _clipped(text: str, limit: int) -> str:
 # --- the state, in the schema's words ---------------------------------------------------------
 
 
-def _state(state: DialogueState, today: date) -> str:
-    lines = [f"On screen: {_focus(state.focus, today)}"]
+def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
+    lines = [f"On screen: {_focus(state.focus, today, names)}"]
     if state.pending is None:
         lines.append("Open question: none")
     else:
@@ -352,23 +355,28 @@ def _state(state: DialogueState, today: date) -> str:
         lines.append(
             f"Open question: asks for {state.pending.missing.value}; already said: {draft}"
         )
-    selected = len(state.scope.account_ids)
-    lines.append(
-        f"Accounts: {selected} selected account{'s' if selected > 1 else ''}"
-        if selected
-        else "Accounts: every account"
-    )
+    lines.append(f"Accounts: {_accounts(state.scope.account_ids, names)}")
     if state.turns:
         lines.append("Last turns, oldest first, as said → answered:")
         lines += [
-            f"- «{_clipped(turn.said, _TURN_CHARACTERS)}» → "
-            f"{_clipped(turn.answered, _TURN_CHARACTERS)}"
+            f"- «{_clipped(turn.said, _SAID_CHARACTERS)}» → "
+            f"{_clipped(turn.answered, _ANSWERED_CHARACTERS)}"
             for turn in state.turns
         ]
     return "\n".join(lines)
 
 
-def _focus(focus: Focus | None, today: date) -> str:
+def _accounts(ids: tuple[UUID, ...], names: Mapping[UUID, str]) -> str:
+    """The accounts selected, by name when every one has a name; a partial list would read as the
+    whole selection, so otherwise how many."""
+    if not ids:
+        return "every account"
+    if all(account in names for account in ids):
+        return ", ".join(names[account] for account in ids)
+    return f"{len(ids)} selected account{'s' if len(ids) > 1 else ''}"
+
+
+def _focus(focus: Focus | None, today: date, names: Mapping[UUID, str] = NO_ACCOUNT_NAMES) -> str:
     match focus:
         case None:
             return "nothing"
@@ -391,7 +399,7 @@ def _focus(focus: Focus | None, today: date) -> str:
                 f"whole {_said(_fields_of(ratio.whole), today)}"
             )
         case BalanceFocus(account_ids=ids):
-            return f"the balance of {len(ids)} accounts" if ids else "the balance of every account"
+            return f"the balance of {_accounts(ids, names)}"
     return "nothing"
 
 

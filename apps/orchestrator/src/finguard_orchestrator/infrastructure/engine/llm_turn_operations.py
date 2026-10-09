@@ -14,12 +14,20 @@ import logging
 from collections.abc import Mapping
 from datetime import date
 from typing import Any
+from uuid import UUID
 
 from finguard_orchestrator.domain.engine.operations import Clarify, Operation
 from finguard_orchestrator.domain.engine.state import DialogueState, Missing
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
-from finguard_orchestrator.domain.ports.turn_operations import InterpretationFailedError
-from finguard_orchestrator.infrastructure.engine.operations_prompt import build_prompt, repair_note
+from finguard_orchestrator.domain.ports.turn_operations import (
+    NO_ACCOUNT_NAMES,
+    InterpretationFailedError,
+)
+from finguard_orchestrator.infrastructure.engine.operations_prompt import (
+    MAX_SENTENCE,
+    build_prompt,
+    repair_note,
+)
 from finguard_orchestrator.infrastructure.engine.operations_schema import (
     UnreadableError,
     read,
@@ -51,9 +59,23 @@ class LlmTurnOperations:
         self._schema = schema_for(self._categories)
 
     async def interpret(
-        self, sentence: str, state: DialogueState, *, today: date
+        self,
+        sentence: str,
+        state: DialogueState,
+        *,
+        today: date,
+        account_names: Mapping[UUID, str] = NO_ACCOUNT_NAMES,
     ) -> tuple[Operation, ...]:
-        prompt = build_prompt(sentence, state, today=today, categories=self._categories)
+        if len(sentence) > MAX_SENTENCE:
+            # Past what the prompt's budget holds (ruling R16): asked back, not sent truncated.
+            return (Clarify(Missing.SUBJECT),)
+        prompt = build_prompt(
+            sentence,
+            state,
+            today=today,
+            categories=self._categories,
+            account_names=account_names,
+        )
         answer = await self._complete(prompt)
         try:
             return read(answer, self._categories)

@@ -58,7 +58,12 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
-from finguard_orchestrator.infrastructure.engine.operations_prompt import build_prompt, examples
+from finguard_orchestrator.infrastructure.engine.operations_prompt import (
+    MAX_SENTENCE,
+    build_prompt,
+    examples,
+    repair_note,
+)
 from finguard_orchestrator.infrastructure.engine.operations_schema import (
     MAX_FIELDS,
     MAX_OPERATIONS,
@@ -575,15 +580,36 @@ def a_busy_state() -> DialogueState:
     )
 
 
-def test_prompt_fits_the_budget() -> None:
-    sentence = (
+LONGEST = (
+    (
         "vale, y ahora quiero lo mismo pero solo de la farmacia y del supermercado, sin contar "
-        "Mercadona, desde que empezó el trimestre"
+        "Mercadona, desde que empezó el trimestre, y si puedes sepáralo por semanas. "
     )
+    * 10
+)[:MAX_SENTENCE]
 
-    prompt = build_prompt(sentence, a_busy_state(), today=TODAY, categories=CATEGORIES)
+
+def test_prompt_fits_the_budget() -> None:
+    """The longest sentence read, over the largest state: within 9,000 characters, and the repair
+    of its longest refused answer within 10,500, so prompt and answer fit a 4096-token window."""
+    assert len(LONGEST) == MAX_SENTENCE
+
+    prompt = build_prompt(LONGEST, a_busy_state(), today=TODAY, categories=CATEGORIES)
+    repair = prompt + repair_note("x" * 5_000, "y" * 5_000)
 
     assert len(prompt) <= 9_000
+    assert len(repair) <= 10_500
+
+
+async def test_a_sentence_too_long_is_asked_back_without_a_model_call() -> None:
+    provider = Provider(answer({"op": "reset"}))
+
+    longer = await interpreter(provider).interpret(LONGEST + "?", EMPTY, today=TODAY)
+    longest = await interpreter(provider).interpret(LONGEST, EMPTY, today=TODAY)
+
+    assert longer == (Clarify(Missing.SUBJECT),)
+    assert longest == (Reset(),)
+    assert len(provider.prompts) == 1
 
 
 def test_state_is_fenced_as_data() -> None:
@@ -682,6 +708,45 @@ def test_the_state_says_what_is_on_screen_what_is_open_and_where() -> None:
     assert "WINDOW" in state
     assert "Farmacia Sol" in state
     assert "2 selected accounts" in state
+
+
+NAMES = {UUID(int=11): "Cuenta corriente", UUID(int=12): "Hucha"}
+
+
+@pytest.mark.parametrize(
+    ("names", "shown"),
+    [
+        (NAMES, "Accounts: Cuenta corriente, Hucha"),
+        ({}, "Accounts: 2 selected accounts"),
+        # One name missing: a partial list would read as the whole selection.
+        ({UUID(int=11): "Cuenta corriente"}, "Accounts: 2 selected accounts"),
+    ],
+    ids=["named", "no names", "one missing"],
+)
+def test_the_selected_accounts_are_shown_by_name(names: dict[UUID, str], shown: str) -> None:
+    prompt = build_prompt(
+        "hola", a_busy_state(), today=TODAY, categories=CATEGORIES, account_names=names
+    )
+
+    assert shown in prompt[prompt.index("<<<STATE") : prompt.index("STATE>>>")]
+
+
+async def test_the_interpreter_shows_the_names_it_is_given() -> None:
+    provider = Provider(answer({"op": "reset"}))
+
+    await interpreter(provider).interpret(
+        "¿y eso?", a_busy_state(), today=TODAY, account_names=NAMES
+    )
+
+    assert "Accounts: Cuenta corriente, Hucha" in provider.prompts[0]
+
+
+def test_the_budget_holds_with_the_accounts_named() -> None:
+    prompt = build_prompt(
+        LONGEST, a_busy_state(), today=TODAY, categories=CATEGORIES, account_names=NAMES
+    )
+
+    assert len(prompt) <= 9_000
 
 
 @pytest.mark.parametrize(
