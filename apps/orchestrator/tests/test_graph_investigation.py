@@ -7,7 +7,11 @@ from datetime import UTC, date, datetime
 import pytest
 
 from finguard_orchestrator.application.graph import codec, investigation
-from finguard_orchestrator.application.graph.investigation import Cause, Finding, MerchantChange
+from finguard_orchestrator.application.graph.investigation import (
+    Explanation,
+    Finding,
+    MerchantChange,
+)
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
     Balance,
@@ -43,30 +47,43 @@ def answer(*groups: tuple[str, int, int]) -> QueryAnswer:
     )
 
 
-def test_a_rise_is_more_purchases_bigger_amounts_both_or_new() -> None:
-    before = answer(("Mercadona", 10_000, 4), ("Amazon", 5_000, 1), ("Cepsa", 6_000, 2))
+def test_a_rise_is_explained_from_counts_and_means() -> None:
+    before = answer(
+        ("Mercadona", 10_000, 4), ("Amazon", 5_000, 1), ("Cepsa", 6_000, 2), ("Bar", 10_000, 4)
+    )
     after = answer(
         ("Mercadona", 15_000, 6),  # mean 25 → 25: more purchases only
         ("Amazon", 17_000, 2),  # 1 → 2 and mean 50 → 85: both
-        ("Cepsa", 9_000, 2),  # same count, mean 30 → 45: bigger amounts
+        ("Cepsa", 9_000, 2),  # same count, mean 30 → 45: higher amounts
         ("Spotify", 999, 1),  # absent before
+        ("Bar", 10_100, 4),  # same count, mean 25 → 25,25 (+1 %): too little to tell
     )
 
     risen = investigation.risen(before, after)
 
-    assert [(c.merchant, c.cause) for c in risen] == [
-        ("Amazon", Cause.BOTH),
-        ("Mercadona", Cause.MORE_PURCHASES),
-        ("Cepsa", Cause.BIGGER_AMOUNTS),
-        ("Spotify", Cause.NEW),
+    assert [(c.merchant, c.explanation) for c in risen] == [
+        ("Amazon", Explanation.BOTH),
+        ("Mercadona", Explanation.MORE_PURCHASES),
+        ("Cepsa", Explanation.HIGHER_AMOUNTS),
+        ("Spotify", Explanation.NEW_MERCHANT),
+        ("Bar", Explanation.CANNOT_TELL),
     ]
     assert investigation.worth_inspecting(risen) == ("Amazon", "Cepsa")
 
 
-def test_fewer_purchases_at_a_higher_mean_is_bigger_amounts() -> None:
+def test_fewer_purchases_at_a_higher_mean_is_higher_amounts() -> None:
     risen = investigation.risen(answer(("Cepsa", 6_000, 3)), answer(("Cepsa", 7_000, 2)))
 
-    assert [c.cause for c in risen] == [Cause.BIGGER_AMOUNTS]
+    assert [c.explanation for c in risen] == [Explanation.HIGHER_AMOUNTS]
+
+
+def test_the_mean_threshold_is_exact_and_needs_no_rounding() -> None:
+    """5 % on a mean of 20,00 € is 21,00 €: exactly there counts, a cent below does not."""
+    explained = investigation.explained
+    assert explained(2_000, 1, 2_100, 1) is Explanation.HIGHER_AMOUNTS
+    assert explained(2_000, 1, 2_099, 1) is Explanation.CANNOT_TELL
+    # More purchases at a mean only 1 % higher is more purchases, not both.
+    assert explained(2_000, 1, 4_040, 2) is Explanation.MORE_PURCHASES
 
 
 def test_merchants_that_fell_or_held_and_the_unknown_merchant_are_not_named() -> None:
@@ -76,15 +93,8 @@ def test_merchants_that_fell_or_held_and_the_unknown_merchant_are_not_named() ->
     assert investigation.risen(before, after) == ()
 
 
-def test_the_mean_is_compared_without_rounding() -> None:
-    # 1000/3 = 333.33… and 1001/3 = 333.67: equal once rounded to the cent, still bigger.
-    risen = investigation.risen(answer(("A", 1_000, 3)), answer(("A", 1_001, 3)))
-
-    assert risen[0].cause is Cause.BIGGER_AMOUNTS
-
-
 def test_one_purchase_explains_a_rise_only_when_without_it_there_is_none() -> None:
-    change = MerchantChange("Amazon", 5_000, 1, 17_000, 2, Cause.BOTH)
+    change = MerchantChange("Amazon", 5_000, 1, 17_000, 2, Explanation.BOTH)
 
     def largest(minor: int) -> Movement:
         return Movement(datetime(2026, 7, 12, tzinfo=UTC), "", minor, "EXPENSE")
@@ -94,41 +104,69 @@ def test_one_purchase_explains_a_rise_only_when_without_it_there_is_none() -> No
     assert investigation.inspected(change, None).finding is None
 
 
-# --- the narrative --------------------------------------------------------------------------------
+# --- each explanation, rendered with its figures --------------------------------------------------
 
-GROUNDED = "  · Amazon: 50,00 € (1 compra) → 170,00 € (2 compras); por importes mayores."
+EARLIER = FinancialPlan(direction=Direction.EXPENSE, date_range=JUNE)
+LATEST = FinancialPlan(direction=Direction.EXPENSE, date_range=JULY)
 
 
-def test_a_narrative_quoting_grounded_numbers_passes() -> None:
-    narrative = "Amazon pasa de 1 compra a 2 y de 50,00 € a 170,00 €."
-
-    assert investigation.checked_narrative(narrative, GROUNDED) == narrative
+def rendered(change: MerchantChange) -> str:
+    text = investigation.answer_text(
+        (change,),
+        (),
+        earlier=EARLIER,
+        latest=LATEST,
+        earlier_total=change.earlier_total,
+        latest_total=change.latest_total,
+        currency="EUR",
+        partial=False,
+    )
+    return text.splitlines()[1]
 
 
 @pytest.mark.parametrize(
-    "narrative",
+    ("change", "line"),
     [
-        "Amazon sube un 240 %.",  # arithmetic the model did
-        "Amazon pasa de 50 € a 170 €.",  # a grounded figure, rewritten
-        "Amazon sube 120,00 €.",  # a difference nobody wrote
+        (
+            MerchantChange("Amazon", 5_000, 1, 17_000, 2, Explanation.BOTH),
+            "  · Amazon: 50,00 € → 170,00 €; por más compras (de 1 compra a 2 compras) y por "
+            "importes mayores (media de 50,00 € a 85,00 €).",
+        ),
+        (
+            MerchantChange("Mercadona", 10_000, 4, 15_000, 6, Explanation.MORE_PURCHASES),
+            "  · Mercadona: 100,00 € → 150,00 €; por más compras (de 4 compras a 6 compras; "
+            "media de 25,00 € a 25,00 €).",
+        ),
+        (
+            MerchantChange("Cepsa", 6_000, 2, 9_000, 2, Explanation.HIGHER_AMOUNTS),
+            "  · Cepsa: 60,00 € → 90,00 €; por importes mayores (media de 30,00 € a 45,00 €; "
+            "de 2 compras a 2 compras).",
+        ),
+        (
+            MerchantChange("Spotify", 0, 0, 999, 1, Explanation.NEW_MERCHANT),
+            "  · Spotify: 0,00 € → 9,99 €; es nuevo: ninguna compra antes, 1 compra ahora.",
+        ),
+        (
+            MerchantChange("Bar", 10_000, 4, 10_100, 4, Explanation.CANNOT_TELL),
+            "  · Bar: 100,00 € → 101,00 €; sube poco para atribuirlo a más compras o a importes "
+            "mayores (de 4 compras a 4 compras; media de 25,00 € a 25,25 €).",
+        ),
     ],
 )
-def test_a_narrative_with_an_unsupported_number_is_refused(narrative: str) -> None:
-    assert investigation.unsupported_numbers(narrative, GROUNDED)
-    assert investigation.checked_narrative(narrative, GROUNDED) is None
+def test_each_explanation_renders_with_its_figures(change: MerchantChange, line: str) -> None:
+    assert rendered(change) == line
 
 
-def test_an_empty_or_overlong_narrative_is_refused() -> None:
-    assert investigation.checked_narrative("  ", GROUNDED) is None
-    assert (
-        investigation.checked_narrative("a" * (investigation.MAX_NARRATIVE + 1), GROUNDED) is None
-    )
+def test_every_explanation_has_a_template() -> None:
+    lines = {
+        explanation: rendered(MerchantChange("X", 1_000, 2, 3_000, 3, explanation))
+        for explanation in Explanation
+    }
+    assert len(set(lines.values())) == len(Explanation)
 
 
-def test_the_grounded_answer_says_both_windows_every_figure_and_the_cause() -> None:
-    earlier = FinancialPlan(direction=Direction.EXPENSE, date_range=JUNE)
-    latest = FinancialPlan(direction=Direction.EXPENSE, date_range=JULY)
-    changes = (MerchantChange("Amazon", 5_000, 1, 17_000, 2, Cause.BOTH),)
+def test_the_answer_says_both_windows_the_inspection_and_a_partial_stop() -> None:
+    changes = (MerchantChange("Amazon", 5_000, 1, 17_000, 2, Explanation.BOTH),)
     found = investigation.inspected(
         changes[0], Movement(datetime(2026, 7, 12, tzinfo=UTC), "", 15_000, "EXPENSE")
     )
@@ -136,22 +174,24 @@ def test_the_grounded_answer_says_both_windows_every_figure_and_the_cause() -> N
     text = investigation.answer_text(
         changes,
         (found,),
-        earlier=earlier,
-        latest=latest,
-        earlier_answer=answer(("Amazon", 5_000, 1)),
-        latest_answer=answer(("Amazon", 17_000, 2)),
+        earlier=EARLIER,
+        latest=LATEST,
+        earlier_total=5_000,
+        latest_total=17_000,
+        currency="EUR",
         partial=True,
     )
 
-    assert text == (
+    lines = text.splitlines()
+    assert lines[0] == (
         "Comercios en los que gastas más del 2026-07-01 al 2026-07-31 frente a del 2026-06-01 al "
-        "2026-06-30:\n"
-        "  · Amazon: 50,00 € (1 compra) → 170,00 € (2 compras); "
-        "por más compras y por importes mayores.\n"
-        "  En Amazon, la subida se debe a una compra: sin la de 150,00 € del 2026-07-12 no "
-        "habrías gastado más que antes.\n"
-        "No he investigado más: he llegado al límite de consultas de esta pregunta."
+        "2026-06-30:"
     )
+    assert lines[2:] == [
+        "  En Amazon, la subida se debe a una compra: sin la de 150,00 € del 2026-07-12 no "
+        "habrías gastado más que antes.",
+        "No he investigado más: he llegado al límite de consultas de esta pregunta.",
+    ]
 
 
 def test_no_rise_says_so_with_both_totals() -> None:
@@ -162,8 +202,9 @@ def test_no_rise_says_so_with_both_totals() -> None:
         (),
         earlier=plan,
         latest=plan,
-        earlier_answer=answer(("A", 9_000, 3)),
-        latest_answer=answer(("A", 8_000, 3)),
+        earlier_total=9_000,
+        latest_total=8_000,
+        currency="EUR",
         partial=False,
     )
 
@@ -217,6 +258,8 @@ def test_the_schema_closes_inspection_to_the_allow_list() -> None:
     merchant = inspect["properties"]["inspect"]["properties"]["merchant"]
     assert merchant == {"type": "string", "enum": ["Amazon", "Cepsa"]}
     assert stop["required"] == ["stop"]
+    # The stop carries nothing: no string the model writes has a place in the answer.
+    assert stop["properties"]["stop"] == {"type": "object", "additionalProperties": False}
     assert schema["additionalProperties"] is False
 
 
@@ -230,7 +273,8 @@ def test_with_nothing_to_inspect_the_only_branch_is_to_stop() -> None:
     ("answer_text", "read"),
     [
         ('{"next": {"inspect": {"merchant": "Amazon"}}}', Inspect("Amazon")),
-        ('{"next": {"stop": {"why": "Nada más."}}}', Stop("Nada más.")),
+        # Text a model writes inside a stop is dropped unread (R42).
+        ('{"next": {"stop": {"why": "MARKER-7f3"}}}', Stop()),
         ('{"next": {"stop": {}}}', Stop()),
         ('{"next": {"inspect": {"merchant": 3}}}', Stop()),
         ("not json", Stop()),

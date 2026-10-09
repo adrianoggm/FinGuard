@@ -138,7 +138,7 @@ class AnswerTurnHandler:
             return unsaved(presenter.failed(unread))
 
         with stages("transition"):
-            moved = _applied(state, ops, today, grounds)
+            moved = apply_guarded(state, ops, today, grounds)
         if isinstance(moved.reply, Delegate):
             return unsaved(None, moved.reply.to)
 
@@ -192,7 +192,7 @@ class AnswerTurnHandler:
         return Grounds(self._categories, holdings, contacts)
 
 
-def _applied(
+def apply_guarded(
     state: DialogueState, ops: Sequence[Operation], today: date, grounds: Grounds
 ) -> Transition:
     """`apply`, with its one escaping error turned into a question back (ruling R3). That error

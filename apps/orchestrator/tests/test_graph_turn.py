@@ -3,8 +3,8 @@
 The interpreter is scripted (it returns the operations a test gives it), the assessor is scripted
 (it returns the steps a test gives it), and the ledger answers each window by merchant from a table.
 What is under test is what the graph adds and what it must keep: the loop and its budgets, the
-allow-list, the narrative's numbers, failure and resume, duplicate and concurrent requests, the
-checkpoint's contents and its version, and that money never runs here.
+allow-list, that no model text reaches the reply, failure and resume, duplicate and concurrent
+requests, the checkpoint's contents and its version, and that money never runs here.
 """
 
 import asyncio
@@ -21,7 +21,7 @@ from support.episodes import ACCOUNT, Accounts, Contacts, Directory
 
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler, EngineAnswer
 from finguard_orchestrator.application.graph import graph as investigation_graph
-from finguard_orchestrator.application.graph import graph_turn
+from finguard_orchestrator.application.graph import graph_turn, investigation
 from finguard_orchestrator.application.graph.graph import GraphPorts
 from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.domain.engine.grounding import Grounds
@@ -51,6 +51,7 @@ from finguard_orchestrator.domain.ports.turn_operations import (
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, FinancialPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
+from finguard_orchestrator.infrastructure.graph.llm_assessor import LlmInvestigationAssessor
 from finguard_orchestrator.infrastructure.graph.memory_turn_reservations import (
     MemoryTurnReservations,
 )
@@ -127,11 +128,14 @@ class Assessor:
 
 class MerchantLedger:
     """Each window by merchant from `FIGURES`; the largest purchase of a merchant from `LARGEST`.
-    `failures` are raised, one per read, before the read is answered."""
+    `failures` are raised, one per read, before the read is answered; `fail_on` raises at the
+    n-th port call (1-based). `attempts` counts every port call, failed ones included."""
 
     def __init__(self) -> None:
         self.ran: list[FinancialPlan | TopMovements] = []
         self.failures: list[Exception] = []
+        self.fail_on: dict[int, Exception] = {}
+        self.attempts = 0
 
     async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
         self._fail()
@@ -151,6 +155,9 @@ class MerchantLedger:
         return Movement(moment, f"Compra privada en {merchant}", LARGEST[merchant], "EXPENSE")
 
     def _fail(self) -> None:
+        self.attempts += 1
+        if self.attempts in self.fail_on:
+            raise self.fail_on.pop(self.attempts)
         if self.failures:
             raise self.failures.pop(0)
 
@@ -181,6 +188,11 @@ class World:
             count_calls=self.calls,
         )
         return GraphTurnHandler(ports, self.reservations, self.saver)
+
+    def last_config(self) -> Any:
+        """The thread of the last turn, for reading back its checkpoint."""
+        (thread,) = {found.config["configurable"]["thread_id"] for found in self.saver.list(None)}
+        return {"configurable": {"thread_id": thread}}
 
     async def ask(
         self,
@@ -219,14 +231,14 @@ async def test_the_current_engine_refuses_a_comparison_by_merchant() -> None:
 
 
 async def test_it_names_the_risen_merchants_with_their_cause_and_inspects_one() -> None:
-    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop("")))
+    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
 
     answer = await world.ask()
 
     text = text_of(answer)
-    assert "  · Amazon: 50,00 € (1 compra) → 170,00 € (2 compras); por más compras y por " in text
-    assert "  · Mercadona: 100,00 € (4 compras) → 150,00 € (6 compras); por más compras." in text
-    assert "  · Cepsa: 60,00 € (2 compras) → 90,00 € (2 compras); por importes mayores." in text
+    assert "  · Amazon: 50,00 € → 170,00 €; por más compras (de 1 compra a 2 compras) y" in text
+    assert "  · Mercadona: 100,00 € → 150,00 €; por más compras (de 4 compras a 6" in text
+    assert "  · Cepsa: 60,00 € → 90,00 €; por importes mayores (media de 30,00 € a 45,00 €" in text
     assert GROUNDED_AMAZON in text
     assert text.endswith("Consultado en todas tus cuentas.")
     # Two windows by merchant, then the one inspection: three banking executions.
@@ -235,7 +247,10 @@ async def test_it_names_the_risen_merchants_with_their_cause_and_inspects_one() 
         "FinancialPlan",
         "TopMovements",
     ]
-    assert answer.model_calls == 3
+    # The interpreter and one assessment: after the inspection no read is left in the budget, so
+    # the assessment is not asked again and the answer says Cepsa was not looked into.
+    assert answer.model_calls == 2
+    assert "No he investigado más" in text
     # The canonical state moved once, to the pair of totals the transition validated.
     assert answer.state.version == 1
     assert isinstance(answer.state.focus, ComparisonFocus)
@@ -243,7 +258,7 @@ async def test_it_names_the_risen_merchants_with_their_cause_and_inspects_one() 
 
 
 async def test_reads_carry_the_validated_window_scope_and_filters() -> None:
-    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop("")))
+    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
 
     await world.ask()
 
@@ -258,20 +273,20 @@ async def test_reads_carry_the_validated_window_scope_and_filters() -> None:
 
 
 async def test_the_assessor_sees_a_value_minimised_summary_and_never_the_sentence() -> None:
-    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop("")))
+    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
 
     await world.ask()
 
     first = world.assessor.seen[0]
     assert first.may_inspect == ("Amazon", "Cepsa")
-    assert [(m.merchant, m.cause) for m in first.risen] == [
+    assert [(m.merchant, m.explanation) for m in first.risen] == [
         ("Amazon", "BOTH"),
         ("Mercadona", "MORE_PURCHASES"),
-        ("Cepsa", "BIGGER_AMOUNTS"),
+        ("Cepsa", "HIGHER_AMOUNTS"),
     ]
     said = json.dumps([repr(summary) for summary in world.assessor.seen])
     assert SENTENCE not in said and "Compra privada" not in said
-    assert world.assessor.seen[1].may_inspect == ("Cepsa",)
+    assert len(world.assessor.seen) == 1
 
 
 async def test_with_no_cause_to_investigate_no_assessment_is_asked(
@@ -284,14 +299,14 @@ async def test_with_no_cause_to_investigate_no_assessment_is_asked(
 
     assert world.assessor.seen == []
     assert answer.model_calls == 1
-    assert "por más compras." in text_of(answer)
+    assert "por más compras (de 4 compras a 6 compras" in text_of(answer)
 
 
 # --- the loop, its budgets and the allow-list ----------------------------------------------------
 
 
 async def test_the_loop_stops_at_the_bank_budget_with_a_grounded_partial_answer() -> None:
-    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Inspect("Cepsa"), Stop("")))
+    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Inspect("Cepsa"), Stop()))
 
     answer = await world.ask()
 
@@ -336,36 +351,92 @@ async def test_an_inspection_outside_the_allow_list_is_refused_without_a_bank_re
     assert answer.state.version == 1
 
 
-# --- no unsupported numeric claims ----------------------------------------------------------------
+# --- no model-written text reaches the person (R42) -----------------------------------------------
+
+MARKER = "MARKER-7f3"
 
 
-async def test_a_narrative_quoting_grounded_figures_is_kept() -> None:
-    why = "En Amazon pasaste de 1 compra a 2, y la de 150,00 € del 2026-07-12 explica la subida."
-    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop(why)))
+class Provider:
+    """A model behind the real assessor adapter: each call answers the next canned text."""
 
-    answer = await world.ask()
+    name = "canned"
 
-    assert why in text_of(answer)
+    def __init__(self, calls: Calls, *answers: str) -> None:
+        self._calls = calls
+        self._answers = list(answers)
+
+    async def complete(self, prompt: str, **_: Any) -> str:
+        self._calls.count += 1
+        return self._answers.pop(0)
+
+
+def with_real_assessor(world: World, *answers: str) -> None:
+    world.assessor = LlmInvestigationAssessor(  # type: ignore[assignment]
+        Provider(world.calls, *answers), model="m", temperature=0.0, max_output_tokens=50
+    )
+    world.handler = world.build()
 
 
 @pytest.mark.parametrize(
-    "why",
+    "answers",
     [
-        "Amazon ha subido un 240 % por la subida de precios.",
-        "Gastas 120,00 € más en Amazon.",
-        "En Amazon pagaste 150 € de una vez.",
+        # Text inside a stop: a figure, a percentage, a reason the bank cannot know.
+        ('{"next": {"stop": {"why": "MARKER-7f3: Gastas cien euros más, un 31 % más."}}}',),
+        # A merchant the allow-list does not hold, then text after an inspection.
+        ('{"next": {"inspect": {"merchant": "MARKER-7f3"}}}',),
+        (
+            '{"next": {"inspect": {"merchant": "Amazon"}}}',
+            '{"next": {"stop": {"why": "MARKER-7f3 el triple"}, "note": "MARKER-7f3"}}',
+        ),
+        # Not the schema at all.
+        ("MARKER-7f3 Subió 100 euros.",),
     ],
 )
-async def test_a_narrative_with_a_number_no_bank_result_holds_is_refused(why: str) -> None:
-    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop(why)))
+async def test_no_string_the_model_writes_reaches_the_reply(answers: tuple[str, ...]) -> None:
+    world = World(BY_MERCHANT)
+    with_real_assessor(world, *answers)
 
     answer = await world.ask()
 
-    text = text_of(answer)
-    assert why not in text
-    # The grounded answer still leaves, whole.
-    assert GROUNDED_AMAZON in text
+    assert MARKER not in text_of(answer)
+    assert "cien" not in text_of(answer) and "%" not in text_of(answer)
+    assert "  · Amazon: 50,00 € → 170,00 €;" in text_of(answer)
     assert answer.state.version == 1
+    # Nor does it reach the checkpoint (R45): the model's choice is kept as a position in the
+    # allow-list, never as the string it wrote.
+    stored = [found.checkpoint["channel_values"] for found in world.saver.list(None)]
+    pending = [w for found in world.saver.list(None) for w in found.pending_writes or ()]
+    assert MARKER not in repr(stored) + repr(pending)
+
+
+async def test_the_whole_reply_is_the_template_over_the_bank_figures() -> None:
+    """Rebuilt from the bank's figures alone, the reply is equal to it: there is nothing else."""
+    world = World(BY_MERCHANT)
+    with_real_assessor(
+        world, '{"next": {"inspect": {"merchant": "Amazon"}}}', '{"next": {"stop": {}}}'
+    )
+
+    answer = await world.ask()
+
+    june = QueryAnswer("EUR", 0, 0, groups=FIGURES[JUNE])
+    july = QueryAnswer("EUR", 0, 0, groups=FIGURES[JULY])
+    changes = investigation.risen(june, july)
+    moment = datetime(2026, 7, 12, 18, 30, tzinfo=UTC)
+    amazon = investigation.inspected(changes[0], Movement(moment, "", LARGEST["Amazon"], "EXPENSE"))
+    expected = investigation.answer_text(
+        changes,
+        (amazon,),
+        earlier=FinancialPlan(direction=Direction.EXPENSE, date_range=JUNE),
+        latest=FinancialPlan(direction=Direction.EXPENSE, date_range=JULY),
+        earlier_total=21_000,
+        latest_total=41_000,
+        currency="EUR",
+        partial=True,  # Cepsa left uninspected: the budget is spent
+    )
+    assert text_of(answer).splitlines() == [
+        *expected.splitlines(),
+        "Consultado en todas tus cuentas.",
+    ]
 
 
 # --- failure and recovery -------------------------------------------------------------------------
@@ -392,42 +463,61 @@ async def test_an_interpreter_outage_saves_nothing() -> None:
     assert world.ledger.ran == []
 
 
-async def test_a_bank_outage_mid_loop_resumes_without_asking_any_model_again() -> None:
-    """The same request after an outage resumes at the read that failed: the interpreter and the
-    first assessment are not asked again, and the conversation moves exactly once."""
-    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop("")))
-    # The two windows read, then the inspection fails.
-    real_ranked = world.ledger.ranked
-    outage = [BankingUnavailableError("down")]
-
-    async def ranked_once_down(ranking: TopMovements, **rest: object) -> Movement | None:
-        if outage:
-            raise outage.pop()
-        return await real_ranked(ranking, **rest)
-
-    world.ledger.ranked = ranked_once_down  # type: ignore[method-assign]
+async def test_a_failure_on_the_second_read_resumes_within_three_bank_calls() -> None:
+    """R44. The first window is read once and kept; the failed second read counts; the resume
+    reads only the second window, asks no interpreter again, and the inspection the assessment then
+    asks for would be a fourth call, so it is refused and the answer says it stopped."""
+    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
+    world.ledger.fail_on = {2: BankingUnavailableError("down")}
 
     failed = await world.ask(request_id="req-1")
     assert failed.result is not None and failed.result.outcome == "BANKING_UNAVAILABLE"
     assert failed.state.version == 0
-    calls_after_failure = world.calls.count
+    assert world.ledger.attempts == 2
 
     resumed = await world.ask(request_id="req-1")
 
-    assert GROUNDED_AMAZON in text_of(resumed)
-    assert resumed.state.version == 1
-    # Resumed at the inspection: no interpreter call, only the final assessment.
+    assert world.ledger.attempts == investigation_graph.MAX_BANK_EXECUTIONS == 3
+    assert [p.date_range for p in world.ledger.ran] == [JUNE, JULY]  # June never read again
     assert len(world.interpreter.sentences) == 1
-    assert world.calls.count == calls_after_failure + 1
-    assert [type(p).__name__ for p in world.ledger.ran] == [
-        "FinancialPlan",
-        "FinancialPlan",
-        "TopMovements",
-    ]
+    assert "  · Amazon: 50,00 € → 170,00 €;" in text_of(resumed)
+    assert "No he investigado más" in text_of(resumed)
+    assert resumed.state.version == 1
+    stored = (await world.handler._graph.aget_state(world.last_config())).values  # noqa: SLF001
+    assert stored["bank_calls"] == 3
+
+
+async def test_a_failed_inspection_is_not_retried_past_the_budget() -> None:
+    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
+    world.ledger.fail_on = {3: BankingUnavailableError("down")}
+
+    await world.ask(request_id="req-1")
+    resumed = await world.ask(request_id="req-1")
+
+    assert world.ledger.attempts == 3
+    assert GROUNDED_AMAZON not in text_of(resumed)
+    assert "No he investigado más" in text_of(resumed)
+    assert resumed.state.version == 1
+
+
+async def test_the_budget_holds_across_resumes() -> None:
+    """Two failed reads of the first window and one good one leave no call for the second: the
+    turn says so rather than read a fourth time, and saves nothing."""
+    world = World(BY_MERCHANT)
+    world.ledger.failures = [BankingUnavailableError("down"), BankingUnavailableError("down")]
+
+    for _ in range(2):
+        await world.ask(request_id="req-1")
+    last = await world.ask(request_id="req-1")
+
+    assert world.ledger.attempts == 3
+    assert last.result is not None and last.result.outcome == "BANKING_UNAVAILABLE"
+    assert "límite" in last.result.text
+    assert last.state.version == 0
 
 
 async def test_a_failed_turn_can_be_taken_over_by_a_new_request() -> None:
-    world = World(BY_MERCHANT, BY_MERCHANT, steps=(Stop(""), Stop("")))
+    world = World(BY_MERCHANT, BY_MERCHANT, steps=(Stop(), Stop()))
     world.ledger.failures = [BankingUnavailableError("down")]
 
     await world.ask(request_id="req-1")
@@ -440,7 +530,7 @@ async def test_a_failed_turn_can_be_taken_over_by_a_new_request() -> None:
 
 
 async def test_a_duplicate_request_replays_its_answer_without_model_or_bank_work() -> None:
-    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop("")))
+    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
     first = await world.ask(request_id="req-1")
     calls, reads = world.calls.count, len(world.ledger.ran)
 
@@ -452,7 +542,7 @@ async def test_a_duplicate_request_replays_its_answer_without_model_or_bank_work
 
 
 async def test_a_duplicate_of_a_follow_up_turn_replays_too() -> None:
-    world = World(GROCERIES_IN_JULY, BY_MERCHANT, steps=(Stop(""),))
+    world = World(GROCERIES_IN_JULY, BY_MERCHANT, steps=(Stop(),))
     first = await world.ask(request_id="req-1")
     conversation = first.state.conversation_id
 
@@ -463,7 +553,7 @@ async def test_a_duplicate_of_a_follow_up_turn_replays_too() -> None:
 
 
 async def test_another_request_against_a_version_a_turn_is_in_flight_on_is_stale() -> None:
-    world = World(GROCERIES_IN_JULY, BY_MERCHANT, BY_MERCHANT, steps=(Stop(""), Stop("")))
+    world = World(GROCERIES_IN_JULY, BY_MERCHANT, BY_MERCHANT, steps=(Stop(), Stop()))
     first = await world.ask(request_id="req-1")
     conversation = first.state.conversation_id
 
@@ -486,7 +576,7 @@ async def test_another_request_against_a_version_a_turn_is_in_flight_on_is_stale
 async def test_a_version_moved_by_another_engine_meanwhile_loses_the_compare_and_set() -> None:
     """The final compare-and-set still decides: a save made elsewhere between the reservation and
     the commit makes this turn stale, and it saves nothing."""
-    world = World(BY_MERCHANT, steps=(Stop(""),))
+    world = World(BY_MERCHANT, steps=(Stop(),))
     store = world.store
 
     real_save = store.save
@@ -516,7 +606,7 @@ async def test_a_stale_version_is_refused_before_any_work() -> None:
 
 
 async def test_the_checkpoint_holds_no_sentence_no_prompt_and_no_movement_text() -> None:
-    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop("Nada más que añadir.")))
+    world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
 
     await world.ask()
 
@@ -536,12 +626,12 @@ async def test_the_checkpoint_holds_no_sentence_no_prompt_and_no_movement_text()
 async def test_a_checkpoint_from_another_graph_version_is_not_resumed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    world = World(BY_MERCHANT, BY_MERCHANT, steps=(Inspect("Amazon"), Stop("")))
+    world = World(BY_MERCHANT, BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
     world.ledger.failures = [BankingUnavailableError("down")]
     await world.ask(request_id="req-1")  # fails at the first read, checkpointed before it
 
     # The deployed graph is now a later version than the one that wrote the checkpoint.
-    monkeypatch.setattr(graph_turn, "GRAPH_VERSION", "investigation/2")
+    monkeypatch.setattr(graph_turn, "GRAPH_VERSION", f"{investigation_graph.GRAPH_VERSION}+next")
     answer = await world.ask(request_id="req-1")
 
     # Started again: the interpreter was asked a second time, and the turn still saved once.
@@ -590,3 +680,170 @@ async def test_an_ordinary_question_is_answered_as_the_engine_answers_it() -> No
     assert answer.result == control.result
     assert replace(answer.state, conversation_id=control.state.conversation_id) == control.state
     assert world.assessor.seen == []
+
+
+# --- the reservation is released on every exit (R43) ----------------------------------------------
+
+
+class Blocking(Interpreter):
+    """Holds the turn inside the model call until the test lets it go or cancels it."""
+
+    def __init__(self, calls: Calls, *turns: tuple[Operation, ...]) -> None:
+        super().__init__(calls, *turns)
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.block = False
+
+    async def interpret(self, *args: Any, **kwargs: Any) -> tuple[Operation, ...]:
+        if self.block:
+            self.block = False
+            self.entered.set()
+            await self.release.wait()
+        return await super().interpret(*args, **kwargs)
+
+
+async def started(world: World) -> UUID:
+    first = await world.ask(request_id="req-0", sentence="primera")
+    return first.state.conversation_id
+
+
+async def test_a_cancelled_turn_leaves_the_conversation_usable_at_the_same_version() -> None:
+    world = World()
+    world.interpreter = Blocking(world.calls, GROCERIES_IN_JULY, BY_MERCHANT, BY_MERCHANT)
+    world.handler = world.build()
+    conversation = await started(world)
+    world.interpreter.block = True
+
+    turn = asyncio.create_task(world.ask(conversation_id=conversation, version=1, request_id="r1"))
+    await world.interpreter.entered.wait()
+    turn.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+
+    answer = await world.ask(conversation_id=conversation, version=1, request_id="r2")
+    assert answer.state.version == 2
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("a port nobody expected"), AssertionError()])
+async def test_an_unexpected_failure_releases_the_turn(failure: BaseException) -> None:
+    world = World(GROCERIES_IN_JULY, BY_MERCHANT, BY_MERCHANT)
+    conversation = await started(world)
+    world.ledger.failures = [failure]  # type: ignore[list-item]
+
+    with pytest.raises(type(failure)):
+        await world.ask(conversation_id=conversation, version=1, request_id="r1")
+
+    answer = await world.ask(conversation_id=conversation, version=1, request_id="r2")
+    assert answer.state.version == 2
+
+
+# --- a request id is bound to its sentence (R45) --------------------------------------------------
+
+
+async def test_a_request_id_reused_with_another_sentence_is_refused() -> None:
+    world = World(GROCERIES_IN_JULY, GROCERIES_IN_JULY)
+    first = await world.ask(request_id="req-1", sentence="¿cuánto gasté en julio?")
+
+    with pytest.raises(graph_turn.RequestReusedError):
+        await world.ask(
+            conversation_id=first.state.conversation_id,
+            version=0,
+            request_id="req-1",
+            sentence="¿y en agosto?",
+        )
+    with pytest.raises(graph_turn.RequestReusedError):
+        await world.ask(request_id="req-1", sentence="¿y en agosto?")
+
+    again = await world.ask(request_id="req-1", sentence="¿cuánto gasté en julio?")
+    assert again == first
+
+
+async def test_a_failed_request_cannot_be_resumed_with_another_sentence() -> None:
+    world = World(BY_MERCHANT, BY_MERCHANT, steps=(Stop(), Stop()))
+    world.ledger.failures = [BankingUnavailableError("down")]
+    await world.ask(request_id="req-1")
+
+    with pytest.raises(graph_turn.RequestReusedError):
+        await world.ask(request_id="req-1", sentence="otra pregunta")
+
+    resumed = await world.ask(request_id="req-1")
+    assert resumed.state.version == 1
+
+
+# --- the release survives its own failures, and a saved turn is never resumable (fix round 2) ----
+
+
+async def failed_on_the_second_read(world: World) -> UUID:
+    """A conversation at version 1, whose next turn's second read fails, so its exit has calls
+    to persist before the release."""
+    conversation = await started(world)
+    world.ledger.fail_on = {world.ledger.attempts + 2: BankingUnavailableError("down")}
+    return conversation
+
+
+async def test_a_cancellation_while_persisting_the_calls_still_releases_the_turn() -> None:
+    world = World(GROCERIES_IN_JULY, BY_MERCHANT, BY_MERCHANT, steps=(Stop(), Stop()))
+    conversation = await failed_on_the_second_read(world)
+    persisting, never = asyncio.Event(), asyncio.Event()
+
+    async def stuck(config: Any, calls: int) -> None:
+        persisting.set()
+        await never.wait()
+
+    world.handler._persist_calls = stuck  # type: ignore[method-assign]  # noqa: SLF001
+    turn = asyncio.create_task(world.ask(conversation_id=conversation, version=1, request_id="r1"))
+    await persisting.wait()
+    turn.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+
+    answer = await world.ask(conversation_id=conversation, version=1, request_id="r2")
+    assert answer.state.version == 2
+
+
+async def test_a_persist_that_raises_neither_holds_the_turn_nor_masks_the_answer() -> None:
+    world = World(GROCERIES_IN_JULY, BY_MERCHANT, BY_MERCHANT, steps=(Stop(), Stop()))
+    conversation = await failed_on_the_second_read(world)
+
+    async def broken(config: Any, calls: int) -> None:
+        raise RuntimeError("the checkpointer is down")
+
+    world.handler._persist_calls = broken  # type: ignore[method-assign]  # noqa: SLF001
+    failed = await world.ask(conversation_id=conversation, version=1, request_id="r1")
+
+    assert failed.result is not None and failed.result.outcome == "BANKING_UNAVAILABLE"
+    answer = await world.ask(conversation_id=conversation, version=1, request_id="r2")
+    assert answer.state.version == 2
+
+
+@pytest.mark.parametrize("interruption", ["raises", "cancelled"])
+async def test_a_turn_saved_before_its_reservation_closed_is_replayed_not_resumed(
+    interruption: str,
+) -> None:
+    """The save succeeded and `done()` did not return: the turn is saved, so it must never be
+    marked resumable. Its duplicate replays it instead of finding a stale version."""
+    world = World(BY_MERCHANT, steps=(Stop(),))
+    real_done = world.reservations.done
+    closing, never = asyncio.Event(), asyncio.Event()
+    interrupted = [True]
+
+    async def done_once_interrupted(*args: Any) -> None:
+        if interrupted.pop() if interrupted else False:
+            if interruption == "raises":
+                raise RuntimeError("the reservation store hiccuped")
+            closing.set()
+            await never.wait()
+        await real_done(*args)
+
+    world.reservations.done = done_once_interrupted  # type: ignore[method-assign,assignment]
+    turn = asyncio.create_task(world.ask(request_id="r1"))
+    if interruption == "cancelled":
+        await closing.wait()
+        turn.cancel()
+    with pytest.raises((RuntimeError, asyncio.CancelledError)):
+        await turn
+
+    again = await world.ask(request_id="r1")
+
+    assert again.state.version == 1
+    assert len(world.interpreter.sentences) == 1  # replayed: no second turn ran

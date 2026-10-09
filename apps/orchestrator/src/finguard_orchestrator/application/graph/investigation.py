@@ -5,20 +5,18 @@ a importes mayores?». What banking can establish, and therefore all this module
 
 - **which merchants rose**: the same window pair the canonical `Compare` validated, each side read
   by merchant (`GroupBy.MERCHANT`), so every merchant has a total and a movement count per window;
-- **more purchases or bigger amounts**: a rise in the movement count is «más compras», a rise in
-  the mean per movement is «importes mayores». Both are integer arithmetic over banking's own
-  totals and counts, the mean compared by cross-multiplication so no rounding decides it;
+- **why, as a closed explanation** (`Explanation`), decided here from those figures and nothing
+  else, and rendered by a template with the figures it was decided from;
 - **one purchase or many** (the follow-up a model may ask for): the largest movement of that
   merchant in the latest window, a ranking banking answers, set against the rise.
 
+**No model-written text reaches the person** (review ruling R42). The model may only choose the
+next allow-listed read or stop; every word of the answer is a template here, every figure banking's.
+
 What must stay unknown: why the person bought more or paid more (a price rise, a move, a habit).
-No bank figure says it, so no template here says it, and a narrative that tries is checked only
-for its numbers, not its reasons (see `unsupported_numbers` and the report's limitations).
-A merchant absent from the earlier window is new, with no cause; a currency mismatch is refused by
-the executor before anything here runs.
+No bank figure says it, so no template says it.
 """
 
-import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
@@ -29,19 +27,29 @@ from finguard_orchestrator.domain.value_objects.financial_plan import FinancialP
 
 # The rises a reply names, largest first. More is a list nobody reads in a chat.
 MAX_NAMED: Final = 5
-# What a narrative may run to, in characters.
-MAX_NARRATIVE: Final = 400
+# How much the mean per purchase must rise, in percent of the earlier mean, to count as «importes
+# mayores». Below it the mean is «parecida»: a cent more per purchase is no explanation.
+MEAN_RISE_PERCENT: Final = 5
 # The groups banking files movements without a merchant under (banking's `UNKNOWN_MERCHANT`) and
 # the fakes' one-row `total`: never a shop to name or inspect.
 _NO_MERCHANT: Final = frozenset({"total", "UNKNOWN_MERCHANT"})
 
 
-class Cause(StrEnum):
-    MORE_PURCHASES = "MORE_PURCHASES"
-    BIGGER_AMOUNTS = "BIGGER_AMOUNTS"
-    BOTH = "BOTH"
-    # Absent before: there is nothing to have more of, so no cause is given.
-    NEW = "NEW"
+class Explanation(StrEnum):
+    """Why a merchant's spending rose, decided from the two windows' totals and counts.
+
+    With `more` = the latest count is above the earlier one, and `higher` = the latest mean per
+    purchase is at least `MEAN_RISE_PERCENT` % above the earlier one (integer cross-multiplication,
+    no rounding):
+    """
+
+    NEW_MERCHANT = "NEW_MERCHANT"  # no purchases in the earlier window: there is no cause to give
+    BOTH = "BOTH"  # more and higher
+    MORE_PURCHASES = "MORE_PURCHASES"  # more, not higher
+    HIGHER_AMOUNTS = "HIGHER_AMOUNTS"  # higher, not more
+    # Neither: the same number of purchases or fewer, and a mean that rose by less than the
+    # threshold. The total rose, but by too little to say it was one or the other.
+    CANNOT_TELL = "CANNOT_TELL"
 
 
 class Finding(StrEnum):
@@ -60,7 +68,7 @@ class MerchantChange:
     earlier_count: int
     latest_total: int
     latest_count: int
-    cause: Cause
+    explanation: Explanation
 
     @property
     def rise(self) -> int:
@@ -90,7 +98,7 @@ def risen(earlier: QueryAnswer, latest: QueryAnswer) -> tuple[MerchantChange, ..
                 then.movement_count,
                 total_now,
                 now.movement_count,
-                _cause(total_then, then.movement_count, total_now, now.movement_count),
+                explained(total_then, then.movement_count, total_now, now.movement_count),
             )
         )
     changes.sort(key=lambda change: (-change.rise, change.merchant))
@@ -101,23 +109,31 @@ def _by_merchant(answer: QueryAnswer) -> dict[str, Group]:
     return {group.key: group for group in answer.groups if group.key not in _NO_MERCHANT}
 
 
-def _cause(total_then: int, count_then: int, total_now: int, count_now: int) -> Cause:
+def explained(total_then: int, count_then: int, total_now: int, count_now: int) -> Explanation:
+    """The explanation of a rise (see `Explanation` for the rule)."""
     if count_then == 0:
-        return Cause.NEW
+        return Explanation.NEW_MERCHANT
     more = count_now > count_then
-    # mean_now > mean_then, without dividing: total_now / count_now > total_then / count_then.
-    bigger = count_now > 0 and total_now * count_then > total_then * count_now
-    if more and bigger:
-        return Cause.BOTH
-    # The total rose, so at least one of the two did.
-    return Cause.MORE_PURCHASES if more else Cause.BIGGER_AMOUNTS
+    # mean_now >= mean_then * (100 + p) / 100, without dividing.
+    higher = count_now > 0 and (
+        total_now * count_then * 100 >= total_then * count_now * (100 + MEAN_RISE_PERCENT)
+    )
+    if more and higher:
+        return Explanation.BOTH
+    if more:
+        return Explanation.MORE_PURCHASES
+    if higher:
+        return Explanation.HIGHER_AMOUNTS
+    return Explanation.CANNOT_TELL
 
 
 def worth_inspecting(changes: tuple[MerchantChange, ...]) -> tuple[str, ...]:
     """The merchants a single large purchase could explain: those whose mean rose. The allow-list
     of the one follow-up operation the graph runs, decided here and never by the model."""
     return tuple(
-        change.merchant for change in changes if change.cause in (Cause.BIGGER_AMOUNTS, Cause.BOTH)
+        change.merchant
+        for change in changes
+        if change.explanation in (Explanation.HIGHER_AMOUNTS, Explanation.BOTH)
     )
 
 
@@ -128,14 +144,7 @@ def inspected(change: MerchantChange, largest: Movement | None) -> Inspection:
     return Inspection(change.merchant, largest, Finding.ONE_PURCHASE if alone else Finding.SPREAD)
 
 
-# --- what the person reads ----------------------------------------------------------------------
-
-_CAUSE_SAID: Final = {
-    Cause.MORE_PURCHASES: "por más compras",
-    Cause.BIGGER_AMOUNTS: "por importes mayores",
-    Cause.BOTH: "por más compras y por importes mayores",
-    Cause.NEW: "es nuevo: no tenía compras en el periodo anterior",
-}
+# --- what the person reads: templates over banking's figures ------------------------------------
 
 
 def answer_text(
@@ -144,18 +153,18 @@ def answer_text(
     *,
     earlier: FinancialPlan,
     latest: FinancialPlan,
-    earlier_answer: QueryAnswer,
-    latest_answer: QueryAnswer,
+    earlier_total: int,
+    latest_total: int,
+    currency: str,
     partial: bool,
 ) -> str:
-    """The grounded answer: every figure in it is banking's, through `answer_writer`."""
-    currency = latest_answer.currency
+    """The whole answer: every figure banking's, through `answer_writer`; every word a template."""
+    money = answer_writer.money
     windows = f"{answer_writer.window_of(latest)} frente a {answer_writer.window_of(earlier)}"
     if not changes:
         lines = [
-            f"Ningún comercio sube {windows}. En total: "
-            f"{answer_writer.money(abs(earlier_answer.total_minor), currency)} antes y "
-            f"{answer_writer.money(abs(latest_answer.total_minor), currency)} ahora."
+            f"Ningún comercio sube {windows}. En total: {money(earlier_total, currency)} antes y "
+            f"{money(latest_total, currency)} ahora."
         ]
     else:
         lines = [f"Comercios en los que gastas más {windows}:"]
@@ -169,10 +178,32 @@ def answer_text(
 def _change_line(change: MerchantChange, currency: str) -> str:
     money = answer_writer.money
     return (
-        f"  · {change.merchant}: {money(change.earlier_total, currency)} "
-        f"({_purchases(change.earlier_count)}) → {money(change.latest_total, currency)} "
-        f"({_purchases(change.latest_count)}); {_CAUSE_SAID[change.cause]}."
+        f"  · {change.merchant}: {money(change.earlier_total, currency)} → "
+        f"{money(change.latest_total, currency)}; {_explanation(change, currency)}."
     )
+
+
+def _explanation(change: MerchantChange, currency: str) -> str:
+    """The explanation's template, with the figures it was decided from."""
+    counts = f"de {_purchases(change.earlier_count)} a {_purchases(change.latest_count)}"
+    if change.explanation is Explanation.NEW_MERCHANT:
+        return f"es nuevo: ninguna compra antes, {_purchases(change.latest_count)} ahora"
+    means = (
+        f"{answer_writer.money(_mean(change.earlier_total, change.earlier_count), currency)} a "
+        f"{answer_writer.money(_mean(change.latest_total, change.latest_count), currency)}"
+    )
+    match change.explanation:
+        case Explanation.BOTH:
+            return f"por más compras ({counts}) y por importes mayores (media de {means})"
+        case Explanation.MORE_PURCHASES:
+            return f"por más compras ({counts}; media de {means})"
+        case Explanation.HIGHER_AMOUNTS:
+            return f"por importes mayores (media de {means}; {counts})"
+        case _:
+            return (
+                f"sube poco para atribuirlo a más compras o a importes mayores "
+                f"({counts}; media de {means})"
+            )
 
 
 def _inspection_line(inspection: Inspection, currency: str) -> str:
@@ -191,30 +222,13 @@ def _inspection_line(inspection: Inspection, currency: str) -> str:
     )
 
 
+def _mean(total_minor: int, count: int) -> int:
+    """Mean in minor units, rounded half up, without a float."""
+    if count <= 0:
+        return 0
+    units, remainder = divmod(total_minor, count)
+    return units + int(remainder * 2 >= count)
+
+
 def _purchases(count: int) -> str:
     return f"{count} {'compra' if count == 1 else 'compras'}"
-
-
-# --- the narrative's numbers --------------------------------------------------------------------
-
-_NUMBER: Final = re.compile(r"\d+(?:[.,]\d+)*")
-
-
-def unsupported_numbers(narrative: str, grounded: str) -> tuple[str, ...]:
-    """The numbers in `narrative` that the grounded answer does not contain, in order.
-
-    The grounded answer is built from banking's figures only, so a number it does not hold is one
-    a model wrote. Compared as written: «120,00» and «120» are different claims.
-    """
-    allowed = set(_NUMBER.findall(grounded))
-    return tuple(number for number in _NUMBER.findall(narrative) if number not in allowed)
-
-
-def checked_narrative(narrative: str, grounded: str) -> str | None:
-    """`narrative` when every number in it is grounded and it fits, else None (refused)."""
-    narrative = narrative.strip()
-    if not narrative or len(narrative) > MAX_NARRATIVE:
-        return None
-    if unsupported_numbers(narrative, grounded):
-        return None
-    return narrative

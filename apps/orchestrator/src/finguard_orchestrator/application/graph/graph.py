@@ -19,9 +19,12 @@ counts. Not the sentence, not a prompt, not a credential and no movement but the
 context, which LangGraph never checkpoints.
 
 **Budgets**, deterministic: at most `MAX_BANK_EXECUTIONS` banking port calls by the investigation
-and `MAX_MODEL_CALLS` model calls per turn. The model may ask for the next operation only from the
-allow-list `investigation.worth_inspecting` computed from banking's answer; anything else is
-refused and the turn answers with what it has, marked partial.
+and `MAX_MODEL_CALLS` model calls per turn. Every port call counts, a failed one included, and the
+count is in the checkpoint: the investigation reads one thing per step and keeps what it read, so a
+resume never reads it again and `present_and_commit` renders from what the checkpoint holds (R44).
+The model may ask for the next operation only from the allow-list `investigation.worth_inspecting`
+computed from banking's answer; anything else is refused and the turn answers with what it has,
+marked partial.
 """
 
 import dataclasses
@@ -38,7 +41,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Checkpointer
 
 from finguard_orchestrator.application.engine import presenter
-from finguard_orchestrator.application.engine.answer_turn import _applied as applied
+from finguard_orchestrator.application.engine.answer_turn import apply_guarded
 from finguard_orchestrator.application.engine.executor import (
     Executed,
     MixedCurrenciesError,
@@ -47,14 +50,16 @@ from finguard_orchestrator.application.engine.executor import (
     execute,
 )
 from finguard_orchestrator.application.graph import codec, investigation
-from finguard_orchestrator.application.graph.investigation import Cause, MerchantChange
+from finguard_orchestrator.application.graph.investigation import Explanation, MerchantChange
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.engine.grounding import Grounds
 from finguard_orchestrator.domain.engine.operations import Compare, Delegate, Operation
 from finguard_orchestrator.domain.engine.state import DialogueState, DialogueTurn
 from finguard_orchestrator.domain.engine.transitions import Transition, Work
 from finguard_orchestrator.domain.enums import GroupBy, Metric, PlanningOutcome
-from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
+from finguard_orchestrator.domain.errors import DomainError
+from finguard_orchestrator.domain.models.account_summary import AccountSummary
+from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
@@ -78,13 +83,21 @@ logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "investigation/1"
+GRAPH_VERSION: Final = "investigation/3"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
-STATE_SCHEMA_VERSION: Final = 1
+STATE_SCHEMA_VERSION: Final = 3
 MAX_BANK_EXECUTIONS: Final = 3
 MAX_MODEL_CALLS: Final = 3
-# A backstop under the budgets: each loop is plan, validate, execute, assess.
+# A backstop under the budgets: one step per read, and plan, validate and assess per loop.
 RECURSION_LIMIT: Final = 4 * (MAX_BANK_EXECUTIONS + 1) + 4
+
+
+class ReadBudgetExhaustedError(DomainError):
+    """The reads the investigation still needs would go past `MAX_BANK_EXECUTIONS`, failed reads
+    counted. Answered as such, with nothing saved."""
+
+    code = "read_budget_exhausted"
+
 
 Status = Literal[
     "loaded",
@@ -112,16 +125,23 @@ class TurnGraphState(TypedDict, total=False):
     ops: str  # codec.dumps of the interpreter's operations, once planned
     status: Status
     model_calls: int
-    bank_executions: int
+    # Every banking port call this turn made, failed ones included (R44).
+    bank_calls: int
+    # The earlier window by merchant, kept between its read and the latest one's: [merchant,
+    # total, count] per merchant, its total and its currency. Emptied once the latest is read.
+    earlier_groups: list[list[Any]]
+    earlier_total: int
+    earlier_currency: str
     # Per risen merchant: [merchant, earlier total, earlier count, latest total, latest count,
-    # cause]; and both windows' totals with their currency.
+    # explanation]; and both windows' totals with their currency.
     risen: list[list[Any]]
     totals: list[int]
     currency: str
     # Per inspected merchant: [merchant, largest amount or None, its ISO datetime or None].
     inspected: list[list[Any]]
-    next_merchant: str | None
-    narrative: str
+    # The assessment's choice as a position in `_may_inspect(state)`, or -1 for a merchant the
+    # allow-list does not hold: the string the model wrote is never stored (R45).
+    next_inspect: int | None
     partial: bool
     refused: list[str]
 
@@ -149,6 +169,9 @@ class GraphContext:
     reporting_timezone: str
     ports: GraphPorts
     cache: dict[str, Any] = field(default_factory=dict)
+    # Banking port calls made since the last checkpoint: a node adds them to `bank_calls` when it
+    # returns, and the handler writes them to the checkpoint when it does not (R44).
+    unsaved_calls: int = 0
 
 
 type Ctx = Runtime[GraphContext]
@@ -166,7 +189,7 @@ async def load_and_reserve(state: TurnGraphState, runtime: Ctx) -> TurnGraphStat
 async def plan(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     """The interpreter's one structured call, on the first pass only. On a loop the operation is
     the one the assessment asked for, already in the state, and no model is called."""
-    if state.get("next_merchant"):
+    if state.get("next_inspect") is not None:
         return {}
     ctx = runtime.context
     current = await _canonical(state, ctx)
@@ -187,16 +210,16 @@ async def plan(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
 async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     """The canonical transition for the interpreter's operations; the allow-list and the budget for
     the assessment's. Nothing here is decided by a model."""
-    asked = state.get("next_merchant")
-    if asked:
-        allowed = set(_may_inspect(state))
-        executions = state.get("bank_executions", 0)
-        if asked not in allowed or executions + 1 > MAX_BANK_EXECUTIONS:
-            reason = "not_allowed" if asked not in allowed else "bank_budget"
+    asked = state.get("next_inspect")
+    if asked is not None:
+        allowed = 0 <= asked < len(_may_inspect(state))
+        calls = state.get("bank_calls", 0)
+        if not allowed or calls + 1 > MAX_BANK_EXECUTIONS:
+            reason = "not_allowed" if not allowed else "bank_budget"
             logger.warning("graph.operation_refused reason=%s", reason)
             return {
                 "status": "refused",
-                "next_merchant": None,
+                "next_inspect": None,
                 "partial": True,
                 "refused": [*state.get("refused", []), reason],
             }
@@ -211,28 +234,42 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
 
 
 async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
-    """Banking reads through the executor, and only reads: no operation that reaches here can move
-    money, because none of the operations it runs can say so."""
+    """One banking read per step, through the executor, and only reads: no operation that reaches
+    here can move money, because none of the operations it runs can say so. What was read goes into
+    the checkpoint, so a resume after a failed read starts at that read."""
     ctx = runtime.context
-    moved = await _transition(state, ctx)
-    work = moved.work
-    assert work is not None
-    if state["status"] == "canonical":
-        ctx.cache["run"] = await _execute(work, state, ctx)
-        return {"status": "executed", "bank_executions": state.get("bank_executions", 0) + 1}
+    work = (await _transition(state, ctx)).work
+    assert work is not None and isinstance(work.plan, ComparisonPlan)
+    made = state.get("bank_calls", 0)
+    if made + 1 > MAX_BANK_EXECUTIONS:
+        if state["status"] == "inspect":
+            # The pair is read: the answer stands without the inspection, and says it stopped.
+            return {"status": "executed", "next_inspect": None, "partial": True}
+        raise ReadBudgetExhaustedError(f"{made} reads made")
     if state["status"] == "inspect":
         return await _inspect(state, work, ctx)
-    assert isinstance(work.plan, ComparisonPlan)
-    earlier_run = await _execute(_by_merchant_work(work, work.plan.earlier), state, ctx)
-    latest_run = await _execute(_by_merchant_work(work, work.plan.latest), state, ctx)
-    assert isinstance(earlier_run, QueryRun) and isinstance(latest_run, QueryRun)
-    then, now = earlier_run.answer, latest_run.answer
+    if "earlier_groups" not in state:
+        earlier = await _read_by_merchant(work, work.plan.earlier, state, ctx)
+        return {
+            "earlier_groups": [[g.key, g.total_minor, g.movement_count] for g in earlier.groups],
+            "earlier_total": abs(earlier.total_minor),
+            "earlier_currency": earlier.currency,
+            "bank_calls": _bank_calls(state, ctx),
+        }
+    now = await _read_by_merchant(work, work.plan.latest, state, ctx)
+    then = QueryAnswer(
+        state["earlier_currency"],
+        state["earlier_total"],
+        sum(group[2] for group in state["earlier_groups"]),
+        groups=tuple(Group(*group) for group in state["earlier_groups"]),
+    )
     if then.currency != now.currency and not then.is_empty and not now.is_empty:
         raise MixedCurrenciesError(f"{then.currency} and {now.currency}")
     changes = investigation.risen(then, now)
     return {
         "status": "executed",
-        "bank_executions": state.get("bank_executions", 0) + 2,
+        "bank_calls": _bank_calls(state, ctx),
+        "earlier_groups": [],
         "risen": [
             [
                 c.merchant,
@@ -240,11 +277,11 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
                 c.earlier_count,
                 c.latest_total,
                 c.latest_count,
-                c.cause.value,
+                c.explanation.value,
             ]
             for c in changes
         ],
-        "totals": [abs(then.total_minor), abs(now.total_minor)],
+        "totals": [state["earlier_total"], abs(now.total_minor)],
         "currency": now.currency,
         "inspected": [],
     }
@@ -258,7 +295,11 @@ async def assess_result(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     candidates = _may_inspect(state)
     if not candidates and not state.get("inspected"):
         return {}  # nothing to investigate and nothing to narrate
-    if state.get("model_calls", 0) >= MAX_MODEL_CALLS:
+    if (
+        state.get("model_calls", 0) >= MAX_MODEL_CALLS
+        or state.get("bank_calls", 0) >= MAX_BANK_EXECUTIONS
+    ):
+        # Nothing the assessment could ask for could be read, or it could not be asked.
         return {"partial": state.get("partial", False) or bool(candidates)}
     ctx = runtime.context
     before = ctx.ports.count_calls()
@@ -272,10 +313,9 @@ async def assess_result(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     }
     if decided is None:
         update["partial"] = state.get("partial", False) or bool(candidates)
-    elif isinstance(decided, Stop):
-        update["narrative"] = decided.why
-    else:
-        update["next_merchant"] = decided.merchant
+    elif not isinstance(decided, Stop):
+        chosen = decided.merchant
+        update["next_inspect"] = candidates.index(chosen) if chosen in candidates else -1
     return update
 
 
@@ -294,9 +334,9 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
         result = _investigated(state, moved.work, names)
         in_words = result.plan_in_words or ""
     else:
-        # A resume after the read and before this node has no run in its cache: reading again is
-        # safe because it is only a read, and nothing was saved for the first one.
-        run = ctx.cache.get("run") or await _execute(moved.work, state, ctx)
+        # An ordinary turn reads and answers in this one step, as the engine does: there is no
+        # earlier read to keep. Its port calls are counted, not capped (the measured engine's work).
+        run = await _execute(moved.work, state, ctx)
         result = presenter.answered(
             run,
             scope=moved.work.account_ids,
@@ -310,7 +350,7 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
         expected_version=state["expected_version"],
     )
     ctx.cache["result"], ctx.cache["saved"] = result, saved
-    return {"status": "committed"}
+    return {"status": "committed", "bank_calls": _bank_calls(state, ctx)}
 
 
 # --- routing --------------------------------------------------------------------------------------
@@ -320,14 +360,19 @@ def _after_validation(state: TurnGraphState) -> str:
     match state["status"]:
         case "delegated":
             return END
-        case "replied" | "refused":
+        case "replied" | "refused" | "canonical":
             return "present_and_commit"
         case _:
             return "execute_read_only"
 
 
+def _after_execution(state: TurnGraphState) -> str:
+    """The latest window is the next step's read until it is read."""
+    return "execute_read_only" if state["status"] == "investigate" else "assess_result"
+
+
 def _after_assessment(state: TurnGraphState) -> str:
-    return "plan" if state.get("next_merchant") else "present_and_commit"
+    return "plan" if state.get("next_inspect") is not None else "present_and_commit"
 
 
 def build(checkpointer: Checkpointer) -> CompiledStateGraph[Any, Any, Any, Any]:
@@ -344,7 +389,9 @@ def build(checkpointer: Checkpointer) -> CompiledStateGraph[Any, Any, Any, Any]:
     graph.add_conditional_edges(
         "validate_and_apply", _after_validation, ["execute_read_only", "present_and_commit", END]
     )
-    graph.add_edge("execute_read_only", "assess_result")
+    graph.add_conditional_edges(
+        "execute_read_only", _after_execution, ["execute_read_only", "assess_result"]
+    )
     graph.add_conditional_edges("assess_result", _after_assessment, ["plan", "present_and_commit"])
     graph.add_edge("present_and_commit", END)
     return graph.compile(checkpointer=checkpointer)
@@ -386,7 +433,7 @@ async def _transition(state: TurnGraphState, ctx: GraphContext) -> Transition:
     if "transition" not in ctx.cache:
         ops = tuple(_without_merchant_grouping(op) for op in codec.loads(state["ops"]))
         current = await _canonical(state, ctx)
-        ctx.cache["transition"] = applied(current, ops, ctx.today, await _grounds(state, ctx))
+        ctx.cache["transition"] = apply_guarded(current, ops, ctx.today, await _grounds(state, ctx))
     transition: Transition = ctx.cache["transition"]
     return transition
 
@@ -418,11 +465,49 @@ def _by_merchant_work(work: Work, side: FinancialPlan) -> Work:
     return Work("QUERY", by_merchant, work.account_ids)
 
 
+async def _read_by_merchant(
+    work: Work, side: FinancialPlan, state: TurnGraphState, ctx: GraphContext
+) -> QueryAnswer:
+    run = await _execute(_by_merchant_work(work, side), state, ctx)
+    assert isinstance(run, QueryRun)
+    return run.answer
+
+
+def _bank_calls(state: TurnGraphState, ctx: GraphContext) -> int:
+    """`bank_calls` with this step's calls added, which are then no longer unsaved."""
+    calls, ctx.unsaved_calls = state.get("bank_calls", 0) + ctx.unsaved_calls, 0
+    return calls
+
+
+class _CountedQueries:
+    """The query port, counting each call before it is made, so a failed one counts too."""
+
+    def __init__(self, inner: FinancialQueryPort, ctx: GraphContext) -> None:
+        self._inner, self._ctx = inner, ctx
+
+    async def run(self, plan: FinancialPlan, **kwargs: Any) -> QueryAnswer:
+        self._ctx.unsaved_calls += 1
+        return await self._inner.run(plan, **kwargs)
+
+    async def ranked(self, ranking: TopMovements, **kwargs: Any) -> Movement | None:
+        self._ctx.unsaved_calls += 1
+        return await self._inner.ranked(ranking, **kwargs)
+
+
+class _CountedSummary:
+    def __init__(self, inner: AccountSummaryPort, ctx: GraphContext) -> None:
+        self._inner, self._ctx = inner, ctx
+
+    async def of(self, account_id: UUID, **kwargs: Any) -> AccountSummary:
+        self._ctx.unsaved_calls += 1
+        return await self._inner.of(account_id, **kwargs)
+
+
 async def _execute(work: Work, state: TurnGraphState, ctx: GraphContext) -> Executed:
     return await execute(
         work,
-        queries=ctx.ports.queries,
-        summary=ctx.ports.summary,
+        queries=_CountedQueries(ctx.ports.queries, ctx),
+        summary=_CountedSummary(ctx.ports.summary, ctx),
         account_id=UUID(state["account_id"]),
         today=ctx.today,
         reporting_timezone=ctx.reporting_timezone,
@@ -432,8 +517,9 @@ async def _execute(work: Work, state: TurnGraphState, ctx: GraphContext) -> Exec
 async def _inspect(state: TurnGraphState, work: Work, ctx: GraphContext) -> TurnGraphState:
     """The largest purchase at the merchant asked about, in the latest window and the same scope
     and filters the validated comparison carries: a ranking banking answers."""
-    merchant = state["next_merchant"]
-    assert merchant is not None and isinstance(work.plan, ComparisonPlan)
+    position = state["next_inspect"]
+    assert position is not None and isinstance(work.plan, ComparisonPlan)
+    merchant = _may_inspect(state)[position]
     latest = work.plan.latest
     ranking = TopMovements(
         direction=latest.direction,
@@ -454,9 +540,9 @@ async def _inspect(state: TurnGraphState, work: Work, ctx: GraphContext) -> Turn
     ]
     return {
         "status": "executed",
-        "bank_executions": state.get("bank_executions", 0) + 1,
+        "bank_calls": _bank_calls(state, ctx),
         "inspected": [*state.get("inspected", []), found],
-        "next_merchant": None,
+        "next_inspect": None,
     }
 
 
@@ -465,7 +551,7 @@ async def _inspect(state: TurnGraphState, work: Work, ctx: GraphContext) -> Turn
 
 def _changes(state: TurnGraphState) -> tuple[MerchantChange, ...]:
     return tuple(
-        MerchantChange(name, e_total, e_count, l_total, l_count, Cause(cause))
+        MerchantChange(name, e_total, e_count, l_total, l_count, Explanation(cause))
         for name, e_total, e_count, l_total, l_count, cause in state.get("risen", [])
     )
 
@@ -497,7 +583,7 @@ def _summary(state: TurnGraphState, candidates: tuple[str, ...]) -> Investigatio
         inspected.append(InspectedSummary(found.merchant, found.finding or "NOT_FOUND", largest))
     return InvestigationSummary(
         risen=tuple(
-            MerchantSummary(c.merchant, c.cause, c.earlier_count, c.latest_count)
+            MerchantSummary(c.merchant, c.explanation, c.earlier_count, c.latest_count)
             for c in _changes(state)
         ),
         inspected=tuple(inspected),
@@ -512,24 +598,17 @@ def _investigated(
     earlier, latest = work.plan.earlier, work.plan.latest
     currency = state["currency"]
     then, now = state["totals"]
-    grounded = investigation.answer_text(
+    text = investigation.answer_text(
         _changes(state),
         _inspections(state),
         earlier=earlier,
         latest=latest,
-        earlier_answer=QueryAnswer(currency, then, 0),
-        latest_answer=QueryAnswer(currency, now, 0),
+        earlier_total=then,
+        latest_total=now,
+        currency=currency,
         partial=state.get("partial", False),
     )
-    text = grounded
-    narrative = state.get("narrative", "")
-    if narrative:
-        checked = investigation.checked_narrative(narrative, grounded)
-        if checked is None:
-            logger.warning("graph.narrative_refused")
-        else:
-            text = f"{grounded}\n{checked}"
-    text = f"{text}\n{presenter._scope_note(work.account_ids, names)}"
+    text = "\n".join((text, presenter.scope_note(work.account_ids, names)))
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
         text=text,

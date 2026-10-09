@@ -90,7 +90,7 @@ def answered(
             result = _pair(run)
         case RatioRun():
             result = _ratio(run)
-    return replace(result, text=f"{result.text}\n{_scope_note(scope, account_names)}")
+    return replace(result, text=f"{result.text}\n{scope_note(scope, account_names)}")
 
 
 def _query(run: QueryRun, reporting_timezone: str) -> AskFinancialQuestionResult:
@@ -305,7 +305,7 @@ def _balance(run: BalanceRun) -> AskFinancialQuestionResult:
     )
 
 
-def _scope_note(scope: tuple[UUID, ...], account_names: Mapping[UUID, str]) -> str:
+def scope_note(scope: tuple[UUID, ...], account_names: Mapping[UUID, str]) -> str:
     """Which accounts the figures came from, by the holder's names for them."""
     if not scope:
         return "Consultado en todas tus cuentas."

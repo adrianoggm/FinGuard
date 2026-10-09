@@ -2,8 +2,8 @@
 
 Separate from the interpreter (`TurnOperationsPort`) and never combined with it in one request: the
 interpreter reads the person's sentence, this reads only a bounded summary of banking's results and
-never the sentence. It may ask for one operation from an allow-list the graph computed, or stop with
-a short narrative whose numbers the graph checks against the grounded answer before anything leaves.
+never the sentence. It may ask for one operation from an allow-list the graph computed, or stop.
+Nothing it writes reaches the person (review ruling R42): the answer is the graph's templates.
 """
 
 from dataclasses import dataclass
@@ -14,12 +14,12 @@ from finguard_orchestrator.domain.errors import DomainError
 
 @dataclass(frozen=True)
 class MerchantSummary:
-    """One risen merchant, value-minimised: its name, the cause the graph computed, and the two
-    movement counts. No amounts: the model needs none to choose, and a figure it never sees is one
-    it cannot misquote."""
+    """One risen merchant, value-minimised: its name, the explanation the graph computed, and
+    the two movement counts. No amounts: the model needs none to choose, and a figure it never sees
+    is one it cannot misquote."""
 
     merchant: str
-    cause: str
+    explanation: str
     earlier_count: int
     latest_count: int
 
@@ -27,7 +27,7 @@ class MerchantSummary:
 @dataclass(frozen=True)
 class InspectedSummary:
     """What inspecting a merchant found: the finding and the largest purchase as the answer says
-    it, so a narrative quoting it quotes the grounded text."""
+    it."""
 
     merchant: str
     finding: str
@@ -49,7 +49,7 @@ class Inspect:
 
 @dataclass(frozen=True)
 class Stop:
-    why: str = ""
+    """Nothing more is worth reading. It carries nothing: no model text reaches the person."""
 
 
 class AssessmentFailedError(DomainError):

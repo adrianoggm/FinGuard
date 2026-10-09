@@ -7,7 +7,8 @@ operations schema, with every key required and no extra keys, which is the shape
 is a stop with nothing to narrate, and the graph answers with what banking already said.
 
 The prompt carries the value-minimised summary and nothing else: no sentence, no conversation, no
-amount but the inspected purchase as the grounded answer already says it.
+amount but the inspected purchase as the grounded answer already says it. What comes back is a
+merchant from the allow-list or a stop, never text for the person (review ruling R42).
 """
 
 import json
@@ -27,20 +28,17 @@ from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 logger = logging.getLogger(__name__)
 
 _INSTRUCTIONS: Final = """\
-You review what a bank answered about which merchants a person now spends more at, and why.
-Each risen merchant comes with the cause already computed from the bank's totals and counts:
-MORE_PURCHASES (more movements), BIGGER_AMOUNTS (higher mean per movement), BOTH, or NEW.
-"inspected" lists the merchants whose largest purchase was already looked at: ONE_PURCHASE means
-that without that purchase the person would not have spent more than before, SPREAD that even
-without it they would have.
+You review what a bank answered about which merchants a person now spends more at.
+Each risen merchant comes with its explanation already computed from the bank's totals and counts:
+MORE_PURCHASES (more movements), HIGHER_AMOUNTS (a higher mean per movement), BOTH, NEW_MERCHANT,
+or CANNOT_TELL. "inspected" lists the merchants whose largest purchase was already looked at:
+ONE_PURCHASE means that without that purchase the person would not have spent more than before,
+SPREAD that even without it they would have.
 
 Answer with exactly one of:
 - {"inspect": {"merchant": M}} to look at the largest purchase of M, only for M in "may_inspect",
   when knowing whether one purchase explains the rise would change the answer;
-- {"stop": {"why": TEXT}} when nothing else is worth reading. TEXT is at most two short Spanish
-  sentences saying what the data shows, or "" for nothing to add. Quote no number that is not
-  written in the summary exactly as it is written there, compute nothing, and never give a reason
-  the bank cannot know (prices, habits, moves): say that the data does not show it.
+- {"stop": {}} when nothing else is worth reading.
 
 Summary:
 """
@@ -84,9 +82,12 @@ class LlmInvestigationAssessor:
 
 
 def schema_for(may_inspect: tuple[str, ...]) -> dict[str, Any]:
-    """`{"next": {"inspect": {"merchant": M}} | {"stop": {"why": TEXT}}}`, with M closed to
-    `may_inspect` and the inspect branch absent when it is empty."""
-    branches = [_object({"stop": _object({"why": {"type": "string"}})})]
+    """`{"next": {"inspect": {"merchant": M}} | {"stop": {}}}`, with M closed to `may_inspect` and
+    the inspect branch absent when it is empty. The stop carries nothing, so the model has nowhere
+    to write text (R42). An empty object is closed by `additionalProperties` alone: Groq reads an
+    empty `properties` as missing and refuses a `required` beside it (`operations_schema` found)."""
+    nothing = {"type": "object", "additionalProperties": False}
+    branches = [_object({"stop": nothing})]
     if may_inspect:
         merchant = {"type": "string", "enum": list(may_inspect)}
         branches.insert(0, _object({"inspect": _object({"merchant": merchant})}))
@@ -111,8 +112,9 @@ def read(answer: str, may_inspect: tuple[str, ...]) -> Inspect | Stop:
         chosen = json.loads(answer)["next"]
         if set(chosen) == {"inspect"} and isinstance(chosen["inspect"]["merchant"], str):
             return Inspect(chosen["inspect"]["merchant"])
-        if set(chosen) == {"stop"} and isinstance(chosen["stop"]["why"], str):
-            return Stop(chosen["stop"]["why"])
+        if set(chosen) == {"stop"}:
+            # Whatever a model wrote inside it is dropped unread: a stop carries nothing.
+            return Stop()
     except (ValueError, KeyError, TypeError):
         pass
     logger.warning("graph.assessment_unreadable")

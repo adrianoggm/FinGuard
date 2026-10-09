@@ -199,7 +199,9 @@ def test_the_graph_hands_the_sentence_to_the_interpreter_and_the_remembered_turn
         if isinstance(node, ast.Attribute) and node.attr == "sentence"
     )
 
-    assert in_handler == ["GraphContext(...)"]
+    # The fingerprint binds a request id to its sentence (R45): `_fingerprint` hashes its bytes
+    # (`sentence.encode`), and the hash is compared for equality, never read for what it says.
+    assert in_handler == ["GraphContext(...)", "_fingerprint(...)", "sentence.encode"]
     assert in_nodes == ["DialogueTurn(said=)", "ctx.ports.interpreter.interpret(...)"]
 
 
@@ -406,17 +408,47 @@ def test_an_engine_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, rout
     assert answers[1]["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
 
 
-class Stopping:
-    async def assess(self, summary: Any) -> Any:
-        from finguard_orchestrator.domain.ports.investigation_assessor import Stop
+class Inspecting:
+    """The assessment: inspect the first merchant it may, then stop."""
 
-        return Stop()
+    def __init__(self) -> None:
+        self.asked = 0
+
+    async def assess(self, summary: Any) -> Any:
+        from finguard_orchestrator.domain.ports.investigation_assessor import Inspect, Stop
+
+        self.asked += 1
+        return Inspect(summary.may_inspect[0]) if summary.may_inspect else Stop()
+
+
+class Rising:
+    """June against July by merchant, Amazon up by both, and its largest July purchase."""
+
+    def __init__(self) -> None:
+        self.reads = 0
+
+    async def run(self, plan: Any, **_: Any) -> Any:
+        from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
+
+        self.reads += 1
+        july = plan.date_range == JULY
+        group = Group("Amazon", 17_000, 2) if july else Group("Amazon", 5_000, 1)
+        return QueryAnswer("EUR", group.total_minor, group.movement_count, groups=(group,))
+
+    async def ranked(self, ranking: Any, **_: Any) -> Any:
+        from datetime import UTC, datetime
+
+        from finguard_orchestrator.domain.models.query_answer import Movement
+
+        self.reads += 1
+        return Movement(datetime(2026, 7, 12, tzinfo=UTC), "", 15_000, "EXPENSE")
 
 
 @pytest.mark.parametrize("route", QUESTION_ROUTES)
 def test_a_graph_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, route: str) -> None:
-    """The same tripwire over HTTP with the investigation graph answering, on an ordinary turn, a
-    follow-up and a comparison by merchant."""
+    """The same tripwire over HTTP with the investigation graph answering: an ordinary turn, a
+    follow-up, and a comparison by merchant that is assessed, inspects a purchase and is assessed
+    again (R45)."""
     from langgraph.checkpoint.memory import InMemorySaver
 
     from finguard_orchestrator.application.graph.graph import GraphPorts
@@ -435,13 +467,26 @@ def test_a_graph_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, route:
             PlanFields(window=JULY),
         ),
     )
-    turns = (*TURNS, ("¿en qué comercios gasto más que antes?", by_merchant))
     stack = a_stack()
+    rising, assessor = Rising(), Inspecting()
+
+    class Banking:
+        """The stack's ledger for ordinary turns, the rising one for the comparison."""
+
+        async def run(self, plan: Any, **rest: Any) -> Any:
+            if plan.group_by is GroupBy.MERCHANT:
+                return await rising.run(plan, **rest)
+            return await stack.ledger.run(plan, **rest)
+
+        async def ranked(self, ranking: Any, **rest: Any) -> Any:
+            return await rising.ranked(ranking, **rest)
+
+    turns = (*TURNS, ("¿en qué comercios gasto más que antes?", by_merchant))
     ports = GraphPorts(
         Scripted(*(operations for _, operations in turns)),
-        Stopping(),
+        assessor,
         MemoryDialogueStore(),
-        stack.ledger,
+        Banking(),
         Accounts(),
         Directory(),
         Contacts(),
@@ -465,4 +510,6 @@ def test_a_graph_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, route:
     assert tripped == []
     assert [answer["outcome"] for answer in answers] == ["PLANNED"] * 3
     assert answers[1]["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
-    assert answers[2]["text"].startswith("Ningún comercio sube")
+    # Assessed, inspected (three reads), and the inspection is in the answer.
+    assert (assessor.asked, rising.reads) == (1, 3)
+    assert "En Amazon, la subida se debe a una compra" in answers[2]["text"]

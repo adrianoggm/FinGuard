@@ -21,6 +21,8 @@ class Reservation(StrEnum):
     RESUME = "RESUME"  # this request owned it and did not finish: resume from its checkpoint
     DONE = "DONE"  # this request finished it: replay its answer
     TAKEN = "TAKEN"  # another request owns it: the caller answers stale
+    # This request id was used for another sentence: refused, never resumed or replayed (R45).
+    REUSED = "REUSED"
 
 
 @dataclass(frozen=True)
@@ -39,11 +41,14 @@ class Reserved:
 
 @runtime_checkable
 class TurnReservationsPort(Protocol):
-    async def reserve(self, key: TurnKey, request_id: str) -> Reserved: ...
+    async def reserve(self, key: TurnKey, request_id: str, fingerprint: str) -> Reserved:
+        """`fingerprint` is the sentence's: the same id with another one is `REUSED`."""
+        ...
 
-    async def replayed(self, key: TurnKey, request_id: str) -> Any:
-        """The answer `request_id` gave for `key`, when it finished one, else None. Read before the
-        version check: a duplicate of a turn that saved arrives with the version it moved from."""
+    async def replayed(self, key: TurnKey, request_id: str, fingerprint: str) -> Reserved | None:
+        """DONE with the answer `request_id` gave for `key` when it finished one, REUSED when it
+        was for another sentence, else None. Read before the version check: a duplicate of a turn
+        that saved arrives with the version it moved from."""
         ...
 
     async def failed(self, key: TurnKey, request_id: str) -> None:

@@ -12,6 +12,7 @@ from finguard_orchestrator.domain.ports.turn_reservations import Reservation, Re
 @dataclass
 class _Held:
     request_id: str
+    fingerprint: str
     status: Reservation  # NEW while in flight, RESUME once failed, DONE once saved
     answer: Any = None
 
@@ -23,17 +24,19 @@ class MemoryTurnReservations:
         self._held: dict[TurnKey, _Held] = {}
         self._lock = asyncio.Lock()
 
-    async def reserve(self, key: TurnKey, request_id: str) -> Reserved:
+    async def reserve(self, key: TurnKey, request_id: str, fingerprint: str) -> Reserved:
         async with self._lock:
             held = self._held.get(key)
             if held is None or (
                 held.status is Reservation.RESUME and held.request_id != request_id
             ):
                 # Free, or a failed turn nobody is resuming: nothing was saved under it.
-                self._held[key] = _Held(request_id, Reservation.NEW)
+                self._held[key] = _Held(request_id, fingerprint, Reservation.NEW)
                 return Reserved(Reservation.NEW)
             if held.request_id != request_id:
                 return Reserved(Reservation.TAKEN)
+            if held.fingerprint != fingerprint:
+                return Reserved(Reservation.REUSED)
             if held.status is Reservation.DONE:
                 return Reserved(Reservation.DONE, held.answer)
             if held.status is Reservation.RESUME:
@@ -43,11 +46,13 @@ class MemoryTurnReservations:
             # run of the same turn beside the first.
             return Reserved(Reservation.TAKEN)
 
-    async def replayed(self, key: TurnKey, request_id: str) -> Any:
+    async def replayed(self, key: TurnKey, request_id: str, fingerprint: str) -> Reserved | None:
         held = self._held.get(key)
-        if held is None or held.request_id != request_id or held.status is not Reservation.DONE:
+        if held is None or held.request_id != request_id:
             return None
-        return held.answer
+        if held.fingerprint != fingerprint:
+            return Reserved(Reservation.REUSED)
+        return Reserved(Reservation.DONE, held.answer) if held.status is Reservation.DONE else None
 
     async def failed(self, key: TurnKey, request_id: str) -> None:
         async with self._lock:
@@ -57,4 +62,5 @@ class MemoryTurnReservations:
 
     async def done(self, key: TurnKey, request_id: str, answer: Any) -> None:
         async with self._lock:
-            self._held[key] = _Held(request_id, Reservation.DONE, answer)
+            fingerprint = self._held[key].fingerprint if key in self._held else ""
+            self._held[key] = _Held(request_id, fingerprint, Reservation.DONE, answer)

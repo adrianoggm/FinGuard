@@ -20,6 +20,8 @@ in-memory saver: a restart loses every checkpoint, so **durability is unproven**
 recovery is claimed (see the Task 8 report).
 """
 
+import asyncio
+import hashlib
 import logging
 import time
 from dataclasses import dataclass
@@ -40,12 +42,15 @@ from finguard_orchestrator.application.graph.graph import (
     STATE_SCHEMA_VERSION,
     GraphContext,
     GraphPorts,
+    ReadBudgetExhaustedError,
     TurnGraphState,
 )
+from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.engine.operations import Delegate
 from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.errors import (
     BankingUnavailableError,
+    DomainError,
     InvalidValueError,
     QueryRejectedError,
 )
@@ -59,6 +64,14 @@ from finguard_orchestrator.domain.ports.turn_reservations import (
 
 logger = logging.getLogger(__name__)
 
+
+class RequestReusedError(DomainError):
+    """A request id sent again with another sentence: it is not the same turn, so it is neither
+    resumed nor replayed. Only reachable by a caller that sends ids; the HTTP routes send none."""
+
+    code = "request_reused"
+
+
 # What a turn can run into that is answered honestly and saves nothing, as in `answer_turn`.
 _UNANSWERED = (
     BankingUnavailableError,
@@ -66,6 +79,7 @@ _UNANSWERED = (
     MixedCurrenciesError,
     InvalidValueError,
     InterpretationFailedError,
+    ReadBudgetExhaustedError,
 )
 
 
@@ -104,7 +118,13 @@ class GraphTurnHandler:
         """`request_id` is the turn's idempotency key; without one every call is a new request."""
         calls_before = self._ports.count_calls()
         started = time.perf_counter()
-        turn = await self._reserve(conversation_id, version, account_id, request_id or uuid4().hex)
+        turn = await self._reserve(
+            conversation_id,
+            version,
+            account_id,
+            request_id or uuid4().hex,
+            _fingerprint(sentence),
+        )
         if isinstance(turn, EngineAnswer):
             return turn  # replayed
         config: Any = {
@@ -117,56 +137,104 @@ class GraphTurnHandler:
             calls = self._ports.count_calls() - calls_before
             return EngineAnswer(result, turn.held, delegate_to, calls, _ms(started))
 
+        answer: EngineAnswer | None = None
+        closed = False
         try:
-            final = await self._graph.ainvoke(
-                await self._input(turn, config), config, context=context
+            try:
+                final = await self._graph.ainvoke(
+                    await self._input(turn, config), config, context=context
+                )
+            except _UNANSWERED as unanswered:
+                # Resumable by the same request: its checkpoint stays.
+                logger.warning("graph.turn_unanswered error=%s", type(unanswered).__name__)
+                return unsaved(_failed(unanswered))
+            if final.get("status") == "delegated":
+                ops = codec.loads(final["ops"])
+                delegate = next(op for op in ops if isinstance(op, Delegate))
+                return unsaved(None, delegate.to)
+            answer = EngineAnswer(
+                context.cache["result"],
+                context.cache["saved"],
+                None,
+                self._ports.count_calls() - calls_before,
+                _ms(started),
             )
-        except StaleDialogueError:
-            await self._reservations.failed(turn.key, turn.request_id)
-            raise
-        except _UNANSWERED as unanswered:
-            # Resumable by the same request: its checkpoint stays.
-            logger.warning("graph.turn_unanswered error=%s", type(unanswered).__name__)
-            await self._reservations.failed(turn.key, turn.request_id)
-            return unsaved(presenter.failed(unanswered))
-        if final.get("status") == "delegated":
-            await self._reservations.failed(turn.key, turn.request_id)
-            ops = codec.loads(final["ops"])
-            delegate = next(op for op in ops if isinstance(op, Delegate))
-            return unsaved(None, delegate.to)
-        answer = EngineAnswer(
-            context.cache["result"],
-            context.cache["saved"],
-            None,
-            self._ports.count_calls() - calls_before,
-            _ms(started),
-        )
-        await self._reservations.done(turn.key, turn.request_id, answer)
-        return answer
+            await self._reservations.done(turn.key, turn.request_id, answer)
+            closed = True
+            return answer
+        finally:
+            if not closed:
+                await self._close(turn, config, context, answer)
+
+    async def _close(
+        self, turn: _Turn, config: Any, context: GraphContext, answer: EngineAnswer | None
+    ) -> None:
+        """The reservation of a turn that did not close normally, whatever ended it (R43).
+
+        **Saved** (the compare-and-set went through, `done()` did not return): the turn is closed
+        as done, never marked resumable, because resuming it would run a saved turn again. If that
+        fails too, the reservation stays in flight and a duplicate is stale, which is still true.
+
+        **Not saved**: the calls the failed step made go into the checkpoint (R44), and the
+        reservation is released in a `finally`, so neither a persist that raises nor a cancellation
+        during it can leave the turn held. A persist error is logged, not raised: it must not mask
+        the failure that ended the turn, nor the answer already given for it. Each step is
+        shielded, so a second cancellation cannot interrupt it half done.
+        """
+        if answer is not None:
+            try:
+                await asyncio.shield(self._reservations.done(turn.key, turn.request_id, answer))
+            except Exception as failed:
+                logger.error("graph.saved_turn_not_closed error=%s", type(failed).__name__)
+            return
+        try:
+            if context.unsaved_calls:
+                await asyncio.shield(self._persist_calls(config, context.unsaved_calls))
+        except Exception as failed:
+            logger.error("graph.calls_not_persisted error=%s", type(failed).__name__)
+        finally:
+            await asyncio.shield(self._reservations.failed(turn.key, turn.request_id))
+
+    async def _persist_calls(self, config: Any, calls: int) -> None:
+        found = await self._graph.aget_state(config)
+        if found.values:
+            stored = found.values.get("bank_calls", 0)
+            await self._graph.aupdate_state(config, {"bank_calls": stored + calls})
 
     async def _reserve(
-        self, conversation_id: UUID | None, version: int | None, account_id: UUID, request_id: str
+        self,
+        conversation_id: UUID | None,
+        version: int | None,
+        account_id: UUID,
+        request_id: str,
+        fingerprint: str,
     ) -> "_Turn | EngineAnswer":
-        held = None
-        if conversation_id is not None:
-            held = await self._ports.store.load(conversation_id, account_id=account_id)
+        # A new conversation's id is derived from the request, so the same request resumed or
+        # replayed lands on the same conversation, and was sent against its version 0.
+        derived = uuid5(NAMESPACE_URL, f"finguard:{account_id}:{request_id}")
+        if conversation_id is None:
+            conversation_id, version = derived, 0
+        held = await self._ports.store.load(conversation_id, account_id=account_id)
         if held is not None and version is not None:
             sent = TurnKey(account_id, held.conversation_id, version)
-            replayed: EngineAnswer | None = await self._reservations.replayed(sent, request_id)
-            if replayed is not None:
-                return replayed
+            found = await self._reservations.replayed(sent, request_id, fingerprint)
+            if found is not None and found.outcome is Reservation.REUSED:
+                raise RequestReusedError(request_id)
+            if found is not None:
+                done: EngineAnswer = found.answer
+                return done
         if held is not None and version is not None and version != held.version:
             raise StaleDialogueError(held)
-        # A new conversation's id is derived from the request, so the same request resumed or
-        # replayed lands on the same conversation.
-        held = held or DialogueState(uuid5(NAMESPACE_URL, f"finguard:{account_id}:{request_id}"))
+        held = held or DialogueState(derived)
         key = TurnKey(account_id, held.conversation_id, held.version)
-        reserved = await self._reservations.reserve(key, request_id)
+        reserved = await self._reservations.reserve(key, request_id, fingerprint)
+        if reserved.outcome is Reservation.REUSED:
+            raise RequestReusedError(request_id)
         if reserved.outcome is Reservation.TAKEN:
             raise StaleDialogueError(held)
         if reserved.outcome is Reservation.DONE:
-            done: EngineAnswer = reserved.answer
-            return done
+            replayed: EngineAnswer = reserved.answer
+            return replayed
         return _Turn(key, request_id, held)
 
     async def _input(self, turn: _Turn, config: Any) -> TurnGraphState | None:
@@ -192,11 +260,28 @@ class GraphTurnHandler:
             "conversation_id": str(turn.key.conversation_id),
             "expected_version": turn.key.expected_version,
             "model_calls": 0,
-            "bank_executions": 0,
+            "bank_calls": 0,
             "partial": False,
             "refused": [],
-            "next_merchant": None,
+            "next_inspect": None,
         }
+
+
+def _fingerprint(sentence: str) -> str:
+    """What binds a request id to its sentence: a hash, compared and never read (R45)."""
+    return hashlib.sha256(sentence.encode("utf-8")).hexdigest()
+
+
+def _failed(error: DomainError) -> AskFinancialQuestionResult:
+    if isinstance(error, ReadBudgetExhaustedError):
+        return AskFinancialQuestionResult(
+            outcome="BANKING_UNAVAILABLE",
+            text=(
+                "No he podido completar las consultas al banco dentro del límite de esta "
+                "pregunta. Vuelve a preguntármelo."
+            ),
+        )
+    return presenter.failed(error)
 
 
 def _thread(turn: _Turn) -> str:
