@@ -54,6 +54,7 @@ from finguard_orchestrator.domain.enums import (
     GroupBy,
     Metric,
     Period,
+    Rail,
 )
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.ports.turn_operations import (
@@ -647,6 +648,42 @@ def test_bank_transfer_is_a_separate_typed_prepare_operation() -> None:
             '{"operations":[{"prepare_transfer":{"recipient":"Aitor","amount_minor":0}}]}',
             CATALOGUE,
         )
+
+
+def test_typed_iban_transfer_example_keeps_the_iban_out_of_model_output() -> None:
+    example = next(
+        (item for item in examples(TODAY) if "IBAN ES9121000418450200051332" in item[1]),
+        None,
+    )
+    assert example is not None
+    assert read(example[2], CATALOGUE) == (PrepareTransfer("Aitor Beltran Diaz", None),)
+    assert "never return or invent an IBAN" in build_prompt(
+        "Haz una transferencia a Aitor Beltran Diaz con IBAN ES9121000418450200051332",
+        DialogueState(UUID(int=1)),
+        today=TODAY,
+        categories={key: key for key in CATALOGUE},
+    )
+
+
+def test_pending_transfer_prompt_preserves_the_canonical_rail() -> None:
+    prompt = build_prompt(
+        "20 euros",
+        DialogueState(
+            UUID(int=1),
+            payment=PaymentDraftPending(
+                PaymentDraft(
+                    recipient_name="Aitor Beltran Diaz",
+                    rail=Rail.TRANSFER,
+                    recipient_iban="ES9121000418450200051332",
+                )
+            ),
+        ),
+        today=TODAY,
+        categories={key: key for key in CATALOGUE},
+    )
+    assert "transfer draft in progress" in prompt
+    assert "Bizum draft in progress" not in prompt
+    assert "ES9121000418450200051332" not in prompt
 
 
 def test_restore_previous_has_a_bounded_one_based_history_position() -> None:

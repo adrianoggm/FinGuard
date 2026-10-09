@@ -41,7 +41,7 @@ from finguard_orchestrator.domain.engine.state import (
     QueryFocus,
     RatioFocus,
 )
-from finguard_orchestrator.domain.enums import PERIODS_NEEDING_COUNT, GroupBy, Period
+from finguard_orchestrator.domain.enums import PERIODS_NEEDING_COUNT, GroupBy, Period, Rail
 from finguard_orchestrator.domain.ports.turn_operations import NO_ACCOUNT_NAMES
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -82,8 +82,11 @@ restore_previous=N reruns history (1=newest); balance reads accounts; clarify is
 WINDOW/SUBJECT/ACCOUNT/PERSON/OPERAND; smalltalk is GREETING/THANKS/IDENTITY/HELP.
 create_visualization/update_visualization choose AUTO/BAR/LINE for result/chart (no bank call);
 prepare_bizum(recipient, amount_minor) starts/continues Bizum; prepare_transfer(recipient,
-amount_minor) prepares a saved-contact transfer and requires "transferencia" in the sentence;
-null means missing; never invent amounts. prepare_own_transfer(destination_account) moves money
+amount_minor) starts/continues a transfer to a saved contact and requires "transferencia" in the
+sentence. A user-written IBAN may accompany that contact; deterministic code reads and validates it,
+so never return or invent an IBAN. Null means a missing slot; never invent amounts. A transfer with
+a named contact and no amount is still prepare_transfer, so code can ask for the amount.
+prepare_own_transfer(destination_account) moves money
 between the holder's accounts. delegate is PAYMENT/TRANSFER/BOOKING/CHART/UNSUPPORTED.
 
 ## Examples
@@ -112,9 +115,10 @@ periods chronologically. A follow-up patches or compares the current focus; peri
 change only its window. Use target pending only when the state shows an open question; with none
 open, a correction patches focus. Explicit "return to the previous query" restores history item 1.
 "All categories/movements" clears top-N. Explicit account names must populate accounts; [] means all
-accounts. A saved-contact transfer uses prepare_transfer; Bizum uses prepare_bizum. Amounts must be
-said. Other transfers and bookings delegate. Visual operations stand alone; restyle a shown chart,
-otherwise create one.
+accounts. A transfer to a named saved contact uses prepare_transfer, including when the sentence
+also contains a user-written IBAN or omits the amount; Bizum uses prepare_bizum. Amounts must be
+said. Transfers without a named saved contact and bookings delegate. Visual operations stand alone;
+restyle a shown chart, otherwise create one.
 Operations JSON only.
 """)
 
@@ -343,6 +347,13 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             ),
         ),
         (
+            "",
+            "Haz una transferencia a Aitor Beltran Diaz con IBAN ES9121000418450200051332",
+            _answer(
+                {"prepare_transfer": {"recipient": "Aitor Beltran Diaz", "amount_minor": None}}
+            ),
+        ),
+        (
             "a query",
             "El trimestre pasado, y en número de compras",
             _answer(
@@ -557,6 +568,7 @@ def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
         )
     if isinstance(state.payment, PaymentDraftPending):
         payment_draft = state.payment.draft
+        rail = "Bizum" if payment_draft.rail is Rail.BIZUM else "transfer"
         recipient = payment_draft.recipient_name or (
             "choose one of the listed contacts"
             if state.payment.candidate_contact_ids
@@ -568,8 +580,8 @@ def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
             else "not given"
         )
         lines.append(
-            f"Bizum draft in progress: recipient {recipient}; amount {amount}. "
-            "Continue it only with a value the user supplies."
+            f"{rail} draft in progress: recipient {recipient}; amount {amount}. "
+            "Continue it only with values the user supplies, keeping the same payment rail."
         )
     elif isinstance(state.payment, PaymentConfirmationPending):
         lines.append(
