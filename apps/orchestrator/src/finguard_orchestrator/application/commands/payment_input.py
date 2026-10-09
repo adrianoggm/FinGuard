@@ -72,14 +72,12 @@ def resolve_contact_payment_draft(
     matching contacts or supply a value that was not spoken or already in the draft.
     """
     prior = previous or PaymentDraft()
-    rail = Rail.TRANSFER if isinstance(operation, PrepareTransfer) else Rail.BIZUM
-    if (
-        previous is not None
-        and previous.rail is not rail
-        and not payment_words.names_a_rail(sentence)
-    ):
-        return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
-    if payment_words.names_a_rail(sentence) and payment_words.rail_in(sentence) is not rail:
+    planned_rail = Rail.TRANSFER if isinstance(operation, PrepareTransfer) else Rail.BIZUM
+    names_rail = payment_words.names_a_rail(sentence)
+    # A reply that fills a pending slot is silent about the rail. The canonical draft, not an
+    # imperfect re-interpretation of "20 euros", decides whether the payment remains a transfer.
+    rail = previous.rail if previous is not None and not names_rail else planned_rail
+    if names_rail and payment_words.rail_in(sentence) is not rail:
         return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
     if (
         rail is Rail.TRANSFER
@@ -115,6 +113,13 @@ def resolve_contact_payment_draft(
         if rail is Rail.TRANSFER and recipient_iban is not None
         else None
     )
+    if (
+        typed_recipient is None
+        and previous is not None
+        and previous.recipient_iban is not None
+        and previous.recipient_name is not None
+    ):
+        typed_recipient = previous.recipient_name
     candidates: tuple[Contact, ...] = ()
     if len(spoken) > 1:
         candidates = spoken
@@ -132,13 +137,6 @@ def resolve_contact_payment_draft(
         contact = next((c for c in contacts if c.contact_id == prior.recipient_contact_id), None)
         if contact is None:
             return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
-    elif (
-        previous is not None
-        and previous.recipient_iban is not None
-        and previous.recipient_name is not None
-    ):
-        typed_recipient = previous.recipient_name
-
     if typed_recipient is not None:
         typed_matches = payment_words.contacts_in(typed_recipient, contacts)
         if len(typed_matches) > 1:

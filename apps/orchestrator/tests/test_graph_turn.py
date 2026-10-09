@@ -1324,7 +1324,8 @@ async def test_graph_prepares_transfer_to_new_recipient_from_user_typed_name_and
 async def test_graph_retains_new_recipient_and_iban_while_asking_for_amount() -> None:
     world = World(
         (PrepareTransfer("Juan Perez", None),),
-        (PrepareTransfer(None, 2_000),),
+        # Model misclassification cannot change the persisted transfer when this reply omits a rail.
+        (PrepareBizum("Juan Perez", 2_000),),
     )
     bank = with_payment_commands(world)
     first = await world.ask(
