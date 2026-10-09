@@ -36,6 +36,8 @@ from finguard_orchestrator.domain.engine.state import (
     DialogueState,
     Focus,
     Measure,
+    PaymentConfirmationPending,
+    PaymentDraftPending,
     QueryFocus,
     RatioFocus,
 )
@@ -79,8 +81,9 @@ select_operand keeps earlier/latest; reset starts over; restore_previous=N rerun
 requested numbered history item (1=newest); balance(accounts) reads current money; clarify is
 WINDOW/SUBJECT/ACCOUNT/PERSON/OPERAND; smalltalk is GREETING/THANKS/IDENTITY/HELP;
 create_visualization=AUTO/BAR/LINE charts the last result; update_visualization=AUTO/BAR/LINE
-restyles the active chart without a bank call; prepare_bizum(recipient, amount_minor) previews only
-when both are explicit, with exact cents; prepare_own_transfer(destination_account) starts or
+restyles the active chart without a bank call; prepare_bizum(recipient, amount_minor) starts or
+continues a draft (null means missing; never invent the amount);
+prepare_own_transfer(destination_account) starts or
 continues a transfer between the holder's accounts (null means no destination was named this turn);
 delegate is PAYMENT/TRANSFER/BOOKING/CHART/UNSUPPORTED.
 
@@ -535,6 +538,27 @@ def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
         draft = _said(state.pending.draft, today) or "nothing"
         lines.append(
             f"Open question: asks for {state.pending.missing.value}; already said: {draft}"
+        )
+    if isinstance(state.payment, PaymentDraftPending):
+        payment_draft = state.payment.draft
+        recipient = payment_draft.recipient_name or (
+            "choose one of the listed contacts"
+            if state.payment.candidate_contact_ids
+            else "not chosen"
+        )
+        amount = (
+            f"{payment_draft.amount_minor} minor units"
+            if payment_draft.amount_minor
+            else "not given"
+        )
+        lines.append(
+            f"Bizum draft in progress: recipient {recipient}; amount {amount}. "
+            "Continue it only with a value the user supplies."
+        )
+    elif isinstance(state.payment, PaymentConfirmationPending):
+        lines.append(
+            "A bank-authored payment preview is awaiting an explicit yes or no; "
+            "do not start another payment or treat any other reply as confirmation."
         )
     if state.own_transfer is not None:
         transfer = state.own_transfer

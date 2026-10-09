@@ -86,19 +86,34 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
     def simple_value(node: Any) -> dict[str, Any]:
         field = resolve(node)
         kind = field.get("type") if isinstance(field, dict) else None
+        nullable_branches = field.get("anyOf", []) if isinstance(field, dict) else []
+        if isinstance(nullable_branches, list) and nullable_branches:
+            primitive: list[dict[str, Any]] = []
+            for choice in nullable_branches:
+                resolved = resolve(choice)
+                choice_type = resolved.get("type") if isinstance(resolved, dict) else None
+                if choice_type not in {"string", "integer", "number", "boolean", "null"}:
+                    primitive = []
+                    break
+                item: dict[str, Any] = {"type": choice_type}
+                if isinstance(resolved.get("enum"), list):
+                    item["enum"] = resolved["enum"]
+                primitive.append(item)
+            if primitive:
+                return {"anyOf": primitive}
         if not isinstance(kind, str):
-            choices: list[Any] = []
+            enum_choices: list[Any] = []
             variants = field.get("anyOf", []) if isinstance(field, dict) else []
             if isinstance(variants, list):
                 for choice in variants:
                     if not isinstance(choice, dict):
                         continue
                     if "const" in choice:
-                        choices.append(choice["const"])
+                        enum_choices.append(choice["const"])
                     elif isinstance(choice.get("enum"), list) and choice["enum"]:
-                        choices.append(choice["enum"][0])
-            if choices:
-                return {"type": "string", "enum": choices}
+                        enum_choices.append(choice["enum"][0])
+            if enum_choices:
+                return {"type": "string", "enum": enum_choices}
             return {"type": "object"}
         value: dict[str, Any] = {"type": kind}
         if isinstance(field.get("enum"), list):

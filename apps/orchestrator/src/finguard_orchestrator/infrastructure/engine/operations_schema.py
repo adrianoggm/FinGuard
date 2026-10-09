@@ -423,15 +423,19 @@ class UpdateVisualizationOp(_Closed):
 
 
 class BizumFields(_Closed):
-    recipient: str
-    amount_minor: Annotated[int, Field(ge=1, le=MAX_PAYMENT_MINOR)]
+    recipient: Annotated[Name | None, Field()]
+    amount_minor: Annotated[int | None, Field(ge=1, le=MAX_PAYMENT_MINOR)]
 
 
 class PrepareBizumOp(_Closed):
     prepare_bizum: BizumFields
 
     def as_operation(self) -> PrepareBizum:
-        return PrepareBizum(self.prepare_bizum.recipient.strip(), self.prepare_bizum.amount_minor)
+        recipient = self.prepare_bizum.recipient
+        return PrepareBizum(
+            recipient.strip() if recipient is not None else None,
+            self.prepare_bizum.amount_minor,
+        )
 
 
 class PrepareOwnTransferOp(_Closed):

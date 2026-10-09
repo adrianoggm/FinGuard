@@ -127,15 +127,17 @@ class Visualize:
 
 @dataclass(frozen=True)
 class PrepareBizum:
-    """Prepare a bank-authored Bizum preview. This operation can never confirm or send money."""
+    """Start or continue a Bizum draft; only the bank preview can reach confirmation."""
 
-    recipient: str
-    amount_minor: int
+    recipient: str | None
+    amount_minor: int | None
 
     def __post_init__(self) -> None:
-        if not self.recipient.strip() or len(self.recipient) > MAX_RECIPIENT_NAME:
+        if self.recipient is not None and (
+            not self.recipient.strip() or len(self.recipient) > MAX_RECIPIENT_NAME
+        ):
             raise InvalidValueError("Bizum recipient name is invalid")
-        if (
+        if self.amount_minor is not None and (
             isinstance(self.amount_minor, bool)
             or not isinstance(self.amount_minor, int)
             or not 0 < self.amount_minor <= MAX_PAYMENT_MINOR

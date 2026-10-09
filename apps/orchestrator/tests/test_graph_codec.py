@@ -75,8 +75,10 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
         rail=Rail.BIZUM,
         recipient_phone="+34600000000",
     )
+    candidates = (uuid4(), uuid4())
     draft_state = DialogueState(
-        uuid4(), payment=PaymentDraftPending(PaymentDraft(recipient_name="Marta"))
+        uuid4(),
+        payment=PaymentDraftPending(PaymentDraft(amount_minor=2_600), candidates),
     )
     confirmation_state = DialogueState(
         uuid4(), payment=PaymentConfirmationPending(preview, "workflow-opaque-123")
@@ -86,6 +88,8 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
     confirmation_restored = codec.loads_state(codec.dumps_state(confirmation_state))
 
     assert draft_restored == draft_state
+    assert isinstance(draft_restored.payment, PaymentDraftPending)
+    assert draft_restored.payment.candidate_contact_ids == candidates
     assert confirmation_restored == confirmation_state
     assert confirmation_restored.payment is not None
     assert confirmation_restored.payment.preview.intent_id == intent_id
@@ -107,6 +111,30 @@ def test_dialogue_checkpoint_round_trips_own_transfer_draft() -> None:
 def test_own_transfer_workflow_id_must_be_a_uuid_hex() -> None:
     with pytest.raises(InvalidValueError, match="opaque UUID"):
         OwnTransferDraftPending(workflow_id="x" * 32)
+
+
+def test_schema_seven_dialogue_loads_with_no_pending_own_transfer() -> None:
+    encoded = json.loads(codec.dumps_state(DialogueState(uuid4(), version=4)))
+    encoded["schema_version"] = 7
+    encoded["state"]["f"].pop("own_transfer")
+
+    restored = codec.loads_state(json.dumps(encoded))
+
+    assert restored.version == 4
+    assert restored.own_transfer is None
+
+
+def test_schema_eight_payment_draft_without_candidate_ids_still_loads() -> None:
+    state = DialogueState(uuid4(), payment=PaymentDraftPending(PaymentDraft(amount_minor=2_000)))
+    encoded = json.loads(codec.dumps_state(state))
+    encoded["schema_version"] = 8
+    encoded["state"]["f"]["payment"]["f"].pop("candidate_contact_ids")
+
+    restored = codec.loads_state(json.dumps(encoded))
+
+    assert isinstance(restored.payment, PaymentDraftPending)
+    assert restored.payment.draft.amount_minor == 2_000
+    assert restored.payment.candidate_contact_ids == ()
 
 
 def test_structured_operations_round_trip_dates_and_closed_enum_values() -> None:

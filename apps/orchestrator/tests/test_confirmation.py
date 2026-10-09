@@ -116,3 +116,9 @@ def test_politeness_travelling_with_a_yes_is_still_a_yes() -> None:
     assert confirmation.is_confirmation("vale, gracias")
     assert confirmation.is_confirmation("hazlo por favor")
     assert confirmation.is_confirmation("de acuerdo")
+
+
+def test_checkpoint_reply_is_reduced_to_a_decision() -> None:
+    assert confirmation.canonical_reply("s\u00ed, gracias") == "s\u00ed"
+    assert confirmation.canonical_reply("no, cancela") == "no"
+    assert confirmation.canonical_reply("s\u00ed, pero cambia el importe") == "respuesta ambigua"

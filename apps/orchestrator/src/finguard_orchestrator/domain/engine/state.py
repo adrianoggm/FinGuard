@@ -207,6 +207,11 @@ class PaymentDraftPending:
     """A payment paused while it still needs a recipient or amount."""
 
     draft: PaymentDraft
+    candidate_contact_ids: tuple[UUID, ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(set(self.candidate_contact_ids)) != len(self.candidate_contact_ids):
+            raise InvalidValueError("payment contact candidates must be unique")
 
 
 @dataclass(frozen=True)

@@ -19,16 +19,20 @@ idempotency and compare-and-set version checks remain mandatory at the operation
 
 The graph's versioned conversation state is the source of truth. It includes the active financial
 plan, pending operation or clarification, recent turns, a bounded aggregate-only result artifact,
-and the verified chart specification/profile with result and chart versions. Its version-8 schema
+and the verified chart specification/profile with result and chart versions. Its version-9 schema
 also has typed slots for an unfinished payment draft or the exact bank-authored confirmation
 preview, so a later graph turn can resume from canonical state without reconstructing payment data
 from the client. Bizum preparation and confirmation now run in the same conversation graph. Mixed
 analytics/Bizum turns save the analytic result and pending bank preview with one canonical version
-advance. Own-account transfers use a typed pending draft when the destination or amount is missing,
-then the existing bank preview and explicit-confirmation path. Drafts retain an opaque idempotency
-key across clarification turns; supplied values are grounded against the account catalogue and
-closed amount grammar before the payment command is called. Checkpoint state is versioned separately
-from the application schema. Movement ledgers never enter canonical state or checkpoints.
+advance. Bizum and own-account transfers use typed pending drafts when a contact/account or amount is
+missing, then the existing bank preview and explicit-confirmation path. Drafts survive unrelated
+analytics turns; ambiguous Bizum contacts remain restricted to the bank directory candidates, and
+the two kinds of draft cannot overwrite each other. Transfer drafts retain an opaque idempotency key
+across clarification turns. Supplied values are grounded against the relevant account catalogue and
+closed amount/contact readers before the payment command is called. A confirmation reply is reduced
+to an allow-listed yes/no/unclear value before LangGraph checkpoints its resume payload. Checkpoint
+state is versioned separately from the application schema. Movement ledgers never enter canonical
+state or checkpoints.
 
 The canonical dialogue state retains up to eight typed prior focuses and their account scopes. The
 model can emit the closed `restore_previous` operation when the user explicitly goes back, selecting
@@ -55,7 +59,7 @@ One graph follows the smallest useful cycle:
 Visual operations are first-class typed edits over a persisted result: changing chart type reuses
 the result; changing an analytical dimension requests a new validated aggregation. The current
 conversation graph slice creates and restyles bar/line charts and KPIs from the bounded active
-result. Bizum preparation, own-account transfer preparation and confirmation use
+result. Bizum draft/preparation, own-account transfer draft/preparation and confirmation use
 `interrupt()`/`Command(resume=...)` in this same compiled graph and invoke the existing guarded
 banking commands. The confirmation node reuses the
 persisted bank preview, requires the account-scoped workflow id and confirmation scope, and does not

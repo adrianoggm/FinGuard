@@ -152,6 +152,7 @@ class PrepareChosenPaymentCommand(Command[PaymentAnswer]):
     currency: str
     idempotency_key: str
     rail: Rail = Rail.BIZUM
+    recipient_contact_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -359,6 +360,7 @@ class PrepareChosenPaymentHandler:
                 amount_minor=command.amount_minor,
                 currency=command.currency,
                 rail=command.rail,
+                recipient_contact_id=command.recipient_contact_id,
             )
         except InvalidValueError as refused:
             # A payment of nothing, a negative one, or one beyond the ceiling. The same value

@@ -10,8 +10,9 @@ Checked two ways (ruling R18), because each misses what the other sees:
   still answer on both routes with nothing tripped. This is what "the new flow does not consult
   the readers" means, which an import list alone cannot show.
 
-And the sentence itself (ruling R19): it reaches the interpreter and the turn the state remembers
-for the next prompt, and nothing else.
+And the sentence itself (ruling R19): an ordinary turn reaches the interpreter and the remembered
+turn; payment slots reach only the closed grounding adapter. A confirmation resume is reduced to an
+allow-listed decision before it enters the checkpoint.
 """
 
 import ast
@@ -181,9 +182,9 @@ def test_the_sentence_reaches_only_the_interpreter_and_the_remembered_turn() -> 
     assert uses == ["DialogueTurn(said=)", "self._interpreter.interpret(...)"]
 
 
-def test_the_graph_hands_the_sentence_to_the_interpreter_and_the_remembered_turn_alone() -> None:
-    """R19 for the graph: the handler puts the sentence in the runtime context, which LangGraph
-    never checkpoints, and the nodes read it there for the interpreter and the remembered turn."""
+def test_the_graph_limits_sentence_uses_and_normalizes_confirmation_before_checkpoint() -> None:
+    """Ordinary text reaches interpretation and remembered state; payment slots are grounded and
+    free-form confirmation text is normalized before it is sent as a LangGraph resume value."""
     handler = _tree(SRC / "application" / "graph" / "graph_turn.py")
     nodes = _tree(SRC / "application" / "graph" / "graph.py")
     handler_parents, node_parents = _parents(handler), _parents(nodes)
@@ -201,18 +202,29 @@ def test_the_graph_hands_the_sentence_to_the_interpreter_and_the_remembered_turn
 
     # The fingerprint binds a request id to its sentence (R45): `_fingerprint` hashes its bytes
     # (`sentence.encode`), and the hash is compared for equality, never read for what it says.
-    assert in_handler == [
-        "DialogueTurn(...)",
-        "GraphContext(...)",
-        "_fingerprint(...)",
-        "sentence.encode",
-    ]
+    assert "confirmation.canonical_reply(...)" in in_handler
+    assert "Command(resume=)" not in in_handler
+    assert "_fingerprint(...)" in in_handler
+    assert "sentence.encode" in in_handler
     assert in_nodes == [
         "DialogueTurn(...)",
         "DialogueTurn(...)",
+        "DialogueTurn(...)",
+        "DialogueTurn(...)",
+        "DialogueTurn(...)",
         "DialogueTurn(said=)",
+        "_remember_result(...)",
+        "_remember_result(...)",
+        "_remember_result(...)",
+        "_remember_result(...)",
+        "candidate.turns[-1].said == ctx.sentence",
+        "candidate.turns[-1].said == ctx.sentence",
         "ctx.ports.interpreter.interpret(...)",
         "ctx.ports.visual_policy.decide(...)",
+        "payment_input.amount(...)",
+        "payment_input.destination_candidates(...)",
+        "payment_input.mentions_amount(...)",
+        "payment_input.resolve_bizum_draft(...)",
     ]
 
 

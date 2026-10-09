@@ -41,6 +41,7 @@ from finguard_orchestrator.domain.engine.state import (
     Focus,
     Measure,
     Missing,
+    PaymentDraftPending,
     Pending,
     QueryFocus,
     RatioFocus,
@@ -65,6 +66,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
@@ -612,6 +614,14 @@ def test_bizum_is_a_typed_prepare_operation_with_a_bounded_integer_amount() -> N
     )
 
     assert parsed == (PrepareBizum("Marta Solis Vega", 2500),)
+    assert read(
+        '{"operations":[{"prepare_bizum":{"recipient":"Marta Solis Vega","amount_minor":null}}]}',
+        CATALOGUE,
+    ) == (PrepareBizum("Marta Solis Vega", None),)
+    assert read(
+        '{"operations":[{"prepare_bizum":{"recipient":null,"amount_minor":null}}]}',
+        CATALOGUE,
+    ) == (PrepareBizum(None, None),)
     with pytest.raises(UnreadableError):
         read(
             '{"operations":[{"prepare_bizum":{"recipient":"Marta","amount_minor":0}}]}',
@@ -1002,6 +1012,20 @@ def test_the_selected_accounts_are_shown_by_name(names: dict[UUID, str], shown: 
     )
 
     assert shown in prompt[prompt.index("<<<STATE") : prompt.index("STATE>>>")]
+
+
+def test_a_pending_bizum_draft_is_part_of_the_interpreted_state() -> None:
+    state = DialogueState(
+        UUID(int=1),
+        payment=PaymentDraftPending(PaymentDraft(recipient_name="Aitor Beltran Diaz")),
+    )
+
+    prompt = build_prompt("20 euros", state, today=TODAY, categories=CATEGORIES)
+    shown = prompt[prompt.index("<<<STATE") : prompt.index("STATE>>>")]
+
+    assert "Bizum draft in progress" in shown
+    assert "recipient Aitor Beltran Diaz" in shown
+    assert "amount not given" in shown
 
 
 async def test_the_interpreter_shows_the_names_it_is_given() -> None:

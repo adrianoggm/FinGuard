@@ -111,8 +111,8 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
 
     bizum = operations["prepare_bizum"]
     assert bizum["properties"] == {
-        "recipient": {"type": "string"},
-        "amount_minor": {"type": "integer"},
+        "recipient": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "amount_minor": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
     }
     assert bizum["required"] == ["recipient", "amount_minor"]
     assert bizum["additionalProperties"] is False

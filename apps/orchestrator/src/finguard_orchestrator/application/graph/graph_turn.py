@@ -67,6 +67,7 @@ from finguard_orchestrator.domain.ports.turn_reservations import (
     TurnKey,
     TurnReservationsPort,
 )
+from finguard_orchestrator.domain.services import confirmation
 
 logger = logging.getLogger(__name__)
 
@@ -291,7 +292,8 @@ class GraphTurnHandler:
                     ):
                         raise StaleDialogueError(turn.held)
                     return Command(
-                        resume=sentence,
+                        # Checkpoints hold only the decision, never the user's free-form reply.
+                        resume=confirmation.canonical_reply(sentence),
                         update={
                             "turn_id": turn.request_id,
                             "expected_version": turn.key.expected_version,

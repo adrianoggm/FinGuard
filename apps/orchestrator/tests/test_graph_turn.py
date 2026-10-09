@@ -51,10 +51,17 @@ from finguard_orchestrator.domain.engine.state import (
     DialogueState,
     DialogueTurn,
     PaymentConfirmationPending,
+    PaymentDraftPending,
     QueryFocus,
 )
 from finguard_orchestrator.domain.engine.transitions import apply
-from finguard_orchestrator.domain.enums import Direction, GroupBy, PaymentOutcome, Period
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    PaymentOutcome,
+    Period,
+    PlanningOutcome,
+)
 from finguard_orchestrator.domain.errors import BankingUnavailableError, NotAuthorisedError
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
@@ -1160,6 +1167,180 @@ async def test_bizum_without_prepare_scope_never_calls_banking() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bizum_draft_resumes_when_the_user_supplies_the_missing_amount() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", None),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+
+    asked = await world.ask(
+        sentence="Haz un bizum a Aitor Beltran Diaz",
+        request_id="bizum-draft",
+        caller_scopes=scopes,
+    )
+
+    assert asked.result is not None and "bizum a Aitor" in asked.result.text
+    assert isinstance(asked.state.payment, PaymentDraftPending)
+    assert asked.state.payment.draft.recipient_contact_id is not None
+    assert asked.state.version == 1
+    assert bank.prepared == []
+
+    world.interpreter._turns.append((PrepareBizum(None, 2_000),))  # noqa: SLF001
+    preview = await world.ask(
+        conversation_id=asked.state.conversation_id,
+        version=asked.state.version,
+        sentence="20 euros",
+        request_id="bizum-draft-amount",
+        caller_scopes=scopes,
+    )
+
+    assert preview.result is not None
+    assert preview.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert preview.state.version == 2
+    assert isinstance(preview.state.payment, PaymentConfirmationPending)
+    assert bank.prepared[0].amount_minor == 2_000
+    assert bank.prepared[0].recipient_contact_id == UUID(int=8)
+
+
+@pytest.mark.asyncio
+async def test_bizum_ambiguous_contact_stays_restricted_to_named_candidates() -> None:
+    world = World((PrepareBizum("Marta", 2_000),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare"})
+
+    asked = await world.ask(
+        sentence="Haz un bizum de 20 euros a Marta",
+        request_id="bizum-ambiguous",
+        caller_scopes=scopes,
+    )
+
+    assert asked.result is not None and "Marta Solis Vega" in asked.result.text
+    assert isinstance(asked.state.payment, PaymentDraftPending)
+    candidates = asked.state.payment.candidate_contact_ids
+    assert len(candidates) == 2 and bank.prepared == []
+
+    world.interpreter._turns.append((PrepareBizum("Aitor Beltran Diaz", None),))  # noqa: SLF001
+    rejected = await world.ask(
+        conversation_id=asked.state.conversation_id,
+        version=asked.state.version,
+        sentence="Aitor Beltran Diaz",
+        request_id="bizum-outside-candidates",
+        caller_scopes=scopes,
+    )
+
+    assert rejected.result is not None
+    assert rejected.result.outcome == PlanningOutcome.INVALID_DOMAIN.value
+    assert isinstance(rejected.state.payment, PaymentDraftPending)
+    assert rejected.state.payment.candidate_contact_ids == candidates
+    assert bank.prepared == []
+
+    world.interpreter._turns.append((PrepareBizum("Marta Solis Vega", None),))  # noqa: SLF001
+    preview = await world.ask(
+        conversation_id=asked.state.conversation_id,
+        version=rejected.state.version,
+        sentence="Marta Solis Vega",
+        request_id="bizum-choose-marta",
+        caller_scopes=scopes,
+    )
+
+    assert preview.result is not None
+    assert preview.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert bank.prepared[0].recipient_contact_id == UUID("55555555-5555-5555-5555-555555555555")
+
+
+@pytest.mark.asyncio
+async def test_bizum_draft_survives_an_unrelated_query_and_then_resumes() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", None),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare"})
+    asked = await world.ask(
+        sentence="Haz un bizum a Aitor Beltran Diaz",
+        request_id="bizum-interrupt-start",
+        caller_scopes=scopes,
+    )
+
+    world.interpreter._turns.append(GROCERIES_IN_JULY)  # noqa: SLF001
+    query = await world.ask(
+        conversation_id=asked.state.conversation_id,
+        version=asked.state.version,
+        sentence="Cuanto gaste en julio",
+        request_id="bizum-interrupt-query",
+        caller_scopes=scopes,
+    )
+
+    assert query.result is not None and "410,00" in query.result.text
+    assert isinstance(query.state.payment, PaymentDraftPending)
+    assert query.state.payment.draft.recipient_name == "Aitor Beltran Diaz"
+    assert bank.prepared == []
+
+    world.interpreter._turns.append((PrepareBizum(None, 2_000),))  # noqa: SLF001
+    preview = await world.ask(
+        conversation_id=query.state.conversation_id,
+        version=query.state.version,
+        sentence="20 euros",
+        request_id="bizum-interrupt-resume",
+        caller_scopes=scopes,
+    )
+
+    assert preview.result is not None
+    assert preview.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert bank.prepared[0].amount_minor == 2_000
+
+
+@pytest.mark.asyncio
+async def test_new_transfer_cannot_overwrite_an_unfinished_bizum_draft() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", None),))
+    bank = with_payment_commands(world)
+    pending = await world.ask(
+        sentence="Haz un bizum a Aitor Beltran Diaz",
+        request_id="bizum-before-transfer",
+        caller_scopes=frozenset({"payments:prepare"}),
+    )
+    assert isinstance(pending.state.payment, PaymentDraftPending)
+
+    world.interpreter._turns.append((PrepareOwnTransfer("Fondo indexado"),))  # noqa: SLF001
+    rejected = await world.ask(
+        conversation_id=pending.state.conversation_id,
+        version=pending.state.version,
+        sentence="Traspasa 20 euros al fondo indexado",
+        request_id="transfer-while-bizum-pending",
+        caller_scopes=frozenset({"payments:prepare"}),
+    )
+
+    assert rejected.result is not None
+    assert rejected.result.outcome == PlanningOutcome.INVALID_DOMAIN.value
+    assert isinstance(rejected.state.payment, PaymentDraftPending)
+    assert rejected.state.own_transfer is None
+    assert bank.prepared == []
+
+
+@pytest.mark.asyncio
+async def test_bizum_out_of_range_amount_does_not_reuse_a_saved_amount() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", None),))
+    bank = with_payment_commands(world)
+    asked = await world.ask(
+        sentence="Haz un bizum a Aitor Beltran Diaz",
+        request_id="bizum-prepare-for-invalid-amount",
+        caller_scopes=frozenset({"payments:prepare"}),
+    )
+    assert asked.result is not None
+    assert isinstance(asked.state.payment, PaymentDraftPending)
+
+    world.interpreter._turns.append((PrepareBizum(None, None),))  # noqa: SLF001
+    invalid = await world.ask(
+        conversation_id=asked.state.conversation_id,
+        version=asked.state.version,
+        sentence="20000000 euros",
+        request_id="bizum-invalid-amount",
+        caller_scopes=frozenset({"payments:prepare"}),
+    )
+
+    assert invalid.result is not None
+    assert invalid.result.outcome == PlanningOutcome.INVALID_DOMAIN.value
+    assert isinstance(invalid.state.payment, PaymentDraftPending)
+    assert bank.prepared == []
+
+
+@pytest.mark.asyncio
 async def test_mixed_query_and_bizum_commit_once_and_keep_query_result() -> None:
     world = World(GROCERIES_IN_JULY + (PrepareBizum("Aitor Beltran Diaz", 2_000),))
     bank = with_payment_commands(world)
@@ -1317,6 +1498,51 @@ async def test_own_transfer_without_prepare_scope_never_calls_banking() -> None:
         )
 
     assert bank.prepared == [] and bank.confirmed == []
+
+
+@pytest.mark.asyncio
+async def test_mixed_query_and_own_transfer_share_one_canonical_commit() -> None:
+    world = World(GROCERIES_IN_JULY + (PrepareOwnTransfer("Fondo indexado"),))
+    bank = with_payment_commands(world)
+
+    answer = await world.ask(
+        sentence=("Cuanto gaste en julio y traspasa 20 euros al fondo indexado"),
+        request_id="query-and-own-transfer",
+        caller_scopes=frozenset({"payments:prepare"}),
+    )
+
+    assert answer.result is not None
+    assert "410,00" in answer.result.text
+    assert "20,00" in answer.result.text
+    assert answer.state.version == 1
+    assert answer.state.active_result is not None
+    assert isinstance(answer.state.payment, PaymentConfirmationPending)
+    assert len(world.ledger.ran) == 1
+    assert len(bank.prepared) == 1
+
+
+@pytest.mark.asyncio
+async def test_declining_own_transfer_cancels_preview_without_confirming() -> None:
+    world = World((PrepareOwnTransfer("Fondo indexado"),))
+    bank = with_payment_commands(world)
+    prepared = await world.ask(
+        sentence="Traspasa 20 euros al fondo indexado",
+        request_id="own-transfer-cancel-preview",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    cancelled = await world.ask(
+        conversation_id=prepared.state.conversation_id,
+        version=prepared.state.version,
+        sentence="no",
+        request_id="own-transfer-cancel",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert cancelled.result is not None
+    assert cancelled.result.outcome == PaymentOutcome.CANCELLED.value
+    assert bank.cancelled == [INTENT]
+    assert bank.confirmed == []
 
 
 @pytest.mark.asyncio

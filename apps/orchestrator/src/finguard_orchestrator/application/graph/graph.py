@@ -84,6 +84,7 @@ from finguard_orchestrator.domain.engine.state import (
     DialogueTurn,
     OwnTransferDraftPending,
     PaymentConfirmationPending,
+    PaymentDraftPending,
 )
 from finguard_orchestrator.domain.engine.transitions import Transition, Work
 from finguard_orchestrator.domain.enums import (
@@ -133,9 +134,9 @@ logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "conversation/8"
+GRAPH_VERSION: Final = "conversation/9"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
-STATE_SCHEMA_VERSION: Final = 8
+STATE_SCHEMA_VERSION: Final = 9
 MAX_BANK_EXECUTIONS: Final = 3
 MAX_MODEL_CALLS: Final = 3
 # A backstop under the budgets: one step per read, and plan, validate and assess per loop.
@@ -508,13 +509,38 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
     operations = codec.loads(state["ops"])
     own_transfer = next((item for item in operations if isinstance(item, PrepareOwnTransfer)), None)
     if own_transfer is not None:
+        if isinstance(current.payment, PaymentDraftPending):
+            return await _finish_own_transfer_refusal(
+                state,
+                ctx,
+                current,
+                base_result,
+                "Termina o cancela el Bizum pendiente antes de iniciar otra operación de pago.",
+            )
         return await _prepare_own_transfer(state, ctx, current, base_result, own_transfer)
     op = next((item for item in operations if isinstance(item, PrepareBizum)), None)
     if op is None:
         raise RuntimeError("payment node reached without a PrepareBizum operation")
+    if current.own_transfer is not None:
+        return await _finish_payment_without_command(
+            state,
+            ctx,
+            "Termina o cancela la transferencia pendiente antes de iniciar otro pago.",
+            current,
+            base_result,
+        )
     contacts = await ctx.ports.contacts.all_of(account_id)
-    grounded = payment_input.grounded_bizum(ctx.sentence, op, contacts)
-    if grounded is None:
+    previous_payment = current.payment if isinstance(current.payment, PaymentDraftPending) else None
+    resolved = payment_input.resolve_bizum_draft(
+        ctx.sentence,
+        op,
+        contacts,
+        previous=previous_payment.draft if previous_payment is not None else None,
+        candidate_contact_ids=(
+            previous_payment.candidate_contact_ids if previous_payment is not None else ()
+        ),
+    )
+    if resolved.rejected:
         return await _finish_payment_without_command(
             state,
             ctx,
@@ -523,12 +549,56 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
             current,
             base_result,
         )
-    recipient, grounded_amount = grounded
+    if resolved.candidate_contact_ids or resolved.draft.missing:
+        if resolved.candidate_contact_ids:
+            names = tuple(
+                contact.display_name
+                for contact in contacts
+                if contact.contact_id in resolved.candidate_contact_ids
+            )
+            question = payment_writer.several_candidates(names)
+        else:
+            question = payment_writer.still_missing(resolved.draft)
+        result = AskFinancialQuestionResult(
+            outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+            text=question,
+        )
+        result = _combine_payment_result(base_result, result)
+        candidate = _remember_result(
+            replace(
+                current,
+                payment=PaymentDraftPending(resolved.draft, resolved.candidate_contact_ids),
+            ),
+            ctx.sentence,
+            result.text,
+        )
+        saved = await ctx.ports.store.save(
+            candidate,
+            account_id=account_id,
+            expected_version=state["expected_version"],
+        )
+        ctx.cache["dialogue"], ctx.cache["result"], ctx.cache["saved"] = (
+            saved,
+            result,
+            saved,
+        )
+        return {"status": "payment_complete", "expected_version": saved.version}
+    recipient = next(
+        (
+            contact
+            for contact in contacts
+            if contact.contact_id == resolved.draft.recipient_contact_id
+        ),
+        None,
+    )
+    if recipient is None or resolved.draft.amount_minor is None:
+        raise RuntimeError("complete Bizum draft lacks a grounded recipient or amount")
     command = PrepareChosenPaymentCommand(
         account_id=account_id,
         recipient_name=recipient.display_name,
-        amount_minor=grounded_amount,
-        currency="EUR",
+        recipient_contact_id=recipient.contact_id,
+        amount_minor=resolved.draft.amount_minor,
+        currency=resolved.draft.currency,
         idempotency_key=f"conversation-bizum:{state['turn_id']}",
         rail=Rail.BIZUM,
     )

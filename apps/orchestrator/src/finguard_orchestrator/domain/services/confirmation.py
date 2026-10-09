@@ -113,3 +113,12 @@ def is_refusal(reply: str) -> bool:
     """
     words = _words(reply)
     return bool(words) and all(word in _NO for word in words)
+
+
+def canonical_reply(reply: str) -> str:
+    """Reduce a confirmation turn to an allow-listed response before checkpointing it."""
+    if is_confirmation(reply):
+        return "s\u00ed"
+    if is_refusal(reply):
+        return "no"
+    return "respuesta ambigua"
