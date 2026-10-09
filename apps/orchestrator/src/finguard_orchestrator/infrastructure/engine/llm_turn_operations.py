@@ -8,6 +8,14 @@ another turn's latency to find out what two did not.
 A provider that cannot answer at all is different: no question to the person fixes it, so it is
 raised as `InterpretationFailedError` for the handler to report. There is no fallback across
 models here; walking the catalogue is the provider layer's policy and lives there.
+
+**On a hosted runtime with strict decoding there is often nothing to repair.** Groq's strict
+`json_schema` refuses an answer that breaks the schema with an HTTP 400, and an answer cut off by
+the token budget either with a 400 ("Failed to validate JSON") or with `finish_reason: length` and
+no content. `OpenAiCompatibleProvider` raises `ProviderFailedError` for each, so each becomes
+`InterpretationFailedError` with no repair call: there is no answer to send back. The repair is
+for a runtime that returns what the model wrote, which Ollama does when an answer is valid against
+the grammar but refused by the domain, or truncated at `num_predict`.
 """
 
 import logging

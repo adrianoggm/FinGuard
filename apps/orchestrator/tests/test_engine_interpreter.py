@@ -360,6 +360,26 @@ def nodes(schema: Any) -> list[dict[str, Any]]:
     return found
 
 
+PORTABLE_KEYWORDS = {
+    "$defs",
+    "$ref",
+    "additionalProperties",
+    "anyOf",
+    "enum",
+    "items",
+    "maxItems",
+    "maxLength",
+    "maximum",
+    "minItems",
+    "minimum",
+    "pattern",
+    "properties",
+    "required",
+    "type",
+}
+ISO_DATE = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+
+
 def test_the_schema_is_closed() -> None:
     schema = schema_for(CATALOGUE)
 
@@ -371,8 +391,11 @@ def test_the_schema_is_closed() -> None:
         # small model asked to choose whether to emit a key gets that choice wrong.
         assert node["required"] == list(node["properties"])
     for node in nodes(schema):
-        # Keywords not every constrained decoder takes; the same constraint is said portably.
-        assert not {"oneOf", "discriminator", "const", "default", "title"} & set(node)
+        # Only keywords every constrained decoder here takes (Ollama's grammar, Groq's strict
+        # json_schema); anything else is said in these or not at all.
+        assert set(node) <= PORTABLE_KEYWORDS, set(node) - PORTABLE_KEYWORDS
+    dated = schema["$defs"]["DatedWindow"]["properties"]
+    assert dated["start"] == dated["end"] == {"pattern": ISO_DATE, "type": "string"}
     operations = schema["properties"]["operations"]
     assert (operations["minItems"], operations["maxItems"]) == (1, MAX_OPERATIONS)
     assert all("maxItems" in node for node in nodes(schema) if node.get("type") == "array")

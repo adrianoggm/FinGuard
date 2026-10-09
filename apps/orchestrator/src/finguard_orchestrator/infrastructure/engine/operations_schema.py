@@ -88,6 +88,8 @@ _MAX_PROBLEMS: Final = 4
 _CATALOGUE: Final = "categories"
 _CATEGORY_MARK: Final = {"$catalogue": _CATALOGUE}
 
+_ISO_DATE: Final = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+
 
 def _in_catalogue(name: str, info: ValidationInfo) -> str:
     catalogue = (info.context or {}).get(_CATALOGUE)
@@ -378,7 +380,9 @@ def _portable(node: Any, categories: tuple[str, ...]) -> Any:
     """`node` said in the subset every constrained decoder here takes.
 
     `oneOf` becomes `anyOf` (the branches are disjoint on `op` and on `field`, so they mean the
-    same), `const` becomes a one-value `enum`, and the annotations no decoder needs go: `title`,
+    same), `const` becomes a one-value `enum`, `format: date` becomes the pattern of one (a
+    format is a hint to some decoders and unknown to others; the reader still refuses a 30th of
+    February, which no pattern can), and the annotations no decoder needs go: `title`,
     `default`, `discriminator`, and `description`, which pydantic fills from the enums' docstrings
     and a hosted runtime may show the model. Every object then requires every key it has, the
     only shape strict decoders take.
@@ -399,6 +403,8 @@ def _portable(node: Any, categories: tuple[str, ...]) -> Any:
             said["anyOf"] = _portable(value, categories)
         elif key == "const":
             said["enum"] = [value]
+        elif (key, value) == ("format", "date"):
+            said["pattern"] = _ISO_DATE
         else:
             said[key] = _portable(value, categories)
     if "properties" in said:
