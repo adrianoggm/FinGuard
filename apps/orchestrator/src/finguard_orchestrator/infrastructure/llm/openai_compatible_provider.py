@@ -52,7 +52,7 @@ from typing import Any, Final
 
 import httpx2 as httpx
 
-from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.errors import AnswerRefusedError, ProviderFailedError
 
 # What the schema is called on the wire. The API wants a name beside the schema; nothing reads it
 # back, so it says what the object is rather than carrying an identifier.
@@ -143,7 +143,15 @@ class OpenAiCompatibleProvider:
             # The status and nothing else. A 400 from a rejected schema carries the reason in the
             # body, and that body quotes the request — which contains the user's sentence. The
             # rule that nothing a person typed reaches a log file does not stop at our own logger.
-            raise ProviderFailedError(self.name, f"HTTP {exc.response.status_code}") from exc
+            status = exc.response.status_code
+            if (refused := _refused_generation(exc.response)) is not None:
+                # Groq's strict mode checks the answer after generating it: the model did answer,
+                # in the wrong shape, and the caller may ask once more (ruling R31). What it wrote
+                # travels on the error, never in its message.
+                raise AnswerRefusedError(
+                    self.name, f"HTTP {status} json_validate_failed", generation=refused or None
+                ) from None
+            raise ProviderFailedError(self.name, f"HTTP {status}") from exc
         except httpx.TimeoutException as exc:
             raise ProviderFailedError(
                 self.name, f"timed out after {self.timeout_seconds}s"
@@ -181,6 +189,20 @@ class OpenAiCompatibleProvider:
                 return response.status_code == 200
         except httpx.HTTPError:
             return False
+
+
+def _refused_generation(response: Any) -> str | None:
+    """What the model wrote, when the endpoint refused it after generating (`json_validate_failed`,
+    "" when it did not say what), or None for any other error."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict) or error.get("code") != "json_validate_failed":
+        return None
+    generation = error.get("failed_generation")
+    return generation if isinstance(generation, str) else ""
 
 
 def _answer_in(body: Any, provider: str) -> str:

@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 from support.episodes import (
     INTENT,
     Accounts,
@@ -753,3 +754,10 @@ def test_a_searchs_offers_ride_through_an_engine_answer_in_the_same_conversation
     # A new conversation: offers sealed for another id would never verify, so none ride along.
     assert elsewhere.conversation["conversation_id"] != str(UUID(int=99))
     assert elsewhere.conversation["activity_offers"] is None
+
+
+@pytest.mark.parametrize("field", ["engine_temperature", "engine_max_output_tokens"])
+def test_the_engines_sampling_refuses_a_negative(field: str) -> None:
+    """M-7: refused when the settings load, by name, rather than by the provider mid-turn."""
+    with pytest.raises(ValidationError, match=field):
+        Settings(**{field: -1})  # type: ignore[arg-type]

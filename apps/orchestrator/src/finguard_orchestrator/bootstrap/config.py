@@ -435,7 +435,7 @@ class Settings(BaseSettings):
     engine_max_output_tokens: int = Field(default=600, gt=0)
     # Zero for the planner's reason: an interpretation that varies between identical turns cannot
     # be measured.
-    engine_temperature: float = 0.0
+    engine_temperature: float = Field(default=0.0, ge=0)
 
     # What a spending or income question means when it names no account and the conversation has
     # chosen none.

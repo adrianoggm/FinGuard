@@ -49,6 +49,20 @@ class ProviderFailedError(DomainError):
         super().__init__(f"provider {provider!r} failed: {reason}")
 
 
+class AnswerRefusedError(ProviderFailedError):
+    """The provider generated an answer and then refused it against the schema it was given.
+
+    Groq's strict mode validates after generating, so a wrong shape arrives as an error rather
+    than as text. It is still an answer, not an outage: a caller that can ask again with what was
+    wrong may do so. `generation` is what the model wrote, when the provider returned it. It can
+    quote the person's sentence, so it is never in the message and never logged.
+    """
+
+    def __init__(self, provider: str, reason: str, *, generation: str | None = None) -> None:
+        super().__init__(provider, reason)
+        self.generation = generation
+
+
 class UnknownProviderError(DomainError):
     code = "unknown_provider"
 
