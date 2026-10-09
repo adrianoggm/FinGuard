@@ -105,6 +105,23 @@ def test_a_written_amount_beyond_the_payment_ceiling_is_refused() -> None:
     assert payment_words.amount_in("once mil euros") is None
 
 
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [
+        ("75 euros", True),
+        ("veinte", True),
+        ("20000000 euros", True),
+        ("en los ultimos 3 meses", False),
+        ("el 15 de julio", False),
+        ("no sé", False),
+    ],
+)
+def test_amount_mention_detection_includes_out_of_range_amounts(
+    sentence: str, expected: bool
+) -> None:
+    assert payment_words.mentions_amount(sentence) is expected
+
+
 # --- the recipient -------------------------------------------------------------------
 
 

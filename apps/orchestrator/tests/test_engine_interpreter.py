@@ -601,6 +601,7 @@ def test_operations_are_keyed_by_their_name() -> None:
         "create_visualization",
         "update_visualization",
         "prepare_bizum",
+        "prepare_own_transfer",
     ]
 
 
@@ -781,6 +782,21 @@ LONGEST = (
     )
     * 10
 )[:MAX_SENTENCE]
+
+
+def test_prompt_keeps_category_breakdowns_unlimited_by_default() -> None:
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    assert "Do not set a limit unless asked for top N or for highest-spending months" in prompt
+    assert '"group_by":"CATEGORY"' in prompt
+    assert '"limit":3' in prompt  # Reserved for the explicit monthly-highest question.
+
+
+def test_prompt_maps_last_year_to_a_rolling_twelve_month_window() -> None:
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    assert "counted LAST_N_MONTHS n=12" in prompt
+    assert "not a date range" in prompt
 
 
 def test_prompt_fits_the_budget() -> None:

@@ -32,6 +32,9 @@ from finguard_orchestrator.domain.services import spanish, spanish_numbers
 _AMOUNT: Final = re.compile(
     r"(?<![\d.,+])(\d{1,3}(?:\.\d{3})+|\d+)(?:[.,](\d{1,2}))?(?![\d])",
 )
+_EXPLICIT_CURRENCY_AMOUNT: Final = re.compile(
+    r"(?<![\d.,+])\d[\d.,]*\s*(?:€|euros?|eur)(?![a-z])", re.IGNORECASE
+)
 
 # What looks like an amount and is not. A phone number is the dangerous one: read as an amount it
 # becomes an enormous payment in front of a confirmation prompt, where a distracted "sí" is the only
@@ -212,6 +215,22 @@ def amount_in(sentence: str) -> int | None:
         # every layer after this one has to reject.
         return None
     return minor
+
+
+def mentions_amount(sentence: str) -> bool:
+    """Whether the turn contains an amount phrase, including one outside the permitted ceiling.
+
+    A pending transfer must not silently reuse its old amount when the user attempted to replace it
+    with a value this assistant cannot offer to move.
+    """
+    # A currency marker distinguishes a too-large amount from a phone number. `amount_in` then
+    # refuses it on the configured ceiling, while this predicate prevents silently reusing a
+    # previous amount in a pending draft.
+    if _EXPLICIT_CURRENCY_AMOUNT.search(sentence):
+        return True
+    if _NOT_AN_AMOUNT.search(sentence):
+        return False
+    return _AMOUNT.search(sentence) is not None or spanish_numbers.money_in(sentence) is not None
 
 
 def concept_in(sentence: str, directory: tuple[Contact, ...] = ()) -> str | None:

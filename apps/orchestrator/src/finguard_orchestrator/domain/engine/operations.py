@@ -25,6 +25,7 @@ __all__ = [
     "Operation",
     "Patch",
     "PrepareBizum",
+    "PrepareOwnTransfer",
     "PlanFields",
     "Reset",
     "RestorePrevious",
@@ -142,6 +143,23 @@ class PrepareBizum:
             raise InvalidValueError("Bizum amount must be a positive bounded integer")
 
 
+@dataclass(frozen=True)
+class PrepareOwnTransfer:
+    """Request a guarded transfer to one of the holder's own accounts.
+
+    The operation carries only the destination name. The amount is read from the current sentence
+    by the deterministic money parser and compared with any amount retained in canonical state.
+    """
+
+    destination_account: str | None
+
+    def __post_init__(self) -> None:
+        if self.destination_account is not None and (
+            not self.destination_account.strip() or len(self.destination_account) > 256
+        ):
+            raise InvalidValueError("destination account name is invalid")
+
+
 Operation = (
     Ask
     | Patch
@@ -156,4 +174,5 @@ Operation = (
     | Delegate
     | Visualize
     | PrepareBizum
+    | PrepareOwnTransfer
 )

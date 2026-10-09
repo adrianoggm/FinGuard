@@ -28,6 +28,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Patch,
     PlanFields,
     PrepareBizum,
+    PrepareOwnTransfer,
     Reset,
     RestorePrevious,
     SelectOperand,
@@ -153,7 +154,7 @@ def apply(
                 return Transition(resting, None, question.clarify)
             restored_previous = True
             continue
-        if isinstance(op, PrepareBizum):
+        if isinstance(op, (PrepareBizum, PrepareOwnTransfer)):
             raise InvariantViolationError("payment operation escaped graph dispatch")
         op = _fill_pending(current, op)
         if isinstance(op, (Smalltalk, Delegate, Visualize, Clarify)):
@@ -258,7 +259,12 @@ def _applied(
             return _on_query(state, pair.earlier if which == "earlier" else pair.latest)
         case Reset():
             return replace(
-                state, focus=None, pending=None, previous_focus=None, focus_history=()
+                state,
+                focus=None,
+                pending=None,
+                previous_focus=None,
+                focus_history=(),
+                own_transfer=None,
             ), None
         case Balance(accounts=names):
             # An aside: it leaves the focus, the open question and the scope as they were. With no

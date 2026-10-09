@@ -197,6 +197,11 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
         name, original = next(iter(properties.items()))
         field = resolve(original)
         kind = field.get("type") if isinstance(field, dict) else None
+        value: dict[str, Any]
+        if name == "prepare_own_transfer" and isinstance(field, dict):
+            value = {"anyOf": [simple_value(branch) for branch in field.get("anyOf", [])]}
+            operation_properties[name] = value
+            continue
         if not isinstance(kind, str):
             return schema
 

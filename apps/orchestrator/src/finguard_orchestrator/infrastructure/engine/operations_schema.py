@@ -69,6 +69,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Patch,
     PlanFields,
     PrepareBizum,
+    PrepareOwnTransfer,
     Reset,
     RestorePrevious,
     SelectOperand,
@@ -433,6 +434,14 @@ class PrepareBizumOp(_Closed):
         return PrepareBizum(self.prepare_bizum.recipient.strip(), self.prepare_bizum.amount_minor)
 
 
+class PrepareOwnTransferOp(_Closed):
+    prepare_own_transfer: Annotated[Name | None, Field()]
+
+    def as_operation(self) -> PrepareOwnTransfer:
+        destination = self.prepare_own_transfer
+        return PrepareOwnTransfer(destination.strip() if destination else None)
+
+
 AnyOp = Annotated[
     Annotated[AskOp, Tag("ask")]
     | Annotated[PatchOp, Tag("patch")]
@@ -447,7 +456,8 @@ AnyOp = Annotated[
     | Annotated[DelegateOp, Tag("delegate")]
     | Annotated[CreateVisualizationOp, Tag("create_visualization")]
     | Annotated[UpdateVisualizationOp, Tag("update_visualization")]
-    | Annotated[PrepareBizumOp, Tag("prepare_bizum")],
+    | Annotated[PrepareBizumOp, Tag("prepare_bizum")]
+    | Annotated[PrepareOwnTransferOp, Tag("prepare_own_transfer")],
     Discriminator(_only_key),
 ]
 

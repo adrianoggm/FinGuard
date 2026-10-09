@@ -25,6 +25,8 @@ from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentHandler,
     PrepareChosenPaymentCommand,
     PrepareChosenPaymentHandler,
+    PrepareOwnTransferCommand,
+    PrepareOwnTransferHandler,
 )
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler, EngineAnswer
 from finguard_orchestrator.application.graph import graph as investigation_graph
@@ -40,6 +42,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Patch,
     PlanFields,
     PrepareBizum,
+    PrepareOwnTransfer,
     RestorePrevious,
     Visualize,
 )
@@ -260,11 +263,12 @@ def text_of(answer: EngineAnswer) -> str:
     return answer.result.text
 
 
-def with_payment_commands(world: World) -> Bank:
-    bank = Bank()
+def with_payment_commands(world: World, bank: Bank | None = None) -> Bank:
+    bank = bank or Bank()
     commands = CommandBus()
     commands.register(PrepareChosenPaymentCommand, PrepareChosenPaymentHandler(bank))
     commands.register(ConfirmPaymentCommand, ConfirmPaymentHandler(bank))
+    commands.register(PrepareOwnTransferCommand, PrepareOwnTransferHandler(bank))
     ports = replace(world.handler._ports, commands=commands)  # noqa: SLF001
     world.handler = GraphTurnHandler(ports, world.reservations, world.saver)
     return bank
@@ -1251,3 +1255,108 @@ async def test_confirmation_without_confirm_scope_does_not_resume_payment() -> N
 
     assert bank.confirmed == []
     assert isinstance(prepared.state.payment, PaymentConfirmationPending)
+
+
+@pytest.mark.asyncio
+async def test_own_transfer_asks_for_amount_then_previews_and_confirms_once() -> None:
+    world = World((PrepareOwnTransfer("Fondo indexado"),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+
+    asked = await world.ask(
+        sentence="Traspasa dinero al fondo indexado",
+        request_id="own-transfer-amount",
+        caller_scopes=scopes,
+    )
+
+    assert asked.result is not None and "Cu\u00e1nto quieres mover" in asked.result.text
+    assert asked.state.version == 1
+    assert asked.state.own_transfer is not None
+    assert asked.state.own_transfer.to_account_id is not None
+    assert bank.prepared == []
+
+    world.interpreter._turns.append((PrepareOwnTransfer("Fondo indexado"),))  # noqa: SLF001
+    preview = await world.ask(
+        conversation_id=asked.state.conversation_id,
+        version=asked.state.version,
+        sentence="75 euros",
+        request_id="own-transfer-preview",
+        caller_scopes=scopes,
+    )
+
+    assert preview.result is not None
+    assert preview.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert preview.state.version == 2
+    assert preview.state.own_transfer is None
+    assert isinstance(preview.state.payment, PaymentConfirmationPending)
+    assert bank.prepared[0].rail.value == "INTERNAL"
+    assert bank.prepared[0].to_account_id == UUID("33333333-3333-3333-3333-333333333333")
+    assert bank.prepared[0].amount_minor == 7_500
+
+    paid = await world.ask(
+        conversation_id=preview.state.conversation_id,
+        version=preview.state.version,
+        sentence="si",
+        request_id="own-transfer-confirm",
+        caller_scopes=scopes,
+    )
+
+    assert paid.result is not None and paid.result.outcome == PaymentOutcome.PAID.value
+    assert bank.confirmed == [INTENT]
+
+
+@pytest.mark.asyncio
+async def test_own_transfer_without_prepare_scope_never_calls_banking() -> None:
+    world = World((PrepareOwnTransfer("Fondo indexado"),))
+    bank = with_payment_commands(world)
+
+    with pytest.raises(NotAuthorisedError):
+        await world.ask(
+            sentence="Traspasa 20 euros al fondo indexado",
+            request_id="own-transfer-no-scope",
+        )
+
+    assert bank.prepared == [] and bank.confirmed == []
+
+
+@pytest.mark.asyncio
+async def test_own_transfer_bank_outage_keeps_draft_and_reuses_idempotency_key() -> None:
+    class FlakyBank(Bank):
+        def __init__(self) -> None:
+            super().__init__()
+            self.keys: list[str] = []
+
+        async def prepare(self, request: Any, *, account_id: UUID, key: str) -> Any:
+            self.keys.append(key)
+            if len(self.keys) == 1:
+                raise BankingUnavailableError("temporarily unavailable")
+            return await super().prepare(request, account_id=account_id, key=key)
+
+    world = World((PrepareOwnTransfer("Fondo indexado"),))
+    bank = with_payment_commands(world, FlakyBank())
+    scopes = frozenset({"payments:prepare"})
+
+    unavailable = await world.ask(
+        sentence="Traspasa 75 euros al fondo indexado",
+        request_id="own-transfer-outage",
+        caller_scopes=scopes,
+    )
+
+    assert unavailable.result is not None
+    assert unavailable.result.outcome == PaymentOutcome.BANKING_UNAVAILABLE.value
+    assert unavailable.state.own_transfer is not None
+    assert unavailable.state.own_transfer.amount_minor == 7_500
+
+    world.interpreter._turns.append((PrepareOwnTransfer("Fondo indexado"),))  # noqa: SLF001
+    recovered = await world.ask(
+        conversation_id=unavailable.state.conversation_id,
+        version=unavailable.state.version,
+        sentence="Reintenta",
+        request_id="own-transfer-retry",
+        caller_scopes=scopes,
+    )
+
+    assert recovered.result is not None
+    assert recovered.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert len(bank.keys) == 2 and bank.keys[0] == bank.keys[1]
+    assert len(bank.prepared) == 1 and bank.prepared[0].amount_minor == 7_500

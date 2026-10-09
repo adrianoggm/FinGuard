@@ -19,13 +19,16 @@ idempotency and compare-and-set version checks remain mandatory at the operation
 
 The graph's versioned conversation state is the source of truth. It includes the active financial
 plan, pending operation or clarification, recent turns, a bounded aggregate-only result artifact,
-and the verified chart specification/profile with result and chart versions. Its version-7 schema
+and the verified chart specification/profile with result and chart versions. Its version-8 schema
 also has typed slots for an unfinished payment draft or the exact bank-authored confirmation
 preview, so a later graph turn can resume from canonical state without reconstructing payment data
 from the client. Bizum preparation and confirmation now run in the same conversation graph. Mixed
 analytics/Bizum turns save the analytic result and pending bank preview with one canonical version
-advance. Checkpoint state is versioned separately from the application schema. Movement ledgers
-never enter canonical state or checkpoints.
+advance. Own-account transfers use a typed pending draft when the destination or amount is missing,
+then the existing bank preview and explicit-confirmation path. Drafts retain an opaque idempotency
+key across clarification turns; supplied values are grounded against the account catalogue and
+closed amount grammar before the payment command is called. Checkpoint state is versioned separately
+from the application schema. Movement ledgers never enter canonical state or checkpoints.
 
 The canonical dialogue state retains up to eight typed prior focuses and their account scopes. The
 model can emit the closed `restore_previous` operation when the user explicitly goes back, selecting
@@ -52,11 +55,12 @@ One graph follows the smallest useful cycle:
 Visual operations are first-class typed edits over a persisted result: changing chart type reuses
 the result; changing an analytical dimension requests a new validated aggregation. The current
 conversation graph slice creates and restyles bar/line charts and KPIs from the bounded active
-result. Bizum preparation and confirmation use `interrupt()`/`Command(resume=...)` in this same
-compiled graph and invoke the existing guarded banking commands. The confirmation node reuses the
+result. Bizum preparation, own-account transfer preparation and confirmation use
+`interrupt()`/`Command(resume=...)` in this same compiled graph and invoke the existing guarded
+banking commands. The confirmation node reuses the
 persisted bank preview, requires the account-scoped workflow id and confirmation scope, and does not
 treat a pause or failure as authorization. Mixed analytics/Bizum turns share one checkpoint and one
-canonical version advance. Transfers and booking still have no graph workflow.
+canonical version advance. External transfers and booking still have no graph workflow.
 
 The graph may call one model repeatedly within explicit turn budgets. It is not a multi-agent
 system. Nodes are adapters to existing financial contracts, validators and renderers, not new
@@ -69,15 +73,16 @@ copies of their business rules.
    concurrency, idempotency and schema migration together.
 3. Finish chart explanation, analytical regrouping and browser-level rendering. Visual-only edits
    must retain result lineage and make zero banking reads.
-4. Migrate transfers and booking, preserving banking authorization, confirmation and idempotency
-   checks.
+4. Extend graph coverage to remaining transfer and booking flows, preserving banking authorization,
+   confirmation and idempotency checks.
 5. Remove legacy conversation coordination only after API and browser coverage of full
    multi-turn analytics, visuals and protected financial actions; then remove the rollout flag.
 
 Until each capability is migrated, it must be explicitly unavailable on the graph route or handled
 by a typed, non-linguistic adapter. It must never silently send the user's words to a legacy
-interpreter. The graph route now prepares and confirms Bizum in its own conversation checkpoint.
-Transfers and booking remain explicitly unavailable there. A payment/transfer/booking workflow echoed from a
+interpreter. The graph route prepares and confirms Bizum and own-account transfers in its own
+conversation checkpoint. External transfers and booking remain explicitly unavailable there. A
+payment/transfer/booking workflow echoed from a
 legacy session is refused without invoking either coordinator; its complete confirmation payload is
 preserved on the wire so this refusal cannot discard or accidentally confirm a staged payment. Such
 a session must be resolved through the same version of the application that created it.

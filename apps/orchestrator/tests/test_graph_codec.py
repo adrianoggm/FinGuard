@@ -11,6 +11,7 @@ from finguard_orchestrator.domain.engine.state import (
     DialogueState,
     DialogueTurn,
     FocusHistoryEntry,
+    OwnTransferDraftPending,
     PaymentConfirmationPending,
     PaymentDraftPending,
     PlanFields,
@@ -19,6 +20,7 @@ from finguard_orchestrator.domain.engine.state import (
     Scope,
 )
 from finguard_orchestrator.domain.enums import Direction, Rail
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview
 from finguard_orchestrator.domain.models.query_answer import Group
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, FinancialPlan
@@ -89,6 +91,22 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
     assert confirmation_restored.payment.preview.intent_id == intent_id
     assert confirmation_restored.payment.preview.expires_at == expires
     assert confirmation_restored.payment.workflow_id == "workflow-opaque-123"
+
+
+def test_dialogue_checkpoint_round_trips_own_transfer_draft() -> None:
+    draft = OwnTransferDraftPending(
+        to_account_id=uuid4(), amount_minor=7_500, workflow_id=uuid4().hex
+    )
+    state = DialogueState(uuid4(), own_transfer=draft)
+
+    restored = codec.loads_state(codec.dumps_state(state))
+
+    assert restored == state
+
+
+def test_own_transfer_workflow_id_must_be_a_uuid_hex() -> None:
+    with pytest.raises(InvalidValueError, match="opaque UUID"):
+        OwnTransferDraftPending(workflow_id="x" * 32)
 
 
 def test_structured_operations_round_trip_dates_and_closed_enum_values() -> None:

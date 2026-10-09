@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from typing import Any, Final, Literal, TypedDict
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -39,10 +39,12 @@ from langgraph.runtime import Runtime
 from langgraph.types import Checkpointer, interrupt
 
 from finguard_orchestrator.application import CommandBus
+from finguard_orchestrator.application.commands import payment_input
 from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     PaymentAnswer,
     PrepareChosenPaymentCommand,
+    PrepareOwnTransferCommand,
 )
 from finguard_orchestrator.application.engine import presenter
 from finguard_orchestrator.application.engine.executor import (
@@ -59,7 +61,7 @@ from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionResult,
     SpokenPlan,
 )
-from finguard_orchestrator.domain.engine.grounding import Grounds
+from finguard_orchestrator.domain.engine.grounding import Grounds, ground
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
     Balance,
@@ -68,7 +70,9 @@ from finguard_orchestrator.domain.engine.operations import (
     Delegate,
     Operation,
     Patch,
+    PlanFields,
     PrepareBizum,
+    PrepareOwnTransfer,
     Reset,
     SelectOperand,
     Visualize,
@@ -78,6 +82,7 @@ from finguard_orchestrator.domain.engine.state import (
     ActiveVisual,
     DialogueState,
     DialogueTurn,
+    OwnTransferDraftPending,
     PaymentConfirmationPending,
 )
 from finguard_orchestrator.domain.engine.transitions import Transition, Work
@@ -115,7 +120,6 @@ from finguard_orchestrator.domain.ports.turn_operations import TurnOperationsPor
 from finguard_orchestrator.domain.services import (
     answer_writer,
     category_words,
-    payment_words,
     payment_writer,
 )
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
@@ -129,9 +133,9 @@ logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "conversation/7"
+GRAPH_VERSION: Final = "conversation/8"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
-STATE_SCHEMA_VERSION: Final = 7
+STATE_SCHEMA_VERSION: Final = 8
 MAX_BANK_EXECUTIONS: Final = 3
 MAX_MODEL_CALLS: Final = 3
 # A backstop under the budgets: one step per read, and plan, validate and assess per loop.
@@ -283,18 +287,18 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
             }
         return {"status": "inspect"}
     ops = codec.loads(state["ops"])
-    payments = tuple(op for op in ops if isinstance(op, PrepareBizum))
+    payments = tuple(op for op in ops if isinstance(op, (PrepareBizum, PrepareOwnTransfer)))
     if payments:
         analytics_ops = (Ask, Patch, Compare, ChangeMeasure, SelectOperand, Reset, Balance)
         if len(payments) != 1 or any(
-            not isinstance(op, (*analytics_ops, PrepareBizum)) for op in ops
+            not isinstance(op, (*analytics_ops, PrepareBizum, PrepareOwnTransfer)) for op in ops
         ):
             return {"status": "payment", "refused": [*state.get("refused", []), "composition"]}
         if Scope.PAYMENTS_PREPARE.value not in runtime.context.caller_scopes:
             raise NotAuthorisedError(
                 f"this credential is not allowed {Scope.PAYMENTS_PREPARE.value}"
             )
-        if all(isinstance(op, PrepareBizum) for op in ops):
+        if all(isinstance(op, (PrepareBizum, PrepareOwnTransfer)) for op in ops):
             return {"status": "payment"}
     visual = next((op for op in ops if isinstance(op, Visualize)), None)
     if visual is not None:
@@ -446,7 +450,7 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
         )
         canonical = replace(canonical, active_result=active_result)
     remembered = canonical.remembered(DialogueTurn(said=ctx.sentence, answered=in_words))
-    if any(isinstance(op, PrepareBizum) for op in codec.loads(state["ops"])):
+    if any(isinstance(op, (PrepareBizum, PrepareOwnTransfer)) for op in codec.loads(state["ops"])):
         # A mixed analytics/payment turn has one canonical commit. Keep the bounded typed result in
         # the graph checkpoint while payment preparation runs so a retry never repeats the query.
         ctx.cache["result"] = result
@@ -502,19 +506,15 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
             base_result,
         )
     operations = codec.loads(state["ops"])
+    own_transfer = next((item for item in operations if isinstance(item, PrepareOwnTransfer)), None)
+    if own_transfer is not None:
+        return await _prepare_own_transfer(state, ctx, current, base_result, own_transfer)
     op = next((item for item in operations if isinstance(item, PrepareBizum)), None)
     if op is None:
         raise RuntimeError("payment node reached without a PrepareBizum operation")
-    grounded_amount = payment_words.amount_in(ctx.sentence)
     contacts = await ctx.ports.contacts.all_of(account_id)
-    mentioned = payment_words.contacts_in(ctx.sentence, contacts)
-    selected_by_model = payment_words.contacts_in(op.recipient, contacts)
-    if (
-        grounded_amount != op.amount_minor
-        or len(mentioned) != 1
-        or len(selected_by_model) != 1
-        or mentioned[0].contact_id != selected_by_model[0].contact_id
-    ):
+    grounded = payment_input.grounded_bizum(ctx.sentence, op, contacts)
+    if grounded is None:
         return await _finish_payment_without_command(
             state,
             ctx,
@@ -523,9 +523,10 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
             current,
             base_result,
         )
+    recipient, grounded_amount = grounded
     command = PrepareChosenPaymentCommand(
         account_id=account_id,
-        recipient_name=mentioned[0].display_name,
+        recipient_name=recipient.display_name,
         amount_minor=grounded_amount,
         currency="EUR",
         idempotency_key=f"conversation-bizum:{state['turn_id']}",
@@ -567,6 +568,210 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
             "expected_version": saved.version,
         }
     return {"status": "payment_complete", "expected_version": saved.version}
+
+
+async def _prepare_own_transfer(
+    state: TurnGraphState,
+    ctx: GraphContext,
+    current: DialogueState,
+    previous: AskFinancialQuestionResult | None,
+    operation: PrepareOwnTransfer,
+) -> TurnGraphState:
+    """Resolve the transfer only from the caller's words and bank account catalogue.
+
+    The model selects the typed transfer operation. Account and amount are independently grounded;
+    only the existing command can ask banking for a preview, and this node never confirms it.
+    """
+    grounds = await _grounds(state, ctx)
+    accounts = grounds.accounts
+    prior = current.own_transfer
+    destination_candidates = payment_input.destination_candidates(ctx.sentence, accounts, prior)
+    destination: Any | None = None
+    if operation.destination_account is not None:
+        grounded = ground(PlanFields(accounts=(operation.destination_account,)), grounds)
+        if isinstance(grounded, PlanFields) and grounded.accounts:
+            destination = next(
+                (holding for holding in accounts if holding.display_name == grounded.accounts[0]),
+                None,
+            )
+    if destination_candidates:
+        if len(destination_candidates) == 1:
+            lexical = destination_candidates[0]
+            if destination is not None and destination.account_id != lexical.account_id:
+                return await _finish_own_transfer_refusal(
+                    state,
+                    ctx,
+                    current,
+                    previous,
+                    "No he podido verificar la cuenta de destino que nombraste.",
+                )
+            destination = lexical
+        else:
+            destination = None
+    elif destination is not None and prior is not None:
+        if prior.to_account_id != destination.account_id:
+            return await _finish_own_transfer_refusal(
+                state,
+                ctx,
+                current,
+                previous,
+                "No he podido verificar la cuenta de destino que nombraste.",
+            )
+    elif destination is not None:
+        return await _finish_own_transfer_refusal(
+            state,
+            ctx,
+            current,
+            previous,
+            "No he podido verificar la cuenta de destino que nombraste.",
+        )
+
+    if destination is None and prior is not None and prior.to_account_id is not None:
+        destination = next(
+            (holding for holding in accounts if holding.account_id == prior.to_account_id), None
+        )
+
+    amount_spoken = payment_input.amount(ctx.sentence)
+    if payment_input.mentions_amount(ctx.sentence) and amount_spoken is None:
+        return await _finish_own_transfer_refusal(
+            state,
+            ctx,
+            current,
+            previous,
+            "El importe indicado queda fuera de los límites permitidos. Indica otro importe.",
+            retain=True,
+        )
+    amount = amount_spoken if amount_spoken is not None else prior.amount_minor if prior else None
+
+    candidate_ids = tuple(holding.account_id for holding in destination_candidates)
+    if destination is None and prior is not None and prior.candidate_account_ids:
+        candidate_ids = prior.candidate_account_ids
+    if destination is None or amount is None:
+        draft = OwnTransferDraftPending(
+            to_account_id=destination.account_id if destination is not None else None,
+            amount_minor=amount,
+            candidate_account_ids=candidate_ids if destination is None else (),
+            workflow_id=prior.workflow_id if prior is not None else uuid4().hex,
+        )
+        question = (
+            answer_writer.which_account(
+                [
+                    holding
+                    for holding in accounts
+                    if not candidate_ids or holding.account_id in candidate_ids
+                ]
+            )
+            if destination is None
+            else answer_writer.how_much_to_move(destination)
+        )
+        result = AskFinancialQuestionResult(
+            outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+            text=question,
+        )
+        result = _combine_payment_result(previous, result)
+        saved = await _save_own_transfer_state(current, draft, result, ctx, state)
+        ctx.cache["result"], ctx.cache["saved"] = result, saved
+        return {"status": "payment_complete", "expected_version": saved.version}
+
+    workflow_id = prior.workflow_id if prior is not None else uuid4().hex
+    command = PrepareOwnTransferCommand(
+        account_id=UUID(state["account_id"]),
+        to_account_id=destination.account_id,
+        amount_minor=amount,
+        currency=destination.currency,
+        idempotency_key=f"conversation-own-transfer:{workflow_id}",
+    )
+    if ctx.ports.commands is None:
+        return await _finish_own_transfer_refusal(
+            state, ctx, current, previous, payment_writer.cannot_pay()
+        )
+    answer = await ctx.ports.commands.dispatch(command)
+    if not isinstance(answer, PaymentAnswer):
+        raise TypeError("own transfer preparation returned an unexpected answer")
+    waiting = (
+        answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value and answer.preview is not None
+    )
+    uncertain = answer.outcome == PaymentOutcome.BANKING_UNAVAILABLE.value
+    pending = None
+    if waiting:
+        if answer.preview is None:
+            raise RuntimeError("a transfer awaiting confirmation has no bank preview")
+        pending = PaymentConfirmationPending(answer.preview, ctx.thread_id)
+    retained = (
+        OwnTransferDraftPending(destination.account_id, amount, workflow_id=workflow_id)
+        if uncertain
+        else None
+    )
+    payment = _payment_result(answer, replace(current, payment=pending), waiting)
+    result = _combine_payment_result(previous, payment)
+    candidate = _remember_result(
+        replace(current, own_transfer=retained, payment=pending), ctx.sentence, result.text
+    )
+    saved = await ctx.ports.store.save(
+        candidate,
+        account_id=UUID(state["account_id"]),
+        expected_version=state["expected_version"],
+    )
+    ctx.cache["dialogue"] = saved
+    ctx.cache["result"] = _combine_payment_result(previous, _payment_result(answer, saved, waiting))
+    ctx.cache["saved"] = saved
+    if waiting:
+        return {
+            "status": "payment_waiting",
+            "payment_answer": codec.dumps_typed(answer),
+            "expected_version": saved.version,
+        }
+    return {"status": "payment_complete", "expected_version": saved.version}
+
+
+async def _finish_own_transfer_refusal(
+    graph_state: TurnGraphState,
+    ctx: GraphContext,
+    current: DialogueState,
+    previous: AskFinancialQuestionResult | None,
+    text: str,
+    *,
+    retain: bool = False,
+) -> TurnGraphState:
+    prior = current.own_transfer
+    result = _combine_payment_result(
+        previous,
+        AskFinancialQuestionResult(outcome=PlanningOutcome.INVALID_DOMAIN.value, text=text),
+    )
+    candidate = _remember_result(
+        replace(current, own_transfer=prior if retain else None), ctx.sentence, result.text
+    )
+    saved = await ctx.ports.store.save(
+        candidate,
+        account_id=UUID(graph_state["account_id"]),
+        expected_version=graph_state["expected_version"],
+    )
+    ctx.cache["dialogue"], ctx.cache["result"], ctx.cache["saved"] = saved, result, saved
+    return {"status": "payment_complete", "expected_version": saved.version}
+
+
+async def _save_own_transfer_state(
+    current: DialogueState,
+    draft: OwnTransferDraftPending,
+    result: AskFinancialQuestionResult,
+    ctx: GraphContext,
+    state: TurnGraphState,
+) -> DialogueState:
+    candidate = _remember_result(replace(current, own_transfer=draft), ctx.sentence, result.text)
+    saved = await ctx.ports.store.save(
+        candidate,
+        account_id=UUID(state["account_id"]),
+        expected_version=state["expected_version"],
+    )
+    ctx.cache["dialogue"] = saved
+    return saved
+
+
+def _remember_result(state: DialogueState, sentence: str, answer: str) -> DialogueState:
+    if state.turns and state.turns[-1].said == sentence:
+        last = state.turns[-1]
+        return replace(state, turns=(*state.turns[:-1], replace(last, answered=answer)))
+    return state.remembered(DialogueTurn(sentence, answer))
 
 
 async def _finish_payment_without_command(
@@ -911,7 +1116,9 @@ def _after_validation(state: TurnGraphState) -> str:
 def _after_presentation(state: TurnGraphState) -> str:
     return (
         "prepare_payment"
-        if any(isinstance(op, PrepareBizum) for op in codec.loads(state["ops"]))
+        if any(
+            isinstance(op, (PrepareBizum, PrepareOwnTransfer)) for op in codec.loads(state["ops"])
+        )
         else END
     )
 
@@ -1007,7 +1214,7 @@ async def _transition(state: TurnGraphState, ctx: GraphContext) -> Transition:
         ops = tuple(
             _without_merchant_grouping(op)
             for op in codec.loads(state["ops"])
-            if not isinstance(op, PrepareBizum)
+            if not isinstance(op, (PrepareBizum, PrepareOwnTransfer))
         )
         current = await _canonical(state, ctx)
         ctx.cache["transition"] = apply_guarded(current, ops, ctx.today, await _grounds(state, ctx))

@@ -9,13 +9,15 @@ against a version that is no longer current.
 """
 
 import dataclasses
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 from enum import StrEnum
 from typing import ClassVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
+from finguard_orchestrator.domain.constants import MAX_PAYMENT_MINOR
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import ChartSpec, VisualProfile
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview
 from finguard_orchestrator.domain.models.query_answer import Group
@@ -208,6 +210,32 @@ class PaymentDraftPending:
 
 
 @dataclass(frozen=True)
+class OwnTransferDraftPending:
+    """A transfer between the holder's accounts, waiting for a destination and/or amount."""
+
+    to_account_id: UUID | None = None
+    amount_minor: int | None = None
+    candidate_account_ids: tuple[UUID, ...] = ()
+    workflow_id: str = field(default_factory=lambda: uuid4().hex)
+
+    def __post_init__(self) -> None:
+        if self.amount_minor is not None and (
+            isinstance(self.amount_minor, bool)
+            or not isinstance(self.amount_minor, int)
+            or not 0 < self.amount_minor <= MAX_PAYMENT_MINOR
+        ):
+            raise InvalidValueError("transfer amount must be a positive bounded integer")
+        if len(set(self.candidate_account_ids)) != len(self.candidate_account_ids):
+            raise InvalidValueError("transfer destination candidates must be unique")
+        try:
+            is_uuid_hex = UUID(hex=self.workflow_id).hex == self.workflow_id
+        except (TypeError, ValueError):
+            is_uuid_hex = False
+        if not is_uuid_hex:
+            raise InvalidValueError("transfer workflow id must be an opaque UUID")
+
+
+@dataclass(frozen=True)
 class PaymentConfirmationPending:
     """The exact bank preview awaiting an explicit confirmation reply.
 
@@ -236,6 +264,7 @@ class DialogueState:
     active_result: ActiveQueryResult | None = None
     active_visual: ActiveVisual | None = None
     payment: PaymentWorkflow | None = None
+    own_transfer: OwnTransferDraftPending | None = None
     previous_focus: PreviousFocus | None = None
     focus_history: tuple[FocusHistoryEntry, ...] = ()
 
