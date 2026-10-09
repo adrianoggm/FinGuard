@@ -10,9 +10,13 @@ from finguard_orchestrator.domain.engine.state import (
     ActiveQueryResult,
     DialogueState,
     DialogueTurn,
+    FocusHistoryEntry,
     PaymentConfirmationPending,
     PaymentDraftPending,
     PlanFields,
+    PreviousFocus,
+    QueryFocus,
+    Scope,
 )
 from finguard_orchestrator.domain.enums import Direction, Rail
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview
@@ -22,7 +26,16 @@ from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraf
 
 
 def test_dialogue_checkpoint_round_trips_typed_state_and_tuple_values() -> None:
-    state = DialogueState(uuid4()).remembered(DialogueTurn("gastos de julio", "Consulta realizada"))
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        date_range=AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30)),
+    )
+    state = DialogueState(
+        uuid4(),
+        focus=QueryFocus(plan),
+        previous_focus=PreviousFocus(QueryFocus(plan), Scope()),
+        focus_history=(FocusHistoryEntry(QueryFocus(plan), Scope()),),
+    ).remembered(DialogueTurn("gastos de julio", "Consulta realizada"))
     value = codec.loads_state(codec.dumps_state(state))
 
     assert value == state
@@ -63,7 +76,9 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
     draft_state = DialogueState(
         uuid4(), payment=PaymentDraftPending(PaymentDraft(recipient_name="Marta"))
     )
-    confirmation_state = DialogueState(uuid4(), payment=PaymentConfirmationPending(preview))
+    confirmation_state = DialogueState(
+        uuid4(), payment=PaymentConfirmationPending(preview, "workflow-opaque-123")
+    )
 
     draft_restored = codec.loads_state(codec.dumps_state(draft_state))
     confirmation_restored = codec.loads_state(codec.dumps_state(confirmation_state))
@@ -73,6 +88,7 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
     assert confirmation_restored.payment is not None
     assert confirmation_restored.payment.preview.intent_id == intent_id
     assert confirmation_restored.payment.preview.expires_at == expires
+    assert confirmation_restored.payment.workflow_id == "workflow-opaque-123"
 
 
 def test_structured_operations_round_trip_dates_and_closed_enum_values() -> None:
@@ -133,3 +149,25 @@ def test_schema_three_conversation_loads_with_no_pending_payment() -> None:
 
     assert restored.version == 5
     assert restored.payment is None
+
+
+def test_schema_four_pending_payment_migrates_without_workflow_handle() -> None:
+    preview = PaymentPreview(
+        intent_id=uuid4(),
+        recipient="Marta Solis Vega",
+        amount_minor=2_600,
+        currency="EUR",
+        balance_before_minor=70_000,
+        balance_after_minor=67_400,
+        expires_at=datetime(2026, 10, 9, 12, 30, tzinfo=UTC),
+        rail=Rail.BIZUM,
+        recipient_phone="+34600000000",
+    )
+    state = DialogueState(uuid4(), payment=PaymentConfirmationPending(preview))
+    encoded = json.loads(codec.dumps_state(state))
+    encoded["schema_version"] = 4
+    encoded["state"]["f"]["payment"]["f"].pop("workflow_id")
+
+    restored = codec.loads_state(json.dumps(encoded))
+
+    assert restored.payment == PaymentConfirmationPending(preview)

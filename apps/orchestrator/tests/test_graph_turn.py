@@ -17,8 +17,15 @@ from uuid import UUID
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from support.episodes import ACCOUNT, Accounts, Contacts, Directory
+from support.episodes import ACCOUNT, INTENT, Accounts, Bank, Contacts, Directory
 
+from finguard_orchestrator.application import CommandBus
+from finguard_orchestrator.application.commands.pay import (
+    ConfirmPaymentCommand,
+    ConfirmPaymentHandler,
+    PrepareChosenPaymentCommand,
+    PrepareChosenPaymentHandler,
+)
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler, EngineAnswer
 from finguard_orchestrator.application.graph import graph as investigation_graph
 from finguard_orchestrator.application.graph import graph_turn, investigation
@@ -32,17 +39,20 @@ from finguard_orchestrator.domain.engine.operations import (
     Operation,
     Patch,
     PlanFields,
+    PrepareBizum,
+    RestorePrevious,
     Visualize,
 )
 from finguard_orchestrator.domain.engine.state import (
     ComparisonFocus,
     DialogueState,
     DialogueTurn,
+    PaymentConfirmationPending,
     QueryFocus,
 )
 from finguard_orchestrator.domain.engine.transitions import apply
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
-from finguard_orchestrator.domain.errors import BankingUnavailableError
+from finguard_orchestrator.domain.enums import Direction, GroupBy, PaymentOutcome, Period
+from finguard_orchestrator.domain.errors import BankingUnavailableError, NotAuthorisedError
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.ports.investigation_assessor import (
@@ -75,6 +85,7 @@ from finguard_orchestrator.infrastructure.graph.memory_turn_reservations import 
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
 
 TODAY = date(2026, 8, 5)
+MAY = AbsoluteRange(date(2026, 5, 1), date(2026, 5, 31))
 JUNE = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
 JULY = AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31))
 SENTENCE = "¿En qué comercios gasto más que antes y se debe a más compras o a importes mayores?"
@@ -91,6 +102,7 @@ MERCHANT_BREAKDOWN_IN_JULY = (
 )
 # June against July. Amazon rose by both, Cepsa by bigger amounts, Mercadona by more purchases.
 FIGURES: dict[AbsoluteRange, tuple[Group, ...]] = {
+    MAY: (Group("Mercadona", 8_000, 3), Group("Amazon", 3_000, 1), Group("Cepsa", 4_000, 2)),
     JUNE: (Group("Mercadona", 10_000, 4), Group("Amazon", 5_000, 1), Group("Cepsa", 6_000, 2)),
     JULY: (Group("Mercadona", 15_000, 6), Group("Amazon", 17_000, 2), Group("Cepsa", 9_000, 2)),
 }
@@ -229,6 +241,7 @@ class World:
         version: int | None = None,
         request_id: str | None = "req-1",
         sentence: str = SENTENCE,
+        caller_scopes: frozenset[str] = frozenset(),
     ) -> EngineAnswer:
         return await self.handler.answer(
             sentence,
@@ -238,12 +251,23 @@ class World:
             today=TODAY,
             reporting_timezone="Europe/Madrid",
             request_id=request_id,
+            caller_scopes=caller_scopes,
         )
 
 
 def text_of(answer: EngineAnswer) -> str:
     assert answer.result is not None
     return answer.result.text
+
+
+def with_payment_commands(world: World) -> Bank:
+    bank = Bank()
+    commands = CommandBus()
+    commands.register(PrepareChosenPaymentCommand, PrepareChosenPaymentHandler(bank))
+    commands.register(ConfirmPaymentCommand, ConfirmPaymentHandler(bank))
+    ports = replace(world.handler._ports, commands=commands)  # noqa: SLF001
+    world.handler = GraphTurnHandler(ports, world.reservations, world.saver)
+    return bank
 
 
 # --- the capability -------------------------------------------------------------------------------
@@ -612,6 +636,68 @@ async def test_a_duplicate_of_a_follow_up_turn_replays_too() -> None:
     again = await world.ask(conversation_id=conversation, version=1, request_id="req-2")
 
     assert again == second and second.state.version == 2
+
+
+async def test_restore_previous_requeries_bank_with_the_original_plan() -> None:
+    may_query = (Ask(PlanFields(direction=Direction.EXPENSE, window=MAY)),)
+    june_query = (Ask(PlanFields(direction=Direction.EXPENSE, window=JUNE)),)
+    july_query = (Ask(PlanFields(direction=Direction.EXPENSE, window=JULY)),)
+    world = World(
+        may_query,
+        june_query,
+        july_query,
+        (RestorePrevious(2),),
+        (RestorePrevious(2),),
+    )
+
+    first = await world.ask()
+    second = await world.ask(
+        conversation_id=first.state.conversation_id, version=1, request_id="july"
+    )
+    third = await world.ask(
+        conversation_id=first.state.conversation_id, version=2, request_id="back"
+    )
+    restored = await world.ask(
+        conversation_id=first.state.conversation_id, version=3, request_id="back-two"
+    )
+    restored_again = await world.ask(
+        conversation_id=first.state.conversation_id, version=4, request_id="back-three"
+    )
+
+    assert isinstance(second.state.focus, QueryFocus)
+    assert second.state.focus.plan.date_range == JUNE
+    assert isinstance(third.state.focus, QueryFocus)
+    assert third.state.focus.plan.date_range == JULY
+    assert isinstance(restored.state.focus, QueryFocus)
+    assert restored.state.focus.plan.date_range == MAY
+    assert isinstance(restored_again.state.focus, QueryFocus)
+    assert restored_again.state.focus.plan.date_range == JUNE
+    assert [plan.date_range for plan in world.ledger.ran] == [MAY, JUNE, JULY, MAY, JUNE]
+    assert restored.state.version == 4
+    assert restored_again.state.version == 5
+
+
+async def test_history_keeps_only_the_final_focus_of_a_composed_turn() -> None:
+    may_query = (Ask(PlanFields(direction=Direction.EXPENSE, window=MAY)),)
+    june_then_july = (
+        Ask(PlanFields(direction=Direction.EXPENSE, window=JUNE)),
+        Patch("focus", PlanFields(window=JULY)),
+    )
+    world = World(may_query, june_then_july, (RestorePrevious(),))
+
+    first = await world.ask()
+    second = await world.ask(
+        conversation_id=first.state.conversation_id, version=1, request_id="composed"
+    )
+    restored = await world.ask(
+        conversation_id=first.state.conversation_id, version=2, request_id="back"
+    )
+
+    assert isinstance(second.state.focus, QueryFocus)
+    assert second.state.focus.plan.date_range == JULY
+    assert isinstance(restored.state.focus, QueryFocus)
+    assert restored.state.focus.plan.date_range == MAY
+    assert [plan.date_range for plan in world.ledger.ran] == [MAY, JULY, MAY]
 
 
 async def test_another_request_against_a_version_a_turn_is_in_flight_on_is_stale() -> None:
@@ -1019,3 +1105,149 @@ async def test_a_turn_saved_before_its_reservation_closed_is_replayed_not_resume
 
     assert again.state.version == 1
     assert len(world.interpreter.sentences) == 1  # replayed: no second turn ran
+
+
+@pytest.mark.asyncio
+async def test_conversation_graph_prepares_and_resumes_bizum_on_one_checkpoint() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+
+    preview = await world.ask(
+        sentence="Haz un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="prepare-bizum",
+        caller_scopes=scopes,
+    )
+
+    assert preview.result is not None
+    assert preview.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert preview.state.version == 1
+    assert isinstance(preview.state.payment, PaymentConfirmationPending)
+    assert preview.state.payment.workflow_id == world.last_config()["configurable"]["thread_id"]
+    assert bank.prepared[0].amount_minor == 2_000
+    assert preview.result.conversation.active is not None
+
+    paid = await world.ask(
+        conversation_id=preview.state.conversation_id,
+        version=preview.state.version,
+        sentence="sí",
+        request_id="confirm-bizum",
+        caller_scopes=scopes,
+    )
+
+    assert paid.result is not None and paid.result.outcome == PaymentOutcome.PAID.value
+    assert paid.state.version == 2
+    assert paid.state.payment is None
+    assert bank.confirmed == [INTENT]
+
+
+@pytest.mark.asyncio
+async def test_bizum_without_prepare_scope_never_calls_banking() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+
+    with pytest.raises(NotAuthorisedError):
+        await world.ask(
+            sentence="Haz un bizum de 20 euros a Aitor Beltran Diaz",
+            request_id="missing-prepare-scope",
+        )
+
+    assert bank.prepared == [] and bank.confirmed == []
+
+
+@pytest.mark.asyncio
+async def test_mixed_query_and_bizum_commit_once_and_keep_query_result() -> None:
+    world = World(GROCERIES_IN_JULY + (PrepareBizum("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+
+    answer = await world.ask(
+        sentence="¿Cuánto gasté en julio? Además, haz un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="query-and-bizum",
+        caller_scopes=frozenset({"payments:prepare"}),
+    )
+
+    assert answer.result is not None
+    assert "20,00" in answer.result.text
+    assert "410,00" in answer.result.text
+    assert answer.state.version == 1
+    assert answer.state.active_result is not None
+    assert isinstance(answer.state.payment, PaymentConfirmationPending)
+    assert len(world.ledger.ran) == 1
+    assert len(bank.prepared) == 1
+
+
+@pytest.mark.asyncio
+async def test_bizum_amount_must_match_user_sentence_before_bank_prepare() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", 2_500),))
+    bank = with_payment_commands(world)
+
+    answer = await world.ask(
+        sentence="Haz un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="mismatched-amount",
+        caller_scopes=frozenset({"payments:prepare"}),
+    )
+
+    assert answer.result is not None and answer.state.version == 1
+    assert bank.prepared == []
+    assert answer.state.payment is None
+
+
+@pytest.mark.asyncio
+async def test_unclear_bizum_reply_reinterrupts_then_explicit_yes_confirms_once() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+    prepared = await world.ask(
+        sentence="Haz un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="prepare-unclear",
+        caller_scopes=scopes,
+    )
+
+    unclear = await world.ask(
+        conversation_id=prepared.state.conversation_id,
+        version=prepared.state.version,
+        sentence="sí, pero cambia el importe",
+        request_id="unclear-reply",
+        caller_scopes=scopes,
+    )
+
+    assert unclear.result is not None
+    assert unclear.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert isinstance(unclear.state.payment, PaymentConfirmationPending)
+    assert unclear.state.version == 2
+    assert bank.confirmed == []
+
+    paid = await world.ask(
+        conversation_id=unclear.state.conversation_id,
+        version=unclear.state.version,
+        sentence="sí",
+        request_id="explicit-yes",
+        caller_scopes=scopes,
+    )
+
+    assert paid.result is not None and paid.result.outcome == PaymentOutcome.PAID.value
+    assert paid.state.payment is None and paid.state.version == 3
+    assert bank.confirmed == [INTENT]
+
+
+@pytest.mark.asyncio
+async def test_confirmation_without_confirm_scope_does_not_resume_payment() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+    prepared = await world.ask(
+        sentence="Haz un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="prepare-no-confirm-scope",
+        caller_scopes=frozenset({"payments:prepare"}),
+    )
+
+    with pytest.raises(NotAuthorisedError):
+        await world.ask(
+            conversation_id=prepared.state.conversation_id,
+            version=prepared.state.version,
+            sentence="sí",
+            request_id="yes-no-confirm-scope",
+            caller_scopes=frozenset({"payments:prepare"}),
+        )
+
+    assert bank.confirmed == []
+    assert isinstance(prepared.state.payment, PaymentConfirmationPending)

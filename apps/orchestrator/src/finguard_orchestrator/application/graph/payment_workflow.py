@@ -101,7 +101,7 @@ async def _persist_preview(state: PaymentWorkflowState, runtime: Ctx) -> Payment
         saved = await ctx.store.save(
             DialogueState(
                 conversation_id,
-                payment=PaymentConfirmationPending(preview),
+                payment=PaymentConfirmationPending(preview, ctx.workflow_id),
             ),
             account_id=ctx.account_id,
             expected_version=0,

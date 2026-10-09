@@ -1,15 +1,14 @@
-"""The bounded investigation as a LangGraph StateGraph (Task 8).
+"""The unified conversational turn as a bounded LangGraph StateGraph.
 
     load_and_reserve → plan → validate_and_apply → execute_read_only → assess_result
                                     │                                    │
                                     ├→ present_and_commit ←──────────────┤ (stop)
                                     └→ END (delegated)        plan ←─────┘ (inspect)
 
-LangGraph owns the sequencing and the loop, and nothing else. Every node is a thin adapter over the
-engine's own pieces: the interpreter (`TurnOperationsPort`), `transitions.apply` for grounding and
-validation, `executor.execute` over the banking ports, the presenter and the canonical store's
-compare-and-set. The turn's reservation and its version check happen before the graph runs
-(`graph_turn`); the node named for them re-checks the version against the store.
+LangGraph owns sequencing, bounded analysis, visualization and payment pause/resume. Nodes adapt
+the existing typed interpreter, transition validation, banking ports, guarded payment commands,
+presenter and canonical store. The turn reservation and version check remain outside the graph
+(`graph_turn`); the persistence nodes still perform compare-and-set.
 
 **What the checkpoint holds** (the graph state, written after every node): the graph and schema
 versions, the turn's request id, account and conversation, the version it was made against, the
@@ -18,13 +17,12 @@ counts. Not the sentence, not a prompt, not a credential and no movement but the
 (its amount and date). The sentence, the ports and the per-invocation cache travel in the runtime
 context, which LangGraph never checkpoints.
 
-**Budgets**, deterministic: at most `MAX_BANK_EXECUTIONS` banking port calls by the investigation
-and `MAX_MODEL_CALLS` model calls per turn. Every port call counts, a failed one included, and the
-count is in the checkpoint: the investigation reads one thing per step and keeps what it read, so a
-resume never reads it again and `present_and_commit` renders from what the checkpoint holds (R44).
-The model may ask for the next operation only from the allow-list `investigation.worth_inspecting`
-computed from banking's answer; anything else is refused and the turn answers with what it has,
-marked partial.
+**Budgets**, deterministic: at most `MAX_BANK_EXECUTIONS` banking port calls and
+`MAX_MODEL_CALLS` model calls per turn. Every port call counts, including failures. A payment
+confirmation is never inferred: the graph interrupts with the exact bank preview and the resume
+node rechecks account, scope, workflow and pending state before invoking the existing guarded
+command. Analysis can loop only over the bounded merchants banking returned; unsupported next
+steps are refused and any partial answer is marked.
 """
 
 import dataclasses
@@ -38,8 +36,14 @@ from uuid import UUID
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
-from langgraph.types import Checkpointer
+from langgraph.types import Checkpointer, interrupt
 
+from finguard_orchestrator.application import CommandBus
+from finguard_orchestrator.application.commands.pay import (
+    ConfirmPaymentCommand,
+    PaymentAnswer,
+    PrepareChosenPaymentCommand,
+)
 from finguard_orchestrator.application.engine import presenter
 from finguard_orchestrator.application.engine.executor import (
     Executed,
@@ -56,16 +60,35 @@ from finguard_orchestrator.application.queries.financial_turn import (
     SpokenPlan,
 )
 from finguard_orchestrator.domain.engine.grounding import Grounds
-from finguard_orchestrator.domain.engine.operations import Compare, Delegate, Operation, Visualize
+from finguard_orchestrator.domain.engine.operations import (
+    Ask,
+    Balance,
+    ChangeMeasure,
+    Compare,
+    Delegate,
+    Operation,
+    Patch,
+    PrepareBizum,
+    Reset,
+    SelectOperand,
+    Visualize,
+)
 from finguard_orchestrator.domain.engine.state import (
     ActiveQueryResult,
     ActiveVisual,
     DialogueState,
     DialogueTurn,
+    PaymentConfirmationPending,
 )
 from finguard_orchestrator.domain.engine.transitions import Transition, Work
-from finguard_orchestrator.domain.enums import GroupBy, Metric, PlanningOutcome
-from finguard_orchestrator.domain.errors import DomainError
+from finguard_orchestrator.domain.enums import (
+    GroupBy,
+    Metric,
+    PaymentOutcome,
+    PlanningOutcome,
+    Rail,
+)
+from finguard_orchestrator.domain.errors import DomainError, NotAuthorisedError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
@@ -73,6 +96,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualDataset,
     VisualRow,
 )
+from finguard_orchestrator.domain.models.conversation import Conversation, PaymentConfirmation
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
@@ -88,20 +112,26 @@ from finguard_orchestrator.domain.ports.investigation_assessor import (
     Stop,
 )
 from finguard_orchestrator.domain.ports.turn_operations import TurnOperationsPort
-from finguard_orchestrator.domain.services import answer_writer, category_words
+from finguard_orchestrator.domain.services import (
+    answer_writer,
+    category_words,
+    payment_words,
+    payment_writer,
+)
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, FinancialPlan
+from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "conversation/4"
+GRAPH_VERSION: Final = "conversation/7"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
-STATE_SCHEMA_VERSION: Final = 4
+STATE_SCHEMA_VERSION: Final = 7
 MAX_BANK_EXECUTIONS: Final = 3
 MAX_MODEL_CALLS: Final = 3
 # A backstop under the budgets: one step per read, and plan, validate and assess per loop.
@@ -127,6 +157,9 @@ Status = Literal[
     "refused",
     "executed",
     "committed",
+    "payment",
+    "payment_waiting",
+    "payment_complete",
 ]
 
 
@@ -161,6 +194,10 @@ class TurnGraphState(TypedDict, total=False):
     next_inspect: int | None
     partial: bool
     refused: list[str]
+    payment_answer: str
+    payment_reply: str
+    pending_state: str
+    pending_result: str
 
 
 @dataclass(frozen=True)
@@ -175,6 +212,7 @@ class GraphPorts:
     categories: frozenset[str]
     visual_policy: VisualPlanningPolicy | None = None
     count_calls: Callable[[], int] = lambda: 0
+    commands: CommandBus | None = None
 
 
 @dataclass
@@ -186,6 +224,8 @@ class GraphContext:
     today: date
     reporting_timezone: str
     ports: GraphPorts
+    caller_scopes: frozenset[str] = frozenset()
+    thread_id: str = ""
     cache: dict[str, Any] = field(default_factory=dict)
     # Banking port calls made since the last checkpoint: a node adds them to `bank_calls` when it
     # returns, and the handler writes them to the checkpoint when it does not (R44).
@@ -243,6 +283,19 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
             }
         return {"status": "inspect"}
     ops = codec.loads(state["ops"])
+    payments = tuple(op for op in ops if isinstance(op, PrepareBizum))
+    if payments:
+        analytics_ops = (Ask, Patch, Compare, ChangeMeasure, SelectOperand, Reset, Balance)
+        if len(payments) != 1 or any(
+            not isinstance(op, (*analytics_ops, PrepareBizum)) for op in ops
+        ):
+            return {"status": "payment", "refused": [*state.get("refused", []), "composition"]}
+        if Scope.PAYMENTS_PREPARE.value not in runtime.context.caller_scopes:
+            raise NotAuthorisedError(
+                f"this credential is not allowed {Scope.PAYMENTS_PREPARE.value}"
+            )
+        if all(isinstance(op, PrepareBizum) for op in ops):
+            return {"status": "payment"}
     visual = next((op for op in ops if isinstance(op, Visualize)), None)
     if visual is not None:
         return {"status": "visualize"}
@@ -392,13 +445,276 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
             else None
         )
         canonical = replace(canonical, active_result=active_result)
+    remembered = canonical.remembered(DialogueTurn(said=ctx.sentence, answered=in_words))
+    if any(isinstance(op, PrepareBizum) for op in codec.loads(state["ops"])):
+        # A mixed analytics/payment turn has one canonical commit. Keep the bounded typed result in
+        # the graph checkpoint while payment preparation runs so a retry never repeats the query.
+        ctx.cache["result"] = result
+        return {
+            "status": "committed",
+            "pending_state": codec.dumps_state(remembered),
+            "pending_result": codec.dumps_typed(result),
+            "bank_calls": _bank_calls(state, ctx),
+        }
     saved = await ctx.ports.store.save(
-        canonical.remembered(DialogueTurn(said=ctx.sentence, answered=in_words)),
+        remembered,
         account_id=UUID(state["account_id"]),
         expected_version=state["expected_version"],
     )
+    ctx.cache["dialogue"] = saved
     ctx.cache["result"], ctx.cache["saved"] = result, saved
-    return {"status": "committed", "bank_calls": _bank_calls(state, ctx)}
+    return {
+        "status": "committed",
+        "expected_version": saved.version,
+        "bank_calls": _bank_calls(state, ctx),
+    }
+
+
+async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
+    """Ground the model's typed Bizum against the sentence and holder contacts before asking the
+    existing guarded command handler for a bank-authored preview. No command here can confirm."""
+    ctx = runtime.context
+    account_id = UUID(state["account_id"])
+    conversation_id = UUID(state["conversation_id"])
+    current = (
+        codec.loads_state(state["pending_state"])
+        if state.get("pending_state")
+        else await ctx.ports.store.load(conversation_id, account_id=account_id)
+        or DialogueState(conversation_id)
+    )
+    base_result = (
+        codec.loads_typed(state["pending_result"]) if state.get("pending_result") else None
+    )
+    if current is None or current.version != state["expected_version"]:
+        raise StaleDialogueError(current or DialogueState(conversation_id))
+    if base_result is not None and not isinstance(base_result, AskFinancialQuestionResult):
+        raise RuntimeError("pending graph result is not an answer")
+    if ctx.ports.commands is None:
+        return await _finish_payment_without_command(
+            state, ctx, payment_writer.cannot_pay(), current, base_result
+        )
+    if "composition" in state.get("refused", []):
+        return await _finish_payment_without_command(
+            state,
+            ctx,
+            "No puedo combinar ese Bizum con las otras operaciones de este turno.",
+            current,
+            base_result,
+        )
+    operations = codec.loads(state["ops"])
+    op = next((item for item in operations if isinstance(item, PrepareBizum)), None)
+    if op is None:
+        raise RuntimeError("payment node reached without a PrepareBizum operation")
+    grounded_amount = payment_words.amount_in(ctx.sentence)
+    contacts = await ctx.ports.contacts.all_of(account_id)
+    mentioned = payment_words.contacts_in(ctx.sentence, contacts)
+    selected_by_model = payment_words.contacts_in(op.recipient, contacts)
+    if (
+        grounded_amount != op.amount_minor
+        or len(mentioned) != 1
+        or len(selected_by_model) != 1
+        or mentioned[0].contact_id != selected_by_model[0].contact_id
+    ):
+        return await _finish_payment_without_command(
+            state,
+            ctx,
+            "No he podido verificar el importe y el destinatario en tu mensaje y tus contactos. "
+            "Indica un Bizum con un importe y un contacto reconocible.",
+            current,
+            base_result,
+        )
+    command = PrepareChosenPaymentCommand(
+        account_id=account_id,
+        recipient_name=mentioned[0].display_name,
+        amount_minor=grounded_amount,
+        currency="EUR",
+        idempotency_key=f"conversation-bizum:{state['turn_id']}",
+        rail=Rail.BIZUM,
+    )
+    answer = await ctx.ports.commands.dispatch(command)
+    if not isinstance(answer, PaymentAnswer):
+        raise TypeError("payment preparation returned an unexpected answer")
+    pending = (
+        PaymentConfirmationPending(answer.preview, ctx.thread_id)
+        if answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+        and answer.preview is not None
+        else None
+    )
+    payment_result = _payment_result(answer, replace(current, payment=pending), pending is not None)
+    result = _combine_payment_result(base_result, payment_result)
+    candidate = replace(current, payment=pending)
+    if candidate.turns and candidate.turns[-1].said == ctx.sentence:
+        last = candidate.turns[-1]
+        candidate = replace(
+            candidate, turns=(*candidate.turns[:-1], replace(last, answered=result.text))
+        )
+    else:
+        candidate = candidate.remembered(DialogueTurn(ctx.sentence, result.text))
+    saved = await ctx.ports.store.save(
+        candidate,
+        account_id=account_id,
+        expected_version=state["expected_version"],
+    )
+    ctx.cache["dialogue"] = saved
+    ctx.cache["result"] = _combine_payment_result(
+        base_result, _payment_result(answer, saved, pending is not None)
+    )
+    ctx.cache["saved"] = saved
+    if pending is not None:
+        return {
+            "status": "payment_waiting",
+            "payment_answer": codec.dumps_typed(answer),
+            "expected_version": saved.version,
+        }
+    return {"status": "payment_complete", "expected_version": saved.version}
+
+
+async def _finish_payment_without_command(
+    state: TurnGraphState,
+    ctx: GraphContext,
+    text: str,
+    current: DialogueState | None = None,
+    base_result: AskFinancialQuestionResult | None = None,
+) -> TurnGraphState:
+    account_id = UUID(state["account_id"])
+    current = current or await ctx.ports.store.load(
+        UUID(state["conversation_id"]), account_id=account_id
+    )
+    if current is None or current.version != state["expected_version"]:
+        raise StaleDialogueError(current or DialogueState(UUID(state["conversation_id"])))
+    payment_result = AskFinancialQuestionResult(
+        outcome=PlanningOutcome.INVALID_DOMAIN.value,
+        text=text,
+    )
+    result = _combine_payment_result(base_result, payment_result)
+    candidate = current
+    if candidate.turns and candidate.turns[-1].said == ctx.sentence:
+        last = candidate.turns[-1]
+        candidate = replace(
+            candidate, turns=(*candidate.turns[:-1], replace(last, answered=result.text))
+        )
+    else:
+        candidate = candidate.remembered(DialogueTurn(ctx.sentence, result.text))
+    saved = await ctx.ports.store.save(
+        candidate,
+        account_id=account_id,
+        expected_version=state["expected_version"],
+    )
+    ctx.cache["result"], ctx.cache["saved"] = result, saved
+    return {"status": "payment_complete", "expected_version": saved.version}
+
+
+async def wait_for_payment_reply(state: TurnGraphState) -> TurnGraphState:
+    answer = codec.loads_typed(state["payment_answer"])
+    if not isinstance(answer, PaymentAnswer) or answer.preview is None:
+        raise RuntimeError("payment confirmation checkpoint has no bank preview")
+    preview = answer.preview
+    reply = interrupt(
+        {
+            "intent_id": str(preview.intent_id),
+            "recipient": preview.recipient,
+            "amount_minor": preview.amount_minor,
+            "currency": preview.currency,
+            "balance_after_minor": preview.balance_after_minor,
+            "expires_at": preview.expires_at.isoformat(),
+        }
+    )
+    if not isinstance(reply, str):
+        raise ValueError("payment confirmation reply must be text")
+    return {"payment_reply": reply}
+
+
+async def confirm_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
+    ctx = runtime.context
+    if Scope.PAYMENTS_CONFIRM.value not in ctx.caller_scopes:
+        raise NotAuthorisedError(f"this credential is not allowed {Scope.PAYMENTS_CONFIRM.value}")
+    if ctx.ports.commands is None:
+        raise RuntimeError("payment command bus is unavailable")
+    account_id = UUID(state["account_id"])
+    conversation_id = UUID(state["conversation_id"])
+    current = await ctx.ports.store.load(conversation_id, account_id=account_id)
+    pending = current.payment if current is not None else None
+    if (
+        current is None
+        or not isinstance(pending, PaymentConfirmationPending)
+        or pending.workflow_id != ctx.thread_id
+    ):
+        raise StaleDialogueError(current or DialogueState(conversation_id))
+    command = ConfirmPaymentCommand(
+        reply=state["payment_reply"],
+        account_id=account_id,
+        intent_id=pending.preview.intent_id,
+        preview=pending.preview,
+    )
+    answer = await ctx.ports.commands.dispatch(command)
+    if not isinstance(answer, PaymentAnswer):
+        raise TypeError("payment confirmation returned an unexpected answer")
+    answer = replace(answer, preview=pending.preview)
+    remains_pending = answer.outcome in {
+        PaymentOutcome.AWAITING_CONFIRMATION.value,
+        PaymentOutcome.BANKING_UNAVAILABLE.value,
+    }
+    saved = await ctx.ports.store.save(
+        replace(current, payment=pending if remains_pending else None).remembered(
+            DialogueTurn(ctx.sentence, answer.text)
+        ),
+        account_id=account_id,
+        expected_version=state["expected_version"],
+    )
+    ctx.cache["dialogue"] = saved
+    ctx.cache["result"] = _payment_result(answer, saved, remains_pending)
+    ctx.cache["saved"] = saved
+    return {
+        "status": "payment_waiting" if remains_pending else "payment_complete",
+        "payment_answer": codec.dumps_typed(answer),
+        "expected_version": saved.version,
+    }
+
+
+def _payment_result(
+    answer: PaymentAnswer, state: DialogueState, waiting: bool
+) -> AskFinancialQuestionResult:
+    pending = state.payment
+    preview = (
+        answer.preview
+        if answer.preview is not None
+        else pending.preview
+        if isinstance(pending, PaymentConfirmationPending)
+        else None
+    )
+    conversation = Conversation(
+        conversation_id=state.conversation_id,
+        version=state.version,
+        active=(
+            PaymentConfirmation(
+                intent_id=preview.intent_id,
+                recipient=preview.recipient,
+                amount_minor=preview.amount_minor,
+                currency=preview.currency,
+                rail=preview.rail,
+                recipient_iban=preview.recipient_iban,
+            )
+            if waiting and preview is not None
+            else None
+        ),
+    )
+    return AskFinancialQuestionResult(
+        outcome=answer.outcome,
+        text=answer.text,
+        conversation=conversation,
+    )
+
+
+def _combine_payment_result(
+    previous: AskFinancialQuestionResult | None, payment: AskFinancialQuestionResult
+) -> AskFinancialQuestionResult:
+    if previous is None:
+        return payment
+    return replace(
+        previous,
+        text=f"{previous.text}\n\n{payment.text}",
+        conversation=payment.conversation,
+    )
 
 
 async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
@@ -582,12 +898,30 @@ def _after_validation(state: TurnGraphState) -> str:
     match state["status"]:
         case "delegated":
             return END
+        case "payment":
+            return "prepare_payment"
         case "visualize":
             return "visualize_and_commit"
         case "replied" | "refused" | "canonical":
             return "present_and_commit"
         case _:
             return "execute_read_only"
+
+
+def _after_presentation(state: TurnGraphState) -> str:
+    return (
+        "prepare_payment"
+        if any(isinstance(op, PrepareBizum) for op in codec.loads(state["ops"]))
+        else END
+    )
+
+
+def _after_payment_prepare(state: TurnGraphState) -> str:
+    return "wait_for_payment_reply" if state["status"] == "payment_waiting" else END
+
+
+def _after_payment_confirmation(state: TurnGraphState) -> str:
+    return "wait_for_payment_reply" if state["status"] == "payment_waiting" else END
 
 
 def _after_execution(state: TurnGraphState) -> str:
@@ -608,19 +942,31 @@ def build(checkpointer: Checkpointer) -> CompiledStateGraph[Any, Any, Any, Any]:
     graph.add_node("assess_result", assess_result)
     graph.add_node("present_and_commit", present_and_commit)
     graph.add_node("visualize_and_commit", visualize_and_commit)
+    graph.add_node("prepare_payment", prepare_payment)
+    graph.add_node("wait_for_payment_reply", wait_for_payment_reply)
+    graph.add_node("confirm_payment", confirm_payment)
     graph.add_edge(START, "load_and_reserve")
     graph.add_edge("load_and_reserve", "plan")
     graph.add_edge("plan", "validate_and_apply")
     graph.add_conditional_edges(
         "validate_and_apply",
         _after_validation,
-        ["execute_read_only", "present_and_commit", "visualize_and_commit", END],
+        [
+            "execute_read_only",
+            "present_and_commit",
+            "visualize_and_commit",
+            "prepare_payment",
+            END,
+        ],
     )
     graph.add_conditional_edges(
         "execute_read_only", _after_execution, ["execute_read_only", "assess_result"]
     )
     graph.add_conditional_edges("assess_result", _after_assessment, ["plan", "present_and_commit"])
-    graph.add_edge("present_and_commit", END)
+    graph.add_conditional_edges("present_and_commit", _after_presentation)
+    graph.add_conditional_edges("prepare_payment", _after_payment_prepare)
+    graph.add_edge("wait_for_payment_reply", "confirm_payment")
+    graph.add_conditional_edges("confirm_payment", _after_payment_confirmation)
     return graph.compile(checkpointer=checkpointer)
 
 
@@ -658,7 +1004,11 @@ async def _transition(state: TurnGraphState, ctx: GraphContext) -> Transition:
     and the graph is what reads each side by merchant instead. Pure, so recomputing it on a resume
     gives the same transition."""
     if "transition" not in ctx.cache:
-        ops = tuple(_without_merchant_grouping(op) for op in codec.loads(state["ops"]))
+        ops = tuple(
+            _without_merchant_grouping(op)
+            for op in codec.loads(state["ops"])
+            if not isinstance(op, PrepareBizum)
+        )
         current = await _canonical(state, ctx)
         ctx.cache["transition"] = apply_guarded(current, ops, ctx.today, await _grounds(state, ctx))
     transition: Transition = ctx.cache["transition"]

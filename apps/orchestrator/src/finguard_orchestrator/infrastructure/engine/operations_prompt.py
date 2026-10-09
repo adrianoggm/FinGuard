@@ -100,6 +100,9 @@ windows; shared is what both sides have, and what nothing names comes from the s
 a comparison; SHARE: the part the screen is of its total.
 - {"select_operand": "earlier" or "latest"}: keep one side of a comparison.
 - {"reset": {}}: start again.
+- {"restore_previous": N}: rerun a prior answered financial query or comparison. N is the
+  one-based position in the available history, with 1 the immediately previous query. Use only
+  when the person explicitly asks to go back; it re-queries banking and never reuses stale figures.
 - {"balance": [account names]}: the money there is now; [] for every account.
 - {"clarify": M}: you cannot tell what the turn means. M: WINDOW (when), SUBJECT (what), \
 ACCOUNT, PERSON (who) or OPERAND (which side, or which two).
@@ -108,6 +111,9 @@ ACCOUNT, PERSON (who) or OPERAND (which side, or which two).
   S is AUTO, BAR or LINE.
 - {"update_visualization": S}: restyle the active chart over the same result; S is \
   AUTO, BAR or LINE. A visual-only change never calls the bank.
+- {"prepare_bizum": {"recipient": NAME, "amount_minor": INTEGER}}: prepare a Bizum preview \
+  only when the sentence explicitly names both the recipient and amount. amount_minor is the \
+  exact amount in euro cents; never infer it. The bank preview is shown for explicit approval.
 - {"delegate": D}: D is PAYMENT, TRANSFER, BOOKING, UNSUPPORTED, or CHART only for \
   compatibility; prefer the typed visualization operations above for all chart requests. \
 (what no operation can say, such as a forecast).
@@ -132,7 +138,9 @@ SENTENCE>>>
 ## Rules
 - Answer only with operations. Never compute or write an amount: the bank gives every figure.
 - In a patch, list only the fields the turn changes. A field not listed keeps its value.
-- Paying, sending money, transfers and bookings are always delegate.
+- Transfers and bookings remain delegate. For a complete Bizum request use prepare_bizum, never \
+  delegate PAYMENT. The amount must match the deterministic Spanish amount read from the current \
+  sentence; the application rejects a mismatch before contacting the bank.
 - A window that has not begun cannot be asked: delegate UNSUPPORTED. The latest begun reading is \
 only for a month said by its name; a turn pointing ahead of today asks about a window that has \
 not begun.
@@ -147,6 +155,11 @@ for an ordinary ask with no comparative wording.
 clarify; use the default windows above. Clarify only when the comparison itself is ambiguous.
 - When the person asks which merchants explain a spending increase, include group_by MERCHANT in \
 the comparison so each merchant's totals and movement counts can be checked.
+- When the screen is a comparison and the person asks why its totals differ, preserve both periods \
+  and filters and compare by MERCHANT. The question is about the pair, not which operand to select.
+- If the screen is a query for one month and the person asks to compare it with another named \
+  month, use both months as the pair, chronologically ordered. Carry the query's direction, \
+  categories, merchants, accounts and grouping to both sides; ask only if one side is ambiguous.
 - A turn that only makes sense against what is on screen is patch, compare, measure or \
 select_operand, not ask; resolve references to other periods against the dates shown.
 - If the last answer was a query and the person says only a new period (for example "y en octubre",
@@ -155,9 +168,15 @@ select_operand, not ask; resolve references to other periods against the dates s
   period-only follow-up into a new category ranking or a broader query.
 - Use target pending only when the state shows an open question; with none open, a correction \
 patches focus.
+- If the person explicitly asks to return to the previous query/result and state says one is
+  available, emit restore_previous with its one-based position from the numbered history. Do not
+  reconstruct it from the turn transcript.
 - When you cannot tell what the turn refers to, answer clarify. Asking is better than guessing.
 - When the open question asks for WINDOW and the person replies with only a period, patch pending
   with that window. Do not start a new ask or ask again what to consult.
+- When the open question asks which two periods to compare and the reply names two periods, emit \
+  compare for those periods. Carry the active query's filters to both sides; do not patch to only \
+  one period or ask again.
 - When a patch asks for all categories, merchants or other groups after a top-N result, include
   clear_limit true. The absent limit field means keep the current limit.
 - Choose update_visualization only when an active chart is shown and the person changes its style;
@@ -286,8 +305,8 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             ),
         ),
         (
-            "",
-            "¿En qué tiendas he gastado más que en el periodo anterior?",
+            "a comparison of expenses over the previous two complete months, grouped by category",
+            "¿A qué se debe la diferencia?",
             _answer(
                 {
                     "compare": {
@@ -313,25 +332,53 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             ),
         ),
         (
-            "",
-            "¿En qué tiendas me gasto más últimamente que antes?",
+            "an October expenses query, grouped by category",
+            "¿Y comparado con septiembre?",
             _answer(
                 {
                     "compare": {
-                        "shared": _items(direction="EXPENSE", group_by="MERCHANT"),
+                        "shared": _items(direction="EXPENSE", group_by="CATEGORY"),
                         "earlier": _items(
                             window={
                                 "range": {
-                                    "start": earlier_start.isoformat(),
-                                    "end": earlier_end.isoformat(),
+                                    "start": date(october_start.year, 9, 1).isoformat(),
+                                    "end": date(october_start.year, 9, 30).isoformat(),
                                 }
                             }
                         ),
                         "latest": _items(
                             window={
                                 "range": {
-                                    "start": latest_start.isoformat(),
-                                    "end": latest_end.isoformat(),
+                                    "start": october_start.isoformat(),
+                                    "end": october_end.isoformat(),
+                                }
+                            }
+                        ),
+                    }
+                }
+            ),
+        ),
+        (
+            "a September expenses query grouped by category; an open question asks which two "
+            "periods to compare",
+            "Octubre y septiembre",
+            _answer(
+                {
+                    "compare": {
+                        "shared": _items(direction="EXPENSE", group_by="CATEGORY"),
+                        "earlier": _items(
+                            window={
+                                "range": {
+                                    "start": date(october_start.year, 9, 1).isoformat(),
+                                    "end": date(october_start.year, 9, 30).isoformat(),
+                                }
+                            }
+                        ),
+                        "latest": _items(
+                            window={
+                                "range": {
+                                    "start": october_start.isoformat(),
+                                    "end": october_end.isoformat(),
                                 }
                             }
                         ),
@@ -363,7 +410,11 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             "Cámbialo a líneas",
             _answer({"update_visualization": "LINE"}),
         ),
-        ("", "Envíale 25 euros a mi hermana", _answer({"delegate": "PAYMENT"})),
+        (
+            "",
+            "Envía un bizum de 25 euros a Marta Solis Vega",
+            _answer({"prepare_bizum": {"recipient": "Marta Solis Vega", "amount_minor": 2500}}),
+        ),
         (
             "a query",
             "El trimestre pasado, y en número de compras",
@@ -495,6 +546,16 @@ def _clipped(text: str, limit: int) -> str:
 
 def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
     lines = [f"On screen: {_focus(state.focus, today, names)}"]
+    history = state.focus_history
+    if not history and state.previous_focus is not None:
+        # Canonical schema 5/6 only retained the immediately previous focus.
+        legacy = state.previous_focus
+        lines.append(f"Previous answered query [1]: {_focus(legacy.focus, today, names)}")
+    else:
+        for index, entry in enumerate(reversed(history), start=1):
+            lines.append(f"Previous answered query [{index}]: {_focus(entry.focus, today, names)}")
+        if not history:
+            lines.append("Previous answered query: none")
     if state.active_result is not None:
         lines.append(
             "Reusable bank result: the last answered financial query is available as bounded "

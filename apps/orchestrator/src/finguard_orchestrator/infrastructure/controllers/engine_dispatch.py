@@ -178,6 +178,8 @@ async def try_engine(
         }
         if getattr(engine, "supports_idempotency", False):
             answer_kwargs["request_id"] = request_id
+        if getattr(engine, "supports_caller_scopes", False):
+            answer_kwargs["caller_scopes"] = who.scopes
         turn = await engine.answer(
             question.question,
             **answer_kwargs,

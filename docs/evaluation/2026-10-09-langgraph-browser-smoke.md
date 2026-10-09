@@ -45,7 +45,87 @@ reuse the prior banking result.
 
 These are local-model browser smoke runs, not a Groq quality or promotion result. They cover query
 continuity, a category breakdown, chart creation and restyling, and one restart. They do not verify
-mixed payment and analytics turns, payment confirmation inside the main conversation graph,
-booking, or the full regression corpus on LangGraph. The payment pause/resume adapter is still a
-separate compiled graph, and the legacy demo at port 8000 still runs with graph mode off. Those
-remain migration work; this smoke run is not a promotion gate.
+booking or the full regression corpus on LangGraph. This smoke run is not a promotion gate.
+
+## Unified graph follow-up (2026-10-09)
+
+The isolated orchestrator was rebuilt from the working tree and exercised in Chrome against the
+same seeded banking database, with `ORCHESTRATOR_CONVERSATION_GRAPH=on` and local Qwen 3.5 9B.
+The following happened in one browser conversation:
+
+1. `Hazle un bizum de 20 euros a Marta Solis` returned the bank-authored preview for Marta Solis
+   Vega, including 20,00 EUR and the remaining balance. No payment was sent. Replying `no` called
+   the bank cancellation endpoint and the graph answered `Vale, no he enviado nada.`
+2. `Desglosa mis gastos por categoría de los últimos 3 meses` returned 5.937,68 EUR across 88
+   movements and all nine category totals. The renderer showed the first ten movements and kept
+   the total across all 88.
+3. `Muéstramelo en un gráfico` rendered the category result with the existing eight-category
+   display limit. `Cámbialo a líneas` reused the displayed result; Chrome's rendered Vega DOM
+   contained `mark-line` after the change.
+
+This covers graph-owned Bizum preview/cancel, analysis, visualization and restyling in one real UI
+session. It does not authorize or exercise the final money transfer, and this run did not restart
+the orchestrator between the payment pause and reply. Unit tests cover the guarded `sí` path,
+missing scopes, amount mismatch, ambiguous replies, and mixed analytics/Bizum with one canonical
+version advance. Transfer and booking workflows remain unavailable on the graph route.
+
+## Gemini continuity and protected-action run (2026-10-09)
+
+The isolated stack was run with Gemini 3.1 Flash Lite using the configured key and synthetic bank
+data. In one Chrome conversation:
+
+1. An August account query returned 2.159,87 EUR in 33 movements. `¿Y en julio?` kept the account
+   and expense direction and returned 1.895,97 EUR in 28 movements.
+2. `¿Y comparado con agosto?` compared July with August, kept Cuenta corriente, and reported the
+   263,90 EUR increase.
+3. `¿A qué se debe la subida?` reused the comparison. The graph read both periods by merchant and
+   returned merchant totals, movement counts, average amounts and the largest purchase for one
+   merchant. This exercised the graph's bounded second model decision and its bank read.
+4. `¿Cuánto he gastado este mes en mi cuenta corriente y envía un bizum de 1 euro a Marta Solis
+   Vega?` returned the 1.030,42 EUR query and a 1,00 EUR bank-authored Bizum preview in the same
+   conversation. Replying `no` canceled the preview. No money was sent.
+
+This run first exposed and then verified a Gemini schema adapter defect: the shallow operation
+schema sent `prepare_bizum` as an empty object, so Gemini returned no recipient or amount. The
+adapter now preserves both required fields while the canonical reader still validates the full
+operation schema. `test_gemini_provider.py` covers that wire shape.
+
+**Known analysis boundary:** comparing September with the partial month of October showed lower
+total spending in October. The answer to `¿A qué se debe esa diferencia?` listed merchants whose
+spending rose in October, so it did not explain the overall decrease. The investigation capability
+currently models increases only; it needs symmetric decrease attribution before general “why did
+the difference happen?” questions can be considered covered.
+
+Focused verification after these changes: 219 tests passed, one PostgreSQL integration test was
+skipped because its optional test database is unset, and four prompt-size budget cases were
+deselected; Ruff passed and mypy passed for the changed graph, state, controller and Gemini
+provider modules. The excluded prompt-size cases remain a prompt-budget issue, not a passing check.
+
+## Previous query operation (2026-10-09)
+
+Added the structured `restore_previous` operation. Canonical state retains up to eight typed prior
+focuses and their account selections; the model selects a one-based history position. Restoring a
+focus runs its plan through the normal graph executor and queries banking again, so old totals and
+movement rows are not replayed. The dialogue codec and PostgreSQL store accept schema versions
+5/6 and new saves use version 7. The graph checkpoint version was advanced to avoid resuming paused
+work under changed state semantics. Unit coverage selects an older query by depth and verifies a
+fresh bank read, plus codec persistence of the history. Chrome with Gemini 3.1 Flash Lite exercised
+both continuity paths: August 2.159,87 EUR → July 1.895,97 EUR → `Vuelve a la consulta anterior`
+returned August 2.159,87 EUR; and “gimnasio” over the last month returned 59,80 EUR, followed by
+`¿Y en octubre?` which retained the merchant filter and returned 29,90 EUR. The browser run also
+exposed that PostgreSQL rejected stored schema version 5; the store now reads it. No payment was
+attempted in this run.
+
+The next browser pass went beyond one-step restoration: it asked August, July and June, then
+`Vuelve a la consulta de agosto`, which selected history position 2 and freshly returned 2.159,87
+EUR. It then queried all categories for three months, rendered the chart, and changed it to lines;
+the DOM exposed Vega `mark-line` after the restyle. The renderer reused the stored result and made
+no new bank query for that visual-only change.
+
+A repeated-restore attempt exposed that consuming an older history position discarded the other
+entries, so August could not be revisited after a later category query. The history now removes only
+the selected entry and moves the current focus back into the history. Chrome with Gemini verified
+August → July → June → restore August → category breakdown → restore August again. After restarting
+the isolated orchestrator, it restored July from the same conversation and returned 1.895,97 EUR.
+The history survives a process restart, keeps the account selection, and each restore performs a
+fresh bank read.

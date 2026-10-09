@@ -1,9 +1,9 @@
-"""One turn through the investigation graph, with the guarantees the graph does not own.
+"""One turn through the unified conversation graph, with the guarantees it does not own.
 
 What stays here and out of LangGraph: the version check, the turn reservation (idempotency), and
-the decision to resume, replay or refuse. The store's compare-and-set stays in the presenter node.
-Money operations are explicitly unavailable in this graph slice: they execute no banking command,
-record the refusal as a turn, and cannot fall through to a second language interpreter.
+the decision to resume, replay or refuse. The store's compare-and-set stays in the graph's commit
+nodes. Bizum preparation and confirmation run through the same graph and the existing guarded
+banking commands; transfers and bookings remain explicitly unavailable until migrated.
 
 - **New request** against the held version: reserved, then run from the start under a thread id
   made of the account, conversation, version and request id.
@@ -30,6 +30,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.types import Command
 
 from finguard_orchestrator.application.engine import presenter
 from finguard_orchestrator.application.engine.executor import MixedCurrenciesError
@@ -47,7 +48,11 @@ from finguard_orchestrator.application.graph.graph import (
 )
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.engine.operations import Delegate
-from finguard_orchestrator.domain.engine.state import DialogueState, DialogueTurn
+from finguard_orchestrator.domain.engine.state import (
+    DialogueState,
+    DialogueTurn,
+    PaymentConfirmationPending,
+)
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import (
     BankingUnavailableError,
@@ -95,6 +100,7 @@ class GraphTurnHandler:
     """Answers a turn as `AnswerTurnHandler.answer` does, through the investigation graph."""
 
     supports_idempotency = True
+    supports_caller_scopes = True
     authoritative = True
 
     def __init__(
@@ -118,6 +124,7 @@ class GraphTurnHandler:
         today: date,
         reporting_timezone: str,
         request_id: str | None = None,
+        caller_scopes: frozenset[str] = frozenset(),
     ) -> EngineAnswer:
         """`request_id` is the turn's idempotency key; without one every call is a new request."""
         calls_before = self._ports.count_calls()
@@ -135,7 +142,14 @@ class GraphTurnHandler:
             "configurable": {"thread_id": _thread(turn)},
             "recursion_limit": RECURSION_LIMIT,
         }
-        context = GraphContext(sentence, today, reporting_timezone, self._ports)
+        context = GraphContext(
+            sentence,
+            today,
+            reporting_timezone,
+            self._ports,
+            caller_scopes=caller_scopes,
+            thread_id=config["configurable"]["thread_id"],
+        )
 
         def unsaved(result: AskFinancialQuestionResult) -> EngineAnswer:
             calls = self._ports.count_calls() - calls_before
@@ -146,7 +160,7 @@ class GraphTurnHandler:
         try:
             try:
                 final = await self._graph.ainvoke(
-                    await self._input(turn, config), config, context=context
+                    await self._input(turn, config, sentence), config, context=context
                 )
             except _UNANSWERED as unanswered:
                 # Resumable by the same request: its checkpoint stays.
@@ -256,7 +270,9 @@ class GraphTurnHandler:
             return replayed
         return _Turn(key, request_id, held)
 
-    async def _input(self, turn: _Turn, config: Any) -> TurnGraphState | None:
+    async def _input(
+        self, turn: _Turn, config: Any, sentence: str
+    ) -> TurnGraphState | Command[Any] | None:
         """None to resume the turn's own checkpoint; a fresh state to start (or start again)."""
         found = await self._graph.aget_state(config)
         values = found.values
@@ -267,6 +283,20 @@ class GraphTurnHandler:
             )
             if same:
                 logger.info("graph.resumed at=%s", ",".join(found.next))
+                pending = turn.held.payment
+                if isinstance(pending, PaymentConfirmationPending):
+                    if (
+                        pending.workflow_id != config["configurable"]["thread_id"]
+                        or values.get("status") != "payment_waiting"
+                    ):
+                        raise StaleDialogueError(turn.held)
+                    return Command(
+                        resume=sentence,
+                        update={
+                            "turn_id": turn.request_id,
+                            "expected_version": turn.key.expected_version,
+                        },
+                    )
                 return None
             logger.warning("graph.checkpoint_version_mismatch")
         if values:
@@ -318,6 +348,9 @@ def _unavailable(capability: str) -> AskFinancialQuestionResult:
 
 
 def _thread(turn: _Turn) -> str:
+    pending = turn.held.payment
+    if isinstance(pending, PaymentConfirmationPending) and pending.workflow_id:
+        return pending.workflow_id
     key = turn.key
     return f"{key.account_id}:{key.conversation_id}:{key.expected_version}:{turn.request_id}"
 

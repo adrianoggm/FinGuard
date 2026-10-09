@@ -693,6 +693,7 @@ def create_app() -> FastAPI:
                 reservations,  # type: ignore[arg-type]
                 checkpointer,  # type: ignore[arg-type]
                 visual_policy,
+                command_bus,
             )  # type: ignore[return-value]
 
         graph_factory = build_graph

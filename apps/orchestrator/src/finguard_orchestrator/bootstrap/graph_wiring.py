@@ -4,6 +4,7 @@ from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+from finguard_orchestrator.application import CommandBus
 from finguard_orchestrator.application.graph.graph import GraphPorts
 from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.bootstrap.config import Settings
@@ -32,6 +33,7 @@ def graph_engine(
     reservations: TurnReservationsPort,
     checkpointer: BaseCheckpointSaver[Any],
     visual_policy: VisualPlanningPolicy | None = None,
+    commands: CommandBus | None = None,
 ) -> GraphTurnHandler:
     ports = GraphPorts(
         interpreter,
@@ -49,5 +51,6 @@ def graph_engine(
         frozenset(settings.categories),
         visual_policy=visual_policy,
         count_calls=calls_so_far,
+        commands=commands,
     )
     return GraphTurnHandler(ports, reservations, checkpointer)

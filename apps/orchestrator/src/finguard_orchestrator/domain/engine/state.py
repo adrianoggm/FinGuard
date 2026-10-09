@@ -140,6 +140,22 @@ class Scope:
 
 
 @dataclass(frozen=True)
+class PreviousFocus:
+    """The last answered focus and account selection, for an explicit return operation."""
+
+    focus: Focus
+    scope: Scope
+
+
+@dataclass(frozen=True)
+class FocusHistoryEntry:
+    """A prior answered focus and the account selection that produced it."""
+
+    focus: Focus
+    scope: Scope
+
+
+@dataclass(frozen=True)
 class DialogueTurn:
     """`answered` is the plan in words and never its figures: a figure in the prompt is a figure
     a model can repeat, and every figure must come from the bank."""
@@ -201,6 +217,9 @@ class PaymentConfirmationPending:
     """
 
     preview: PaymentPreview
+    # Opaque LangGraph workflow handle. It identifies the durable pause, never authorizes a payment;
+    # the exact preview and the bank command remain the authority when a reply resumes it.
+    workflow_id: str | None = None
 
 
 PaymentWorkflow = PaymentDraftPending | PaymentConfirmationPending
@@ -217,9 +236,17 @@ class DialogueState:
     active_result: ActiveQueryResult | None = None
     active_visual: ActiveVisual | None = None
     payment: PaymentWorkflow | None = None
+    previous_focus: PreviousFocus | None = None
+    focus_history: tuple[FocusHistoryEntry, ...] = ()
+
+    MAX_FOCUS_HISTORY: ClassVar[int] = 8
 
     # What bounds the state the interpreter's prompt carries.
     MAX_TURNS: ClassVar[int] = 8
+
+    def __post_init__(self) -> None:
+        if len(self.focus_history) > self.MAX_FOCUS_HISTORY:
+            raise ValueError("focus history exceeds its bounded size")
 
     def remembered(self, turn: DialogueTurn) -> "DialogueState":
         """This state with `turn` added, keeping only the last MAX_TURNS."""

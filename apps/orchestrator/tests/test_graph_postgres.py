@@ -34,6 +34,30 @@ async def test_postgres_state_cas_and_turn_resume_replay() -> None:
             DialogueState(conversation_id), account_id=account, expected_version=0
         )
         assert saved.version == 1
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT set_config('app.account_id', $1, true)", str(account)
+                )
+                await connection.execute(
+                    "UPDATE assistant.conversation_state SET schema_version = 5 "
+                    "WHERE account_id = $1 AND conversation_id = $2",
+                    account,
+                    conversation_id,
+                )
+        assert await store.load(conversation_id, account_id=account) == saved
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT set_config('app.account_id', $1, true)", str(account)
+                )
+                await connection.execute(
+                    "UPDATE assistant.conversation_state SET schema_version = 6 "
+                    "WHERE account_id = $1 AND conversation_id = $2",
+                    account,
+                    conversation_id,
+                )
+        assert await store.load(conversation_id, account_id=account) == saved
         assert await store.load(conversation_id, account_id=other_account) is None
 
         async def save_race() -> str:

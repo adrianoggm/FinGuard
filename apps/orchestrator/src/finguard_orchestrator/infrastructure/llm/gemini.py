@@ -87,18 +87,16 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
         field = resolve(node)
         kind = field.get("type") if isinstance(field, dict) else None
         if not isinstance(kind, str):
-            choices = (
-                [
-                    choice.get("const", choice.get("enum", [None]))[0]
-                    if isinstance(choice.get("enum"), list)
-                    else choice["const"]
-                    for choice in field.get("anyOf", [])
-                    if isinstance(choice, dict)
-                    and ("const" in choice or isinstance(choice.get("enum"), list))
-                ]
-                if isinstance(field, dict) and isinstance(field.get("anyOf"), list)
-                else []
-            )
+            choices: list[Any] = []
+            variants = field.get("anyOf", []) if isinstance(field, dict) else []
+            if isinstance(variants, list):
+                for choice in variants:
+                    if not isinstance(choice, dict):
+                        continue
+                    if "const" in choice:
+                        choices.append(choice["const"])
+                    elif isinstance(choice.get("enum"), list) and choice["enum"]:
+                        choices.append(choice["enum"][0])
             if choices:
                 return {"type": "string", "enum": choices}
             return {"type": "object"}
@@ -220,6 +218,14 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 "type": "object",
                 "properties": {key: plan_schema for key in ("shared", "earlier", "latest")},
                 "required": ["shared", "earlier", "latest"],
+                "additionalProperties": False,
+            }
+        elif name == "prepare_bizum":
+            properties = field.get("properties", {})
+            value = {
+                "type": "object",
+                "properties": {key: simple_value(child) for key, child in properties.items()},
+                "required": list(properties),
                 "additionalProperties": False,
             }
         elif kind == "object" and not field.get("properties"):

@@ -26,7 +26,9 @@ from finguard_orchestrator.domain.engine.operations import (
     Operation,
     Patch,
     PlanFields,
+    PrepareBizum,
     Reset,
+    RestorePrevious,
     SelectOperand,
     Smalltalk,
     Visualize,
@@ -233,6 +235,7 @@ PARSED: list[tuple[dict[str, Any], Operation]] = [
     ({"measure": "SHARE"}, ChangeMeasure(Measure.SHARE)),
     ({"select_operand": "latest"}, SelectOperand("latest")),
     ({"reset": {}}, Reset()),
+    ({"restore_previous": 2}, RestorePrevious(2)),
     ({"balance": ["Cuenta corriente"]}, Balance(("Cuenta corriente",))),
     ({"balance": []}, Balance(())),
     # What a clarification asks for and nothing else: a name to quote comes from grounding
@@ -590,13 +593,36 @@ def test_operations_are_keyed_by_their_name() -> None:
         "measure",
         "select_operand",
         "reset",
+        "restore_previous",
         "balance",
         "clarify",
         "smalltalk",
         "delegate",
         "create_visualization",
         "update_visualization",
+        "prepare_bizum",
     ]
+
+
+def test_bizum_is_a_typed_prepare_operation_with_a_bounded_integer_amount() -> None:
+    parsed = read(
+        '{"operations":[{"prepare_bizum":{"recipient":"Marta Solis Vega","amount_minor":2500}}]}',
+        CATALOGUE,
+    )
+
+    assert parsed == (PrepareBizum("Marta Solis Vega", 2500),)
+    with pytest.raises(UnreadableError):
+        read(
+            '{"operations":[{"prepare_bizum":{"recipient":"Marta","amount_minor":0}}]}',
+            CATALOGUE,
+        )
+
+
+def test_restore_previous_has_a_bounded_one_based_history_position() -> None:
+    assert read('{"operations":[{"restore_previous":2}]}', CATALOGUE) == (RestorePrevious(2),)
+    for value in (0, 9, True):
+        with pytest.raises(UnreadableError):
+            read(json.dumps({"operations": [{"restore_previous": value}]}), CATALOGUE)
 
 
 def test_a_plan_is_a_closed_list_of_the_fields_it_says() -> None:

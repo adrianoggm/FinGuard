@@ -8,9 +8,12 @@ means throughout: not said, and therefore kept.
 from dataclasses import dataclass
 from typing import Literal
 
+from finguard_orchestrator.domain.constants import MAX_PAYMENT_MINOR, MAX_RECIPIENT_NAME
+
 # `PlanFields` lives with the state, whose pending question holds one; it is named here too because
 # it is what every operation carries.
-from finguard_orchestrator.domain.engine.state import Measure, Missing, PlanFields
+from finguard_orchestrator.domain.engine.state import DialogueState, Measure, Missing, PlanFields
+from finguard_orchestrator.domain.errors import InvalidValueError
 
 __all__ = [
     "Ask",
@@ -21,8 +24,10 @@ __all__ = [
     "Delegate",
     "Operation",
     "Patch",
+    "PrepareBizum",
     "PlanFields",
     "Reset",
+    "RestorePrevious",
     "SelectOperand",
     "Smalltalk",
 ]
@@ -69,6 +74,22 @@ class Reset:
 
 
 @dataclass(frozen=True)
+class RestorePrevious:
+    """Return to a prior answered focus; steps_back is 1 for the immediately previous one."""
+
+    steps_back: int = 1
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.steps_back, bool)
+            or not 1 <= self.steps_back <= DialogueState.MAX_FOCUS_HISTORY
+        ):
+            raise InvalidValueError(
+                f"steps_back must be between 1 and {DialogueState.MAX_FOCUS_HISTORY}"
+            )
+
+
+@dataclass(frozen=True)
 class Balance:
     accounts: tuple[str, ...] = ()
 
@@ -103,6 +124,24 @@ class Visualize:
     style: Literal["AUTO", "BAR", "LINE"] = "AUTO"
 
 
+@dataclass(frozen=True)
+class PrepareBizum:
+    """Prepare a bank-authored Bizum preview. This operation can never confirm or send money."""
+
+    recipient: str
+    amount_minor: int
+
+    def __post_init__(self) -> None:
+        if not self.recipient.strip() or len(self.recipient) > MAX_RECIPIENT_NAME:
+            raise InvalidValueError("Bizum recipient name is invalid")
+        if (
+            isinstance(self.amount_minor, bool)
+            or not isinstance(self.amount_minor, int)
+            or not 0 < self.amount_minor <= MAX_PAYMENT_MINOR
+        ):
+            raise InvalidValueError("Bizum amount must be a positive bounded integer")
+
+
 Operation = (
     Ask
     | Patch
@@ -110,9 +149,11 @@ Operation = (
     | ChangeMeasure
     | SelectOperand
     | Reset
+    | RestorePrevious
     | Balance
     | Clarify
     | Smalltalk
     | Delegate
     | Visualize
+    | PrepareBizum
 )

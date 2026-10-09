@@ -53,6 +53,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_CATEGORIES,
     MAX_MERCHANT_LENGTH,
     MAX_MERCHANTS,
+    MAX_PAYMENT_MINOR,
     MAX_PERIOD_DAYS,
     MAX_RANK,
     MAX_SELECTED_ACCOUNTS,
@@ -67,12 +68,14 @@ from finguard_orchestrator.domain.engine.operations import (
     Operation,
     Patch,
     PlanFields,
+    PrepareBizum,
     Reset,
+    RestorePrevious,
     SelectOperand,
     Smalltalk,
     Visualize,
 )
-from finguard_orchestrator.domain.engine.state import Measure, Missing
+from finguard_orchestrator.domain.engine.state import DialogueState, Measure, Missing
 from finguard_orchestrator.domain.enums import (
     PERIODS_NEEDING_COUNT,
     Direction,
@@ -364,6 +367,13 @@ class ResetOp(_Closed):
         return Reset()
 
 
+class RestorePreviousOp(_Closed):
+    restore_previous: Annotated[int, Field(strict=True, ge=1, le=DialogueState.MAX_FOCUS_HISTORY)]
+
+    def as_operation(self) -> RestorePrevious:
+        return RestorePrevious(self.restore_previous)
+
+
 class BalanceOp(_Closed):
     balance: AccountNames
 
@@ -411,6 +421,18 @@ class UpdateVisualizationOp(_Closed):
         return Visualize("ACTIVE_CHART", self.update_visualization)
 
 
+class BizumFields(_Closed):
+    recipient: str
+    amount_minor: Annotated[int, Field(ge=1, le=MAX_PAYMENT_MINOR)]
+
+
+class PrepareBizumOp(_Closed):
+    prepare_bizum: BizumFields
+
+    def as_operation(self) -> PrepareBizum:
+        return PrepareBizum(self.prepare_bizum.recipient.strip(), self.prepare_bizum.amount_minor)
+
+
 AnyOp = Annotated[
     Annotated[AskOp, Tag("ask")]
     | Annotated[PatchOp, Tag("patch")]
@@ -418,12 +440,14 @@ AnyOp = Annotated[
     | Annotated[MeasureOp, Tag("measure")]
     | Annotated[SelectOperandOp, Tag("select_operand")]
     | Annotated[ResetOp, Tag("reset")]
+    | Annotated[RestorePreviousOp, Tag("restore_previous")]
     | Annotated[BalanceOp, Tag("balance")]
     | Annotated[ClarifyOp, Tag("clarify")]
     | Annotated[SmalltalkOp, Tag("smalltalk")]
     | Annotated[DelegateOp, Tag("delegate")]
     | Annotated[CreateVisualizationOp, Tag("create_visualization")]
-    | Annotated[UpdateVisualizationOp, Tag("update_visualization")],
+    | Annotated[UpdateVisualizationOp, Tag("update_visualization")]
+    | Annotated[PrepareBizumOp, Tag("prepare_bizum")],
     Discriminator(_only_key),
 ]
 

@@ -27,18 +27,23 @@ from finguard_orchestrator.domain.engine.operations import (
     Operation,
     Patch,
     PlanFields,
+    PrepareBizum,
     Reset,
+    RestorePrevious,
     SelectOperand,
     Smalltalk,
     Visualize,
 )
 from finguard_orchestrator.domain.engine.state import (
+    BalanceFocus,
     ComparisonFocus,
     DialogueState,
     Focus,
+    FocusHistoryEntry,
     Measure,
     Missing,
     Pending,
+    PreviousFocus,
     QueryFocus,
     RatioFocus,
     Scope,
@@ -123,6 +128,7 @@ def apply(
     current = resting = state
     work: Work | None = None
     courtesy: Smalltalk | None = None
+    restored_previous = False
     for op in ops:
         if isinstance(op, Smalltalk):
             courtesy = courtesy or op
@@ -140,9 +146,20 @@ def apply(
             # found it in the holder's catalogues; from the model it is free text, and quoting
             # it would show the person the model's words, a figure among them.
             return Transition(resting, None, Clarify(op.missing))
+        if isinstance(op, RestorePrevious):
+            try:
+                current, work = _restored(current, op.steps_back)
+            except _CannotApplyError as question:
+                return Transition(resting, None, question.clarify)
+            restored_previous = True
+            continue
+        if isinstance(op, PrepareBizum):
+            raise InvariantViolationError("payment operation escaped graph dispatch")
         op = _fill_pending(current, op)
         if isinstance(op, (Smalltalk, Delegate, Visualize, Clarify)):
             raise InvariantViolationError("non-domain operation escaped transition dispatch")
+        if not isinstance(op, (Ask, Patch, Compare, ChangeMeasure, SelectOperand, Reset, Balance)):
+            raise InvariantViolationError("unsupported operation escaped transition dispatch")
         try:
             current, work = _applied(current, op, today, grounds)
         except _CannotApplyError as question:
@@ -160,6 +177,20 @@ def apply(
             # An aside answered after a question: that question is not answered, so it must not
             # become what is on screen either.
             current = resting
+    if work is not None and work.kind != "BALANCE" and not restored_previous:
+        history = _history_after(resting)
+        if resting.focus is not None:
+            previous_focus = PreviousFocus(resting.focus, resting.scope)
+        elif history:
+            previous = history[-1]
+            previous_focus = PreviousFocus(previous.focus, previous.scope)
+        else:
+            previous_focus = None
+        current = replace(
+            current,
+            focus_history=history,
+            previous_focus=previous_focus,
+        )
     return Transition(current, work, None if work else courtesy)
 
 
@@ -226,7 +257,9 @@ def _applied(
             pair = state.focus.comparison
             return _on_query(state, pair.earlier if which == "earlier" else pair.latest)
         case Reset():
-            return replace(state, focus=None, pending=None), None
+            return replace(
+                state, focus=None, pending=None, previous_focus=None, focus_history=()
+            ), None
         case Balance(accounts=names):
             # An aside: it leaves the focus, the open question and the scope as they were. With no
             # account named it is about all the money (ruling R11), as on the rules route: a scope
@@ -432,6 +465,69 @@ def _on_pair(state: DialogueState, pair: ComparisonPlan, *, percent: bool) -> Ap
         ratio = RatioPlan(part=pair.latest, whole=pair.earlier, kind=RatioKind.PERCENT_CHANGE)
         return state, Work("RATIO", ratio, state.scope.account_ids)
     return state, Work("COMPARE", pair, state.scope.account_ids)
+
+
+def _history_after(state: DialogueState) -> tuple[FocusHistoryEntry, ...]:
+    """Keep prior typed foci, migrating schema-6's single slot before appending current focus."""
+    history = state.focus_history
+    if not history and state.previous_focus is not None:
+        previous = state.previous_focus
+        history = _append_history(history, previous.focus, previous.scope)
+    if state.focus is not None:
+        history = _append_history(history, state.focus, state.scope)
+    return history
+
+
+def _append_history(
+    history: tuple[FocusHistoryEntry, ...], focus: Focus, scope: Scope
+) -> tuple[FocusHistoryEntry, ...]:
+    """Move a focus to the newest history position without keeping duplicate plans."""
+    entry = FocusHistoryEntry(focus, scope)
+    return (*tuple(existing for existing in history if existing != entry), entry)[
+        -DialogueState.MAX_FOCUS_HISTORY :
+    ]
+
+
+def _restored(state: DialogueState, steps_back: int) -> Applied:
+    history = state.focus_history
+    if len(history) >= steps_back:
+        selected_index = len(history) - steps_back
+        previous = history[selected_index]
+        remaining = (*history[:selected_index], *history[selected_index + 1 :])
+    elif steps_back == 1 and not history and state.previous_focus is not None:
+        # Schema-5 canonical state only retained this one entry; keep it restorable once.
+        previous = FocusHistoryEntry(state.previous_focus.focus, state.previous_focus.scope)
+        remaining = ()
+    else:
+        raise _CannotApplyError(Missing.SUBJECT)
+
+    if state.focus is not None:
+        remaining = _append_history(remaining, state.focus, state.scope)
+
+    focus = previous.focus
+    restored = replace(
+        state,
+        focus=focus,
+        scope=previous.scope,
+        focus_history=remaining,
+        previous_focus=PreviousFocus(remaining[-1].focus, remaining[-1].scope)
+        if remaining
+        else None,
+        pending=None,
+    )
+    match focus:
+        case QueryFocus(plan=plan):
+            return restored, Work("QUERY", plan, restored.scope.account_ids)
+        case ComparisonFocus(comparison=pair, measure=Measure.PERCENT_CHANGE):
+            ratio = RatioPlan(part=pair.latest, whole=pair.earlier, kind=RatioKind.PERCENT_CHANGE)
+            return restored, Work("RATIO", ratio, restored.scope.account_ids)
+        case ComparisonFocus(comparison=pair):
+            return restored, Work("COMPARE", pair, restored.scope.account_ids)
+        case RatioFocus(ratio=ratio):
+            return restored, Work("RATIO", ratio, restored.scope.account_ids)
+        case BalanceFocus(account_ids=ids):
+            return restored, Work("BALANCE", None, ids)
+    assert_never(focus)
 
 
 def _anchor(focus: Focus | None) -> Plan | None:

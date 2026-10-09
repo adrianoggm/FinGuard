@@ -19,13 +19,23 @@ idempotency and compare-and-set version checks remain mandatory at the operation
 
 The graph's versioned conversation state is the source of truth. It includes the active financial
 plan, pending operation or clarification, recent turns, a bounded aggregate-only result artifact,
-and the verified chart specification/profile with result and chart versions. Its version-4 schema
+and the verified chart specification/profile with result and chart versions. Its version-7 schema
 also has typed slots for an unfinished payment draft or the exact bank-authored confirmation
 preview, so a later graph turn can resume from canonical state without reconstructing payment data
-from the client. The payment HTTP flow now stores and resumes the exact preview in canonical state;
-the general conversation graph still does not own payment planning within a mixed analytics/payment
-turn. Checkpoint state is versioned separately from the application schema. Movement ledgers never
-enter canonical state or checkpoints.
+from the client. Bizum preparation and confirmation now run in the same conversation graph. Mixed
+analytics/Bizum turns save the analytic result and pending bank preview with one canonical version
+advance. Checkpoint state is versioned separately from the application schema. Movement ledgers
+never enter canonical state or checkpoints.
+
+The canonical dialogue state retains up to eight typed prior focuses and their account scopes. The
+model can emit the closed `restore_previous` operation when the user explicitly goes back, selecting
+one by its one-based position in the history shown to the model. The graph restores that typed focus
+and executes it against banking again, so displayed figures always come from a fresh bank response.
+The selected entry is moved to the active focus while the other entries remain navigable; when a
+later query replaces the active focus, it is added back to history. This allows revisiting a query
+after other queries or a process restart without preserving stale figures.
+Prior schema-5/6 state remains readable; the graph checkpoint version advances so paused workflows
+are not resumed under changed semantics.
 
 PostgreSQL is the durable store for graph checkpoints, canonical state, turn reservations and
 artifact metadata. Conversation writes use an account-scoped compare-and-set. Concurrent turns
@@ -42,11 +52,11 @@ One graph follows the smallest useful cycle:
 Visual operations are first-class typed edits over a persisted result: changing chart type reuses
 the result; changing an analytical dimension requests a new validated aggregation. The current
 conversation graph slice creates and restyles bar/line charts and KPIs from the bounded active
-result. Payment HTTP prepare/confirm routes now use a separate LangGraph pause/resume workflow and
-the existing guarded banking commands. The confirmation graph reuses the persisted bank preview,
-requires the account-scoped workflow id, and does not treat a pause or failure as authorization.
-This is an intermediate migration step: mixed analytics/payment turns and one compiled conversation
-entry point remain unimplemented. Booking still has no graph pause/resume path.
+result. Bizum preparation and confirmation use `interrupt()`/`Command(resume=...)` in this same
+compiled graph and invoke the existing guarded banking commands. The confirmation node reuses the
+persisted bank preview, requires the account-scoped workflow id and confirmation scope, and does not
+treat a pause or failure as authorization. Mixed analytics/Bizum turns share one checkpoint and one
+canonical version advance. Transfers and booking still have no graph workflow.
 
 The graph may call one model repeatedly within explicit turn budgets. It is not a multi-agent
 system. Nodes are adapters to existing financial contracts, validators and renderers, not new
@@ -59,15 +69,15 @@ copies of their business rules.
    concurrency, idempotency and schema migration together.
 3. Finish chart explanation, analytical regrouping and browser-level rendering. Visual-only edits
    must retain result lineage and make zero banking reads.
-4. Fold payment pause/resume into the conversation graph, then migrate booking, preserving banking
-   authorization, confirmation and idempotency checks.
+4. Migrate transfers and booking, preserving banking authorization, confirmation and idempotency
+   checks.
 5. Remove legacy conversation coordination only after API and browser coverage of full
-   multi-turn analytics, visuals and protected financial actions.
+   multi-turn analytics, visuals and protected financial actions; then remove the rollout flag.
 
 Until each capability is migrated, it must be explicitly unavailable on the graph route or handled
 by a typed, non-linguistic adapter. It must never silently send the user's words to a legacy
-interpreter. The current graph route still refuses payment/transfer/booking operations; the separate
-payment endpoints use the pause/resume workflow. A payment/transfer/booking workflow echoed from a
+interpreter. The graph route now prepares and confirms Bizum in its own conversation checkpoint.
+Transfers and booking remain explicitly unavailable there. A payment/transfer/booking workflow echoed from a
 legacy session is refused without invoking either coordinator; its complete confirmation payload is
 preserved on the wire so this refusal cannot discard or accidentally confirm a staged payment. Such
 a session must be resolved through the same version of the application that created it.
@@ -83,8 +93,8 @@ continuity, recovery, latency, model calls, token cost and orchestration code re
 The graph sends every turn through the configured structured interpreter. `Patch` carries only
 changed fields. `CreateVisualization` and `UpdateVisualization` are typed operations over the
 canonical aggregate result and active chart. The stored aggregate and chart metadata are bounded,
-versioned and account-scoped. Broader browser verification and folding payment into the unified
-graph remain open work.
+versioned and account-scoped. Browser verification of multi-turn payment confirmation and mixed
+payment/analytics remains open.
 
 A real Chrome smoke run on an isolated graph-enabled stack verified a category query, a bar chart,
 and a line restyle after restarting the orchestrator. Category labels were observed in Spanish in
