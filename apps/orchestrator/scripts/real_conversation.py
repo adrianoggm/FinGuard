@@ -427,8 +427,13 @@ async def _ask(
     options: Options,
     sentence: str,
     conversation: dict[str, Any] | None,
-) -> tuple[dict[str, Any] | None, float, str | None]:
-    """One turn, as `evaluate_e2e._ask` sends it: the sentence and the conversation echoed back."""
+) -> tuple[dict[str, Any] | None, float, str | None, dict[str, Any]]:
+    """One turn, as `evaluate_e2e._ask` sends it: the sentence and the conversation echoed back.
+
+    The last element is what the engine says about itself: `engine` (`X-FinGuard-Engine`) and
+    `model_calls` (`X-FinGuard-Model-Calls`). An absent header is None, never 0: a stream answer
+    on the rules route carries no call count, and 0 would read as a measurement.
+    """
     started = time.perf_counter()
     try:
         response = await client.post(
@@ -437,11 +442,19 @@ async def _ask(
             headers={"Authorization": f"Bearer {options.token}"},
         )
     except httpx.HTTPError as error:
-        return None, round(time.perf_counter() - started, 2), f"{type(error).__name__}: {error}"
+        seconds = round(time.perf_counter() - started, 2)
+        return None, seconds, f"{type(error).__name__}: {error}", {}
     seconds = round(time.perf_counter() - started, 2)
+    calls = response.headers.get("X-FinGuard-Model-Calls")
+    engine = {
+        "engine": response.headers.get("X-FinGuard-Engine"),
+        "model_calls": int(calls) if calls is not None and calls.isdigit() else None,
+        "model_calls_malformed": calls is not None and not calls.isdigit(),
+    }
     if response.status_code != 200:
-        return None, seconds, f"HTTP {response.status_code}: {response.text[:300]}"
-    return dict(response.json()), seconds, None
+        # A 409 is `{"code": "STALE_CONVERSATION", ...}`: the text carries the code.
+        return None, seconds, f"HTTP {response.status_code}: {response.text[:300]}", engine
+    return dict(response.json()), seconds, None, engine
 
 
 async def record_of(
@@ -454,6 +467,7 @@ async def record_of(
     seconds: float | None,
     error: str | None = None,
     expect: dict[str, Any] | None = None,
+    engine: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The turn as the report keeps it, with its figure checked against the ledger.
 
@@ -489,6 +503,9 @@ async def record_of(
         "suggestions": body.get("suggestions") or [],
         "state": {key: state.get(key) for key in ("workflow", "awaiting", "last_asked")},
         "seconds": seconds,
+        "engine": (engine or {}).get("engine"),
+        "model_calls": (engine or {}).get("model_calls"),
+        "model_calls_malformed": bool((engine or {}).get("model_calls_malformed")),
         "sql": sql,
         "figure_check": "error" if failed else figure_check(answer, sql),
         "figure_note": note,
@@ -516,7 +533,7 @@ async def _turn(
             "skipped": "un «sí» a una operación pendiente no se envía: movería dinero en la demo",
             "expect": expect,
         }, conversation
-    body, seconds, error = await _ask(client, options, said, conversation)
+    body, seconds, error, engine = await _ask(client, options, said, conversation)
     # A hosted planner on a free tier answers 429 in bursts, and the service reports it as
     # PROVIDER_ERROR. The turn is sent again with the conversation from before it, so a retry is
     # the same turn, not a new one; the record says how many it took.
@@ -528,7 +545,7 @@ async def _turn(
     ):
         await asyncio.sleep(getattr(options, "provider_wait", 60.0))
         retried += 1
-        body, seconds, error = await _ask(client, options, said, conversation)
+        body, seconds, error, engine = await _ask(client, options, said, conversation)
     record = await record_of(
         options,
         name=name,
@@ -538,6 +555,7 @@ async def _turn(
         seconds=seconds,
         error=error,
         expect=expect,
+        engine=engine,
     )
     if retried:
         record["provider_retries"] = retried
@@ -711,6 +729,22 @@ def _mechanism(record: dict[str, Any]) -> str:
     )
 
 
+def _p95_index(count: int) -> int:
+    return max(0, -(-95 * count // 100) - 1)
+
+
+def _latency(seconds: list[float]) -> dict[str, Any] | None:
+    """Median, p95 and max of sorted seconds; None when there is nothing to measure."""
+    if not seconds:
+        return None
+    return {
+        "median": round(statistics.median(seconds), 2),
+        "p95": seconds[_p95_index(len(seconds))],
+        "max": seconds[-1],
+        "turns": len(seconds),
+    }
+
+
 def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Per-mechanism counts, the recovery rate, the figure checks and the latency of a run.
 
@@ -742,27 +776,71 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
     for record in turns:
         figures[record.get("figure_check", "n/a")] += 1
 
-    seconds = sorted(
-        record["seconds"]
+    def timed(group: list[dict[str, Any]]) -> list[float]:
+        return sorted(
+            record["seconds"]
+            for record in group
+            if record.get("seconds") is not None and not record.get("error")
+        )
+
+    latency = _latency(timed(turns))
+    engines = sorted({record["engine"] for record in turns if record.get("engine")})
+    latency_by_engine = {
+        engine: _latency(timed([record for record in turns if record.get("engine") == engine]))
+        for engine in engines
+    }
+
+    calls = sorted(
+        record["model_calls"]
         for record in turns
-        if record.get("seconds") is not None and not record.get("error")
+        if record.get("model_calls") is not None and not record.get("error")
     )
-    latency = (
+    malformed = sum(1 for record in turns if record.get("model_calls_malformed"))
+    model_calls = (
         {
-            "median": round(statistics.median(seconds), 2),
-            "p95": seconds[max(0, -(-95 * len(seconds) // 100) - 1)],
-            "max": seconds[-1],
-            "turns": len(seconds),
+            "turns": len(calls),
+            "mean": round(statistics.mean(calls), 2),
+            "p95": calls[_p95_index(len(calls))],
         }
-        if seconds
+        if calls
         else None
     )
+
+    # A conversation succeeds when every one of its turns passed and, where the judge ruled on the
+    # goal, the goal was met. Any failed turn or an unmet goal fails it. One with no failure but a
+    # turn the judge has not ruled on is `unjudged`: it is left out of the rate, so a run nobody
+    # judged does not read as 100 %.
+    names = list(dict.fromkeys(record["conversation"] for record in turns))
+    succeeded = unjudged = 0
+    for name in names:
+        mine = [record for record in turns if record["conversation"] == name]
+        statuses = [_status(record) for record in mine]
+        goal_unmet = any(
+            (record.get("judgement") or {}).get("goal_met") is False for record in mine
+        )
+        if goal_unmet or "failed" in statuses:
+            continue
+        if all(status == "passed" for status in statuses):
+            succeeded += 1
+        else:
+            unjudged += 1
+    judged = len(names) - unjudged
+    conversations = {
+        "total": len(names),
+        "succeeded": succeeded,
+        "unjudged": unjudged,
+        "rate": succeeded / judged if judged else None,
+    }
     return {
         "by_mechanism": dict(sorted(by_mechanism.items())),
         "recovery_rate": recovered / opportunities if opportunities else None,
         "recovery": {"recovered": recovered, "after_a_failure": opportunities},
         "figures": figures,
         "latency": latency,
+        "latency_by_engine": latency_by_engine,
+        "model_calls": model_calls,
+        "model_calls_malformed": malformed,
+        "conversations": conversations,
     }
 
 
@@ -858,6 +936,32 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
         f"- Latencia por turno: mediana {_seconds(latency.get('median'))} · "
         f"p95 {_seconds(latency.get('p95'))} · máx {_seconds(latency.get('max'))} "
         f"({latency.get('turns', 0)} turnos)",
+    ]
+    for engine, measured in summary["latency_by_engine"].items():
+        lines.append(
+            f"  - motor `{engine}`: mediana {_seconds(measured['median'])} · "
+            f"p95 {_seconds(measured['p95'])} · máx {_seconds(measured['max'])} "
+            f"({measured['turns']} turnos)"
+        )
+    calls = summary["model_calls"]
+    won = summary["conversations"]
+    lines += [
+        f"- Conversaciones logradas (todos los turnos bien y objetivo cumplido): "
+        f"{won['succeeded']} de {won['total'] - won['unjudged']} juzgadas "
+        f"({_percent(won['rate'])}) · {won['unjudged']} sin juzgar"
+        + (f" · antes {_percent(earlier['conversations']['rate'])}" if earlier else ""),
+        "- Llamadas al modelo por turno: "
+        + (
+            f"media {str(calls['mean']).replace('.', ',')} · p95 {calls['p95']} "
+            f"({calls['turns']} turnos con dato)"
+            if calls
+            else "sin dato"
+        )
+        + (
+            f" · {summary['model_calls_malformed']} cabeceras mal formadas"
+            if summary["model_calls_malformed"]
+            else ""
+        ),
         "",
     ]
 

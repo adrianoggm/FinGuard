@@ -33,9 +33,10 @@ AN_ANSWER: dict[str, Any] = {"choices": [{"message": {"content": '{"intent":"COU
 
 
 class _Response:
-    def __init__(self, payload: Any, status: int) -> None:
+    def __init__(self, payload: Any, status: int, headers: dict[str, str] | None = None) -> None:
         self._payload = payload
         self.status_code = status
+        self.headers = headers or {}
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -54,6 +55,8 @@ class Endpoint:
         self.requests: list[dict[str, Any]] = []
         self.body: Any = AN_ANSWER
         self.status = 200
+        # Answered once, before `body`/`status`: a rate limit the next attempt gets past.
+        self.first: _Response | None = None
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         return self.requests[index]
@@ -80,6 +83,9 @@ def sent(monkeypatch: pytest.MonkeyPatch) -> Endpoint:
 
         async def post(self, url: str, *, json: Any, headers: Any) -> _Response:
             endpoint.requests[-1] |= {"url": url, "json": json, "headers": headers}
+            if (first := endpoint.first) is not None:
+                endpoint.first = None
+                return first
             return _Response(endpoint.body, endpoint.status)
 
         async def get(self, url: str, *, headers: Any) -> _Response:
@@ -270,6 +276,44 @@ async def test_an_http_error_does_not_carry_the_body(sent: Endpoint) -> None:
 
     assert "cuánto gasté" not in str(raised.value)
     assert "400" in str(raised.value)
+
+
+async def test_a_short_rate_limit_is_waited_out_once(
+    sent: Endpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The free tier's per-minute budget runs out between two turns typed at a normal pace; Groq
+    says how long to wait, and a few seconds is cheaper than a turn the person has to retype."""
+    waited: list[float] = []
+
+    async def no_sleep(seconds: float) -> None:
+        waited.append(seconds)
+
+    monkeypatch.setattr(openai_compatible_provider.asyncio, "sleep", no_sleep)
+    sent.first = _Response({"error": {}}, 429, {"retry-after": "7"})
+
+    answer = await a_provider().complete("x", model="m", temperature=0.0, max_output_tokens=8)
+
+    assert answer == '{"intent":"COURTESY"}'
+    assert waited == [7.0]
+
+
+@pytest.mark.parametrize("retry_after", [None, "600", "soon"])
+async def test_a_long_or_unstated_rate_limit_fails_at_once(
+    sent: Endpoint, monkeypatch: pytest.MonkeyPatch, retry_after: str | None
+) -> None:
+    """A daily budget that ran out says minutes, not seconds: waiting that long holds the request
+    open for nothing, so the turn fails now and the caller says so."""
+
+    async def no_sleep(seconds: float) -> None:
+        raise AssertionError("must not wait")
+
+    monkeypatch.setattr(openai_compatible_provider.asyncio, "sleep", no_sleep)
+    sent.body, sent.status = {"error": {}}, 429
+    headers = {} if retry_after is None else {"retry-after": retry_after}
+    sent.first = _Response({"error": {}}, 429, headers)
+
+    with pytest.raises(ProviderFailedError, match="429"):
+        await a_provider().complete("x", model="m", temperature=0.0, max_output_tokens=8)
 
 
 # --- when it exists at all -----------------------------------------------------------------

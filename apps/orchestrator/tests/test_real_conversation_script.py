@@ -263,7 +263,7 @@ def test_a_rate_limited_turn_is_sent_again_with_the_conversation_from_before_it(
 
     async def ask(_client: object, _options: object, said: str, conversation: object) -> Any:
         sent.append((said, conversation))
-        return answers.pop(0), 0.1, None
+        return answers.pop(0), 0.1, None, {}
 
     async def no_wait(_: float) -> None:
         return None
@@ -400,3 +400,160 @@ def test_the_subscriptions_conversation_is_the_batterys_own_words() -> None:
     assert [turn["say"] for turn in subscriptions["turns"]] == [
         turn["say"] for turn in episode["turns"]
     ]
+
+
+class _Headers(dict[str, str]):
+    def __init__(self, headers: dict[str, str]) -> None:
+        super().__init__({key.lower(): value for key, value in headers.items()})
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return super().get(key.lower(), default)
+
+
+class _FakeResponse:
+    def __init__(self, status: int, body: dict[str, Any], headers: dict[str, str]) -> None:
+        self.status_code = status
+        self._body = body
+        # httpx headers are case-insensitive; the fake is too.
+        self.headers = _Headers(headers)
+        self.text = json.dumps(body)
+
+    def json(self) -> dict[str, Any]:
+        return self._body
+
+
+class _FakeClient:
+    def __init__(self, response: _FakeResponse) -> None:
+        self.response = response
+        self.posted: list[dict[str, Any]] = []
+
+    async def post(self, _url: str, *, json: dict[str, Any], headers: dict[str, str]) -> Any:
+        self.posted.append(json)
+        return self.response
+
+
+def _turn_with(response: _FakeResponse, conversation: Any = None) -> tuple[Any, Any, Any]:
+    client = _FakeClient(response)
+    options = real.Options(
+        account=LAURA,
+        timezone="Europe/Madrid",
+        database="unused",
+        base_url="http://x",
+        token="t",
+    )
+    record, following = asyncio.run(
+        real._turn(
+            client,
+            options,
+            name="a",
+            turn=1,
+            said="hola",
+            conversation=conversation,
+        )
+    )
+    return record, following, client
+
+
+def test_the_engine_and_the_model_calls_of_a_turn_land_in_its_record() -> None:
+    answer = {"outcome": "COURTESY", "text": "Hola.", "conversation": {"version": 3}}
+    headers = {"X-FinGuard-Engine": "model", "X-FinGuard-Model-Calls": "2"}
+    record, following, client = _turn_with(_FakeResponse(200, answer, headers), {"version": 2})
+    assert record["engine"] == "model" and record["model_calls"] == 2
+    # The whole conversation is echoed, its version with it.
+    assert following == {"version": 3} and client.posted[0]["conversation"] == {"version": 2}
+
+
+def test_a_stream_answer_without_the_model_calls_header_is_missing_not_zero() -> None:
+    answer = {"outcome": "COURTESY", "text": "Hola.", "conversation": {}}
+    record, _, _ = _turn_with(_FakeResponse(200, answer, {"x-finguard-engine": "rules"}))
+    assert record["engine"] == "rules" and record["model_calls"] is None
+
+
+def test_a_stale_conversation_is_an_error_turn_that_keeps_the_conversation_sent() -> None:
+    body = {"code": "STALE_CONVERSATION", "conversation": {"version": 5}}
+    record, following, _ = _turn_with(_FakeResponse(409, body, {}), {"version": 2})
+    assert "STALE_CONVERSATION" in record["error"] and following == {"version": 2}
+
+
+def _record(name: str, turn: int, verdict: str = "pass", **over: Any) -> dict[str, Any]:
+    return {
+        "conversation": name,
+        "turn": turn,
+        "said": "x",
+        "figure_check": "n/a",
+        "seconds": 1.0,
+        "judgement": {"verdict": verdict, "mechanism": "intent"},
+        **over,
+    }
+
+
+def test_a_conversation_succeeds_only_when_every_turn_passes() -> None:
+    records = [_record("a", 1), _record("a", 2), _record("b", 1), _record("b", 2, "fail")]
+    assert real.summarise(records)["conversations"] == {
+        "total": 2,
+        "succeeded": 1,
+        "unjudged": 0,
+        "rate": 0.5,
+    }
+
+
+def test_a_goal_judged_unmet_fails_a_conversation_whose_turns_all_passed() -> None:
+    records = [_record("a", 1), _record("a", 2, judgement={"verdict": "pass", "goal_met": False})]
+    records += [_record("b", 1, judgement={"verdict": "pass", "goal_met": True})]
+    assert real.summarise(records)["conversations"]["succeeded"] == 1
+
+
+def test_model_calls_and_latency_are_reported_per_engine() -> None:
+    records = [
+        _record("a", 1, engine="model", model_calls=1, seconds=2.0),
+        _record("a", 2, engine="model", model_calls=3, seconds=4.0),
+        _record("b", 1, engine="rules", model_calls=None, seconds=1.0),
+    ]
+    summary = real.summarise(records)
+    assert summary["model_calls"] == {"turns": 2, "mean": 2.0, "p95": 3}
+    assert summary["latency_by_engine"]["model"]["median"] == 3.0
+    assert summary["latency_by_engine"]["rules"]["turns"] == 1
+
+
+def test_a_run_nobody_judged_is_not_a_success() -> None:
+    records = [_record("a", 1, judgement=None), _record("b", 1, judgement=None)]
+    conversations = real.summarise(records)["conversations"]
+    assert conversations["unjudged"] == 2 and conversations["rate"] is None
+
+
+def test_one_dropped_judgement_makes_an_otherwise_passing_conversation_unjudged() -> None:
+    records = [_record("a", 1), _record("a", 2, judgement=None), _record("b", 1)]
+    conversations = real.summarise(records)["conversations"]
+    assert conversations == {"total": 2, "succeeded": 1, "unjudged": 1, "rate": 1.0}
+
+
+def test_an_errored_turn_fails_its_conversation() -> None:
+    records = [_record("a", 1), _record("a", 2, error="HTTP 409: STALE_CONVERSATION")]
+    conversations = real.summarise(records)["conversations"]
+    assert conversations["succeeded"] == 0 and conversations["rate"] == 0.0
+
+
+def test_an_errored_turn_is_left_out_of_the_model_calls() -> None:
+    records = [
+        _record("a", 1, engine="model", model_calls=2),
+        _record("a", 2, engine="model", model_calls=9, error="HTTP 409"),
+    ]
+    assert real.summarise(records)["model_calls"] == {"turns": 1, "mean": 2.0, "p95": 2}
+
+
+def test_a_malformed_model_calls_header_is_counted() -> None:
+    answer = {"outcome": "COURTESY", "text": "Hola.", "conversation": {}}
+    record, _, _ = _turn_with(_FakeResponse(200, answer, {"X-FinGuard-Model-Calls": "many"}))
+    assert record["model_calls"] is None and record["model_calls_malformed"] is True
+    assert (
+        real.summarise([_record("a", 1, model_calls_malformed=record["model_calls_malformed"])])[
+            "model_calls_malformed"
+        ]
+        == 1
+    )
+
+
+def test_p95_of_a_small_sample_is_its_largest_value() -> None:
+    assert real._latency([2.0])["p95"] == 2.0
+    assert real._latency([1.0, 3.0])["p95"] == 3.0
+    assert real._p95_index(1) == 0 and real._p95_index(2) == 1

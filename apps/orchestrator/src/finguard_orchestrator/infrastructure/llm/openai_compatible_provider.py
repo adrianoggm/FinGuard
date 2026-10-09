@@ -48,6 +48,7 @@ schema put the JSON in the thinking channel and returned an empty answer. Two ru
 symptoms, one cause — reasoning and constrained decoding interact, and neither runtime says so.
 """
 
+import asyncio
 from typing import Any, Final
 
 import httpx2 as httpx
@@ -57,6 +58,10 @@ from finguard_orchestrator.domain.errors import AnswerRefusedError, ProviderFail
 # What the schema is called on the wire. The API wants a name beside the schema; nothing reads it
 # back, so it says what the object is rather than carrying an identifier.
 _SCHEMA_NAME: Final = "answer"
+# Groq's free tier allows 8,000 tokens a minute and an engine turn reserves about 6,000, so two
+# turns typed at a normal pace meet a 429 that asks for a few seconds. Waited out once; a longer
+# wait (the daily budget says minutes) fails the turn at once rather than hold the request open.
+_LONGEST_RATE_WAIT_SECONDS: Final = 20.0
 
 
 class OpenAiCompatibleProvider:
@@ -137,6 +142,11 @@ class OpenAiCompatibleProvider:
                 response = await client.post(
                     f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
                 )
+                if (wait := _short_rate_wait(response)) is not None:
+                    await asyncio.sleep(wait)
+                    response = await client.post(
+                        f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
+                    )
                 response.raise_for_status()
                 body = response.json()
         except httpx.HTTPStatusError as exc:
@@ -189,6 +199,17 @@ class OpenAiCompatibleProvider:
                 return response.status_code == 200
         except httpx.HTTPError:
             return False
+
+
+def _short_rate_wait(response: Any) -> float | None:
+    """The seconds a 429 asks for, when they are few enough to wait; None otherwise."""
+    if response.status_code != 429:
+        return None
+    try:
+        seconds = float(response.headers.get("retry-after", ""))
+    except ValueError:
+        return None
+    return seconds if 0 <= seconds <= _LONGEST_RATE_WAIT_SECONDS else None
 
 
 def _refused_generation(response: Any) -> str | None:
