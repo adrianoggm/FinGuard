@@ -1,0 +1,435 @@
+"""What the person reads: banking's figures in the existing writers' words, and a closed set of
+templates for every turn that is not a figure.
+
+No figure here comes from a model, and no prose either. An answer is `answer_writer` or
+`ratio_writer` over what the executor ran; a question back, a courtesy or a failure is a template,
+filled only with names from the holder's own catalogues or with the name an operation quotes
+(`Clarify.about`).
+
+The rule every answer keeps: when the bank was asked, the text says what it answered. A
+percentage with no base still says both amounts and why there is no percentage, rather than only
+that it is undefined.
+"""
+
+from collections.abc import Mapping
+from dataclasses import replace
+from typing import Final
+from uuid import UUID
+
+from finguard_orchestrator.application.engine.executor import (
+    BalanceRun,
+    Executed,
+    MixedCurrenciesError,
+    PairRun,
+    QueryRun,
+    RankingRun,
+    RatioRun,
+)
+from finguard_orchestrator.application.queries.financial_turn import (
+    AskFinancialQuestionResult,
+    SpokenGroup,
+    SpokenMovement,
+)
+from finguard_orchestrator.domain.engine.operations import Clarify, Smalltalk
+from finguard_orchestrator.domain.engine.state import (
+    ComparisonFocus,
+    DialogueState,
+    Missing,
+    PlanFields,
+)
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    Metric,
+    Period,
+    PlanningOutcome,
+    Spoken,
+)
+from finguard_orchestrator.domain.errors import (
+    BankingUnavailableError,
+    DomainError,
+    InvalidValueError,
+)
+from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.ports.turn_operations import InterpretationFailedError
+from finguard_orchestrator.domain.services import answer_writer, ratio_writer
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
+
+_PLANNED: Final = PlanningOutcome.PLANNED.value
+
+# --- answers ----------------------------------------------------------------------------------
+
+
+def answered(
+    run: Executed,
+    *,
+    scope: tuple[UUID, ...],
+    account_names: Mapping[UUID, str],
+    reporting_timezone: str,
+) -> AskFinancialQuestionResult:
+    """The answer to work that ran, with the accounts it was read from said under it."""
+    match run:
+        case BalanceRun():
+            # The balance names its accounts itself.
+            return _balance(run)
+        case QueryRun():
+            result = _query(run, reporting_timezone)
+        case RankingRun():
+            result = _ranking(run)
+        case PairRun():
+            result = _pair(run)
+        case RatioRun():
+            result = _ratio(run)
+    return replace(result, text=f"{result.text}\n{_scope_note(scope, account_names)}")
+
+
+def _query(run: QueryRun, reporting_timezone: str) -> AskFinancialQuestionResult:
+    plan, answer = run.plan, run.answer
+    if plan.metric is Metric.FREQUENCY:
+        text = answer_writer.when(answer, plan, reporting_timezone=reporting_timezone)
+    elif plan.metric is Metric.RECURRENCE:
+        text = answer_writer.recurring_expenses(answer, plan, reporting_timezone=reporting_timezone)
+    else:
+        text = answer_writer.write(answer, plan)
+    # A top-N of groups is answered about those N, so the figures beside it are theirs too.
+    limited = plan.group_limit is not None
+    groups = answer.groups[: plan.group_limit] if limited else answer.groups
+    return AskFinancialQuestionResult(
+        outcome=_PLANNED,
+        text=text,
+        plan_in_words=answer_writer.plan_in_words(plan),
+        currency=answer.currency,
+        total_minor=sum(g.total_minor for g in groups) if limited else answer.total_minor,
+        movement_count=sum(g.movement_count for g in groups) if limited else answer.movement_count,
+        groups=[_spoken_group(g.key, g, plan) for g in groups],
+        movements=[] if limited else [_spoken(m) for m in answer.movements],
+    )
+
+
+def _ranking(run: RankingRun) -> AskFinancialQuestionResult:
+    ranking, found = run.ranking, run.movements
+    if ranking.rank == 1:
+        text = answer_writer.ranked(found[0] if found else None, ranking)
+        in_words = answer_writer.plan_in_words(ranking)
+    else:
+        text = answer_writer.ranked_many(found, ranking, requested=ranking.rank)
+        in_words = f"{answer_writer.plan_in_words(ranking.at_rank(1))}, top {ranking.rank}"
+    currencies = {movement.currency for movement in found}
+    currency = next(iter(currencies)) if len(currencies) == 1 else None
+    return AskFinancialQuestionResult(
+        outcome=_PLANNED,
+        text=text,
+        plan_in_words=in_words,
+        currency=currency,
+        # Rows in different currencies have no total, so none is invented for them.
+        total_minor=sum(m.amount_minor for m in found) if found and currency else None,
+        movement_count=len(found),
+        movements=[_spoken(m) for m in found],
+    )
+
+
+def _pair(run: PairRun) -> AskFinancialQuestionResult:
+    """Both sides in the order they happened, earlier first, then what changed between them."""
+    earlier, latest = run.pair.earlier, run.pair.latest
+    windows = answer_writer.compared_window(earlier), answer_writer.compared_window(latest)
+    text = answer_writer.grouped_period_comparison(
+        run.earlier,
+        run.latest,
+        earlier,
+        latest,
+        earlier_window=windows[0],
+        latest_window=windows[1],
+    ) or _pair_text(run, *windows)
+    counted = run.pair.metric is Metric.COUNT
+    return AskFinancialQuestionResult(
+        outcome=_PLANNED,
+        text=text,
+        plan_in_words=(
+            f"{answer_writer.plan_in_words(earlier)} frente a {answer_writer.plan_in_words(latest)}"
+        ),
+        currency=run.latest.currency,
+        # No single leading figure: the sentence states both sides and the change between them,
+        # and the change goes out as one. A count's change is movements, which `_minor` is not.
+        total_minor=None,
+        difference_minor=None if counted else run.difference,
+        movement_count=run.earlier.movement_count + run.latest.movement_count,
+        groups=[
+            _side(windows[0], run.earlier, earlier),
+            _side(windows[1], run.latest, latest),
+        ],
+        movements=[_spoken(m) for m in (*run.earlier.movements, *run.latest.movements)],
+    )
+
+
+def _pair_text(run: PairRun, earlier_window: str, latest_window: str) -> str:
+    earlier, latest = run.pair.earlier, run.pair.latest
+    counted = run.pair.metric is Metric.COUNT
+    concept = answer_writer.comparison_concept(latest)
+    about = answer_writer.compared_subject(latest)
+    figures = (
+        f"{earlier_window.capitalize()}: {answer_writer.comparison_figure(run.earlier, earlier)}; "
+        f"{latest_window}: {answer_writer.comparison_figure(run.latest, latest)}."
+    )
+    if run.pair.metric is Metric.AVERAGE and (run.earlier.is_empty or run.latest.is_empty):
+        empty = earlier_window if run.earlier.is_empty else latest_window
+        conclusion = (
+            f"No hubo movimientos{about} {empty}, así que la media de ese periodo no está definida."
+        )
+    elif run.difference == 0:
+        conclusion = (
+            f"Hubo el mismo número de movimientos{about} en ambos periodos."
+            if counted
+            else f"El {concept}{about} fue el mismo en ambos periodos."
+        )
+    else:
+        higher = latest_window if run.difference > 0 else earlier_window
+        change = answer_writer.comparison_difference(
+            abs(run.difference), run.latest.currency, run.pair.metric
+        )
+        conclusion = (
+            f"Hubo {change} más{about} {higher}."
+            if counted
+            else f"El {concept}{about} fue {change} mayor {higher}."
+        )
+    return f"{figures} {conclusion}"
+
+
+def _ratio(run: RatioRun) -> AskFinancialQuestionResult:
+    ratio = run.ratio
+    no_base = (
+        ratio.kind is RatioKind.PERCENT_CHANGE
+        and answer_writer.comparison_value(run.whole, ratio.whole) == 0
+    )
+    text = _no_percentage(run) if no_base else ratio_writer.write(run.part, run.whole, ratio)
+    # A share's whole contains its part: the part's movements are the evidence, once.
+    share = ratio.kind is RatioKind.SHARE
+    movements = run.part.movements if share else (*run.whole.movements, *run.part.movements)
+    return AskFinancialQuestionResult(
+        outcome=_PLANNED,
+        text=text,
+        plan_in_words=(
+            f"{answer_writer.plan_in_words(ratio.part)} respecto a "
+            f"{answer_writer.plan_in_words(ratio.whole)}"
+        ),
+        currency=run.part.currency,
+        movement_count=(
+            run.part.movement_count if share else run.part.movement_count + run.whole.movement_count
+        ),
+        movements=[_spoken(m) for m in movements],
+    )
+
+
+# What there was none of, when the earlier side of a change is empty.
+_NOTHING: Final = {
+    Direction.EXPENSE: "no gastaste nada",
+    Direction.INCOME: "no ingresaste nada",
+    Direction.ALL: "no hubo movimientos",
+}
+
+
+def _no_percentage(run: RatioRun) -> str:
+    """A change from zero has no percentage, and saying only that would hide two real figures:
+    «No hay variación porcentual: en junio de 2026 no gastaste nada en ocio; en julio de 2026,
+    23,06 €.»"""
+    earlier, latest = run.ratio.whole, run.ratio.part
+    window = answer_writer.compared_window(earlier)
+    if run.whole.is_empty:
+        nothing = (
+            "no hubo movimientos" if earlier.metric is Metric.COUNT else _NOTHING[earlier.direction]
+        )
+        base = f"{window} {nothing}{answer_writer.filter_of(earlier)}"
+    else:
+        base = (
+            f"{window} la cifra de partida fue "
+            f"{answer_writer.comparison_figure(run.whole, earlier)}"
+        )
+    then = (
+        f"{answer_writer.compared_window(latest)}, "
+        f"{answer_writer.comparison_figure(run.part, latest)}"
+    )
+    return f"No hay variación porcentual: {base}; {then}."
+
+
+def _balance(run: BalanceRun) -> AskFinancialQuestionResult:
+    names = tuple(holding.display_name for holding in run.selected or ())
+    # The line «Ver la consulta» shows, and the turn remembered: what was asked, and no figure.
+    asked = f"saldo de {answer_writer.listed(names)}" if names else "saldo de tus cuentas"
+    return AskFinancialQuestionResult(
+        outcome=Spoken.BALANCE.value,
+        text=answer_writer.balance(run.summary, selected=run.selected),
+        plan_in_words=asked,
+        currency=run.summary.currency,
+        total_minor=answer_writer.leading_figure(run.summary, selected=run.selected),
+    )
+
+
+def _scope_note(scope: tuple[UUID, ...], account_names: Mapping[UUID, str]) -> str:
+    """Which accounts the figures came from, by the holder's names for them."""
+    if not scope:
+        return "Consultado en todas tus cuentas."
+    names = tuple(account_names.get(account_id) for account_id in scope)
+    if None in names:
+        # An account selected earlier that the directory no longer lists.
+        return "Consultado en las cuentas seleccionadas."
+    return f"Consultado en {answer_writer.listed(tuple(n for n in names if n))}."
+
+
+def _side(window: str, answer: QueryAnswer, plan: FinancialPlan) -> SpokenGroup:
+    return _spoken_group(window, Group(window, answer.total_minor, answer.movement_count), plan)
+
+
+def _spoken_group(key: str, group: Group, plan: FinancialPlan) -> SpokenGroup:
+    """A row with its figure in the unit the plan measures, as the rules route reports it."""
+    value = (
+        answer_writer.comparison_value(
+            QueryAnswer("", group.total_minor, group.movement_count), plan
+        )
+        if plan.metric in (Metric.COUNT, Metric.AVERAGE)
+        else group.total_minor
+    )
+    return SpokenGroup(key, group.total_minor, group.movement_count, value)
+
+
+def _spoken(movement: Movement) -> SpokenMovement:
+    return SpokenMovement(
+        occurred_at=movement.occurred_at.isoformat(),
+        description=movement.description,
+        amount_minor=movement.amount_minor,
+        direction=movement.direction,
+        merchant_name=movement.merchant_name,
+        category=movement.category,
+        transaction_type=movement.transaction_type.value if movement.transaction_type else None,
+        counterparty_name=movement.counterparty_name,
+        counterparty_type=movement.counterparty_type.value,
+        receipt_category=movement.receipt_category.value if movement.receipt_category else None,
+    )
+
+
+# --- turns that ran no work ---------------------------------------------------------------------
+
+_SMALLTALK: Final = {
+    "GREETING": (Spoken.COURTESY, "¡Hola! Pregúntame por tus gastos, tus ingresos o tu saldo."),
+    "THANKS": (Spoken.COURTESY, "De nada. Si necesitas algo más de tus cuentas, dímelo."),
+    "IDENTITY": (
+        Spoken.IDENTITY,
+        "Soy FinGuard, tu asistente financiero. Cada cifra que te doy viene de tu banco, "
+        "y te enseño la consulta que he hecho.",
+    ),
+    "HELP": (
+        Spoken.IDENTITY,
+        "Puedo decirte cuánto gastaste o ingresaste en un periodo, por categoría, comercio o "
+        "persona; tus mayores gastos; comparar dos periodos, también en porcentaje; qué parte de "
+        "tus gastos se fue en algo; y tu saldo.",
+    ),
+}
+_RESET: Final = "De acuerdo, empezamos de nuevo. ¿Qué quieres consultar?"
+
+
+def replied(
+    reply: Clarify | Smalltalk | None, state: DialogueState, account_names: Mapping[UUID, str]
+) -> AskFinancialQuestionResult:
+    """A turn the bank was not asked about: a question back, a courtesy, or a fresh start (no
+    reply at all, which only a reset leaves)."""
+    if isinstance(reply, Clarify):
+        question = _question(reply, state, account_names)
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.NEEDS_CLARIFICATION.value, text=question, question=question
+        )
+    if isinstance(reply, Smalltalk):
+        outcome, text = _SMALLTALK[reply.kind]
+        return AskFinancialQuestionResult(outcome=outcome.value, text=text)
+    return AskFinancialQuestionResult(outcome=Spoken.GUIDANCE.value, text=_RESET)
+
+
+def _question(reply: Clarify, state: DialogueState, account_names: Mapping[UUID, str]) -> str:
+    about = reply.about
+    match reply.missing:
+        case Missing.WINDOW:
+            return _window_question(state.pending.draft if state.pending else None)
+        case Missing.PERSON:
+            return (
+                f"No encuentro a {about} entre tus contactos."
+                if about
+                else "¿De qué persona me hablas?"
+            )
+        case Missing.ACCOUNT:
+            unknown = f"No encuentro la cuenta «{about}». " if about else ""
+            names = tuple(account_names.values())
+            which = f": {answer_writer.listed(names)}" if names else ""
+            return f"{unknown}¿En cuál de tus cuentas quieres consultarlo{which}?"
+        case Missing.OPERAND:
+            if isinstance(state.focus, ComparisonFocus):
+                pair = state.focus.comparison
+                return (
+                    f"¿Cuál de los dos periodos: {answer_writer.compared_window(pair.earlier)} "
+                    f"o {answer_writer.compared_window(pair.latest)}?"
+                )
+            return "¿Qué dos periodos quieres comparar?"
+        case Missing.SUBJECT:
+            if about:
+                return f"No tengo ninguna categoría «{about}». ¿Sobre qué quieres preguntar?"
+            return "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo."
+
+
+# Stands in for the window a period question asks for, only so the subject can be named in the
+# answers' own words (`window_question`). Nothing is ever run with it.
+_NAMING_WINDOW: Final = RelativePeriod(Period.THIS_MONTH)
+_DIRECTION_WORDS: Final = {
+    Direction.EXPENSE: "gastos",
+    Direction.INCOME: "ingresos",
+    Direction.ALL: "movimientos",
+}
+
+
+def _window_question(draft: PlanFields | None) -> str:
+    """«¿De qué periodo quieres ver tus gastos en restaurantes?», naming what was already said."""
+    if draft is None or draft.direction is None:
+        return "¿De qué periodo quieres verlo?"
+    try:
+        named = FinancialPlan(
+            direction=draft.direction,
+            period=_NAMING_WINDOW,
+            categories=draft.categories or (),
+            excluded_categories=draft.excluded_categories or (),
+            merchants=draft.merchants or (),
+            excluded_merchants=draft.excluded_merchants or (),
+            counterparties=draft.people or (),
+        )
+    except InvalidValueError:
+        return "¿De qué periodo quieres verlo?"
+    question = (
+        answer_writer.window_question(named)
+        or f"¿De qué periodo quieres ver tus {_DIRECTION_WORDS[draft.direction]}?"
+    )
+    # A window was said and still asked about: it has not begun, and nothing has happened in it.
+    return f"Ese periodo todavía no ha empezado. {question}" if draft.window else question
+
+
+# --- turns that could not be answered -----------------------------------------------------------
+
+
+def failed(error: DomainError) -> AskFinancialQuestionResult:
+    """An honest answer to a turn that ran into a wall. Nothing is saved for it."""
+    if isinstance(error, BankingUnavailableError):
+        return AskFinancialQuestionResult(
+            outcome="BANKING_UNAVAILABLE", text="El banco no ha respondido. Vuelve a intentarlo."
+        )
+    if isinstance(error, InterpretationFailedError):
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.PROVIDER_ERROR.value,
+            text="No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+        )
+    if isinstance(error, MixedCurrenciesError):
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text="No puedo relacionar importes en monedas distintas.",
+        )
+    if isinstance(error, InvalidValueError):
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text="He entendido la pregunta, pero la consulta que he construido no es válida.",
+        )
+    return AskFinancialQuestionResult(
+        outcome=PlanningOutcome.INVALID_DOMAIN.value,
+        text="He entendido la pregunta, pero el banco ha rechazado la consulta.",
+    )
