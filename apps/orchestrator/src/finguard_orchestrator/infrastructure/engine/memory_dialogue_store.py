@@ -2,8 +2,11 @@
 
 **Single instance only.** Two replicas would each hold their own conversations, and a restart
 forgets every one of them; a client that comes back after a restart is told its version is stale
-and handed the empty state. A Postgres adapter in the orchestrator's `assistant` schema is the next
+and handed an empty state. A Postgres adapter in the orchestrator's `assistant` schema is the next
 step (spec: "Canonical state").
+
+Keyed by account and conversation (ruling R20): the same id under another account is another
+entry, which is how someone else's conversation stays unknown.
 """
 
 import asyncio
@@ -13,26 +16,30 @@ from uuid import UUID
 from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 
+type _Key = tuple[UUID, UUID]
+
 
 class MemoryDialogueStore:
     """Implements DialogueStorePort."""
 
     def __init__(self) -> None:
-        self._states: dict[UUID, DialogueState] = {}
-        self._locks: dict[UUID, asyncio.Lock] = {}
+        self._states: dict[_Key, DialogueState] = {}
+        self._locks: dict[_Key, asyncio.Lock] = {}
 
-    async def load(self, conversation_id: UUID) -> DialogueState | None:
-        return self._states.get(conversation_id)
+    async def load(self, conversation_id: UUID, *, account_id: UUID) -> DialogueState | None:
+        return self._states.get((account_id, conversation_id))
 
-    async def save(self, state: DialogueState, *, expected_version: int) -> DialogueState:
+    async def save(
+        self, state: DialogueState, *, account_id: UUID, expected_version: int
+    ) -> DialogueState:
+        key = (account_id, state.conversation_id)
         # One lock per conversation, so the check and the write are one step. Nothing between them
         # awaits today, which already makes them atomic on one event loop; the lock is what keeps
         # them so when something there does.
-        lock = self._locks.setdefault(state.conversation_id, asyncio.Lock())
-        async with lock:
-            held = self._states.get(state.conversation_id, DialogueState(state.conversation_id))
+        async with self._locks.setdefault(key, asyncio.Lock()):
+            held = self._states.get(key, DialogueState(state.conversation_id))
             if held.version != expected_version:
                 raise StaleDialogueError(held)
             saved = replace(state, version=expected_version + 1)
-            self._states[state.conversation_id] = saved
+            self._states[key] = saved
             return saved

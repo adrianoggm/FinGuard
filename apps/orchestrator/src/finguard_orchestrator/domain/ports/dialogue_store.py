@@ -4,6 +4,11 @@ Saved by compare-and-set: a save names the version it was made against, and is r
 store no longer holds that version. A double submit, or two tabs on one conversation, would
 otherwise each read version 3 and each write a version 4, and the turn saved second would erase the
 first without anybody being told.
+
+**A conversation belongs to the account it was saved under** (ruling R20). Its state holds what the
+holder said and which of their accounts they looked at, so under any other account it does not
+exist: `load` finds nothing, and a save is compared with nothing of the holder's. Its id is a
+reference the client echoes, never a credential.
 """
 
 from typing import Protocol, runtime_checkable
@@ -16,8 +21,8 @@ from finguard_orchestrator.domain.errors import DomainError
 class StaleDialogueError(DomainError):
     """A turn was made against a version the store no longer holds.
 
-    Carries the state the store does hold, so the caller can answer with it (a 409 with the
-    current conversation) instead of with nothing.
+    Carries the state the store does hold for that account, so the caller can answer with it (a
+    409 with the current conversation) instead of with nothing.
     """
 
     code = "stale_dialogue"
@@ -29,14 +34,16 @@ class StaleDialogueError(DomainError):
 
 @runtime_checkable
 class DialogueStorePort(Protocol):
-    async def load(self, conversation_id: UUID) -> DialogueState | None:
-        """The state last saved, or None for a conversation never saved."""
+    async def load(self, conversation_id: UUID, *, account_id: UUID) -> DialogueState | None:
+        """The state last saved under `account_id`, or None for a conversation it never saved."""
         ...
 
-    async def save(self, state: DialogueState, *, expected_version: int) -> DialogueState:
-        """`state` saved as version `expected_version + 1`, and returned as saved.
+    async def save(
+        self, state: DialogueState, *, account_id: UUID, expected_version: int
+    ) -> DialogueState:
+        """`state` saved under `account_id` as version `expected_version + 1`, and returned.
 
-        Raises `StaleDialogueError` with the state held when that is not `expected_version`. A
-        conversation never saved is held at version 0.
+        Raises `StaleDialogueError` with the state held under `account_id` when that is not
+        `expected_version`. A conversation never saved under it is held at version 0.
         """
         ...

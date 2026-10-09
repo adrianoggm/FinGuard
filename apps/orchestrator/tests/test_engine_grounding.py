@@ -76,7 +76,10 @@ def test_an_exact_name_wins_over_the_longer_names_that_contain_it() -> None:
 
 
 def test_a_name_that_two_contacts_contain_is_unknown_never_a_guess() -> None:
-    assert ground(PlanFields(people=("Marta",)), GROUNDS) == Unknown(Missing.PERSON, "Marta")
+    # Unknown, with both it could be, so the question back can offer them (M-1).
+    assert ground(PlanFields(people=("Marta",)), GROUNDS) == Unknown(
+        Missing.PERSON, "Marta", ("Marta Ruiz", "Marta Solis Vega")
+    )
 
 
 # A catalogue where the start of a word is somebody else's whole name: «Juan» is not Juana.

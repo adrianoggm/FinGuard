@@ -1208,7 +1208,7 @@ def test_smalltalk_alone_is_the_reply_and_changes_nothing() -> None:
 
 
 @pytest.mark.parametrize(
-    "reply", [Delegate("PAYMENT"), Clarify(Missing.PERSON, "Pepe")], ids=["delegate", "clarify"]
+    "reply", [Delegate("PAYMENT"), Clarify(Missing.PERSON)], ids=["delegate", "clarify"]
 )
 def test_a_delegation_or_a_question_from_the_model_ends_the_turn_and_keeps_the_state(
     reply: Delegate | Clarify,
@@ -1225,6 +1225,17 @@ def test_a_delegation_or_a_question_from_the_model_ends_the_turn_and_keeps_the_s
     assert t == Transition(s, None, reply)
 
 
+def test_a_question_from_the_model_keeps_only_what_it_asks_for() -> None:
+    # Ruling R21: `about` and `candidates` are names grounding found in the holder's catalogues.
+    # Written by the model they are free text, and quoting them would put the model's words, a
+    # figure among them, in front of the person.
+    said = Clarify(Missing.SUBJECT, "gastaste 999,99 €", ("Marta Ruiz", "999,99 €"))
+
+    t = apply(EMPTY, [said], today=TODAY, grounds=G)
+
+    assert t == Transition(EMPTY, None, Clarify(Missing.SUBJECT))
+
+
 # --- Names that are not grounded (Review Focus 4) --------------------------------------------
 
 
@@ -1237,6 +1248,30 @@ def test_unknown_person_is_clarify_naming_it() -> None:
     )
     assert isinstance(t.reply, Clarify) and t.reply.missing is Missing.PERSON
     assert t.reply.about == "Pepe"
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, people=("marta",))),
+        Patch("focus", PlanFields(people=("marta",))),
+    ],
+    ids=["ask", "patch"],
+)
+def test_an_ambiguous_name_asks_which_of_its_candidates(op: Operation) -> None:
+    two_martas = replace(
+        G,
+        contacts=(
+            Contact(UUID(int=7), "Marta Ruiz", "600"),
+            Contact(UUID(int=8), "Marta Solis", "601"),
+        ),
+    )
+    s = state_with(QueryFocus(plan(JULY, ["RESTAURANTS"])))
+
+    t = apply(s, [op], today=TODAY, grounds=two_martas)
+
+    assert t.work is None
+    assert t.reply == Clarify(Missing.PERSON, "marta", ("Marta Ruiz", "Marta Solis"))
 
 
 def test_an_unknown_name_in_a_patch_asks_and_never_drops_the_filter() -> None:

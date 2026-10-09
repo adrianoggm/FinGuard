@@ -2,7 +2,7 @@
 
 A save names the version it was made against. The store refuses it when that is no longer the
 version it holds, and hands back the one it does hold, so a double submit can never overwrite the
-turn that won.
+turn that won. And a conversation is its holder's: under another account it does not exist.
 """
 
 import asyncio
@@ -16,6 +16,8 @@ from finguard_orchestrator.domain.ports.dialogue_store import DialogueStorePort,
 from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
 
 ID = UUID(int=1)
+HOLDER = UUID(int=100)
+SOMEBODY_ELSE = UUID(int=200)
 FRESH = DialogueState(ID)
 
 
@@ -24,52 +26,54 @@ def test_the_memory_store_is_a_dialogue_store() -> None:
 
 
 async def test_a_conversation_never_saved_loads_as_nothing() -> None:
-    assert await MemoryDialogueStore().load(ID) is None
+    assert await MemoryDialogueStore().load(ID, account_id=HOLDER) is None
 
 
 async def test_a_save_returns_the_next_version_and_is_what_load_reads() -> None:
     store = MemoryDialogueStore()
     said = FRESH.remembered(DialogueTurn("hola", "un saludo"))
 
-    saved = await store.save(said, expected_version=0)
+    saved = await store.save(said, account_id=HOLDER, expected_version=0)
 
     assert saved == replace(said, version=1)
-    assert await store.load(ID) == saved
-    again = await store.save(replace(saved, turns=()), expected_version=1)
+    assert await store.load(ID, account_id=HOLDER) == saved
+    again = await store.save(replace(saved, turns=()), account_id=HOLDER, expected_version=1)
     assert again.version == 2
-    assert await store.load(ID) == again
+    assert await store.load(ID, account_id=HOLDER) == again
 
 
 async def test_a_save_against_a_version_no_longer_held_is_refused_and_changes_nothing() -> None:
     store = MemoryDialogueStore()
-    held = await store.save(FRESH, expected_version=0)
+    held = await store.save(FRESH, account_id=HOLDER, expected_version=0)
 
     with pytest.raises(StaleDialogueError) as refused:
-        await store.save(FRESH.remembered(DialogueTurn("otra", "otra")), expected_version=0)
+        await store.save(
+            FRESH.remembered(DialogueTurn("otra", "otra")), account_id=HOLDER, expected_version=0
+        )
 
     assert refused.value.current == held
-    assert await store.load(ID) == held
+    assert await store.load(ID, account_id=HOLDER) == held
 
 
 async def test_a_first_save_against_a_version_never_held_is_refused_with_the_empty_state() -> None:
     store = MemoryDialogueStore()
 
     with pytest.raises(StaleDialogueError) as refused:
-        await store.save(FRESH, expected_version=3)
+        await store.save(FRESH, account_id=HOLDER, expected_version=3)
 
     assert refused.value.current == FRESH
-    assert await store.load(ID) is None
+    assert await store.load(ID, account_id=HOLDER) is None
 
 
 async def test_two_saves_against_one_version_one_wins() -> None:
     store = MemoryDialogueStore()
-    await store.save(FRESH, expected_version=0)
+    await store.save(FRESH, account_id=HOLDER, expected_version=0)
     first = FRESH.remembered(DialogueTurn("primera", "a"))
     second = FRESH.remembered(DialogueTurn("segunda", "b"))
 
     outcomes = await asyncio.gather(
-        store.save(first, expected_version=1),
-        store.save(second, expected_version=1),
+        store.save(first, account_id=HOLDER, expected_version=1),
+        store.save(second, account_id=HOLDER, expected_version=1),
         return_exceptions=True,
     )
 
@@ -77,14 +81,29 @@ async def test_two_saves_against_one_version_one_wins() -> None:
     won = [o for o in outcomes if isinstance(o, DialogueState)]
     assert len(refused) == 1 and len(won) == 1
     assert won[0].version == 2
-    assert refused[0].current == won[0] == await store.load(ID)
+    assert refused[0].current == won[0] == await store.load(ID, account_id=HOLDER)
 
 
 async def test_conversations_do_not_share_versions() -> None:
     store = MemoryDialogueStore()
     other = DialogueState(UUID(int=2))
 
-    await store.save(FRESH, expected_version=0)
-    saved = await store.save(other, expected_version=0)
+    await store.save(FRESH, account_id=HOLDER, expected_version=0)
+    saved = await store.save(other, account_id=HOLDER, expected_version=0)
 
     assert saved.version == 1
+
+
+async def test_a_conversation_is_only_its_holders() -> None:
+    # Ruling R20: another account naming this conversation finds nothing, and a save it makes
+    # neither reaches the holder's state nor is refused with it.
+    store = MemoryDialogueStore()
+    held = await store.save(
+        FRESH.remembered(DialogueTurn("mi secreto", "a")), account_id=HOLDER, expected_version=0
+    )
+
+    assert await store.load(ID, account_id=SOMEBODY_ELSE) is None
+    with pytest.raises(StaleDialogueError) as refused:
+        await store.save(FRESH, account_id=SOMEBODY_ELSE, expected_version=1)
+    assert refused.value.current == FRESH
+    assert await store.load(ID, account_id=HOLDER) == held

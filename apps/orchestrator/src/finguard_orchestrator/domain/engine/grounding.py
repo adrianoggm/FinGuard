@@ -7,7 +7,8 @@ its words are a run of whole words of exactly one entry («corriente» is «Cuen
 
 A name that matches nothing, or more than one entry, comes back as `Unknown` rather than dropped
 or guessed. A filter silently lost answers a wider question than the one asked, with a real
-figure; a guessed one answers about somebody else.
+figure; a guessed one answers about somebody else. When it matches several, `Unknown` carries them,
+so the question back can offer the holder's own entries rather than claim there is none.
 
 Shops are not grounded: their names are ledger data with no catalogue here, so they travel as
 written and banking matches them.
@@ -32,10 +33,12 @@ class Grounds:
 
 @dataclass(frozen=True)
 class Unknown:
-    """A name the catalogues do not hold exactly once, kept as written so it can be quoted back."""
+    """A name the catalogues do not hold exactly once, kept as written so it can be quoted back.
+    `candidates` are the entries it could be, in catalogue order; empty when it matches none."""
 
     kind: Missing
     name: str
+    candidates: tuple[str, ...] = ()
 
 
 class _UnknownNameError(Exception):
@@ -49,13 +52,13 @@ def ground(fields: PlanFields, grounds: Grounds) -> PlanFields | Unknown:
     none. Fields with no catalogue are returned untouched."""
     accounts = [holding.display_name for holding in grounds.accounts]
     people = [contact.display_name for contact in grounds.contacts]
+    # Sorted, so the candidates of an ambiguous name come back in the same order on every run.
+    categories = sorted(grounds.categories)
     try:
         return replace(
             fields,
-            categories=_entries(fields.categories, grounds.categories, Missing.SUBJECT),
-            excluded_categories=_entries(
-                fields.excluded_categories, grounds.categories, Missing.SUBJECT
-            ),
+            categories=_entries(fields.categories, categories, Missing.SUBJECT),
+            excluded_categories=_entries(fields.excluded_categories, categories, Missing.SUBJECT),
             people=_entries(fields.people, people, Missing.PERSON),
             accounts=_entries(fields.accounts, accounts, Missing.ACCOUNT),
         )
@@ -70,22 +73,21 @@ def _entries(
         return None
     found = []
     for name in names:
-        entry = _the_one(name, catalogue)
-        if entry is None:
-            raise _UnknownNameError(Unknown(kind, name))
-        found.append(entry)
+        candidates = _candidates(name, catalogue)
+        if len(candidates) != 1:
+            raise _UnknownNameError(Unknown(kind, name, candidates))
+        found.append(candidates[0])
     # «hucha» and «Hucha» are one account, and a plan refuses the same account twice.
     return tuple(dict.fromkeys(found))
 
 
-def _the_one(name: str, catalogue: Collection[str]) -> str | None:
+def _candidates(name: str, catalogue: Collection[str]) -> tuple[str, ...]:
+    """The entries `name` is exactly, or else those it is a run of whole words of."""
     said = _words(name)
     if not said:
-        return None
-    exact = [entry for entry in catalogue if _words(entry) == said]
-    within = [entry for entry in catalogue if _runs_through(said, _words(entry))]
-    candidates = exact or within
-    return candidates[0] if len(candidates) == 1 else None
+        return ()
+    exact = tuple(entry for entry in catalogue if _words(entry) == said)
+    return exact or tuple(entry for entry in catalogue if _runs_through(said, _words(entry)))
 
 
 def _runs_through(said: tuple[str, ...], words: tuple[str, ...]) -> bool:

@@ -93,10 +93,15 @@ class _CannotApplyError(Exception):
     where the gap is found and caught once in `apply`, so no helper carries a reply back up."""
 
     def __init__(
-        self, missing: Missing, about: str | None = None, *, pending: Pending | None = None
+        self,
+        missing: Missing,
+        about: str | None = None,
+        *,
+        pending: Pending | None = None,
+        candidates: tuple[str, ...] = (),
     ) -> None:
         super().__init__(missing)
-        self.clarify = Clarify(missing, about)
+        self.clarify = Clarify(missing, about, candidates)
         self.pending = pending
 
 
@@ -126,7 +131,10 @@ def apply(
             # when that flow hands it back.
             return Transition(state, None, op)
         if isinstance(op, Clarify):
-            return Transition(resting, None, op)
+            # Only what it asks for (ruling R21). A name to quote comes from grounding, which
+            # found it in the holder's catalogues; from the model it is free text, and quoting
+            # it would show the person the model's words, a figure among them.
+            return Transition(resting, None, Clarify(op.missing))
         try:
             current, work = _applied(current, op, today, grounds)
         except _CannotApplyError as question:
@@ -188,8 +196,12 @@ def _applied(
 def _asked(state: DialogueState, said: PlanFields, today: date, grounds: Grounds) -> Applied:
     grounded = ground(said, grounds)
     if isinstance(grounded, Unknown):
-        pending = Pending(grounded.kind, said)
-        raise _CannotApplyError(grounded.kind, grounded.name, pending=pending)
+        raise _CannotApplyError(
+            grounded.kind,
+            grounded.name,
+            pending=Pending(grounded.kind, said),
+            candidates=grounded.candidates,
+        )
     try:
         plan = _built(grounded, today)
     except _CannotApplyError as gap:
@@ -419,7 +431,7 @@ def _as_said(pair: ComparisonPlan, *said: PlanFields) -> ComparisonPlan:
 def _grounded(fields: PlanFields, grounds: Grounds) -> PlanFields:
     grounded = ground(fields, grounds)
     if isinstance(grounded, Unknown):
-        raise _CannotApplyError(grounded.kind, grounded.name)
+        raise _CannotApplyError(grounded.kind, grounded.name, candidates=grounded.candidates)
     return grounded
 
 

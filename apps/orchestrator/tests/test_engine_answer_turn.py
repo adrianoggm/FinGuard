@@ -31,6 +31,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Ask,
     Balance,
     ChangeMeasure,
+    Clarify,
     Compare,
     Delegate,
     Operation,
@@ -50,7 +51,7 @@ from finguard_orchestrator.domain.engine.state import (
     Scope,
 )
 from finguard_orchestrator.domain.engine.transitions import InvariantViolationError
-from finguard_orchestrator.domain.enums import Direction, PlanningOutcome, Spoken
+from finguard_orchestrator.domain.enums import Direction, Metric, PlanningOutcome, Spoken
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
@@ -65,7 +66,8 @@ from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import Me
 
 JUNE = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
 JULY = AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31))
-CATEGORIES = frozenset({"RESTAURANTS", "LEISURE", "GROCERIES", "TRANSPORT_FUEL"})
+CATEGORIES = frozenset({"RESTAURANTS", "LEISURE", "GROCERIES", "TRANSPORT_FUEL", "SALARY"})
+SOMEBODY_ELSE = UUID(int=200)
 EVERY_ACCOUNT = "Consultado en todas tus cuentas."
 
 
@@ -109,11 +111,17 @@ class Scripted:
 
 
 class ByWindow(Ledger):
-    """The episodes ledger, with each window's own total and count."""
+    """The episodes ledger, with each window's own total and count, and `whole` for a plan with
+    no subject (the whole a share is a part of)."""
 
-    def __init__(self, figures: Mapping[AbsoluteRange, tuple[int, int]]) -> None:
+    def __init__(
+        self,
+        figures: Mapping[AbsoluteRange, tuple[int, int]],
+        whole: tuple[int, int] | None = None,
+    ) -> None:
         super().__init__()
         self._figures = figures
+        self._whole = whole
         self.down = False
 
     async def run(
@@ -122,9 +130,14 @@ class ByWindow(Ledger):
         if self.down:
             raise BankingUnavailableError("timeout")
         answer = await super().run(plan, movements=movements, **rest)
-        if plan.date_range not in self._figures:
+        subject = plan.categories or plan.merchants or plan.counterparties
+        if self._whole is not None and not subject:
+            figure: tuple[int, int] | None = self._whole
+        else:
+            figure = self._figures.get(plan.date_range) if plan.date_range else None
+        if figure is None:
             return answer
-        total, count = self._figures[plan.date_range]
+        total, count = figure
         return replace(
             answer, total_minor=total, movement_count=count, groups=(Group("total", total, count),)
         )
@@ -150,10 +163,12 @@ class Rig:
 
 
 def a_rig(
-    *turns: tuple[Operation, ...], figures: Mapping[AbsoluteRange, tuple[int, int]] | None = None
+    *turns: tuple[Operation, ...],
+    figures: Mapping[AbsoluteRange, tuple[int, int]] | None = None,
+    whole: tuple[int, int] | None = None,
 ) -> Rig:
     interpreter = Scripted(*turns)
-    ledger = ByWindow(figures or {})
+    ledger = ByWindow(figures or {}, whole)
     store = MemoryDialogueStore()
     handler = AnswerTurnHandler(
         interpreter,
@@ -194,7 +209,7 @@ async def test_a_query_runs_and_becomes_the_focus() -> None:
     assert turn.state.turns == (
         DialogueTurn("¿cuánto gasté en restaurantes en julio?", turn.result.plan_in_words),
     )
-    assert await rig.store.load(turn.state.conversation_id) == turn.state
+    assert await rig.store.load(turn.state.conversation_id, account_id=ACCOUNT) == turn.state
     assert turn.model_calls == 1
     # The sentence went to the interpreter, with the holder's accounts by name (ruling R15).
     sentence, _, names = rig.interpreter.seen[0]
@@ -297,6 +312,72 @@ async def test_an_undefined_percentage_still_says_both_amounts() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("figures", "sides"),
+    [
+        (
+            {JUNE: (0, 0), JULY: (4_000, 2)},
+            "en junio de 2026 no hubo movimientos en ocio; en julio de 2026, 20,00 €",
+        ),
+        (
+            {JUNE: (4_000, 2), JULY: (0, 0)},
+            "en junio de 2026, 20,00 €; en julio de 2026 no hubo movimientos en ocio",
+        ),
+        (
+            {JUNE: (0, 0), JULY: (0, 0)},
+            "en junio de 2026 no hubo movimientos en ocio; "
+            "en julio de 2026 no hubo movimientos en ocio",
+        ),
+    ],
+    ids=["earlier-empty", "latest-empty", "both-empty"],
+)
+async def test_an_average_with_an_empty_side_has_no_percentage(
+    figures: dict[AbsoluteRange, tuple[int, int]], sides: str
+) -> None:
+    # A side with no movements has no average: «disminuyó un 100 %… a sin movimientos» would be
+    # a change from a figure to the absence of one.
+    averages = Compare(
+        spending(categories=("LEISURE",), metric=Metric.AVERAGE),
+        PlanFields(window=JUNE),
+        PlanFields(window=JULY),
+    )
+    rig = a_rig((averages, ChangeMeasure(Measure.PERCENT_CHANGE)), figures=figures)
+
+    turn = await rig.say("la media de junio frente a julio en ocio, en porcentaje")
+
+    assert turn.result is not None
+    assert turn.result.text == f"No hay variación porcentual: {sides}.\n{EVERY_ACCOUNT}"
+
+
+@pytest.mark.parametrize(
+    ("asked", "said"),
+    [
+        (
+            spending(window=JULY, people=("Marta Solis",)),
+            "Tus gastos a Marta Solis Vega representan el 25,00 % de tus gastos totales "
+            "del 2026-07-01 al 2026-07-31: 500,00 € de 2.000,00 €.",
+        ),
+        (
+            PlanFields(direction=Direction.INCOME, window=JULY, categories=("SALARY",)),
+            "Tus ingresos en nómina representan el 25,00 % de tus ingresos totales "
+            "del 2026-07-01 al 2026-07-31: 500,00 € de 2.000,00 €.",
+        ),
+    ],
+    ids=["a-person", "income"],
+)
+async def test_a_share_says_what_its_part_is(asked: PlanFields, said: str) -> None:
+    # The writer's label knows categories and shops of spending: a person was dropped («Tus
+    # gastos»), and a payslip was «el gasto en nómina».
+    rig = a_rig(
+        (Ask(asked), ChangeMeasure(Measure.SHARE)), figures={JULY: (50_000, 1)}, whole=(200_000, 9)
+    )
+
+    turn = await rig.say("¿qué parte fue eso en julio?")
+
+    assert turn.result is not None
+    assert turn.result.text == f"{said}\n{EVERY_ACCOUNT}"
+
+
 # --- a question asked back ---------------------------------------------------------------------
 
 
@@ -322,6 +403,34 @@ async def test_a_pending_window_is_asked_naming_the_subject_and_completed_by_the
     assert answered.state.focus == QueryFocus(asked(JULY, "RESTAURANTS"))
 
 
+async def test_a_window_not_begun_is_said_when_it_is_asked_for_again() -> None:
+    october = AbsoluteRange(date(2026, 10, 1), date(2026, 10, 31))  # after TODAY, 5 August
+    rig = a_rig((Ask(spending(window=october, categories=("RESTAURANTS",))),))
+
+    turn = await rig.say("¿cuánto gastaré en restaurantes en octubre?")
+
+    assert turn.result is not None
+    assert turn.result.text == (
+        "Ese periodo todavía no ha empezado. "
+        "¿De qué periodo quieres ver tus gastos en restaurantes?"
+    )
+
+
+async def test_a_past_window_is_never_said_not_to_have_begun() -> None:
+    # M-3: the open question is about a person, with July said. A period question over it must
+    # not claim that July has not begun.
+    rig = a_rig(
+        (Ask(spending(window=JULY, people=("Pepe",))),),
+        (Clarify(Missing.WINDOW),),
+    )
+    first = await rig.say("¿cuánto le pasé a Pepe en julio?")
+
+    turn = await rig.say("¿y de cuándo?", first)
+
+    assert turn.result is not None
+    assert turn.result.text == "¿De qué periodo quieres ver lo que le mandaste a Pepe?"
+
+
 async def test_an_unknown_person_is_asked_about_by_name() -> None:
     rig = a_rig((Ask(spending(window=JULY, people=("Pepe",))),))
 
@@ -329,6 +438,32 @@ async def test_an_unknown_person_is_asked_about_by_name() -> None:
 
     assert turn.result is not None
     assert turn.result.text == "No encuentro a Pepe entre tus contactos."
+    assert rig.ledger.plans == []
+
+
+async def test_a_question_from_the_model_never_quotes_its_own_words() -> None:
+    # Ruling R21: only names grounding found are quoted. A figure the model wrote into `about`
+    # reaches neither the person nor the turn the next prompt quotes back.
+    rig = a_rig((Clarify(Missing.SUBJECT, "gastaste 999,99 €"),))
+
+    turn = await rig.say("¿y eso?")
+
+    assert turn.result is not None
+    assert (
+        turn.result.text == "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo."
+    )
+    assert "999,99" not in turn.state.turns[-1].answered
+
+
+async def test_an_ambiguous_person_is_asked_about_by_the_candidates() -> None:
+    # The episodes' contacts hold two Martas: «No encuentro a Marta» would be false (M-1).
+    rig = a_rig((Ask(spending(window=JULY, people=("Marta",))),))
+
+    turn = await rig.say("¿cuánto le pasé a Marta en julio?")
+
+    assert turn.result is not None
+    assert turn.result.text == "¿A cuál te refieres: Marta Solis Vega o Marta Ruiz Gomez?"
+    assert turn.state.pending is not None and turn.state.pending.missing is Missing.PERSON
     assert rig.ledger.plans == []
 
 
@@ -395,7 +530,7 @@ async def test_delegate_returns_no_result_and_keeps_state() -> None:
 
     assert delegated.result is None and delegated.delegate_to == "PAYMENT"
     assert delegated.state == first.state
-    assert await rig.store.load(first.state.conversation_id) == first.state
+    assert await rig.store.load(first.state.conversation_id, account_id=ACCOUNT) == first.state
     assert len(rig.ledger.plans) == 1
 
 
@@ -418,9 +553,42 @@ async def test_a_stale_version_is_refused_and_nothing_changes() -> None:
         )
 
     assert refused.value.current == first.state
-    assert await rig.store.load(first.state.conversation_id) == first.state
+    assert await rig.store.load(first.state.conversation_id, account_id=ACCOUNT) == first.state
     assert rig.interpreter.calls == 1
     assert len(rig.ledger.plans) == 1
+
+
+async def test_another_holders_conversation_looks_unknown() -> None:
+    # Ruling R20: another account naming this conversation and its version gets a conversation of
+    # its own, and nothing of the holder's: not in its prompt, and not in a refusal.
+    rig = a_rig(
+        (Ask(spending(window=JULY, categories=("RESTAURANTS",), accounts=("hucha",))),),
+        (Smalltalk("GREETING"),),
+    )
+    theirs = await rig.say("mi secreto: restaurantes en julio en la hucha")
+
+    async def somebody_else_says(version: int | None) -> EngineAnswer:
+        return await rig.handler.answer(
+            "hola",
+            conversation_id=theirs.state.conversation_id,
+            version=version,
+            account_id=SOMEBODY_ELSE,
+            today=TODAY,
+            reporting_timezone="Europe/Madrid",
+        )
+
+    with pytest.raises(StaleDialogueError) as refused:
+        await somebody_else_says(theirs.state.version)
+    stranger = refused.value.current
+    assert stranger.conversation_id != theirs.state.conversation_id
+    assert (stranger.version, stranger.turns, stranger.scope) == (0, (), Scope())
+
+    mine = await somebody_else_says(None)
+    _, seen, _ = rig.interpreter.seen[-1]
+    assert (seen.turns, seen.scope, seen.focus) == ((), Scope(), None)
+    assert mine.state.conversation_id != theirs.state.conversation_id
+    assert mine.state.version == 1 and len(mine.state.turns) == 1
+    assert await rig.store.load(theirs.state.conversation_id, account_id=ACCOUNT) == theirs.state
 
 
 async def test_two_concurrent_turns_on_one_version_one_wins() -> None:
@@ -439,7 +607,11 @@ async def test_two_concurrent_turns_on_one_version_one_wins() -> None:
     won = [o for o in outcomes if isinstance(o, EngineAnswer)]
     assert len(refused) == 1 and len(won) == 1
     assert won[0].state.version == 2
-    assert await rig.store.load(first.state.conversation_id) == won[0].state == refused[0].current
+    assert (
+        await rig.store.load(first.state.conversation_id, account_id=ACCOUNT)
+        == won[0].state
+        == refused[0].current
+    )
 
 
 async def test_a_banking_failure_saves_nothing() -> None:
@@ -451,7 +623,7 @@ async def test_a_banking_failure_saves_nothing() -> None:
 
     assert failed.result is not None and failed.result.outcome == "BANKING_UNAVAILABLE"
     assert failed.state == first.state
-    assert await rig.store.load(first.state.conversation_id) == first.state
+    assert await rig.store.load(first.state.conversation_id, account_id=ACCOUNT) == first.state
 
 
 async def test_an_interpreter_that_cannot_answer_saves_nothing() -> None:
@@ -467,7 +639,7 @@ async def test_an_interpreter_that_cannot_answer_saves_nothing() -> None:
     assert failed.result is not None
     assert failed.result.outcome == PlanningOutcome.PROVIDER_ERROR.value
     assert failed.state == first.state
-    assert await rig.store.load(first.state.conversation_id) == first.state
+    assert await rig.store.load(first.state.conversation_id, account_id=ACCOUNT) == first.state
 
 
 async def test_an_invariant_violation_is_logged_and_asked_back(

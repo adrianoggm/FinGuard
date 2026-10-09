@@ -13,6 +13,7 @@ that it is undefined.
 
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import date
 from typing import Final
 from uuid import UUID
 
@@ -35,7 +36,7 @@ from finguard_orchestrator.domain.engine.state import (
     ComparisonFocus,
     DialogueState,
     Missing,
-    PlanFields,
+    Pending,
 )
 from finguard_orchestrator.domain.enums import (
     Direction,
@@ -51,11 +52,20 @@ from finguard_orchestrator.domain.errors import (
 )
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.turn_operations import InterpretationFailedError
-from finguard_orchestrator.domain.services import answer_writer, ratio_writer
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.services import answer_writer, category_words, ratio_writer
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
 _PLANNED: Final = PlanningOutcome.PLANNED.value
+_DIRECTION_WORDS: Final = {
+    Direction.EXPENSE: "gastos",
+    Direction.INCOME: "ingresos",
+    Direction.ALL: "movimientos",
+}
 
 # --- answers ----------------------------------------------------------------------------------
 
@@ -196,11 +206,12 @@ def _pair_text(run: PairRun, earlier_window: str, latest_window: str) -> str:
 
 def _ratio(run: RatioRun) -> AskFinancialQuestionResult:
     ratio = run.ratio
-    no_base = (
-        ratio.kind is RatioKind.PERCENT_CHANGE
-        and answer_writer.comparison_value(run.whole, ratio.whole) == 0
-    )
-    text = _no_percentage(run) if no_base else ratio_writer.write(run.part, run.whole, ratio)
+    if ratio.kind is RatioKind.PERCENT_CHANGE and not _has_percentage(run):
+        text = _no_percentage(run)
+    elif ratio.kind is RatioKind.SHARE:
+        text = _share(run)
+    else:
+        text = ratio_writer.write(run.part, run.whole, ratio)
     # A share's whole contains its part: the part's movements are the evidence, once.
     share = ratio.kind is RatioKind.SHARE
     movements = run.part.movements if share else (*run.whole.movements, *run.part.movements)
@@ -219,7 +230,40 @@ def _ratio(run: RatioRun) -> AskFinancialQuestionResult:
     )
 
 
-# What there was none of, when the earlier side of a change is empty.
+def _share(run: RatioRun) -> str:
+    """`ratio_writer`'s sentence, except where its label would lose the part: it names categories
+    and shops of spending, so a person was dropped («Tus gastos» for what went to Marta) and income
+    was called spending («El gasto en nómina»). Those are said here the way the answers say them."""
+    part = run.ratio.part
+    if not part.counterparties and part.direction is Direction.EXPENSE:
+        return ratio_writer.write(run.part, run.whole, run.ratio)
+    noun = _DIRECTION_WORDS[part.direction]
+    about = answer_writer.filter_of(part)
+    window = answer_writer.window_of(part)
+    share = ratio_writer.basis_points(run.part.total_minor, run.whole.total_minor)
+    if share is None:
+        return (
+            f"No hubo {noun} {window}, así que no puedo calcular qué porcentaje representan "
+            f"tus {noun}{about}."
+        )
+    return (
+        f"Tus {noun}{about} representan el {ratio_writer.percentage(share)} de tus {noun} "
+        f"totales {window}: {answer_writer.money(run.part.total_minor, run.part.currency)} de "
+        f"{answer_writer.money(run.whole.total_minor, run.whole.currency)}."
+    )
+
+
+def _has_percentage(run: RatioRun) -> bool:
+    """Whether a change between the two sides is a percentage at all. Not from a base of zero, and
+    not for an average with a side that had no movements: that side has no average, and «a sin
+    movimientos» is a change to the absence of a figure."""
+    earlier, latest = run.ratio.whole, run.ratio.part
+    if latest.metric is Metric.AVERAGE and (run.whole.is_empty or run.part.is_empty):
+        return False
+    return answer_writer.comparison_value(run.whole, earlier) != 0
+
+
+# What there was none of, on a side of a change with no movements.
 _NOTHING: Final = {
     Direction.EXPENSE: "no gastaste nada",
     Direction.INCOME: "no ingresaste nada",
@@ -228,26 +272,24 @@ _NOTHING: Final = {
 
 
 def _no_percentage(run: RatioRun) -> str:
-    """A change from zero has no percentage, and saying only that would hide two real figures:
-    «No hay variación porcentual: en junio de 2026 no gastaste nada en ocio; en julio de 2026,
-    23,06 €.»"""
-    earlier, latest = run.ratio.whole, run.ratio.part
-    window = answer_writer.compared_window(earlier)
-    if run.whole.is_empty:
-        nothing = (
-            "no hubo movimientos" if earlier.metric is Metric.COUNT else _NOTHING[earlier.direction]
-        )
-        base = f"{window} {nothing}{answer_writer.filter_of(earlier)}"
-    else:
-        base = (
-            f"{window} la cifra de partida fue "
-            f"{answer_writer.comparison_figure(run.whole, earlier)}"
-        )
-    then = (
-        f"{answer_writer.compared_window(latest)}, "
-        f"{answer_writer.comparison_figure(run.part, latest)}"
-    )
-    return f"No hay variación porcentual: {base}; {then}."
+    """A change with no percentage still says both sides, and why: «No hay variación porcentual:
+    en junio de 2026 no gastaste nada en ocio; en julio de 2026, 23,06 €.»"""
+    earlier = _side_said(run.ratio.whole, run.whole, base=True)
+    latest = _side_said(run.ratio.part, run.part, base=False)
+    return f"No hay variación porcentual: {earlier}; {latest}."
+
+
+def _side_said(plan: FinancialPlan, answer: QueryAnswer, *, base: bool) -> str:
+    window = answer_writer.compared_window(plan)
+    if answer.is_empty:
+        # A count or an average of nothing is no movements; an amount of nothing is nothing spent.
+        counted = plan.metric in (Metric.COUNT, Metric.AVERAGE)
+        nothing = "no hubo movimientos" if counted else _NOTHING[plan.direction]
+        return f"{window} {nothing}{answer_writer.filter_of(plan)}"
+    figure = answer_writer.comparison_figure(answer, plan)
+    if base and answer_writer.comparison_value(answer, plan) == 0:
+        return f"{window} la cifra de partida fue {figure}"
+    return f"{window}, {figure}"
 
 
 def _balance(run: BalanceRun) -> AskFinancialQuestionResult:
@@ -326,12 +368,16 @@ _RESET: Final = "De acuerdo, empezamos de nuevo. ¿Qué quieres consultar?"
 
 
 def replied(
-    reply: Clarify | Smalltalk | None, state: DialogueState, account_names: Mapping[UUID, str]
+    reply: Clarify | Smalltalk | None,
+    state: DialogueState,
+    account_names: Mapping[UUID, str],
+    *,
+    today: date,
 ) -> AskFinancialQuestionResult:
     """A turn the bank was not asked about: a question back, a courtesy, or a fresh start (no
     reply at all, which only a reset leaves)."""
     if isinstance(reply, Clarify):
-        question = _question(reply, state, account_names)
+        question = _question(reply, state, account_names, today)
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.NEEDS_CLARIFICATION.value, text=question, question=question
         )
@@ -341,11 +387,22 @@ def replied(
     return AskFinancialQuestionResult(outcome=Spoken.GUIDANCE.value, text=_RESET)
 
 
-def _question(reply: Clarify, state: DialogueState, account_names: Mapping[UUID, str]) -> str:
+def _question(
+    reply: Clarify, state: DialogueState, account_names: Mapping[UUID, str], today: date
+) -> str:
     about = reply.about
+    if len(reply.candidates) > 1:
+        # Several of the holder's own entries fit the name: offering them is the question, and
+        # «No encuentro a Marta» would be false with two Martas in the address book.
+        names = (
+            tuple(category_words.name_of(key) for key in reply.candidates)
+            if reply.missing is Missing.SUBJECT
+            else reply.candidates
+        )
+        return f"¿A cuál te refieres: {', '.join(names[:-1])} o {names[-1]}?"
     match reply.missing:
         case Missing.WINDOW:
-            return _window_question(state.pending.draft if state.pending else None)
+            return _window_question(state.pending, today)
         case Missing.PERSON:
             return (
                 f"No encuentro a {about} entre tus contactos."
@@ -374,15 +431,11 @@ def _question(reply: Clarify, state: DialogueState, account_names: Mapping[UUID,
 # Stands in for the window a period question asks for, only so the subject can be named in the
 # answers' own words (`window_question`). Nothing is ever run with it.
 _NAMING_WINDOW: Final = RelativePeriod(Period.THIS_MONTH)
-_DIRECTION_WORDS: Final = {
-    Direction.EXPENSE: "gastos",
-    Direction.INCOME: "ingresos",
-    Direction.ALL: "movimientos",
-}
 
 
-def _window_question(draft: PlanFields | None) -> str:
+def _window_question(pending: Pending | None, today: date) -> str:
     """«¿De qué periodo quieres ver tus gastos en restaurantes?», naming what was already said."""
+    draft = pending.draft if pending else None
     if draft is None or draft.direction is None:
         return "¿De qué periodo quieres verlo?"
     try:
@@ -401,8 +454,15 @@ def _window_question(draft: PlanFields | None) -> str:
         answer_writer.window_question(named)
         or f"¿De qué periodo quieres ver tus {_DIRECTION_WORDS[draft.direction]}?"
     )
-    # A window was said and still asked about: it has not begun, and nothing has happened in it.
-    return f"Ese periodo todavía no ha empezado. {question}" if draft.window else question
+    # Said only of the window the open question is about, and only while it has not begun: the
+    # draft of a question about somebody else can hold a past month.
+    not_begun = (
+        pending is not None
+        and pending.missing is Missing.WINDOW
+        and isinstance(draft.window, AbsoluteRange)
+        and draft.window.start > today
+    )
+    return f"Ese periodo todavía no ha empezado. {question}" if not_begun else question
 
 
 # --- turns that could not be answered -----------------------------------------------------------

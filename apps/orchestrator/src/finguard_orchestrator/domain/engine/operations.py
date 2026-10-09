@@ -75,10 +75,12 @@ class Balance:
 
 @dataclass(frozen=True)
 class Clarify:
-    """`about` is a name to quote back, never prose: the question itself is a template."""
+    """`about` is a name to quote back and `candidates` the holder's entries it could be, both
+    from grounding, never prose: the question itself is a template."""
 
     missing: Missing
     about: str | None = None
+    candidates: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
