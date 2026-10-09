@@ -83,5 +83,11 @@ continuity, recovery, latency, model calls, token cost and orchestration code re
 The graph sends every turn through the configured structured interpreter. `Patch` carries only
 changed fields. `CreateVisualization` and `UpdateVisualization` are typed operations over the
 canonical aggregate result and active chart. The stored aggregate and chart metadata are bounded,
-versioned and account-scoped. Browser-level verification and folding payment into the unified graph
-remain open work.
+versioned and account-scoped. Broader browser verification and folding payment into the unified
+graph remain open work.
+
+A real Chrome smoke run on an isolated graph-enabled stack verified a category query, a bar chart,
+and a line restyle after restarting the orchestrator. Category labels were observed in Spanish in
+the rendered chart. The run used local Qwen 3.5 9B because Groq GPT-OSS 120B returned HTTP 429 for
+the token-per-minute limit; see `docs/evaluation/2026-10-09-langgraph-browser-smoke.md`. This is
+evidence for one graph and persistence path, not corpus-wide or provider-promotion evidence.
