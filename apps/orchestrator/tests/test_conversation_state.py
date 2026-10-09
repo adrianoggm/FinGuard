@@ -211,6 +211,9 @@ BOTH_MONTHS = ComparisonPlan(earlier=LAST_MONTH, latest=THIS_MONTH)
 
 # Every field set to something distinguishable, so a transition that drops one is visible.
 FULL = Conversation(
+    # The model-led engine's version: no transition of the rules engine may drop it, which is how
+    # a turn that engine hands over comes back holding it.
+    version=3,
     active=PaymentInProgress(draft=PaymentDraft(recipient_name="Marta")),
     last_plan=LAST_MONTH,
     prior_plan=THIS_MONTH,

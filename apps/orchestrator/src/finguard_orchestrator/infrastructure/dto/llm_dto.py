@@ -674,6 +674,15 @@ class ConversationPayload(_Payload):
     # conclusion about UUIDs for the opposite reason: there a UUID is refused because it would be
     # a raw *account* id, here it is required because it is the only thing that cannot be prose.
     conversation_id: UUID | None = None
+    # The model-led engine's version of this conversation, under
+    # `ORCHESTRATOR_CONVERSATION_ENGINE=model`. Echoed so that a turn made against a version the
+    # engine no longer holds is refused with a 409 instead of overwriting the turn that moved it.
+    # The rules engine carries it and never reads it.
+    #
+    # **Left off the wire while it is None**, which is always under `rules`: a key that appeared as
+    # `"version": null` in every answer would be a change to production made by a feature that is
+    # switched off. A client that never sends it gets no check, exactly as before.
+    version: int | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
 
     # Absent when nothing is under way.
     workflow: Workflow | None = None

@@ -44,12 +44,14 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyHandler,
 )
 from finguard_orchestrator.application.commands.book_activity import BookActivityHandler
+from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
 from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.ports.visual_planner import VisualPlannerPort
+from finguard_orchestrator.domain.services import category_words
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
@@ -77,6 +79,9 @@ from finguard_orchestrator.infrastructure import (
     payments_router,
     register_error_handlers,
 )
+from finguard_orchestrator.infrastructure.controllers import engine_dispatch
+from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
+from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
 from finguard_orchestrator.infrastructure.expert_agents.http_expert_agents import HttpExpertAgents
 from finguard_orchestrator.infrastructure.expert_agents.llm_reply_normaliser import (
     LlmReplyNormaliser,
@@ -90,6 +95,10 @@ from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter impo
 from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import (
     CLOUDFLARE,
     cloudflare_workers_ai,
+)
+from finguard_orchestrator.infrastructure.llm.counting_provider import (
+    CountingProvider,
+    calls_so_far,
 )
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
@@ -146,6 +155,11 @@ _DEVELOPMENT_GATEWAY_TOKEN = "development-only-a2a-gateway-token"
 def _is_loopback_origin(origin: str) -> bool:
     hostname = urlsplit(origin).hostname
     return hostname is not None and hostname.lower() in _LOOPBACK_HOSTS
+
+
+def _counted(build: Callable[[], LlmProviderPort]) -> Callable[[], LlmProviderPort]:
+    """`build`, with what it builds counted per request (`counting_provider`)."""
+    return lambda: CountingProvider(build())
 
 
 def create_app() -> FastAPI:
@@ -233,7 +247,9 @@ def create_app() -> FastAPI:
             timeout_seconds=settings.cloudflare_timeout_seconds,
             reasoning_headroom=settings.cloudflare_reasoning_headroom,
         )
-    providers = ProviderRegistry(builders)
+    # Every model call this service makes goes through one of these, so wrapping them here counts
+    # them all, whichever engine or reader made them: the `X-FinGuard-Model-Calls` header.
+    providers = ProviderRegistry({name: _counted(build) for name, build in builders.items()})
     # The active policy is created at startup and lives in the application state: the
     # service is deliberately not stateless, its configuration changes at runtime.
     policies = PolicyStore(catalogue, catalogue.default_policy())
@@ -566,6 +582,31 @@ def create_app() -> FastAPI:
     app.state.expert_searches = expert_searches
     app.state.expert_bookings = expert_bookings
 
+    # The model-led conversation engine, when switched on (`conversation_engine`). Its own reader
+    # on the planner's provider, its own store, and the same banking adapters as the rules route,
+    # so the two engines answer from one bank. None is the rules engine, and the routes ask
+    # nothing of it (`engine_dispatch`).
+    engine: AnswerTurnHandler | None = None
+    if settings.conversation_engine == "model":
+        engine = AnswerTurnHandler(
+            LlmTurnOperations(
+                planner_provider,
+                model=settings.engine_model or settings.planner_model,
+                temperature=settings.engine_temperature,
+                max_output_tokens=settings.engine_max_output_tokens,
+                categories={key: category_words.name_of(key) for key in settings.categories},
+            ),
+            # Single instance only: a restart forgets every conversation (see the store).
+            MemoryDialogueStore(),
+            banking,
+            accounts,
+            account_directory,
+            contacts,
+            frozenset(settings.categories),
+            count_calls=calls_so_far,
+        )
+    app.state.engine = engine
+
     # Before the routers, because a rejected preflight never reaches one. The web client cannot
     # call this service at all without it: a browser refuses a cross-origin request unless the
     # server says otherwise, which makes this the frontend's first dependency and not a detail.
@@ -602,6 +643,9 @@ def create_app() -> FastAPI:
     # was registered first, and every `turn` span is a child of the request that produced it.
     register_turn_recording(app)
     configure_tracing(app, settings=settings)
+    # Which engine answered and how many model calls it cost, on both question routes, and the
+    # 409 a stale engine version gets.
+    engine_dispatch.register(app)
 
     app.include_router(assistant_router)
     app.include_router(payments_router)

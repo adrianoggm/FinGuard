@@ -711,6 +711,7 @@ def to_domain(
         )
         return Conversation(
             conversation_id=conversation_id,
+            version=payload.version,
             last_plan=last_plan,
             prior_plan=(
                 query_to_domain(payload.prior_plan) if payload and payload.prior_plan else None
@@ -750,6 +751,7 @@ def to_domain(
     )
     return Conversation(
         conversation_id=conversation_id,
+        version=payload.version,
         active=active,
         last_plan=last_plan,
         prior_plan=prior_plan,
@@ -959,6 +961,8 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             # minted on every turn and every turn is still its own trace, which is the state this
             # change exists to end — and nothing would fail, because nothing downstream reads it.
             "conversation_id": conversation.conversation_id,
+            # The engine's, carried unchanged: the rules engine neither reads nor moves it.
+            "version": conversation.version,
             "workflow": workflow_of(conversation.active),
             "awaiting": conversation.awaiting,
             "last_asked": conversation.last_asked,

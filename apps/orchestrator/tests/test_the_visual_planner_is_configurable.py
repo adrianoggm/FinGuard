@@ -91,9 +91,10 @@ def test_the_visual_planner_takes_its_own_model_and_sampling_when_named(monkeypa
             0.0,
             512,
         )
-        assert isinstance(visual._provider, EchoLlmProvider)
+        # By name: every provider the app builds is wrapped to count its calls.
+        assert visual._provider.name == EchoLlmProvider.name
         assert handler._planner._model == settings.planner_model  # untouched
-        assert not isinstance(handler._planner._provider, EchoLlmProvider)
+        assert handler._planner._provider.name != EchoLlmProvider.name
     finally:
         get_settings.cache_clear()
 

@@ -136,6 +136,7 @@ class Settings(BaseSettings):
         "visual_planner_model",
         "visual_planner_temperature",
         "visual_planner_max_output_tokens",
+        "engine_model",
         "a2a_gateway_url",
         "a2a_gateway_token",
         "a2a_pairwise_key",
@@ -157,6 +158,7 @@ class Settings(BaseSettings):
         The visual planner's own settings share the treatment for the same reason one level up:
         `ORCHESTRATOR_VISUAL_PLANNER_MODEL=` is what an unset override looks like on disk, and
         taken literally it would fail float/int coercion instead of falling back to the planner's.
+        The engine's model shares it for the same reason: blank is "the planner's model".
 
         The expert agents' three share it: `ORCHESTRATOR_A2A_GATEWAY_URL=` is how .env.defaults
         says the capability does not exist, and a blank token or pairwise key is no key at all.
@@ -412,6 +414,28 @@ class Settings(BaseSettings):
     # read is the operator's call rather than a value shipped in a settings class; and on today's
     # numbers there is no case for flipping it.
     turn_interpreter: Literal["router", "shadow", "hybrid", "model"] = "router"
+
+    # Which engine leads an analytics conversation (spec 2026-10-09, "LLM conversation engine").
+    #
+    #   rules   the handler every turn has run on: readers, a turn arbiter, a planner. What ships.
+    #   model   the phase-1 prototype: a model turns each turn into typed operations, pure code
+    #           applies them to a versioned state held server-side, and money turns (payments,
+    #           transfers, bookings, confirmations) still go to the rules route, which guards them.
+    #
+    # `rules` by default because `model` is a prototype under measurement, not a promotion: its
+    # store lives in one process and forgets every conversation on a restart, and whether it beats
+    # the rules is what Task 7 of the plan measures. With `rules` nothing of the engine is built and
+    # both question routes answer byte for byte as they did before it existed.
+    conversation_engine: Literal["rules", "model"] = "rules"
+    # The engine's model, on the planner's provider (`planner_provider`). None means the planner's
+    # own model, so pointing the planner at a hosted provider moves the engine with it.
+    engine_model: str | None = None
+    # The interpreter's answer: one to four operations. 600 keeps prompt and answer inside the
+    # local model's 4096-token window (the prompt is held to ~2,800 tokens).
+    engine_max_output_tokens: int = Field(default=600, gt=0)
+    # Zero for the planner's reason: an interpretation that varies between identical turns cannot
+    # be measured.
+    engine_temperature: float = 0.0
 
     # What a spending or income question means when it names no account and the conversation has
     # chosen none.

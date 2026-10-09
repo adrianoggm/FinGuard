@@ -52,7 +52,12 @@ from finguard_orchestrator.domain.engine.state import (
 )
 from finguard_orchestrator.domain.engine.transitions import InvariantViolationError
 from finguard_orchestrator.domain.enums import Direction, Metric, PlanningOutcome, Spoken
-from finguard_orchestrator.domain.errors import BankingUnavailableError
+from finguard_orchestrator.domain.errors import (
+    BankingUnavailableError,
+    InvalidValueError,
+    QueryRejectedError,
+)
+from finguard_orchestrator.domain.models.account_summary import Holding
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.ports.turn_operations import (
@@ -112,7 +117,8 @@ class Scripted:
 
 class ByWindow(Ledger):
     """The episodes ledger, with each window's own total and count, and `whole` for a plan with
-    no subject (the whole a share is a part of)."""
+    no subject (the whole a share is a part of). `failure`, when set, is what every read raises;
+    `currencies` answers a window in a currency other than euros."""
 
     def __init__(
         self,
@@ -122,14 +128,17 @@ class ByWindow(Ledger):
         super().__init__()
         self._figures = figures
         self._whole = whole
-        self.down = False
+        self.failure: Exception | None = None
+        self.currencies: dict[AbsoluteRange, str] = {}
 
     async def run(
         self, plan: FinancialPlan, *, movements: int | None = None, **rest: object
     ) -> QueryAnswer:
-        if self.down:
-            raise BankingUnavailableError("timeout")
+        if self.failure is not None:
+            raise self.failure
         answer = await super().run(plan, movements=movements, **rest)
+        if plan.date_range in self.currencies:
+            answer = replace(answer, currency=self.currencies[plan.date_range])
         subject = plan.categories or plan.merchants or plan.counterparties
         if self._whole is not None and not subject:
             figure: tuple[int, int] | None = self._whole
@@ -161,11 +170,35 @@ class Rig:
             reporting_timezone="Europe/Madrid",
         )
 
+    async def say_in(
+        self, sentence: str, conversation_id: UUID | None, version: int | None
+    ) -> EngineAnswer:
+        """One turn naming whatever conversation and version a test gives."""
+        return await self.handler.answer(
+            sentence,
+            conversation_id=conversation_id,
+            version=version,
+            account_id=ACCOUNT,
+            today=TODAY,
+            reporting_timezone="Europe/Madrid",
+        )
+
+
+class Renamed(Directory):
+    """The episodes' account directory, with the accounts a test leaves in it."""
+
+    def __init__(self) -> None:
+        self.holdings = HOLDINGS
+
+    async def all_of(self, *_: object, **__: object) -> tuple[Holding, ...]:
+        return self.holdings
+
 
 def a_rig(
     *turns: tuple[Operation, ...],
     figures: Mapping[AbsoluteRange, tuple[int, int]] | None = None,
     whole: tuple[int, int] | None = None,
+    directory: Directory | None = None,
 ) -> Rig:
     interpreter = Scripted(*turns)
     ledger = ByWindow(figures or {}, whole)
@@ -175,7 +208,7 @@ def a_rig(
         store,
         ledger,
         Accounts(),
-        Directory(),
+        directory or Directory(),
         Contacts(),
         CATEGORIES,
         count_calls=lambda: interpreter.calls,
@@ -238,6 +271,35 @@ async def test_a_scope_narrows_the_plan_and_is_said_by_name() -> None:
     assert rig.ledger.plans == [replace(asked(JULY, "RESTAURANTS"), only_account_ids=(PIGGY,))]
     assert turn.state.scope == Scope((PIGGY,))
     assert turn.result is not None and turn.result.text.endswith("Consultado en Hucha.")
+
+
+async def test_a_scope_of_several_accounts_names_every_one() -> None:
+    rig = a_rig((Ask(spending(window=JULY, accounts=("corriente", "hucha"))),))
+
+    turn = await rig.say("¿cuánto gasté en julio en la corriente y la hucha?")
+
+    assert rig.ledger.plans == [replace(asked(JULY), only_account_ids=(ACCOUNT, PIGGY))]
+    assert turn.result is not None
+    assert turn.result.text.endswith("Consultado en Cuenta corriente y Hucha.")
+
+
+async def test_an_account_the_directory_no_longer_lists_is_not_named() -> None:
+    # The scope was set while the hucha was listed. When the directory no longer lists it, the
+    # line says the accounts were chosen rather than naming a stranger or none.
+    directory = Renamed()
+    rig = a_rig(
+        (Ask(spending(window=JULY, categories=("RESTAURANTS",), accounts=("hucha",))),),
+        (Patch("focus", PlanFields(categories=("LEISURE",))),),
+        directory=directory,
+    )
+    first = await rig.say("¿cuánto en restaurantes en julio en la hucha?")
+    directory.holdings = tuple(h for h in HOLDINGS if h.account_id != PIGGY)
+
+    turn = await rig.say("¿y en ocio?", first)
+
+    assert rig.ledger.plans[-1] == replace(asked(JULY, "LEISURE"), only_account_ids=(PIGGY,))
+    assert turn.result is not None
+    assert turn.result.text.endswith("Consultado en las cuentas seleccionadas.")
 
 
 async def test_a_top_n_lists_the_n_largest() -> None:
@@ -310,6 +372,13 @@ async def test_an_undefined_percentage_still_says_both_amounts() -> None:
         "No hay variación porcentual: en junio de 2026 no gastaste nada en ocio; "
         "en julio de 2026, 23,06 €.\n" + EVERY_ACCOUNT
     )
+    # What is on screen is the pair shown as a percentage, saved under the next version, and the
+    # turn is remembered as the plan in words, never as the figures.
+    pair = ComparisonPlan(asked(JUNE, "LEISURE"), asked(JULY, "LEISURE"))
+    assert turn.state.focus == ComparisonFocus(pair, Measure.PERCENT_CHANGE)
+    assert turn.state.version == 1
+    assert turn.state.turns[-1].answered == turn.result.plan_in_words
+    assert await rig.store.load(turn.state.conversation_id, account_id=ACCOUNT) == turn.state
 
 
 @pytest.mark.parametrize(
@@ -617,13 +686,84 @@ async def test_two_concurrent_turns_on_one_version_one_wins() -> None:
 async def test_a_banking_failure_saves_nothing() -> None:
     rig = a_rig(RESTAURANTS_IN_JULY, (Patch("focus", PlanFields(categories=("LEISURE",))),))
     first = await rig.say("¿cuánto en restaurantes en julio?")
-    rig.ledger.down = True
+    rig.ledger.failure = BankingUnavailableError("timeout")
 
     failed = await rig.say("¿y en ocio?", first)
 
     assert failed.result is not None and failed.result.outcome == "BANKING_UNAVAILABLE"
     assert failed.state == first.state
     assert await rig.store.load(first.state.conversation_id, account_id=ACCOUNT) == first.state
+
+
+@pytest.mark.parametrize(
+    ("failure", "said"),
+    [
+        (
+            QueryRejectedError("unknown category"),
+            "He entendido la pregunta, pero el banco ha rechazado la consulta.",
+        ),
+        (
+            InvalidValueError("at most 20 selected accounts"),
+            "He entendido la pregunta, pero la consulta que he construido no es válida.",
+        ),
+    ],
+    ids=["rejected", "invalid"],
+)
+async def test_a_plan_the_bank_does_not_answer_saves_nothing(failure: Exception, said: str) -> None:
+    rig = a_rig(RESTAURANTS_IN_JULY, (Patch("focus", PlanFields(categories=("LEISURE",))),))
+    first = await rig.say("¿cuánto en restaurantes en julio?")
+    rig.ledger.failure = failure
+
+    failed = await rig.say("¿y en ocio?", first)
+
+    assert failed.result is not None
+    assert failed.result.outcome == PlanningOutcome.INVALID_DOMAIN.value
+    assert failed.result.text == said
+    assert failed.state == first.state
+    assert await rig.store.load(first.state.conversation_id, account_id=ACCOUNT) == first.state
+
+
+async def test_figures_in_two_currencies_are_not_related_and_save_nothing() -> None:
+    rig = a_rig(
+        RESTAURANTS_IN_JULY, (Compare(PlanFields(), PlanFields(window=JUNE), PlanFields()),)
+    )
+    first = await rig.say("¿cuánto en restaurantes en julio?")
+    rig.ledger.currencies[JUNE] = "USD"
+
+    failed = await rig.say("¿y comparado con junio?", first)
+
+    assert failed.result is not None
+    assert failed.result.outcome == PlanningOutcome.INVALID_DOMAIN.value
+    assert failed.result.text == "No puedo relacionar importes en monedas distintas."
+    assert failed.state == first.state
+    assert await rig.store.load(first.state.conversation_id, account_id=ACCOUNT) == first.state
+
+
+async def test_an_unknown_conversation_starts_a_new_one_under_a_new_id() -> None:
+    # Never saved, forgotten by a restart, or another holder's: the same from outside (R20).
+    rig = a_rig((Smalltalk("GREETING"),))
+    unknown = UUID(int=4242)
+
+    turn = await rig.say_in("hola", unknown, None)
+
+    assert turn.state.conversation_id != unknown and turn.state.version == 1
+    assert await rig.store.load(unknown, account_id=ACCOUNT) is None
+    assert await rig.store.load(turn.state.conversation_id, account_id=ACCOUNT) == turn.state
+
+
+async def test_an_unknown_conversation_named_with_a_version_is_stale_and_empty() -> None:
+    # The client believes in a version the store does not hold: it is told, and handed an empty
+    # state to start from, before the model is asked anything.
+    rig = a_rig()
+    unknown = UUID(int=4242)
+
+    with pytest.raises(StaleDialogueError) as refused:
+        await rig.say_in("hola", unknown, 3)
+
+    current = refused.value.current
+    assert current.conversation_id != unknown
+    assert (current.version, current.turns, current.focus) == (0, (), None)
+    assert rig.interpreter.calls == 0
 
 
 async def test_an_interpreter_that_cannot_answer_saves_nothing() -> None:
@@ -658,3 +798,9 @@ async def test_an_invariant_violation_is_logged_and_asked_back(
     assert turn.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
     assert rig.ledger.plans == []
     assert any("engine.invariant_violation" in record.getMessage() for record in caplog.records)
+    # Saved: the state as it was, nothing put on screen, and the question remembered as asked.
+    assert (turn.state.version, turn.state.focus, turn.state.pending) == (1, None, None)
+    assert turn.state.turns == (
+        DialogueTurn("¿cuánto en restaurantes en julio?", turn.result.text),
+    )
+    assert await rig.store.load(turn.state.conversation_id, account_id=ACCOUNT) == turn.state

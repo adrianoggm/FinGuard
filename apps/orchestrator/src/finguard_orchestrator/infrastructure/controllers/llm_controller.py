@@ -137,6 +137,7 @@ from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.controllers import engine_dispatch
 from finguard_orchestrator.infrastructure.controllers.expert_agent_turns import expert_agent_reply
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
@@ -1891,6 +1892,7 @@ async def ask(
     # resolves the dependency for every request.
     searches: ExpertSearches = None,
     bookings: ExpertBookings = None,
+    engine: engine_dispatch.Engine = None,
 ) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
@@ -1913,6 +1915,10 @@ async def ask(
     `test_the_question_path_has_no_account_to_authorise` fails the day the request grows a
     field that could carry one.
     """
+    # The model-led engine, when it is switched on and the turn is its own (`engine_dispatch`).
+    answered = await engine_dispatch.try_engine(engine, request, who, today, metric_tokens)
+    if answered is not None:
+        return answered
     key = attempt
     was = _conversation_of(request, who, metric_tokens)
     # Task 3: built once per request, unconditionally -- restyling a chart is not a metrics
@@ -2158,6 +2164,7 @@ async def ask_streaming(
     # resolves the dependency for every request.
     searches: ExpertSearches = None,
     bookings: ExpertBookings = None,
+    engine: engine_dispatch.Engine = None,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -2170,6 +2177,12 @@ async def ask_streaming(
     plan that misread the question can be seen for what it is while that still helps —
     rather than arriving as a footnote under a number the user has already read.
     """
+    # The same seam as the question route's, streamed (`engine_dispatch`).
+    streamed = await engine_dispatch.try_engine_streaming(
+        engine, request, who, today, metric_tokens
+    )
+    if streamed is not None:
+        return streamed
     key = attempt
     was = _conversation_of(request, who, metric_tokens)
     # Task 3: built once per request, unconditionally -- see the same line on the question route.

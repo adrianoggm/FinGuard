@@ -451,6 +451,11 @@ class Conversation:
     # a default factory here would mint one identifier at import time and hand the same one to
     # every conversation in the process, which is worse than having none.
     conversation_id: UUID | None = None
+    # The model-led engine's version of this conversation, when that engine is on and has saved
+    # it. Carried here for the identifier's reason: a turn the engine hands to the rules route (a
+    # payment) must come back holding the version it left with, and every branch of that route
+    # builds its answer from the conversation it was given. Never read by the rules engine.
+    version: int | None = None
 
     active: ActiveWorkflow | None = None
     account_selection: AccountSelection | None = None
