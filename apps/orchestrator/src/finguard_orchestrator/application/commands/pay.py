@@ -137,7 +137,7 @@ class PreparePaymentCommand(Command[PaymentAnswer]):
 
 @dataclass(frozen=True)
 class PrepareChosenPaymentCommand(Command[PaymentAnswer]):
-    """A payment somebody built in a form: a contact picked from a list, an amount typed in a field.
+    """A payment built from explicit fields, never interpreted by a model.
 
     Separate from the sentence version because there is nothing to read. No model, and therefore no
     grounding check — grounding exists to catch a figure a model invented, and here the figure was

@@ -21,6 +21,7 @@ from typing import Final
 from finguard_orchestrator.domain.constants import (
     MAX_CONCEPT,
     MAX_PAYMENT_MINOR,
+    MAX_RECIPIENT_NAME,
 )
 from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.models.contact import Contact
@@ -135,6 +136,14 @@ _IBAN: Final = re.compile(
     r"[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}))(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
+_RECIPIENT_FOR_TYPED_IBAN: Final = re.compile(
+    r"\b(?:a|para)\s+(?P<name>[^\W\d_][\w'.-]*(?:\s+[^\W\d_][\w'.-]*){0,4}?)"
+    r"\s+(?:con\s+(?:el\s+)?)?IBAN\s*$",
+    re.IGNORECASE,
+)
+_NOT_RECIPIENT_NAME: Final = frozenset(
+    {"con", "cuenta", "transferencia", "iban", "euros", "euro", "eur", "importe", "dinero"}
+)
 
 
 def iban_in(sentence: str) -> str | None:
@@ -153,6 +162,24 @@ def iban_in(sentence: str) -> str | None:
     if int(digits) % 97 != 1:
         return None
     return compact
+
+
+def transfer_recipient_for_iban(sentence: str) -> str | None:
+    """Extract an explicitly typed recipient label immediately before the user's IBAN."""
+    matches = tuple(_IBAN.finditer(sentence))
+    if len(matches) != 1 or iban_in(sentence) is None:
+        return None
+    prefix = sentence[: matches[0].start()].rstrip(" ,;:")
+    candidates = tuple(_RECIPIENT_FOR_TYPED_IBAN.finditer(prefix))
+    if not candidates:
+        return None
+    name = candidates[-1].group("name").strip()
+    words = spanish.folded(name).split()
+    if not words or any(word in _NOT_RECIPIENT_NAME for word in words):
+        return None
+    if len(name) > MAX_RECIPIENT_NAME:
+        return None
+    return name
 
 
 def mentions_iban(sentence: str) -> bool:

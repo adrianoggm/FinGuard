@@ -1300,6 +1300,82 @@ async def test_graph_keeps_typed_iban_when_the_amount_is_provided_on_a_later_tur
 
 
 @pytest.mark.asyncio
+async def test_graph_prepares_transfer_to_new_recipient_from_user_typed_name_and_iban() -> None:
+    world = World((PrepareTransfer("Juan Perez", 2_000),))
+    bank = with_payment_commands(world)
+
+    answer = await world.ask(
+        sentence="Haz una transferencia de 20 euros a Juan Perez con IBAN ES9121000418450200051332",
+        request_id="typed-new-recipient",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert answer.result is not None
+    assert answer.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert isinstance(answer.state.payment, PaymentConfirmationPending)
+    assert answer.state.payment.preview.recipient == "Juan Perez"
+    assert answer.state.payment.preview.recipient_iban == "ES9121000418450200051332"
+    assert bank.prepared[0].recipient_name == "Juan Perez"
+    assert bank.prepared[0].recipient_contact_id is None
+    assert bank.confirmed == []
+
+
+@pytest.mark.asyncio
+async def test_graph_retains_new_recipient_and_iban_while_asking_for_amount() -> None:
+    world = World(
+        (PrepareTransfer("Juan Perez", None),),
+        (PrepareTransfer(None, 2_000),),
+    )
+    bank = with_payment_commands(world)
+    first = await world.ask(
+        sentence="Haz una transferencia a Juan Perez con IBAN ES9121000418450200051332",
+        request_id="new-recipient-needs-amount",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert first.result is not None
+    assert first.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert isinstance(first.state.payment, PaymentDraftPending)
+    assert first.state.payment.draft.recipient_name == "Juan Perez"
+    assert first.state.payment.draft.recipient_iban == "ES9121000418450200051332"
+
+    second = await world.ask(
+        conversation_id=first.state.conversation_id,
+        version=first.state.version,
+        sentence="20 euros",
+        request_id="new-recipient-amount-answer",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert second.result is not None
+    assert second.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert bank.prepared[0].recipient_name == "Juan Perez"
+    assert bank.prepared[0].recipient_iban == "ES9121000418450200051332"
+    assert bank.prepared[0].recipient_contact_id is None
+    assert bank.confirmed == []
+
+
+@pytest.mark.asyncio
+async def test_typed_iban_payee_cannot_be_redirected_to_a_different_saved_contact() -> None:
+    world = World((PrepareTransfer("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+
+    answer = await world.ask(
+        sentence=(
+            "Haz una transferencia de 20 euros a Aitor Beltran Diaz pero a Juan Perez "
+            "con IBAN ES9121000418450200051332"
+        ),
+        request_id="typed-iban-conflicting-payees",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert answer.result is not None
+    assert answer.result.outcome == PlanningOutcome.INVALID_DOMAIN.value
+    assert bank.prepared == []
+    assert bank.confirmed == []
+
+
+@pytest.mark.asyncio
 async def test_bizum_without_prepare_scope_never_calls_banking() -> None:
     world = World((PrepareBizum("Aitor Beltran Diaz", 2_000),))
     bank = with_payment_commands(world)

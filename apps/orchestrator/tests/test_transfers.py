@@ -125,6 +125,24 @@ def test_typed_iban_is_only_a_transfer_destination() -> None:
         "ES9121000418450200051332"
     )
     assert payment_words.amount_in("IBAN ES91 2100 0418 4502 0005 1332 20 euros") == 2_000
+    assert (
+        payment_words.transfer_recipient_for_iban(
+            "Haz una transferencia de 20 euros a Juan Perez con IBAN ES9121000418450200051332"
+        )
+        == "Juan Perez"
+    )
+    assert (
+        payment_words.transfer_recipient_for_iban(
+            "Haz una transferencia a Juan Perez con IBAN ES9121000418450200051332"
+        )
+        == "Juan Perez"
+    )
+    assert (
+        payment_words.transfer_recipient_for_iban(
+            "Haz una transferencia a Juan Perez ES9121000418450200051332"
+        )
+        is None
+    )
 
 
 # --- a contact who cannot be transferred to --------------------------------------------

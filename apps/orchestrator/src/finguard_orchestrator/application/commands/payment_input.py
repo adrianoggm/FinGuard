@@ -110,6 +110,11 @@ def resolve_contact_payment_draft(
         else ()
     )
     contact: Contact | None = None
+    typed_recipient: str | None = (
+        payment_words.transfer_recipient_for_iban(sentence)
+        if rail is Rail.TRANSFER and recipient_iban is not None
+        else None
+    )
     candidates: tuple[Contact, ...] = ()
     if len(spoken) > 1:
         candidates = spoken
@@ -119,7 +124,7 @@ def resolve_contact_payment_draft(
             len(modeled) != 1 or modeled[0].contact_id != contact.contact_id
         ):
             return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
-    elif operation.recipient is not None:
+    elif operation.recipient is not None and typed_recipient is None:
         if len(modeled) != 1 or prior.recipient_contact_id != modeled[0].contact_id:
             return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
         contact = modeled[0]
@@ -127,13 +132,39 @@ def resolve_contact_payment_draft(
         contact = next((c for c in contacts if c.contact_id == prior.recipient_contact_id), None)
         if contact is None:
             return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
+    elif (
+        previous is not None
+        and previous.recipient_iban is not None
+        and previous.recipient_name is not None
+    ):
+        typed_recipient = previous.recipient_name
 
-    if operation.recipient is not None and contact is None and not candidates:
+    if typed_recipient is not None:
+        typed_matches = payment_words.contacts_in(typed_recipient, contacts)
+        if len(typed_matches) > 1:
+            return ContactPaymentDraftResolution(
+                prior, tuple(contact.contact_id for contact in typed_matches)
+            )
+        if typed_matches:
+            if contact is not None and contact.contact_id != typed_matches[0].contact_id:
+                return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
+            contact = typed_matches[0]
+        elif contact is not None:
+            # A known contact elsewhere in the sentence must not override the explicit recipient
+            # label that was written beside the typed destination.
+            return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
+
+    if (
+        operation.recipient is not None
+        and contact is None
+        and not candidates
+        and typed_recipient is None
+    ):
         # An unknown name cannot be passed to banking for a fuzzy guess.
         return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
 
     draft = PaymentDraft(
-        recipient_name=contact.display_name if contact else None,
+        recipient_name=contact.display_name if contact else typed_recipient,
         recipient_contact_id=contact.contact_id if contact else None,
         recipient_iban=recipient_iban,
         amount_minor=amount_minor,

@@ -624,12 +624,24 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
         ),
         None,
     )
-    if recipient is None or resolved.draft.amount_minor is None:
-        raise RuntimeError("complete Bizum draft lacks a grounded recipient or amount")
+    recipient_name = (
+        resolved.draft.recipient_name
+        if resolved.draft.recipient_iban is not None
+        else recipient.display_name
+        if recipient is not None
+        else None
+    )
+    if recipient_name is None or resolved.draft.amount_minor is None:
+        raise RuntimeError("complete payment draft lacks a grounded recipient or amount")
+    recipient_contact_id = (
+        recipient.contact_id
+        if resolved.draft.recipient_iban is None and recipient is not None
+        else None
+    )
     command = PrepareChosenPaymentCommand(
         account_id=account_id,
-        recipient_name=recipient.display_name,
-        recipient_contact_id=(None if resolved.draft.recipient_iban else recipient.contact_id),
+        recipient_name=recipient_name,
+        recipient_contact_id=recipient_contact_id,
         recipient_iban=resolved.draft.recipient_iban,
         amount_minor=resolved.draft.amount_minor,
         currency=resolved.draft.currency,
@@ -639,7 +651,11 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
     answer = await ctx.ports.commands.dispatch(command)
     if not isinstance(answer, PaymentAnswer):
         raise TypeError("payment preparation returned an unexpected answer")
-    if answer.reason == "contact_has_no_account" and resolved.draft.rail is Rail.TRANSFER:
+    if (
+        answer.reason == "contact_has_no_account"
+        and resolved.draft.rail is Rail.TRANSFER
+        and recipient is not None
+    ):
         answer = replace(
             answer,
             text=payment_writer.saved_contact_transfer_unavailable(recipient.display_name),

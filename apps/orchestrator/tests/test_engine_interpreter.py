@@ -656,9 +656,9 @@ def test_typed_iban_transfer_example_keeps_the_iban_out_of_model_output() -> Non
         None,
     )
     assert example is not None
-    assert read(example[2], CATALOGUE) == (PrepareTransfer("Aitor Beltran Diaz", None),)
-    assert "never return or invent an IBAN" in build_prompt(
-        "Haz una transferencia a Aitor Beltran Diaz con IBAN ES9121000418450200051332",
+    assert read(example[2], CATALOGUE) == (PrepareTransfer("Juan Perez", None),)
+    assert "never output an IBAN" in build_prompt(
+        "Haz una transferencia a Juan Perez con IBAN ES9121000418450200051332",
         DialogueState(UUID(int=1)),
         today=TODAY,
         categories={key: key for key in CATALOGUE},

@@ -677,6 +677,19 @@ class Bank:
                 expires_at=datetime(2026, 8, 5, 10, 5, tzinfo=UTC),
                 rail=Rail.INTERNAL,
             )
+        if request.recipient_iban is not None:
+            return PaymentPreview(
+                intent_id=INTENT,
+                recipient=request.recipient_name,
+                recipient_phone=None,
+                amount_minor=request.amount_minor,
+                currency=request.currency,
+                balance_before_minor=215_648,
+                balance_after_minor=215_648 - request.amount_minor,
+                expires_at=datetime(2026, 8, 5, 10, 5, tzinfo=UTC),
+                rail=Rail.TRANSFER,
+                recipient_iban=request.recipient_iban,
+            )
         wanted = request.recipient_name.lower()
         exact = [c for c in CONTACTS if c.display_name.lower() == wanted]
         partial = exact or [c for c in CONTACTS if wanted in c.display_name.lower()]

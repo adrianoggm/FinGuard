@@ -148,11 +148,11 @@ class PrepareBizum:
 
 @dataclass(frozen=True)
 class PrepareTransfer:
-    """Start or continue a bank transfer to a saved contact.
+    """Start or continue a bank transfer to a grounded payee.
 
-    The operation identifies the payment rail semantically. The amount and recipient still have
-    to be grounded in the utterance and the holder's contact list, and the deterministic payment
-    reader must independently find the word "transferencia" before banking is called.
+    The operation identifies the payment rail semantically. A saved contact is resolved against
+    the holder's directory; a new payee needs a name and checksum-valid IBAN written in the user's
+    utterance. The deterministic payment reader independently verifies the rail before banking.
     """
 
     recipient: str | None
