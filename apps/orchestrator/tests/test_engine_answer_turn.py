@@ -628,10 +628,12 @@ async def test_a_stale_version_is_refused_and_nothing_changes() -> None:
 
 
 async def test_another_holders_conversation_looks_unknown() -> None:
-    # Ruling R20: another account naming this conversation and its version gets a conversation of
-    # its own, and nothing of the holder's: not in its prompt, and not in a refusal.
+    # Ruling R20: another account naming this conversation, with or without its version, gets a
+    # conversation of its own, and nothing of the holder's: not in its prompt, and not in an answer.
+    # Ruling R27: with the version, too, it starts fresh rather than being refused.
     rig = a_rig(
         (Ask(spending(window=JULY, categories=("RESTAURANTS",), accounts=("hucha",))),),
+        (Smalltalk("GREETING"),),
         (Smalltalk("GREETING"),),
     )
     theirs = await rig.say("mi secreto: restaurantes en julio en la hucha")
@@ -646,11 +648,11 @@ async def test_another_holders_conversation_looks_unknown() -> None:
             reporting_timezone="Europe/Madrid",
         )
 
-    with pytest.raises(StaleDialogueError) as refused:
-        await somebody_else_says(theirs.state.version)
-    stranger = refused.value.current
-    assert stranger.conversation_id != theirs.state.conversation_id
-    assert (stranger.version, stranger.turns, stranger.scope) == (0, (), Scope())
+    stranger = await somebody_else_says(theirs.state.version)
+    _, seen, _ = rig.interpreter.seen[-1]
+    assert (seen.turns, seen.scope, seen.focus) == ((), Scope(), None)
+    assert stranger.state.conversation_id != theirs.state.conversation_id
+    assert stranger.state.version == 1
 
     mine = await somebody_else_says(None)
     _, seen, _ = rig.interpreter.seen[-1]
@@ -751,19 +753,19 @@ async def test_an_unknown_conversation_starts_a_new_one_under_a_new_id() -> None
     assert await rig.store.load(turn.state.conversation_id, account_id=ACCOUNT) == turn.state
 
 
-async def test_an_unknown_conversation_named_with_a_version_is_stale_and_empty() -> None:
-    # The client believes in a version the store does not hold: it is told, and handed an empty
-    # state to start from, before the model is asked anything.
-    rig = a_rig()
+async def test_an_unknown_conversation_named_with_a_version_starts_fresh() -> None:
+    # Ruling R27: the client believes in a version of a conversation the store does not hold (a
+    # restart forgot it, or it was never this holder's). There is nothing to be stale against, so
+    # it starts again under a new id instead of being refused on every turn.
+    rig = a_rig((Smalltalk("GREETING"),))
     unknown = UUID(int=4242)
 
-    with pytest.raises(StaleDialogueError) as refused:
-        await rig.say_in("hola", unknown, 3)
+    turn = await rig.say_in("hola", unknown, 3)
 
-    current = refused.value.current
-    assert current.conversation_id != unknown
-    assert (current.version, current.turns, current.focus) == (0, (), None)
-    assert rig.interpreter.calls == 0
+    assert turn.state.conversation_id != unknown
+    assert turn.state.version == 1 and turn.state.focus is None
+    assert rig.interpreter.calls == 1
+    assert await rig.store.load(unknown, account_id=ACCOUNT) is None
 
 
 async def test_an_interpreter_that_cannot_answer_saves_nothing() -> None:

@@ -5,20 +5,26 @@
 exactly as it always did whenever that call returns None:
 
 - **the engine is off**: production, byte for byte;
-- **a money workflow is on the wire** (a payment, a transfer, a booking or a confirmation under
-  way): that turn belongs to the state machine that guards it, whatever its words are, and the
-  engine is not even asked (spec decision 4);
+- **a workflow is on the wire** (a payment, a transfer, a booking or a confirmation under way, or
+  a question the rules route asked): it was opened on that route and its next turn is that
+  route's, whatever its words are, so the engine is not even asked (spec decision 4, ruling R26).
+  The one exception is a half-built payment the rules route has *set aside* (`suspended`) to
+  answer a question: the engine answers the turns after it, and hands the draft back exactly as it
+  was echoed, so it can still be resumed there;
 - **the engine delegates** (`Delegate`: a payment, a transfer, a booking, a chart, or a turn it
   does not support): it saved nothing, so its focus is intact when the conversation comes back.
 
 Every other turn is the engine's, answered with the same `QuestionResponse` wire shape. Its
-`conversation` carries the engine's conversation id and version and nothing else: the analytics
-memory is the engine's own, server-side, and the rules route's would be stale beside it. A turn the
+`conversation` carries the engine's conversation id and version, plus a set-aside payment draft
+when one was echoed, and nothing else: the analytics memory is the engine's own, server-side, and
+the rules route's would be stale beside it. A turn the
 engine hands over comes back holding that id and version, because the rules route builds every
 answer from the conversation it was given and the mapper carries `version` through unchanged.
 
-A version the engine no longer holds is a 409 with the holder's current conversation (the handler
-raises `StaleDialogueError` before anything runs; `register` turns it into the response).
+A version other than the one the engine holds for this conversation is a 409 with the holder's
+current conversation (the handler raises `StaleDialogueError` before anything runs; `register`
+turns it into the response). A conversation the engine holds nothing of, after a restart or under
+someone else's id, simply starts again under a new id (ruling R27).
 
 **Every answer says who gave it and what it cost**, on both routes and both engines:
 `X-FinGuard-Engine: rules|model` names the engine that answered the turn (a delegated turn is the
@@ -36,6 +42,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import date
 from typing import Annotated, Any, Final, Literal
+from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -43,12 +50,19 @@ from starlette.datastructures import MutableHeaders
 
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
+from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import QueryRejectedError
 from finguard_orchestrator.domain.models.conversation import Conversation, Workflow
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest, QuestionResponse
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.dto.llm_dto import (
+    ConversationPayload,
+    QuestionRequest,
+    QuestionResponse,
+)
 from finguard_orchestrator.infrastructure.llm.counting_provider import counting_calls
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
@@ -58,15 +72,9 @@ logger = logging.getLogger(__name__)
 ENGINE_HEADER: Final = "X-FinGuard-Engine"
 MODEL_CALLS_HEADER: Final = "X-FinGuard-Model-Calls"
 _QUESTION_ROUTES: Final = frozenset({"/v1/questions", "/v1/questions/stream"})
-# The workflows whose next turn belongs to the rules route: money, and the booking that may cost it.
-_MONEY: Final = frozenset(
-    {
-        Workflow.PAYMENT_IN_PROGRESS,
-        Workflow.TRANSFER_IN_PROGRESS,
-        Workflow.PAYMENT_CONFIRMATION,
-        Workflow.BOOKING_CONFIRMATION,
-    }
-)
+# A payment the rules route set aside to answer a question: the fields that hold it, echoed back
+# unchanged by an engine answer so the draft survives the turns the engine takes.
+_SET_ASIDE: Final = ("workflow", "payment", "candidates", "awaiting", "suspended")
 # The directory and the contacts are read before the sentence is: a refusal there means the turn
 # was never interpreted, so it must not say it was («He entendido la pregunta…»).
 _UNREAD: Final = "No he podido leer tus cuentas y tus contactos: el banco ha rechazado la consulta."
@@ -104,10 +112,10 @@ async def try_engine(
 ) -> QuestionResponse | None:
     """The engine's answer to this turn, or None for the rules route to answer it.
 
-    A version the engine no longer holds raises `StaleDialogueError` out of here, before anything
+    A version other than the held one raises `StaleDialogueError` out of here, before anything
     ran; `register` writes the 409."""
     echoed = question.conversation
-    if engine is None or (echoed is not None and echoed.workflow in _MONEY):
+    if engine is None or (echoed is not None and _owned_by_the_rules(echoed)):
         return None
     conversation_id = echoed.conversation_id if echoed is not None else None
     version = echoed.version if echoed is not None else None
@@ -129,14 +137,66 @@ async def try_engine(
             outcome=PlanningOutcome.INVALID_DOMAIN.value, text=_UNREAD
         )
         held = Conversation(conversation_id=conversation_id, version=version)
-        return _on_the_wire(unread, held, who, metric_tokens)
+        return _carrying(echoed, _on_the_wire(unread, held, who, metric_tokens))
     if turn.result is None:
         logger.info("engine.delegated to=%s", turn.delegate_to)
         _answered_by("rules")
+        if turn.delegate_to == "CHART":
+            _hand_over_the_screen(question, turn.state)
         return None
     state = turn.state
     held = Conversation(conversation_id=state.conversation_id, version=state.version)
-    return _on_the_wire(turn.result, held, who, metric_tokens)
+    return _carrying(echoed, _on_the_wire(turn.result, held, who, metric_tokens))
+
+
+def _carrying(echoed: ConversationPayload | None, answer: QuestionResponse) -> QuestionResponse:
+    """The engine's answer, holding what it must hand back untouched from the echoed conversation:
+    a payment the rules route set aside (only that workflow reaches the engine)."""
+    if echoed is None or echoed.workflow is None or answer.conversation is None:
+        return answer
+    carried = {field: getattr(echoed, field) for field in _SET_ASIDE}
+    conversation = answer.conversation.model_copy(update=carried)
+    return answer.model_copy(update={"conversation": conversation})
+
+
+def _hand_over_the_screen(question: QuestionRequest, state: DialogueState) -> None:
+    """A chart is the rules route's to draw, of what is on screen (ruling R28), and what is on
+    screen is the engine's: its focus goes into the conversation that route is about to read, as the
+    plan or the pair it answered last, read from the same accounts the engine read it from. The
+    rules route's chart code is not touched; only the context it is handed is."""
+    focus, accounts = state.focus, state.scope.account_ids
+    screen: dict[str, object]
+    if isinstance(focus, QueryFocus):
+        screen = {"last_plan": conversation_mapper.plan_payload(_read_from(focus.plan, accounts))}
+    elif isinstance(focus, ComparisonFocus):
+        pair = focus.comparison
+        screen = {
+            "last_comparison_earlier": conversation_mapper.plan_payload(
+                _read_from(pair.earlier, accounts)
+            ),
+            "last_comparison_latest": conversation_mapper.plan_payload(
+                _read_from(pair.latest, accounts)
+            ),
+        }
+    else:
+        return
+    echoed = question.conversation.model_dump() if question.conversation is not None else {}
+    question.conversation = ConversationPayload.model_validate({**echoed, **screen})
+
+
+def _read_from(
+    plan: FinancialPlan | TopMovements, accounts: tuple[UUID, ...]
+) -> FinancialPlan | TopMovements:
+    """`plan` as the engine executed it: from the accounts selected, or every one when none is."""
+    return replace(
+        plan, across_accounts=not accounts, only_account_id=None, only_account_ids=accounts
+    )
+
+
+def _owned_by_the_rules(echoed: ConversationPayload) -> bool:
+    """Whether the turn belongs to a workflow the rules route opened (ruling R26)."""
+    set_aside = echoed.workflow is Workflow.PAYMENT_IN_PROGRESS and echoed.suspended
+    return echoed.workflow is not None and not set_aside
 
 
 async def try_engine_streaming(

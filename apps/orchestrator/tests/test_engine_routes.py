@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -38,15 +38,23 @@ from finguard_orchestrator.domain.engine.operations import (
     Patch,
     PlanFields,
 )
-from finguard_orchestrator.domain.engine.state import DialogueState, QueryFocus
+from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
 from finguard_orchestrator.domain.enums import Direction
 from finguard_orchestrator.domain.errors import QueryRejectedError
 from finguard_orchestrator.domain.models.account_summary import Holding
+from finguard_orchestrator.domain.models.conversation import Conversation, FinancialClarification
 from finguard_orchestrator.domain.ports.turn_operations import NO_ACCOUNT_NAMES
 from finguard_orchestrator.domain.services import category_words
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, FinancialPlan
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    FinancialPlanDraft,
+)
 from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.controllers import engine_dispatch
+from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
 from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
 from finguard_orchestrator.infrastructure.llm.counting_provider import (
@@ -54,6 +62,7 @@ from finguard_orchestrator.infrastructure.llm.counting_provider import (
     calls_so_far,
     counting_calls,
 )
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
 JSON_ROUTE = "/v1/questions"
 STREAM_ROUTE = "/v1/questions/stream"
@@ -384,7 +393,7 @@ def test_stale_version_is_409_with_current_state(route: str) -> None:
 def test_another_holders_id_gets_a_fresh_conversation(route: str) -> None:
     """Ruling R20 on the wire: someone else's conversation id names nothing of theirs."""
     stack = a_stack()
-    interpreter = Scripted(RESTAURANTS_IN_JULY, AND_IN_LEISURE, AND_IN_LEISURE)
+    interpreter = Scripted(RESTAURANTS_IN_JULY, AND_IN_LEISURE, AND_IN_LEISURE, AND_IN_LEISURE)
     engine_on(stack, interpreter)
     theirs = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
     holder = app.dependency_overrides[authenticated_caller]
@@ -394,11 +403,12 @@ def test_another_holders_id_gets_a_fresh_conversation(route: str) -> None:
         scopes=frozenset({Scope.QUESTIONS_READ}),
     )
 
-    # With their version: stale, and handed a conversation of one's own, not theirs.
-    stale = post(stack, route, "¿y en ocio?", theirs.conversation)
-    assert stale.status == 409
-    assert stale.body["conversation"]["conversation_id"] != theirs.conversation["conversation_id"]
-    assert stale.body["conversation"]["version"] == 0
+    # With their version: a fresh conversation of one's own (R27), read against an empty state.
+    fresh = post(stack, route, "¿y en ocio?", theirs.conversation)
+    assert fresh.status == 200
+    assert fresh.conversation["conversation_id"] != theirs.conversation["conversation_id"]
+    assert fresh.conversation["version"] == 1
+    assert (interpreter.seen[-1].focus, interpreter.seen[-1].turns) == (None, ())
 
     # Without one: a fresh conversation, read against an empty state.
     mine = post(
@@ -581,4 +591,136 @@ def test_a_delegated_compound_read_keeps_the_engine_conversation(route: str) -> 
     assert (followed.conversation["conversation_id"], followed.conversation["version"]) == (
         engine_id,
         2,
+    )
+
+
+# --- a workflow on the wire (R26) ---------------------------------------------------------------
+
+DRAFT_KEYS = ("workflow", "payment", "candidates", "awaiting", "suspended")
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_suspended_bizum_lets_the_engine_answer_and_rides_along(route: str) -> None:
+    """A half-built Bizum the rules route set aside for a question keeps nothing else on that
+    route: the engine answers the next analytics turn, and hands the draft back untouched so it
+    can still be resumed there."""
+    stack = a_stack()
+    interpreter = Scripted(RESTAURANTS_IN_JULY, TO_PAYMENTS, AND_IN_LEISURE)
+    engine_on(stack, interpreter)
+    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
+    drafted = post(stack, route, "hazle un bizum de 20 a Marta", first.conversation)
+    assert drafted.conversation["workflow"] == "PAYMENT_IN_PROGRESS"
+
+    # Open and not set aside: still the payment's turn, on the rules route.
+    aside = post(stack, route, "¿cuánto gasté en restaurantes en julio?", drafted.conversation)
+    assert aside.engine[0] == "rules" and len(interpreter.seen) == 2
+    assert aside.conversation["suspended"] is True
+
+    answered = post(stack, route, "¿y en ocio?", aside.conversation)
+
+    assert answered.engine[0] == "model"
+    assert answered.body["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
+    assert answered.conversation["version"] == 2
+    assert {key: answered.conversation[key] for key in DRAFT_KEYS} == {
+        key: aside.conversation[key] for key in DRAFT_KEYS
+    }
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_an_open_rules_question_is_answered_by_the_rules_route(route: str) -> None:
+    """M-1: a question the rules route asked is answered where it was asked."""
+    stack = a_stack()
+    interpreter = Scripted()
+    engine_on(stack, interpreter)
+    asked = conversation_mapper.to_payload(
+        Conversation(
+            conversation_id=UUID(int=77),
+            version=3,
+            active=FinancialClarification(
+                draft=FinancialPlanDraft(direction=Direction.EXPENSE, categories=("RESTAURANTS",))
+            ),
+        )
+    ).model_dump(mode="json")
+
+    turn = post(stack, route, "en julio", asked)
+
+    assert turn.engine[0] == "rules"
+    assert interpreter.seen == []
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_preview_owns_the_next_turn_even_an_analytics_one(route: str) -> None:
+    """M-7: a payment awaiting a yes is not suspended by a question; the rules route answers it
+    and the preview stays open."""
+    stack = a_stack()
+    interpreter = Scripted(RESTAURANTS_IN_JULY, TO_PAYMENTS)
+    engine_on(stack, interpreter)
+    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
+    previewed = post(stack, route, "hazle un bizum de 20 a Marta Solis Vega", first.conversation)
+
+    turn = post(stack, route, "¿y en ocio?", previewed.conversation)
+
+    assert turn.engine[0] == "rules"
+    assert len(interpreter.seen) == 2
+    assert turn.conversation["workflow"] == "PAYMENT_CONFIRMATION"
+    assert stack.bank.confirmed == []
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_forgotten_conversation_starts_again_without_a_409(route: str) -> None:
+    """R27: after a restart the store holds nothing; an open tab's next turn is answered under a
+    new id, which it adopts, instead of a 409 on every turn."""
+    stack = a_stack()
+    engine_on(stack, Scripted(RESTAURANTS_IN_JULY))
+    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
+    engine_on(stack, Scripted(RESTAURANTS_IN_JULY))  # a new process: an empty store
+
+    again = post(stack, route, "¿cuánto gasté en restaurantes en julio?", first.conversation)
+
+    assert again.status == 200
+    assert again.conversation["conversation_id"] != first.conversation["conversation_id"]
+    assert again.conversation["version"] == 1
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_chart_of_what_is_on_screen_is_drawn_from_the_engines_plan(
+    route: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R28: «ponlo en un gráfico» after an engine answer is the rules route's to draw, and the
+    plan it is handed as the one on screen is the engine's, read from the same accounts."""
+    stack = a_stack()
+    engine_on(stack, Scripted(RESTAURANTS_IN_JULY, (Delegate("CHART"),)))
+    handed: list[object] = []
+    planned = stack.planner.plan
+
+    async def plan(sentence: str, *, context: Any) -> Any:
+        handed.append(context.continuation.plan if context.continuation else None)
+        return await planned(sentence, context=context)
+
+    monkeypatch.setattr(stack.planner, "plan", plan)
+    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
+
+    charted = post(stack, route, "ponlo en un gráfico", first.conversation)
+
+    assert charted.engine[0] == "rules"
+    assert handed == [ran("RESTAURANTS")]
+    assert charted.conversation["conversation_id"] == first.conversation["conversation_id"]
+
+
+def test_a_pair_on_screen_is_handed_over_as_the_last_comparison() -> None:
+    june = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
+    pair = ComparisonPlan(
+        FinancialPlan(direction=Direction.EXPENSE, date_range=june, categories=("LEISURE",)),
+        FinancialPlan(direction=Direction.EXPENSE, date_range=JULY, categories=("LEISURE",)),
+    )
+    question = QuestionRequest(question="ponlo en un gráfico")
+
+    engine_dispatch._hand_over_the_screen(  # noqa: SLF001
+        question, DialogueState(UUID(int=5), version=2, focus=ComparisonFocus(pair))
+    )
+
+    assert question.conversation is not None
+    handed = conversation_mapper.to_domain(question.conversation).last_comparison
+    assert handed == ComparisonPlan(
+        replace(pair.earlier, across_accounts=True), replace(pair.latest, across_accounts=True)
     )

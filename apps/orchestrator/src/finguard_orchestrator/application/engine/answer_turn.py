@@ -19,8 +19,10 @@ exactly one is kept.
 
 A conversation is loaded and saved under the caller's account (ruling R20). An id the store does not
 hold under it, whether never saved, forgotten by a restart or another holder's, starts a new
-conversation under a new id. The three look the same from outside, which is what keeps someone
-else's from being found by trying ids.
+conversation under a new id, whatever version the client names with it (ruling R27): there is no
+held state to be stale against, and refusing would refuse the same client on every turn after a
+restart. The three look the same from outside, which is what keeps someone else's from being found
+by trying ids.
 """
 
 import asyncio
@@ -112,9 +114,10 @@ class AnswerTurnHandler:
     ) -> EngineAnswer:
         calls_before = self._count_calls()
         stages = _Stages()
-        state = await self._loaded(conversation_id, account_id)
-        if version is not None and version != state.version:
-            raise StaleDialogueError(state)
+        held = await self._held(conversation_id, account_id)
+        if held is not None and version is not None and version != held.version:
+            raise StaleDialogueError(held)
+        state = held or DialogueState(uuid4())
 
         def unsaved(
             result: AskFinancialQuestionResult | None, delegate_to: str | None = None
@@ -175,14 +178,11 @@ class AnswerTurnHandler:
         calls = self._count_calls() - calls_before
         return EngineAnswer(result, saved, None, calls, stages.ms)
 
-    async def _loaded(self, conversation_id: UUID | None, account_id: UUID) -> DialogueState:
-        """The state this account saved under `conversation_id`, or a new one under a new id."""
-        held = (
-            await self._store.load(conversation_id, account_id=account_id)
-            if conversation_id is not None
-            else None
-        )
-        return held or DialogueState(uuid4())
+    async def _held(self, conversation_id: UUID | None, account_id: UUID) -> DialogueState | None:
+        """The state this account saved under `conversation_id`, if it saved one."""
+        if conversation_id is None:
+            return None
+        return await self._store.load(conversation_id, account_id=account_id)
 
     async def _grounds(self, account_id: UUID) -> Grounds:
         """The holder's catalogues, read once per turn: names are grounded against these only."""
