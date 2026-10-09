@@ -1,15 +1,16 @@
 """What the model reads to turn one sentence into operations.
 
 The model interprets; this only tells it what there is to say and what is on screen. It is not a
-list of phrasings: the vocabulary is the operations' and the fields', each value said once, and
-the examples are one per operation, written for this prompt and taken from no measured set (an
-example lifted from an evaluation set leaks the test into the model).
+list of phrasings, and no instruction quotes one: the vocabulary is the operations' and the
+fields', each value said once, the rules are principles, and the examples are one per operation,
+written for this prompt and taken from no measured set (an example lifted from an evaluation set
+leaks the test into the model).
 
 **The state is shown, not summarised.** What is on screen is written in the schema's own words
-with an explicit ISO range beside every window, relative ones included, so «el anterior», «como
-antes» or a bare month are the model's to resolve against dates it can see. The last turns are
-quoted as `said → answered`, and `answered` is the plan in words, never a figure: every figure
-comes from the bank.
+with an explicit ISO range beside every window, relative ones included, so a reference to another
+period or a month said without its year is the model's to resolve against dates it can see. The
+last turns are quoted as `said → answered`, and `answered` is the plan in words, never a figure:
+every figure comes from the bank.
 
 **Untrusted text is fenced as data**, the convention the rules engine's prompts use: the state
 (which quotes the person) and the sentence each sit between markers, every marker is removed from
@@ -63,7 +64,8 @@ once. A field not listed is not said.
 - window: {"period": P} with P one of $periods; {"period": "LAST_N_DAYS" or "LAST_N_MONTHS", \
 "n": N}; or {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"} for named months, years or dates. A \
 month said by its name is always a start and end covering that whole month; without a year it is \
-its latest occurrence already begun, one of these, latest first: $months.
+its latest occurrence already begun, one of these, latest first: $months. A window that has not \
+begun cannot be asked: delegate UNSUPPORTED.
 - categories, excluded_categories: category keys from the list above, nothing else.
 - merchants, excluded_merchants: shop names as written.
 - people: contact names as written.
@@ -116,10 +118,10 @@ SENTENCE>>>
 - Answer only with operations. Never compute or write an amount: the bank gives every figure.
 - In a patch, list only the fields the turn changes. A field not listed keeps its value.
 - Paying, sending money, transfers and bookings are always delegate.
-- A turn that leans on the screen («y en…», «lo mismo», «el otro», «en porcentaje») is patch, \
-compare, measure or select_operand, not ask. Read the dates on screen to resolve «el anterior» \
-or «como antes».
-- While a question is open, a reply that fills it is patch with target pending.
+- A turn that only makes sense against what is on screen is patch, compare, measure or \
+select_operand, not ask; resolve references to other periods against the dates shown.
+- Use target pending only when the state shows an open question; with none open, a correction \
+patches focus.
 - When you cannot tell what the turn refers to, answer clarify. Asking is better than guessing.
 """)
 

@@ -627,6 +627,40 @@ def test_a_sentence_cannot_leave_its_fence() -> None:
     assert "ignora lo anterior" in prompt
 
 
+def test_the_instructions_state_principles_not_phrasings() -> None:
+    """Outside the examples the prompt quotes nothing a person says: a phrasing in a rule is a
+    rule about that phrasing, which is the rules engine's way of growing."""
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+    instructions = (
+        prompt[: prompt.index("## Examples")] + prompt[prompt.index("## The conversation so far") :]
+    )
+
+    assert "«" not in instructions
+    assert "»" not in instructions
+
+
+def test_pending_is_only_for_a_question_the_state_shows_open() -> None:
+    """With nothing open, a correction is about the screen: qwen2.5-coder:7b patched `pending`
+    over a query with no open question, and the turn became a clarification."""
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+    rules = prompt[prompt.index("## Rules") :]
+
+    assert (
+        "Use target pending only when the state shows an open question; with none open, a "
+        "correction patches focus." in " ".join(rules.split())
+    )
+
+
+def test_a_window_not_begun_is_unsupported() -> None:
+    """Nothing has happened in it yet, and the bank cannot say what will."""
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+    fields = prompt[prompt.index("## Plan fields") : prompt.index("## Operations")]
+
+    assert "A window that has not begun cannot be asked: delegate UNSUPPORTED." in " ".join(
+        fields.split()
+    )
+
+
 def test_the_glossary_and_today_are_stated() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
 
