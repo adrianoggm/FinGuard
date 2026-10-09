@@ -714,7 +714,10 @@ def derive_chart(
     dimension_field: str = "key",
     value_field: str | None = None,
     plan_limited: bool = False,
+    max_visible_rows: int = ROWS_THAT_FIT,
 ) -> ChartSpec | None:
+    if not 1 <= max_visible_rows <= 100:
+        raise ValueError("max_visible_rows must be between 1 and 100")
     value_field = value_field or ("movement_count" if metric == "COUNT" else "total_minor")
     if rows < 2 or dimension_field not in fields or value_field not in fields:
         return None
@@ -752,7 +755,7 @@ def derive_chart(
         # Only when nobody said a number, and never on a temporal axis, where trimming rows would
         # drop months out of the middle of a series rather than tail off a ranking. If the plan
         # already cut -- somebody asked for their top 25 -- the chart does not cut again: cutting
-        # twice would answer a question about twenty-five with eight, and a saved metric would
-        # carry a limit nobody asked for.
-        limit=None if temporal or plan_limited or rows <= ROWS_THAT_FIT else ROWS_THAT_FIT,
+        # twice would answer a question about twenty-five with the display limit, and a saved
+        # metric would carry a limit nobody asked for.
+        limit=None if temporal or plan_limited or rows <= max_visible_rows else max_visible_rows,
     )

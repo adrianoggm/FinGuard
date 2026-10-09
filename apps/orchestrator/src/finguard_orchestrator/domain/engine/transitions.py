@@ -145,8 +145,11 @@ def apply(
         if isinstance(op, Clarify):
             # Only what it asks for (ruling R21). A name to quote comes from grounding, which
             # found it in the holder's catalogues; from the model it is free text, and quoting
-            # it would show the person the model's words, a figure among them.
-            return Transition(resting, None, Clarify(op.missing))
+            # it would show the person the model's words, a figure among them. Persist the open
+            # question even when the model itself chose to ask it, so a later restore can dismiss
+            # it and a later planner sees that the reply belongs to this question.
+            open_question = Pending(op.missing, PlanFields())
+            return Transition(replace(resting, pending=open_question), None, Clarify(op.missing))
         if isinstance(op, RestorePrevious):
             try:
                 current, work = _restored(current, op.steps_back)
@@ -166,7 +169,11 @@ def apply(
         except _CannotApplyError as question:
             # One operation that cannot apply makes the whole turn a question. Half a turn run
             # would answer something nobody asked; only the question it opens is kept.
-            pending = question.pending or resting.pending
+            pending = (
+                question.pending
+                or resting.pending
+                or Pending(question.clarify.missing, PlanFields())
+            )
             return Transition(replace(resting, pending=pending), None, question.clarify)
         except InvalidValueError:
             # The fields were understood but make a plan the domain refuses: say what is missing
@@ -495,6 +502,15 @@ def _append_history(
 
 
 def _restored(state: DialogueState, steps_back: int) -> Applied:
+    # A clarification is only an unfinished turn. If the holder says to go back while one is open,
+    # the most recent answered query is still the current focus; discard the draft and show that
+    # result again. Remove the dismissed clarification from recent dialogue too, so its question
+    # cannot capture the next follow-up. The ordinary history below is for going back from one
+    # answered focus to another.
+    if steps_back == 1 and state.pending is not None and state.focus is not None:
+        restored = replace(state, pending=None, turns=state.turns[:-1])
+        return restored, _work_for_focus(restored.focus, restored.scope.account_ids)
+
     history = state.focus_history
     if len(history) >= steps_back:
         selected_index = len(history) - steps_back
@@ -521,18 +537,24 @@ def _restored(state: DialogueState, steps_back: int) -> Applied:
         else None,
         pending=None,
     )
+    return restored, _work_for_focus(focus, restored.scope.account_ids)
+
+
+def _work_for_focus(focus: Focus | None, account_ids: tuple[UUID, ...]) -> Work:
+    if focus is None:
+        raise _CannotApplyError(Missing.SUBJECT)
     match focus:
         case QueryFocus(plan=plan):
-            return restored, Work("QUERY", plan, restored.scope.account_ids)
+            return Work("QUERY", plan, account_ids)
         case ComparisonFocus(comparison=pair, measure=Measure.PERCENT_CHANGE):
             ratio = RatioPlan(part=pair.latest, whole=pair.earlier, kind=RatioKind.PERCENT_CHANGE)
-            return restored, Work("RATIO", ratio, restored.scope.account_ids)
+            return Work("RATIO", ratio, account_ids)
         case ComparisonFocus(comparison=pair):
-            return restored, Work("COMPARE", pair, restored.scope.account_ids)
+            return Work("COMPARE", pair, account_ids)
         case RatioFocus(ratio=ratio):
-            return restored, Work("RATIO", ratio, restored.scope.account_ids)
+            return Work("RATIO", ratio, account_ids)
         case BalanceFocus(account_ids=ids):
-            return restored, Work("BALANCE", None, ids)
+            return Work("BALANCE", None, ids)
     assert_never(focus)
 
 

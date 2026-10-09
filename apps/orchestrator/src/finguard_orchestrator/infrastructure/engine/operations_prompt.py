@@ -461,8 +461,30 @@ def _prompt_examples(today: date) -> tuple[tuple[str, str, str], ...]:
             }
         ),
     )
+    october_year = today.year if today.month >= 10 else today.year - 1
+    october_start = date(october_year, 10, 1)
+    october_end = date(october_year, 10, monthrange(october_year, 10)[1])
+    category_month_follow_up = (
+        "restored category breakdown; no open question",
+        "Y en octubre?",
+        _answer(
+            {
+                "patch": {
+                    "target": "focus",
+                    "changes": _items(
+                        window={
+                            "range": {
+                                "start": october_start.isoformat(),
+                                "end": october_end.isoformat(),
+                            }
+                        }
+                    ),
+                }
+            }
+        ),
+    )
     account_scope = (
-        "no current query; account names: Cuenta corriente, Hucha",
+        "accounts: Cuenta corriente, Hucha",
         "Cuanto he gastado este mes en mi cuenta corriente",
         _answer(
             {
@@ -475,12 +497,12 @@ def _prompt_examples(today: date) -> tuple[tuple[str, str, str], ...]:
         ),
     )
     restore_query = (
-        "comparison; history [1]: June expenses",
+        "expenses by category, last three months; open question: OPERAND",
         "Vuelve a la consulta anterior",
         _answer({"restore_previous": 1}),
     )
     pending_periods = (
-        "October on Cuenta corriente; September on same account; open question: which periods",
+        "open comparison: which periods",
         "Octubre y septiembre",
         _answer(
             {
@@ -492,11 +514,12 @@ def _prompt_examples(today: date) -> tuple[tuple[str, str, str], ...]:
             }
         ),
     )
-    # Keep the exact month-reference comparison example. It is the bridge from a prior query to a
+    # Keep the month-reference comparison example. It is the bridge from a prior query to a
     # comparison; without it a small model may ask for both windows even when one is on screen and
     # the other is in history. Keep the month ranking, comparison, visual and payment examples too.
-    selected = [all_examples[index] for index in (0, 3, 7, 8, 16, 18)]
+    selected = [all_examples[index] for index in (3, 7, 8, 16, 18)]
     selected.insert(2, category_breakdown)
+    selected.insert(3, category_month_follow_up)
     selected.extend((account_scope, restore_query, pending_periods))
     return tuple(selected)
 
@@ -553,8 +576,9 @@ def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
         lines.append(
             "Active visualization: "
             f"{state.active_visual.spec.mark}, chart version {state.active_visual.version}, "
-            f"from result version {state.active_visual.result_version}; it can be restyled "
-            "without changing the financial query."
+            f"from result version {state.active_visual.result_version}. A requested change to "
+            "its presentation MUST use update_visualization and reuse this chart; use "
+            "create_visualization only when no chart is active."
         )
     if state.pending is None:
         lines.append("Open question: none")

@@ -122,11 +122,9 @@ class DeterministicVisualPlanner:
     def plan(self, profile: VisualProfile, presentation: PresentationContext) -> ChartSpec | None:
         """Today's chart, from the profile alone.
 
-        `presentation` is deliberately unread here. The parameter exists so `VisualPlanningPolicy`
-        can hand the floor and the model planner the same inputs -- not because this is an
-        implementation of `VisualPlannerPort`, whose `plan` is async, also takes the question and a
-        budget, and returns a draft rather than a spec. The model planner is what will consume
-        `max_visible_rows`; reading it here would change what this draws, and this is a move.
+        `presentation.max_visible_rows` controls the number of ranked rows retained in the chart.
+        Viewport and channel do not change the chart decision here. The deterministic floor reads
+        this display limit so a caller can preserve a small, complete category set.
         """
         fields = profile.field_names()
         # `field_names()` is a union of every field any row carries. The mapper's own guard
@@ -205,6 +203,7 @@ class DeterministicVisualPlanner:
             dimension_field=dimension.name,
             value_field=measure[0].name,
             plan_limited=profile.plan_limited,
+            max_visible_rows=presentation.max_visible_rows,
         )
         # A ranked dimension sorts by its measure -- on its *axis*, not its tooltip. `derive_chart`
         # always emits a `ChartEncoding("tooltip", dimension_field, ...)` beside the axis encoding

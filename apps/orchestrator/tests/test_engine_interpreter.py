@@ -35,6 +35,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Visualize,
 )
 from finguard_orchestrator.domain.engine.state import (
+    ActiveVisual,
     BalanceFocus,
     ComparisonFocus,
     DialogueState,
@@ -57,6 +58,7 @@ from finguard_orchestrator.domain.enums import (
     Rail,
 )
 from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.models.chart import ChartSpec, VisualProfile
 from finguard_orchestrator.domain.ports.turn_operations import (
     InterpretationFailedError,
     TurnOperationsPort,
@@ -899,6 +901,9 @@ def test_prompt_shows_explicit_account_scope_and_restore_of_the_previous_query()
     assert '"accounts":["Cuenta corriente"]' in prompt
     assert "vuelve a la consulta anterior" in prompt.lower()
     assert '"restore_previous":1' in prompt
+    assert "open question: OPERAND" in prompt
+    assert "restored category breakdown" in prompt
+    assert '"start":"2026-10-01","end":"2026-10-31"' in prompt
 
 
 def test_prompt_fits_the_budget() -> None:
@@ -1028,6 +1033,19 @@ def test_the_state_says_what_is_on_screen_what_is_open_and_where() -> None:
     assert "WINDOW" in state
     assert "Farmacia Sol" in state
     assert "2 selected accounts" in state
+
+
+def test_an_active_chart_makes_visual_changes_updates_instead_of_new_charts() -> None:
+    state = dataclasses.replace(
+        a_busy_state(),
+        active_visual=ActiveVisual(1, 1, ChartSpec("bar", ()), VisualProfile((), "SUM", "money")),
+    )
+
+    prompt = build_prompt("c\u00e1mbialo a l\u00edneas", state, today=TODAY, categories=CATEGORIES)
+    current_state = prompt[prompt.index("<<<STATE") : prompt.index("STATE>>>")]
+
+    assert "A requested change to its presentation MUST use update_visualization" in current_state
+    assert "create_visualization only when no chart is active" in current_state
 
 
 RESTAURANTS_JULY = FinancialPlan(Direction.EXPENSE, date_range=JULY, categories=("RESTAURANTS",))

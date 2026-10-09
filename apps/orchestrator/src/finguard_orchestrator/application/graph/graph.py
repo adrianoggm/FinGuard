@@ -99,7 +99,9 @@ from finguard_orchestrator.domain.errors import DomainError, NotAuthorisedError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
+    ROWS_THAT_FIT,
     Mark,
+    PresentationContext,
     VisualDataset,
     VisualRow,
 )
@@ -263,6 +265,15 @@ async def plan(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     before = ctx.ports.count_calls()
     ops = await ctx.ports.interpreter.interpret(
         ctx.sentence, current, today=ctx.today, account_names=names
+    )
+    logger.info(
+        "graph.plan.completed operation_count=%d operation_types=%s has_focus=%s "
+        "open_question=%s focus_history_count=%d",
+        len(ops),
+        ",".join(type(operation).__name__ for operation in ops),
+        current.focus is not None,
+        current.pending.missing.value if current.pending is not None else "none",
+        len(current.focus_history),
     )
     calls = max(1, ctx.ports.count_calls() - before)
     return {
@@ -1142,8 +1153,15 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
         )
         if ctx.ports.visual_policy is None:
             raise RuntimeError("the graph visual policy is not configured")
+        presentation = DEFAULT_PRESENTATION
+        if plan.group_by is GroupBy.CATEGORY and plan.group_limit is None:
+            presentation = PresentationContext(
+                channel=DEFAULT_PRESENTATION.channel,
+                viewport=DEFAULT_PRESENTATION.viewport,
+                max_visible_rows=min(100, max(ROWS_THAT_FIT, len(rows))),
+            )
         before = ctx.ports.count_calls()
-        decision = await ctx.ports.visual_policy.decide(ctx.sentence, profile, DEFAULT_PRESENTATION)
+        decision = await ctx.ports.visual_policy.decide(ctx.sentence, profile, presentation)
         ctx.cache["visual_model_calls"] = max(0, ctx.ports.count_calls() - before)
         if decision is not None and visual_op.style != "AUTO":
             mark: Mark = "line" if visual_op.style == "LINE" else "bar"
@@ -1180,6 +1198,14 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
         visual_words = (
             dataset.title if artifact.comparison is not None else answer_writer.plan_in_words(plan)
         )
+        if visual_op.target == "ACTIVE_CHART":
+            visual_text = "He actualizado el gr\u00e1fico con la misma consulta."
+        elif artifact.comparison is not None:
+            visual_text = (
+                f"Aqu\u00ed tienes la comparaci\u00f3n en un gr\u00e1fico: {visual_words}."
+            )
+        else:
+            visual_text = "Aqu\u00ed tienes el gr\u00e1fico de los resultados de la consulta."
         if decision is None:
             result = AskFinancialQuestionResult(
                 outcome=PlanningOutcome.PLANNED.value,
@@ -1196,7 +1222,7 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
         else:
             result = AskFinancialQuestionResult(
                 outcome=PlanningOutcome.PLANNED.value,
-                text=f"Aquí tienes el desglose de {visual_words}.",
+                text=visual_text,
                 plan_in_words=visual_words,
                 plan_context=spoken_plan,
                 currency=artifact.currency,

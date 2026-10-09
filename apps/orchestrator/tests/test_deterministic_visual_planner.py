@@ -264,6 +264,20 @@ def test_a_plan_that_already_cut_its_rows_is_not_cut_again() -> None:
     assert unranked_spec.limit == ROWS_THAT_FIT
 
 
+def test_presentation_limit_can_keep_a_small_complete_grouping() -> None:
+    dataset = VisualDataset(
+        metric="SUM",
+        rows=tuple(VisualRow(f"Category {position}", 1_000) for position in range(9)),
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="CATEGORY")
+    presentation = PresentationContext("TEXT", "MOBILE", max_visible_rows=9)
+
+    spec = DeterministicVisualPlanner().plan(profile, presentation)
+
+    assert spec is not None
+    assert spec.limit is None
+
+
 def test_a_comparison_of_counts_labels_its_axis_movements() -> None:
     """`dataset.metric` is a shape marker and not the measure.
 

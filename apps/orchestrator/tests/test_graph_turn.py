@@ -691,6 +691,43 @@ async def test_restore_previous_requeries_bank_with_the_original_plan() -> None:
     assert restored_again.state.version == 5
 
 
+async def test_restore_from_an_open_comparison_question_repeats_the_last_answered_query() -> None:
+    world = World(
+        (Ask(PlanFields(direction=Direction.EXPENSE, window=JULY)),),
+        (
+            Compare(
+                PlanFields(direction=Direction.EXPENSE),
+                PlanFields(),
+                PlanFields(),
+            ),
+        ),
+        (RestorePrevious(),),
+        (Patch("focus", PlanFields(window=JUNE)),),
+    )
+
+    first = await world.ask()
+    clarification = await world.ask(
+        conversation_id=first.state.conversation_id, version=1, request_id="open-question"
+    )
+    restored = await world.ask(
+        conversation_id=first.state.conversation_id, version=2, request_id="dismiss-question"
+    )
+    followed_up = await world.ask(
+        conversation_id=first.state.conversation_id, version=3, request_id="month-follow-up"
+    )
+
+    assert clarification.state.pending is not None
+    assert clarification.result is not None
+    assert clarification.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert restored.state.pending is None
+    assert isinstance(restored.state.focus, QueryFocus)
+    assert restored.state.focus.plan.date_range == JULY
+    assert clarification.state.turns[-1] not in restored.state.turns
+    assert isinstance(followed_up.state.focus, QueryFocus)
+    assert followed_up.state.focus.plan.date_range == JUNE
+    assert [plan.date_range for plan in world.ledger.ran] == [JULY, JULY, JUNE]
+
+
 async def test_history_keeps_only_the_final_focus_of_a_composed_turn() -> None:
     may_query = (Ask(PlanFields(direction=Direction.EXPENSE, window=MAY)),)
     june_then_july = (
@@ -864,6 +901,8 @@ async def test_chart_operation_reuses_the_prior_banking_result_and_keeps_continu
     assert isinstance(rendered.visualization, ChartVisualizationResponse)
     assert restyled.result is not None and restyled.result.visual_decision is not None
     assert restyled.result.visual_decision.spec.mark == "line"
+    assert chart.result.text == "Aqu\u00ed tienes el gr\u00e1fico de los resultados de la consulta."
+    assert restyled.result.text == "He actualizado el gr\u00e1fico con la misma consulta."
     assert reads_after_chart == reads_after_query
     assert chart.state.active_result == query.state.active_result
     assert chart.state.active_visual is not None
@@ -891,7 +930,17 @@ async def test_category_chart_uses_human_readable_labels() -> None:
                 "EUR",
                 12_000,
                 3,
-                groups=(Group("HOUSING_RENT", 10_000, 1), Group("GROCERIES", 2_000, 2)),
+                groups=(
+                    Group("HOUSING_RENT", 4_000, 1),
+                    Group("GROCERIES", 2_000, 2),
+                    Group("RESTAURANTS", 1_500, 1),
+                    Group("TRANSPORT_FUEL", 1_200, 1),
+                    Group("TRANSFER_BIZUM", 1_000, 1),
+                    Group("SUBSCRIPTIONS", 800, 1),
+                    Group("HEALTH", 600, 1),
+                    Group("TRANSPORT_PUBLIC", 500, 1),
+                    Group("LEISURE", 400, 1),
+                ),
             )
 
     world = World(
@@ -920,8 +969,17 @@ async def test_category_chart_uses_human_readable_labels() -> None:
     assert [row.dimension for row in chart.result.visual_dataset.rows] == [
         "alquiler",
         "supermercado",
+        "restaurantes",
+        "gasolina",
+        "bizum",
+        "suscripciones",
+        "salud",
+        "transporte p\u00fablico",
+        "ocio",
     ]
-    assert [row.value_minor for row in chart.result.visual_dataset.rows] == [10_000, 2_000]
+    assert len(chart.result.visual_dataset.rows) == 9
+    assert chart.result.visual_decision is not None
+    assert chart.result.visual_decision.spec.limit is None
 
 
 async def test_an_ordinary_question_is_answered_as_the_engine_answers_it() -> None:
