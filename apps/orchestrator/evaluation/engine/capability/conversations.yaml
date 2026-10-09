@@ -1,0 +1,110 @@
+# Capability conversations for the LangGraph experiment (Task 8), written 2026-10-09 in Step 1,
+# before the graph existed, so they are not tuned to it.
+#
+# The capability: «¿en qué comercios gasto más que antes, y se debe a más compras o a importes
+# mayores?». It needs two windows read by merchant (total and number of movements per merchant),
+# and, only where the per-merchant figures leave the cause open, the movements of that merchant.
+#
+# Same shape as regression/: `say` is what is typed, `expect.want` what a right answer does, for a
+# blind judge. `mechanism` names what the turn exercises. Run the same cases through the current
+# engine (ORCHESTRATOR_CONVERSATION_ENGINE=model) and the graph (ORCHESTRATOR_CONVERSATION_GRAPH=on)
+# and judge them as A and B.
+#
+# What every answer must keep, whatever the engine:
+# - every figure (amount, count, average ticket, difference) is one the bank returned this turn,
+#   or arithmetic over those, and says its window;
+# - «más compras» is a rise in the number of movements, «importes mayores» a rise in the average
+#   per movement; when both rose the answer says both, and when the bank data cannot separate
+#   them (one movement in a window, a merchant absent before) it says so rather than guessing;
+# - nothing is said about why the person bought more (a move, a price rise, a habit): the bank
+#   holds no evidence of that.
+conversations:
+  - name: comercios-crecen-mes
+    goal: Saber en qué comercios gasta más este mes que el anterior y por qué.
+    turns:
+      - say: "¿En qué comercios gasto más que antes y se debe a más compras o a importes mayores?"
+        expect:
+          mechanism: investigation
+          route: QUERY
+          want: >-
+            Asume una ventana razonable y la dice (p. ej. el mes pasado frente al anterior, o los
+            últimos 30 días frente a los 30 previos). Nombra los comercios cuyo gasto subió, con
+            el gasto de cada ventana, y para cada uno dice si subió por más compras (más
+            movimientos), por importes mayores (media por movimiento más alta) o por ambas. No
+            inventa comercios ni cifras; no explica el motivo de fondo.
+      - say: "¿y en cuál ha sido por una compra puntual grande?"
+        expect:
+          mechanism: investigation
+          route: QUERY
+          want: >-
+            Mira los movimientos de los comercios que subieron por importe y dice si la subida se
+            concentra en una sola compra grande (con su fecha e importe, sacados del banco) o no.
+            Si ningún comercio lo cumple, lo dice. Misma ventana que el turno anterior.
+
+  - name: supermercados-trimestre
+    goal: Entender si gasta más en supermercados por ir más veces o por gastar más cada vez.
+    turns:
+      - say: "Compara mis compras en supermercados de este trimestre con el anterior"
+        expect:
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Supermercados, este trimestre frente al anterior, diciendo ambas ventanas y el gasto
+            de cada una.
+      - say: "¿qué comercios explican la diferencia? ¿voy más veces o gasto más por visita?"
+        expect:
+          mechanism: investigation
+          route: QUERY
+          want: >-
+            Conserva supermercados y las dos ventanas. Por comercio: número de compras y media
+            por compra en cada trimestre, y si la diferencia viene de ir más veces, de gastar más
+            por visita o de ambas. Un comercio que no aparecía en el trimestre anterior se dice
+            como nuevo, sin atribuirle una causa.
+      - say: "gracias"
+        expect:
+          mechanism: smalltalk
+          want: Un agradecimiento breve, sin cifras y sin repetir la respuesta.
+
+  - name: sin-subidas-y-sin-datos
+    goal: Preguntar por subidas cuando no las hay o el banco no puede decirlo.
+    turns:
+      - say: "¿En qué tiendas me estoy gastando más últimamente que antes?"
+        expect:
+          mechanism: investigation
+          route: QUERY
+          want: >-
+            Dice las dos ventanas que compara. Si ningún comercio sube, lo dice claramente con el
+            total de ambas ventanas, sin forzar una lista. Si algún comercio sube, lo nombra con
+            sus cifras y la causa (más compras o importes mayores).
+      - say: "¿y por qué? ¿han subido los precios?"
+        expect:
+          mechanism: unknown_cause
+          want: >-
+            Dice lo que los datos sí muestran (número de compras y media por compra) y que el
+            banco no permite saber si los precios han subido ni ningún otro motivo de fondo. No
+            lo afirma ni lo inventa.
+      - say: "Hazme una transferencia de 50 euros a Marta"
+        expect:
+          mechanism: intent
+          route: PAYMENT
+          want: >-
+            Sale del análisis al flujo de transferencias con su previsualización y confirmación;
+            no ejecuta nada sin confirmar, y el análisis anterior no se pierde.
+
+  - name: un-comercio-concreto
+    goal: Investigar un comercio concreto.
+    turns:
+      - say: "Gasto más en Amazon que hace unos meses?"
+        expect:
+          mechanism: investigation
+          route: QUERY
+          want: >-
+            Amazon, dos ventanas dichas (p. ej. los últimos tres meses frente a los tres
+            anteriores), el gasto de cada una y si la diferencia viene de más compras o de
+            importes mayores. Si Amazon no aparece en sus movimientos, lo dice sin inventar.
+      - say: "¿cuál fue la compra más grande?"
+        expect:
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            La compra más grande en Amazon en la ventana reciente, con fecha e importe del banco.

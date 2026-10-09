@@ -73,6 +73,15 @@ ENGINE = (
     SRC / "infrastructure" / "controllers" / "engine_dispatch.py",
     SRC / "infrastructure" / "llm" / "counting_provider.py",
 )
+# The LangGraph experiment (Task 8) is held to the same boundary: every module of it, and the
+# ports and wiring it added.
+GRAPH = (
+    *sorted((SRC / "application" / "graph").glob("*.py")),
+    *sorted((SRC / "infrastructure" / "graph").glob("*.py")),
+    SRC / "domain" / "ports" / "investigation_assessor.py",
+    SRC / "domain" / "ports" / "turn_reservations.py",
+    SRC / "bootstrap" / "graph_wiring.py",
+)
 # What `category_words` may be asked by the engine: the name of a category, for an answer or the
 # model's glossary. Never what a sentence names.
 NAMING = frozenset({"name_of", "names", "keys", "words_for"})
@@ -109,6 +118,11 @@ def forbidden(path: Path) -> set[str]:
 def test_engine_imports_nothing_linguistic() -> None:
     assert all(path.is_file() for path in ENGINE)
     assert {path: forbidden(path) for path in ENGINE if forbidden(path)} == {}
+
+
+def test_the_graph_imports_nothing_linguistic() -> None:
+    assert len(GRAPH) > 8 and all(path.is_file() for path in GRAPH)
+    assert {path: forbidden(path) for path in GRAPH if forbidden(path)} == {}
 
 
 def test_the_check_sees_an_import_when_there_is_one() -> None:
@@ -165,6 +179,41 @@ def test_the_sentence_reaches_only_the_interpreter_and_the_remembered_turn() -> 
     )
 
     assert uses == ["DialogueTurn(said=)", "self._interpreter.interpret(...)"]
+
+
+def test_the_graph_hands_the_sentence_to_the_interpreter_and_the_remembered_turn_alone() -> None:
+    """R19 for the graph: the handler puts the sentence in the runtime context, which LangGraph
+    never checkpoints, and the nodes read it there for the interpreter and the remembered turn."""
+    handler = _tree(SRC / "application" / "graph" / "graph_turn.py")
+    nodes = _tree(SRC / "application" / "graph" / "graph.py")
+    handler_parents, node_parents = _parents(handler), _parents(nodes)
+
+    in_handler = sorted(
+        _where(node, handler_parents)
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Name) and node.id == "sentence"
+    )
+    in_nodes = sorted(
+        _where(node, node_parents)
+        for node in ast.walk(nodes)
+        if isinstance(node, ast.Attribute) and node.attr == "sentence"
+    )
+
+    assert in_handler == ["GraphContext(...)"]
+    assert in_nodes == ["DialogueTurn(said=)", "ctx.ports.interpreter.interpret(...)"]
+
+
+def test_no_other_graph_module_takes_a_sentence() -> None:
+    named = {
+        path.name
+        for path in GRAPH
+        if path.name not in ("graph.py", "graph_turn.py")
+        for node in ast.walk(_tree(path))
+        if (isinstance(node, ast.Name) and node.id == "sentence")
+        or (isinstance(node, ast.arg) and node.arg == "sentence")
+        or (isinstance(node, ast.Attribute) and node.attr == "sentence")
+    }
+    assert named == set()
 
 
 def test_no_other_engine_step_takes_a_sentence() -> None:
@@ -355,3 +404,65 @@ def test_an_engine_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, rout
     assert tripped == []
     assert [answer["outcome"] for answer in answers] == ["PLANNED", "PLANNED"]
     assert answers[1]["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
+
+
+class Stopping:
+    async def assess(self, summary: Any) -> Any:
+        from finguard_orchestrator.domain.ports.investigation_assessor import Stop
+
+        return Stop()
+
+
+@pytest.mark.parametrize("route", QUESTION_ROUTES)
+def test_a_graph_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, route: str) -> None:
+    """The same tripwire over HTTP with the investigation graph answering, on an ordinary turn, a
+    follow-up and a comparison by merchant."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from finguard_orchestrator.application.graph.graph import GraphPorts
+    from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
+    from finguard_orchestrator.domain.engine.operations import Compare
+    from finguard_orchestrator.domain.enums import GroupBy
+    from finguard_orchestrator.infrastructure.graph.memory_turn_reservations import (
+        MemoryTurnReservations,
+    )
+
+    june = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
+    by_merchant = (
+        Compare(
+            PlanFields(direction=Direction.EXPENSE, group_by=GroupBy.MERCHANT),
+            PlanFields(window=june),
+            PlanFields(window=JULY),
+        ),
+    )
+    turns = (*TURNS, ("¿en qué comercios gasto más que antes?", by_merchant))
+    stack = a_stack()
+    ports = GraphPorts(
+        Scripted(*(operations for _, operations in turns)),
+        Stopping(),
+        MemoryDialogueStore(),
+        stack.ledger,
+        Accounts(),
+        Directory(),
+        Contacts(),
+        frozenset({"RESTAURANTS", "LEISURE"}),
+        count_calls=calls_so_far,
+    )
+    app.state.engine = GraphTurnHandler(ports, MemoryTurnReservations(), InMemorySaver())
+    tripped = arm(monkeypatch)
+
+    answers = []
+    conversation = None
+    for sentence, _ in turns:
+        response = stack.client.post(
+            route, json={"question": sentence, "conversation": conversation}
+        )
+        assert response.status_code == 200
+        assert response.headers["x-finguard-engine"] == "model"
+        answers.append(answer_of(response.text))
+        conversation = answers[-1]["conversation"]
+
+    assert tripped == []
+    assert [answer["outcome"] for answer in answers] == ["PLANNED"] * 3
+    assert answers[1]["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
+    assert answers[2]["text"].startswith("Ningún comercio sube")

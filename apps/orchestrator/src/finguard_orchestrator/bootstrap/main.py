@@ -588,14 +588,15 @@ def create_app() -> FastAPI:
     # nothing of it (`engine_dispatch`).
     engine: AnswerTurnHandler | None = None
     if settings.conversation_engine == "model":
+        operations = LlmTurnOperations(
+            planner_provider,
+            model=settings.engine_model or settings.planner_model,
+            temperature=settings.engine_temperature,
+            max_output_tokens=settings.engine_max_output_tokens,
+            categories={key: category_words.name_of(key) for key in settings.categories},
+        )
         engine = AnswerTurnHandler(
-            LlmTurnOperations(
-                planner_provider,
-                model=settings.engine_model or settings.planner_model,
-                temperature=settings.engine_temperature,
-                max_output_tokens=settings.engine_max_output_tokens,
-                categories={key: category_words.name_of(key) for key in settings.categories},
-            ),
+            operations,
             # Single instance only: a restart forgets every conversation (see the store).
             MemoryDialogueStore(),
             banking,
@@ -605,6 +606,20 @@ def create_app() -> FastAPI:
             frozenset(settings.categories),
             count_calls=calls_so_far,
         )
+        if settings.conversation_graph == "on":
+            # The Task 8 experiment answers the engine's turns instead, with the same interpreter
+            # and adapters. Imported here so that with the graph off nothing of it is loaded.
+            from finguard_orchestrator.bootstrap.graph_wiring import graph_engine
+
+            engine = graph_engine(  # type: ignore[assignment]
+                settings,
+                operations,
+                planner_provider,
+                banking,
+                accounts,
+                account_directory,
+                contacts,
+            )
     app.state.engine = engine
 
     # Before the routers, because a rejected preflight never reaches one. The web client cannot

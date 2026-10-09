@@ -32,6 +32,7 @@ os.environ.setdefault("ORCHESTRATOR_DEV_TOKENS", f'["{TEST_TOKEN}:{TEST_HOLDER}:
 _SHIPPED = Path(__file__).resolve().parents[1] / ".env.defaults"
 _PINNED = (
     "CONVERSATION_ENGINE",
+    "CONVERSATION_GRAPH",
     "ENGINE_MODEL",
     "ENGINE_MAX_OUTPUT_TOKENS",
     "ENGINE_TEMPERATURE",
