@@ -21,6 +21,7 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import ValidationError
 from support.episodes import (
+    ACCOUNT,
     INTENT,
     Accounts,
     Contacts,
@@ -29,9 +30,10 @@ from support.episodes import (
     a_stack,
 )
 
-from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
+from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler, EngineAnswer
 from finguard_orchestrator.application.graph.graph import GraphPorts
 from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
+from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.bootstrap.config import Settings, get_settings
 from finguard_orchestrator.bootstrap.dependencies import authenticated_caller
 from finguard_orchestrator.bootstrap.main import app, create_app
@@ -44,10 +46,15 @@ from finguard_orchestrator.domain.engine.operations import (
     Visualize,
 )
 from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
-from finguard_orchestrator.domain.enums import Direction, GroupBy
+from finguard_orchestrator.domain.enums import Direction, GroupBy, PaymentOutcome, Rail
 from finguard_orchestrator.domain.errors import QueryRejectedError
 from finguard_orchestrator.domain.models.account_summary import Holding
-from finguard_orchestrator.domain.models.conversation import Conversation, FinancialClarification
+from finguard_orchestrator.domain.models.conversation import (
+    Conversation,
+    FinancialClarification,
+    PaymentConfirmation,
+    Workflow,
+)
 from finguard_orchestrator.domain.models.query_answer import Group
 from finguard_orchestrator.domain.ports.turn_operations import NO_ACCOUNT_NAMES
 from finguard_orchestrator.domain.services import category_words
@@ -77,6 +84,7 @@ from finguard_orchestrator.infrastructure.llm.counting_provider import (
     counting_calls,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 
 JSON_ROUTE = "/v1/questions"
 STREAM_ROUTE = "/v1/questions/stream"
@@ -409,6 +417,57 @@ def test_authoritative_graph_never_falls_back_for_legacy_payment_workflow(route:
     assert refused.conversation["intent_id"] == preview.conversation["intent_id"]
     assert stack.bank.confirmed == []
     assert refused.engine == ("model", "0")
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_authoritative_graph_resumes_its_own_payment_confirmation(route: str) -> None:
+    stack = a_stack()
+    conversation_id = UUID(int=800)
+    payload = conversation_mapper.to_payload(
+        Conversation(
+            conversation_id=conversation_id,
+            version=3,
+            active=PaymentConfirmation(
+                intent_id=INTENT,
+                recipient="Aitor Beltran Diaz",
+                amount_minor=1_200,
+                rail=Rail.BIZUM,
+            ),
+        )
+    ).model_dump(mode="json")
+
+    class Graph:
+        authoritative = True
+
+        async def owns_workflow(
+            self, received_id: UUID, *, account_id: UUID, workflow: Workflow
+        ) -> bool:
+            assert received_id == conversation_id
+            assert account_id == ACCOUNT
+            assert workflow is Workflow.PAYMENT_CONFIRMATION
+            return True
+
+        async def answer(self, *_: object, **kwargs: object) -> EngineAnswer:
+            assert kwargs["conversation_id"] == conversation_id
+            assert kwargs["version"] == 3
+            assert kwargs["account_id"] == ACCOUNT
+            return EngineAnswer(
+                AskFinancialQuestionResult(
+                    outcome=PaymentOutcome.CANCELLED.value,
+                    text="Vale, no he enviado nada.",
+                ),
+                DialogueState(conversation_id, version=4),
+                None,
+                0,
+                {},
+            )
+
+    app.state.engine = Graph()
+    refused = post(stack, route, "no", payload)
+
+    assert refused.status == 200
+    assert refused.body["outcome"] == PaymentOutcome.CANCELLED.value
+    assert refused.conversation["workflow"] is None
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -805,6 +864,68 @@ def test_graph_visual_operations_render_and_restyle_over_http_without_bank_reads
     assert restyled.conversation["version"] == 3
     assert len(stack.ledger.ran) == bank_reads
     assert created.engine[0] == restyled.engine[0] == "model"
+
+
+def test_graph_payment_confirmation_state_survives_the_http_mapping() -> None:
+    conversation_id = UUID(int=501)
+    intent_id = UUID(int=502)
+    result = AskFinancialQuestionResult(
+        outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
+        text="Vas a enviar 12,00 € a Aitor Beltran Diaz. ¿Confirmas?",
+        conversation=Conversation(
+            conversation_id=conversation_id,
+            version=4,
+            active=PaymentConfirmation(
+                intent_id=intent_id,
+                recipient="Aitor Beltran Diaz",
+                amount_minor=1_200,
+                rail=Rail.BIZUM,
+            ),
+        ),
+    )
+
+    answer = engine_dispatch._on_the_wire(  # noqa: SLF001
+        result,
+        Conversation(conversation_id=conversation_id, version=4),
+        Caller("holder", UUID(int=503)),
+        MetricTokenCodec({"test": b"x" * 32}, "test"),
+    )
+
+    assert answer.conversation is not None
+    assert answer.conversation.workflow == "PAYMENT_CONFIRMATION"
+    assert answer.conversation.intent_id == intent_id
+    assert answer.conversation.recipient == "Aitor Beltran Diaz"
+    assert answer.conversation.amount_minor == 1_200
+    assert answer.conversation.conversation_id == conversation_id
+    assert answer.conversation.version == 4
+
+
+def test_graph_mode_closes_the_parallel_payment_http_surface() -> None:
+    stack = a_stack()
+    previous_graph = app.state.conversation_graph_enabled
+    previous_payments = app.state.payments_enabled
+    app.state.conversation_graph_enabled = True
+    app.state.payments_enabled = True
+    try:
+        response = stack.client.post(
+            "/v1/payments/chosen",
+            headers={"Idempotency-Key": "parallel-workflow-is-disabled"},
+            json={
+                "recipient_name": "Marta Solis Vega",
+                "amount_minor": 2_000,
+                "currency": "EUR",
+            },
+        )
+
+        assert response.status_code == 503
+        assert response.json()["code"] == "feature_disabled"
+        assert "unified conversation" in response.json()["detail"]
+        assert stack.bank.prepared == []
+        assert stack.bank.confirmed == []
+    finally:
+        app.state.conversation_graph_enabled = previous_graph
+        app.state.payments_enabled = previous_payments
+        app.dependency_overrides.clear()
 
 
 def test_a_pair_on_screen_is_handed_over_as_the_last_comparison() -> None:

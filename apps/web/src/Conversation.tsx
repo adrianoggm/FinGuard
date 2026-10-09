@@ -170,6 +170,7 @@ type Props = {
   onThread: (next: Thread) => void;
   onClose: () => void;
   onSettled: () => void;
+  initialDraft?: string;
 };
 
 type VoiceControlClient = Pick<VoiceClient, "start" | "stopCapture" | "cancel" | "close">;
@@ -252,8 +253,8 @@ export async function voiceButtonAction(
   return "cancelled";
 }
 
-export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
-  const [draft, setDraft] = useState("");
+export function Conversation({ thread, onThread, onClose, onSettled, initialDraft = "" }: Props) {
+  const [draft, setDraft] = useState(initialDraft);
   const [stage, setStage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);

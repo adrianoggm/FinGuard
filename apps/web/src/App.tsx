@@ -18,8 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { configured, summary as fetchSummary, type Summary } from "./api";
 import { Accounts } from "./Accounts";
-import { Bizum } from "./Bizum";
-import { Transfer } from "./Transfer";
+import { MoneyAction } from "./MoneyAction";
 import { Cards } from "./Cards";
 import { Conversation, EMPTY_THREAD, type Thread } from "./Conversation";
 import { Finances } from "./Finances";
@@ -34,6 +33,7 @@ export function App() {
   // every turn — and with them the plan the next question needs to be a follow-up at all.
   const [thread, setThread] = useState<Thread>(EMPTY_THREAD);
   const [where, setWhere] = useState<Tab>("inicio");
+  const [conversationDraft, setConversationDraft] = useState("");
   const app = useRef<HTMLElement>(null);
   const opened = useRef(false);
 
@@ -87,7 +87,9 @@ export function App() {
               onAsk={() => setTalking(true)}
             />
           )}
-          {where === "traspaso" && <Transfer summary={summary} onPaid={load} />}
+          {where === "traspaso" && (
+            <MoneyAction kind="transfer" onContinue={openMoneyConversation} />
+          )}
           {tabOf(where) === "cuentas" && where !== "traspaso" && (
             <Accounts
               summary={summary}
@@ -100,7 +102,9 @@ export function App() {
           )}
           {where === "tarjetas" && <Cards />}
           {where === "finanzas" && <Finances />}
-          {where === "bizum" && <Bizum onPaid={load} />}
+          {where === "bizum" && (
+            <MoneyAction kind="bizum" onContinue={openMoneyConversation} />
+          )}
         </main>
 
         {!talking && (
@@ -111,12 +115,13 @@ export function App() {
 
         {talking && (
           <>
-            <div className="scrim" onClick={() => setTalking(false)} />
+            <div className="scrim" onClick={closeConversation} />
             <Conversation
               thread={thread}
               onThread={setThread}
-              onClose={() => setTalking(false)}
+              onClose={closeConversation}
               onSettled={load}
+              initialDraft={conversationDraft}
             />
           </>
         )}
@@ -137,6 +142,16 @@ export function App() {
       </div>
     </div>
   );
+
+  function openMoneyConversation(draft: string) {
+    setConversationDraft(draft);
+    setTalking(true);
+  }
+
+  function closeConversation() {
+    setTalking(false);
+    setConversationDraft("");
+  }
 }
 
 /** Chrome. A phone has one, and without it this reads as a web page in a rounded box. */

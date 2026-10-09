@@ -63,6 +63,7 @@ from finguard_orchestrator.domain.enums import (
     PlanningOutcome,
 )
 from finguard_orchestrator.domain.errors import BankingUnavailableError, NotAuthorisedError
+from finguard_orchestrator.domain.models.conversation import Workflow
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.ports.investigation_assessor import (
@@ -1137,6 +1138,11 @@ async def test_conversation_graph_prepares_and_resumes_bizum_on_one_checkpoint()
     assert preview.state.payment.workflow_id == world.last_config()["configurable"]["thread_id"]
     assert bank.prepared[0].amount_minor == 2_000
     assert preview.result.conversation.active is not None
+    assert await world.handler.owns_workflow(
+        preview.state.conversation_id,
+        account_id=ACCOUNT,
+        workflow=Workflow.PAYMENT_CONFIRMATION,
+    )
 
     paid = await world.ask(
         conversation_id=preview.state.conversation_id,
@@ -1150,6 +1156,11 @@ async def test_conversation_graph_prepares_and_resumes_bizum_on_one_checkpoint()
     assert paid.state.version == 2
     assert paid.state.payment is None
     assert bank.confirmed == [INTENT]
+    assert not await world.handler.owns_workflow(
+        paid.state.conversation_id,
+        account_id=ACCOUNT,
+        workflow=Workflow.PAYMENT_CONFIRMATION,
+    )
 
 
 @pytest.mark.asyncio

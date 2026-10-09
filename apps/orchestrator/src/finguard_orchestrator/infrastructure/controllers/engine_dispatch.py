@@ -144,7 +144,20 @@ async def try_engine(
     echoed = question.conversation
     if engine is None:
         return None
-    if echoed is not None and _owned_by_the_rules(echoed):
+    graph_owns_workflow = False
+    if (
+        echoed is not None
+        and _owned_by_the_rules(echoed)
+        and getattr(engine, "authoritative", False)
+        and echoed.conversation_id is not None
+        and (owns_workflow := getattr(engine, "owns_workflow", None)) is not None
+    ):
+        graph_owns_workflow = await owns_workflow(
+            echoed.conversation_id,
+            account_id=who.account_id,
+            workflow=echoed.workflow,
+        )
+    if echoed is not None and _owned_by_the_rules(echoed) and not graph_owns_workflow:
         if not getattr(engine, "authoritative", False):
             return None
         # A workflow opened by the legacy coordinator is not part of the graph's canonical state.
@@ -221,7 +234,10 @@ async def try_engine(
         return None
     state = turn.state
     held = Conversation(conversation_id=state.conversation_id, version=state.version)
-    return _carrying(echoed, _on_the_wire(turn.result, held, who, metric_tokens))
+    answer = _on_the_wire(turn.result, held, who, metric_tokens)
+    # A graph-owned confirmation has just been consumed or kept pending by the graph. Carrying the
+    # echoed payment fields here would resurrect a cancelled/paid preview from the client payload.
+    return answer if graph_owns_workflow else _carrying(echoed, answer)
 
 
 def _carrying(echoed: ConversationPayload | None, answer: QuestionResponse) -> QuestionResponse:
@@ -315,13 +331,22 @@ def _on_the_wire(
     who: Caller,
     metric_tokens: MetricTokenCodec,
 ) -> QuestionResponse:
-    """The engine's result in the routes' shape, holding the engine's conversation and no other.
+    """The engine's result in the routes' shape, with its state and authoritative version.
 
     Sealed for its holder like every answer the routes give (`test_the_seal_is_never_silently_
     skipped`): the engine draws no chart today, so nothing is minted, and the day it does its
-    charts are born sealed rather than refused at their first restyle."""
+    charts are born sealed rather than refused at their first restyle. Keep the result's typed
+    workflow state (for example a bank preview awaiting confirmation); the held value owns only
+    the canonical id and version. Replacing the result state wholesale loses the payment preview
+    between the graph and the web client, leaving prose that asks for confirmation without the
+    buttons or payload needed to answer it."""
+    conversation = replace(
+        result.conversation,
+        conversation_id=held.conversation_id,
+        version=held.version,
+    )
     return llm_mapper.question_to_dto(
-        replace(result, conversation=held),
+        replace(result, conversation=conversation),
         holder_reference=who.holder_reference,
         metric_tokens=metric_tokens,
     )

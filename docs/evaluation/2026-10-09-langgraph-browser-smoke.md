@@ -191,3 +191,19 @@ fresh banking read. No JavaScript errors occurred.
 Chrome exercised one conversation against the isolated graph-enabled Compose stack and seeded synthetic bank. Gemini 3.1 Flash Lite handled ten turns: September expenses in Cuenta corriente; October; comparison with September; explanation; chart; bar-to-line restyle; subscription-only comparison; gym filter; restore previous query; and September again. Results retained the account and comparison filters, the chart restyle reused the result without a banking read, and restoring a query made a fresh bank read. The orchestrator container was restarted between turns 6 and 7; the browser conversation continued successfully. No browser errors occurred. The SVG changed from bar rectangles to line marks. No payment was initiated.
 
 The same run surfaced a small-model prompt gap around answering a pending question with two named periods. The selected few-shot examples now explicitly show the October/September context and answer. Focused interpreter, graph-turn and codec tests pass (215 total). This run used the Gemini key already supplied by the user through the isolated runtime environment; no credential is stored in the repository. Groq remained rate-limited, so this is not a Groq result.
+
+## Bizum tabs routed through the canonical conversation graph (2026-10-09)
+
+The Bizum and own-account transfer tabs now open the chat with an action-specific draft instead of calling their separate form workflow endpoints. The user still chooses to send the request, then reviews the bank preview and answers in the same conversation used for analytics.
+
+A real Chrome run against the isolated stack with the graph enabled and local Qwen 3.5 9B prepared a 12,00 EUR Bizum to Aitor Beltran Diaz. It showed the bank-authored recipient, amount, balance and explicit `Sí, enviar` / `No` controls. Pressing `No` cleared the confirmation and returned `Vale, no he enviado nada.` The banking API logged a successful `/payments/{intent}/cancel` (204); it logged no confirmation call, so no money moved.
+
+That run exposed two server boundary bugs. The HTTP mapper replaced the graph result's typed confirmation state with an empty conversation, and the authoritative dispatcher classified a graph-owned confirmation as a legacy workflow. The graph now proves ownership from account-scoped canonical state before resuming; missing legacy state is still refused. The HTTP response preserves graph workflow fields and no longer copies an echoed preview over the graph's completed result.
+
+Verification: 122 orchestrator graph/route/codec tests passed; Ruff and mypy passed. The web typecheck passed, all 154 web tests passed, and the production build completed. Chrome verified the visible preview and safe cancellation. The isolated stack uses synthetic banking data. This does not yet promote the graph flag or remove the old API workflow; the migration remains in progress.
+
+## Removal of the parallel payment graph from graph-mode runtime (2026-10-09)
+
+The dedicated `PaymentWorkflowGraph` duplicated pause/resume state beside the canonical conversation graph. It is no longer constructed or shipped as a second runtime graph. In graph mode, the standalone `/v1/payments` API now returns an explicit 503 directing callers to `/v1/questions/stream`; it cannot fall through to direct banking commands. The existing command routes remain available only in legacy mode while migration is incomplete. A route test verifies the graph-mode boundary rejects preparation without calling the bank.
+
+The rebuilt isolated API was also called with the web development credential: `POST /v1/payments/chosen` returned HTTP 503 `feature_disabled` with the unified-conversation instruction. No bank prepare call was logged. This verifies the runtime gate in addition to the route test.

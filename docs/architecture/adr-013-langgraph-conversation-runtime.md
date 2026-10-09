@@ -72,6 +72,11 @@ copies of their business rules. Comparison explanations report both increases an
 merchant. Decreases are attributed only to bank-reported purchase counts and average amounts;
 the large-purchase inspection remains limited to increases it can establish.
 
+When graph mode is active, the standalone `/v1/payments` routes return an explicit 503 directing
+clients to the unified conversation endpoint. They must not create a second payment checkpoint or
+fall through to direct command execution. The legacy routes remain available only while graph mode
+is off; the web Bizum and own-account transfer tabs now enter the canonical chat instead.
+
 ## Migration sequence
 
 1. Keep ordinary analytics turns on the graph and remove any fallback reinterpretation.

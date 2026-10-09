@@ -36,11 +36,6 @@ def get_ask_handler(request: Request) -> AskFinancialQuestionHandler:
     return handler
 
 
-def get_payment_workflow(request: Request) -> object | None:
-    """The durable LangGraph payment pause/resume adapter, when graph mode is enabled."""
-    return request.app.state.payment_workflow
-
-
 async def authenticated_caller(
     request: Request, authorization: Annotated[str | None, Header()] = None
 ) -> Caller:
@@ -75,6 +70,10 @@ def payments_enabled(request: Request) -> None:
     """
     if not request.app.state.payments_enabled:
         raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
+    if getattr(request.app.state, "conversation_graph_enabled", False):
+        raise FeatureDisabledError(
+            "direct payment routes are disabled in graph mode; use the unified conversation"
+        )
 
 
 def metrics_enabled(request: Request) -> None:

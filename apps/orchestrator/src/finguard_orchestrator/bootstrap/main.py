@@ -195,9 +195,6 @@ def create_app() -> FastAPI:
                     raise ValueError("conversation_graph=on requires DATABASE_URL")
                 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-                from finguard_orchestrator.application.graph.payment_workflow import (
-                    PaymentWorkflowGraph,
-                )
                 from finguard_orchestrator.infrastructure.engine.postgres_dialogue_store import (
                     PostgresDialogueStore,
                 )
@@ -217,9 +214,6 @@ def create_app() -> FastAPI:
                 dialogue_store = PostgresDialogueStore(pool)
                 service.state.engine = graph_factory(
                     dialogue_store, PostgresTurnReservations(pool), checkpointer
-                )
-                service.state.payment_workflow = PaymentWorkflowGraph(
-                    service.state.command_bus, dialogue_store, checkpointer
                 )
             yield
         finally:
@@ -517,6 +511,7 @@ def create_app() -> FastAPI:
     # Readiness reports on what /v1/questions needs, not on what /v1/messages needs.
     app.state.questions_enabled = settings.questions_enabled
     app.state.payments_enabled = settings.payments_enabled
+    app.state.conversation_graph_enabled = settings.conversation_graph == "on"
     app.state.metrics_enabled = settings.metrics_enabled
     # The vocabulary a screen may offer. The same list the decoder is constrained to, so a
     # category a chip produces is one the assistant can name back.
@@ -698,7 +693,6 @@ def create_app() -> FastAPI:
 
         graph_factory = build_graph
     app.state.engine = engine
-    app.state.payment_workflow = None
 
     # Before the routers, because a rejected preflight never reaches one. The web client cannot
     # call this service at all without it: a browser refuses a cross-origin request unless the

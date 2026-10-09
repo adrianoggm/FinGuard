@@ -51,7 +51,9 @@ from finguard_orchestrator.domain.engine.operations import Delegate
 from finguard_orchestrator.domain.engine.state import (
     DialogueState,
     DialogueTurn,
+    OwnTransferDraftPending,
     PaymentConfirmationPending,
+    PaymentDraftPending,
 )
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import (
@@ -60,6 +62,7 @@ from finguard_orchestrator.domain.errors import (
     InvalidValueError,
     QueryRejectedError,
 )
+from finguard_orchestrator.domain.models.conversation import Workflow
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.ports.turn_operations import InterpretationFailedError
 from finguard_orchestrator.domain.ports.turn_reservations import (
@@ -114,6 +117,29 @@ class GraphTurnHandler:
         self._reservations = reservations
         self._checkpointer = checkpointer
         self._graph = investigation_graph.build(checkpointer)
+
+    async def owns_workflow(
+        self, conversation_id: UUID, *, account_id: UUID, workflow: Workflow
+    ) -> bool:
+        """Whether a wire workflow belongs to this graph's account-scoped canonical state.
+
+        Legacy sessions can also arrive with payment fields. Graph mode may resume a confirmation
+        only when the same account and conversation have the corresponding durable state; a wire
+        label alone never proves ownership. The version is checked by ``answer`` so a stale but
+        graph-owned workflow receives the normal 409 response.
+        """
+        held = await self._ports.store.load(conversation_id, account_id=account_id)
+        if held is None:
+            return False
+        match workflow:
+            case Workflow.PAYMENT_CONFIRMATION:
+                return isinstance(held.payment, PaymentConfirmationPending)
+            case Workflow.PAYMENT_IN_PROGRESS:
+                return isinstance(held.payment, PaymentDraftPending)
+            case Workflow.TRANSFER_IN_PROGRESS:
+                return isinstance(held.own_transfer, OwnTransferDraftPending)
+            case _:
+                return False
 
     async def answer(
         self,
