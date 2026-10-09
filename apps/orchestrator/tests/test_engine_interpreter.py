@@ -22,7 +22,9 @@ from finguard_orchestrator.domain.engine.operations import (
     ChangeMeasure,
     Clarify,
     Compare,
+    ComparePrevious,
     Delegate,
+    InvestigateComparison,
     Operation,
     Patch,
     PlanFields,
@@ -596,6 +598,8 @@ def test_operations_are_keyed_by_their_name() -> None:
         "ask",
         "patch",
         "compare",
+        "compare_previous",
+        "investigate_comparison",
         "measure",
         "select_operand",
         "reset",
@@ -861,6 +865,46 @@ def test_prompt_keeps_category_breakdowns_unlimited_by_default() -> None:
     assert '"limit":3' in prompt  # Reserved for the explicit monthly-highest question.
 
 
+def test_prompt_teaches_a_previous_three_months_comparison_on_the_active_category_query() -> None:
+    plan = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=3),
+        group_by=GroupBy.CATEGORY,
+    )
+    state = dataclasses.replace(EMPTY, focus=QueryFocus(plan))
+
+    prompt = build_prompt(
+        "Compara estos gastos con los 3 meses anteriores",
+        state,
+        today=TODAY,
+        categories=CATEGORIES,
+    )
+
+    assert "previous turn kept all categories" in prompt
+    assert '"compare_previous":3' in prompt
+
+
+def test_structured_previous_window_operation_decodes_to_a_bounded_month_count() -> None:
+    assert read(answer({"compare_previous": 3}), CATALOGUE) == (ComparePrevious(3),)
+
+
+def test_structured_investigation_operation_has_no_user_supplied_periods() -> None:
+    assert read(answer({"investigate_comparison": True}), CATALOGUE) == (InvestigateComparison(),)
+
+
+def test_why_on_an_active_comparison_inspects_the_same_windows_by_merchant() -> None:
+    prompt = build_prompt(
+        "A que se debe la diferencia?",
+        a_busy_state(),
+        today=TODAY,
+        categories=CATEGORIES,
+    )
+
+    assert "an active comparison by amount" in prompt
+    assert '"investigate_comparison":true' in prompt
+    assert "Do not ask which periods when state shows them." in " ".join(prompt.split())
+
+
 def test_prompt_maps_last_year_to_a_rolling_twelve_month_window() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
 
@@ -988,9 +1032,8 @@ def test_pending_is_only_for_a_question_the_state_shows_open() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
     rules = prompt[prompt.index("## Rules") :]
 
-    assert (
-        "Use target pending only when the state shows an open question; with none open, a "
-        "correction patches focus." in " ".join(rules.split())
+    assert "Use pending only for an open question; otherwise corrections patch focus." in " ".join(
+        rules.split()
     )
 
 
@@ -1005,11 +1048,7 @@ def test_a_window_not_begun_is_unsupported() -> None:
     rules = " ".join(prompt[prompt.index("## Rules") :].split())
 
     assert "cannot be asked" not in fields
-    assert (
-        "- A window that has not begun cannot be asked: delegate UNSUPPORTED. The latest begun "
-        "reading is only for a month said by its name; a turn pointing ahead of today asks about "
-        "a window that has not begun." in rules
-    )
+    assert "Never ask for a future window; delegate UNSUPPORTED." in rules
 
 
 def test_the_glossary_and_today_are_stated() -> None:
@@ -1046,6 +1085,7 @@ def test_an_active_chart_makes_visual_changes_updates_instead_of_new_charts() ->
 
     assert "A requested change to its presentation MUST use update_visualization" in current_state
     assert "create_visualization only when no chart is active" in current_state
+    assert '"update_visualization":"LINE"' in prompt
 
 
 RESTAURANTS_JULY = FinancialPlan(Direction.EXPENSE, date_range=JULY, categories=("RESTAURANTS",))

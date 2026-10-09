@@ -50,6 +50,7 @@ from finguard_orchestrator.application.engine import presenter
 from finguard_orchestrator.application.engine.executor import (
     Executed,
     MixedCurrenciesError,
+    PairRun,
     QueryRun,
     RankingRun,
     execute,
@@ -68,6 +69,7 @@ from finguard_orchestrator.domain.engine.operations import (
     ChangeMeasure,
     Compare,
     Delegate,
+    InvestigateComparison,
     Operation,
     Patch,
     PlanFields,
@@ -137,9 +139,9 @@ logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "conversation/12"
+GRAPH_VERSION: Final = "conversation/15"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
-STATE_SCHEMA_VERSION: Final = 11
+STATE_SCHEMA_VERSION: Final = 14
 MAX_BANK_EXECUTIONS: Final = 3
 MAX_MODEL_CALLS: Final = 3
 # A backstop under the budgets: one step per read, and plan, validate and assess per loop.
@@ -160,7 +162,9 @@ Status = Literal[
     "visualize",
     "replied",
     "canonical",
+    "compare",
     "investigate",
+    "compare_latest",
     "inspect",
     "refused",
     "executed",
@@ -185,10 +189,12 @@ class TurnGraphState(TypedDict, total=False):
     model_calls: int
     # Every banking port call this turn made, failed ones included (R44).
     bank_calls: int
-    # The earlier window by merchant, kept between its read and the latest one's: [merchant,
-    # total, count] per merchant, its total and its currency. Emptied once the latest is read.
+    # The earlier window, kept between its read and the latest one's: [group, total, count] rows,
+    # its total and its currency. Emptied once the latest is read.
     earlier_groups: list[list[Any]]
     comparison_groups: list[list[list[Any]]]
+    comparison_counts: list[int]
+    earlier_movement_count: int
     earlier_total: int
     earlier_currency: str
     # Per changed merchant: [merchant, earlier total, earlier count, latest total, latest count,
@@ -304,7 +310,16 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
     contact_payments = (PrepareBizum, PrepareTransfer)
     payments = tuple(op for op in ops if isinstance(op, (*contact_payments, PrepareOwnTransfer)))
     if payments:
-        analytics_ops = (Ask, Patch, Compare, ChangeMeasure, SelectOperand, Reset, Balance)
+        analytics_ops = (
+            Ask,
+            Patch,
+            Compare,
+            InvestigateComparison,
+            ChangeMeasure,
+            SelectOperand,
+            Reset,
+            Balance,
+        )
         if len(payments) != 1 or any(
             not isinstance(op, (*analytics_ops, *contact_payments, PrepareOwnTransfer))
             for op in ops
@@ -325,7 +340,13 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
     if moved.work is None:
         return {"status": "replied"}
     investigating = moved.work.kind == "COMPARE" and _by_merchant(codec.loads(state["ops"]))
-    return {"status": "investigate" if investigating else "canonical"}
+    return {
+        "status": "investigate"
+        if investigating
+        else "compare"
+        if moved.work.kind == "COMPARE"
+        else "canonical"
+    }
 
 
 async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
@@ -343,12 +364,58 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
         raise ReadBudgetExhaustedError(f"{made} reads made")
     if state["status"] == "inspect":
         return await _inspect(state, work, ctx)
-    if "earlier_groups" not in state:
-        earlier = await _read_by_merchant(work, work.plan.earlier, state, ctx)
+    if not _by_merchant(codec.loads(state["ops"])):
+        if state["status"] != "compare_latest":
+            earlier = await _execute(Work("QUERY", work.plan.earlier, work.account_ids), state, ctx)
+            assert isinstance(earlier, QueryRun)
+            return {
+                "status": "compare_latest",
+                "earlier_groups": [
+                    [group.key, group.total_minor, group.movement_count]
+                    for group in earlier.answer.groups
+                ],
+                "earlier_total": abs(earlier.answer.total_minor),
+                "earlier_currency": earlier.answer.currency,
+                "earlier_movement_count": earlier.answer.movement_count,
+                "bank_calls": _bank_calls(state, ctx),
+            }
+        latest = await _execute(Work("QUERY", work.plan.latest, work.account_ids), state, ctx)
+        assert isinstance(latest, QueryRun)
+        earlier_answer = QueryAnswer(
+            state["earlier_currency"],
+            state["earlier_total"],
+            state["earlier_movement_count"],
+            groups=tuple(Group(*group) for group in state.get("earlier_groups", [])),
+        )
+        if (
+            earlier_answer.currency != latest.answer.currency
+            and not earlier_answer.is_empty
+            and not latest.answer.is_empty
+        ):
+            raise MixedCurrenciesError(f"{earlier_answer.currency} and {latest.answer.currency}")
         return {
-            "earlier_groups": [[g.key, g.total_minor, g.movement_count] for g in earlier.groups],
-            "earlier_total": abs(earlier.total_minor),
-            "earlier_currency": earlier.currency,
+            "status": "executed",
+            "bank_calls": _bank_calls(state, ctx),
+            "earlier_groups": [],
+            "comparison_groups": [
+                state.get("earlier_groups", []),
+                [
+                    [group.key, group.total_minor, group.movement_count]
+                    for group in latest.answer.groups
+                ],
+            ],
+            "comparison_counts": [state["earlier_movement_count"], latest.answer.movement_count],
+            "totals": [state["earlier_total"], abs(latest.answer.total_minor)],
+            "currency": latest.answer.currency,
+        }
+    if "earlier_groups" not in state:
+        merchant_earlier = await _read_by_merchant(work, work.plan.earlier, state, ctx)
+        return {
+            "earlier_groups": [
+                [g.key, g.total_minor, g.movement_count] for g in merchant_earlier.groups
+            ],
+            "earlier_total": abs(merchant_earlier.total_minor),
+            "earlier_currency": merchant_earlier.currency,
             "bank_calls": _bank_calls(state, ctx),
         }
     now = await _read_by_merchant(work, work.plan.latest, state, ctx)
@@ -385,6 +452,28 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
         "currency": now.currency,
         "inspected": [],
     }
+
+
+def _pair_run_from_state(state: TurnGraphState, pair: ComparisonPlan) -> PairRun:
+    """Rebuild a normal comparison from checkpointed aggregates after a node resume."""
+    groups = state["comparison_groups"]
+    counts = state["comparison_counts"]
+    earlier = QueryAnswer(
+        state["currency"],
+        state["totals"][0],
+        counts[0],
+        groups=tuple(Group(*group) for group in groups[0]),
+    )
+    latest = QueryAnswer(
+        state["currency"],
+        state["totals"][1],
+        counts[1],
+        groups=tuple(Group(*group) for group in groups[1]),
+    )
+    latest_value = answer_writer.comparison_value(latest, pair.latest)
+    earlier_value = answer_writer.comparison_value(earlier, pair.earlier)
+    difference = latest_value - earlier_value
+    return PairRun(pair, earlier, latest, difference)
 
 
 async def assess_result(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
@@ -433,13 +522,23 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
     elif "changes" in state:
         result = _investigated(state, moved.work, names)
         in_words = result.plan_in_words or ""
+    elif isinstance(moved.work.plan, ComparisonPlan) and "comparison_counts" in state:
+        pair_run = _pair_run_from_state(state, moved.work.plan)
+        ctx.cache["run"] = pair_run
+        result = presenter.answered(
+            pair_run,
+            scope=moved.work.account_ids,
+            account_names=names,
+            reporting_timezone=ctx.reporting_timezone,
+        )
+        in_words = result.plan_in_words or ""
     else:
         # An ordinary turn reads and answers in this one step, as the engine does: there is no
         # earlier read to keep. Its port calls are counted, not capped (the measured engine's work).
-        run = await _execute(moved.work, state, ctx)
-        ctx.cache["run"] = run
+        ordinary_run = await _execute(moved.work, state, ctx)
+        ctx.cache["run"] = ordinary_run
         result = presenter.answered(
-            run,
+            ordinary_run,
             scope=moved.work.account_ids,
             account_names=names,
             reporting_timezone=ctx.reporting_timezone,
@@ -487,6 +586,23 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
             comparison_groups=(prior, latest),
         )
         canonical = replace(canonical, active_result=active_result)
+    elif isinstance(final_run, PairRun):
+        groups = final_run.latest.groups[:100]
+        prior = final_run.earlier.groups[:100]
+        if all(len(group.key) <= 256 for group in (*prior, *groups)):
+            canonical = replace(
+                canonical,
+                active_result=ActiveQueryResult(
+                    plan=final_run.pair.latest,
+                    currency=final_run.latest.currency,
+                    total_minor=abs(final_run.latest.total_minor),
+                    movement_count=final_run.latest.movement_count,
+                    groups=groups,
+                    result_version=state["expected_version"] + 1,
+                    comparison=final_run.pair,
+                    comparison_groups=(prior, groups),
+                ),
+            )
     remembered = canonical.remembered(DialogueTurn(said=ctx.sentence, answered=in_words))
     if any(
         isinstance(op, (PrepareBizum, PrepareTransfer, PrepareOwnTransfer))
@@ -1282,6 +1398,8 @@ def _after_validation(state: TurnGraphState) -> str:
             return "prepare_payment"
         case "visualize":
             return "visualize_and_commit"
+        case "compare":
+            return "execute_read_only"
         case "replied" | "refused" | "canonical":
             return "present_and_commit"
         case _:
@@ -1309,7 +1427,11 @@ def _after_payment_confirmation(state: TurnGraphState) -> str:
 
 def _after_execution(state: TurnGraphState) -> str:
     """The latest window is the next step's read until it is read."""
-    return "execute_read_only" if state["status"] == "investigate" else "assess_result"
+    return (
+        "execute_read_only"
+        if state["status"] in {"investigate", "compare_latest"}
+        else "assess_result"
+    )
 
 
 def _after_assessment(state: TurnGraphState) -> str:
@@ -1402,8 +1524,11 @@ def _by_merchant(ops: tuple[Operation, ...]) -> bool:
     """Whether the turn compares two windows by merchant: the capability's trigger, read off the
     interpreter's typed operations and never off the sentence."""
     return any(
-        isinstance(op, Compare)
-        and GroupBy.MERCHANT in (op.shared.group_by, op.earlier.group_by, op.latest.group_by)
+        isinstance(op, InvestigateComparison)
+        or (
+            isinstance(op, Compare)
+            and GroupBy.MERCHANT in (op.shared.group_by, op.earlier.group_by, op.latest.group_by)
+        )
         for op in ops
     )
 

@@ -30,3 +30,22 @@ all months”. Focused tests cover restoring an interrupted comparison, preservi
 follow-up, and ordinary history restoration. Six focused tests pass; Ruff and mypy pass. These checks
 used the isolated synthetic stack. The full 10-turn acceptance and corpus evaluation remain before
 changing the feature flag.
+
+## Rolling comparison, investigation, chart and restore (2026-10-10)
+
+The isolated `finguard-graph-test` stack ran with the graph flag enabled, seeded banking data, and local Qwen 3.5 9B. A real Chrome conversation completed these eight turns:
+
+| Turn | Result |
+| --- | --- |
+| Expenses by category, last three months | 5,867.59 EUR, 87 movements, all nine category totals |
+| Show all categories | Retained the same query and all nine totals |
+| Compare with the prior three months | 6,510.80 EUR (2026-04-10–2026-07-09) vs 5,867.59 EUR (2026-07-10–2026-10-10) |
+| Show a chart | Rendered the comparison |
+| Change it to lines | Updated the same chart; DOM contained two Vega line marks |
+| Why the difference? | Investigated merchant totals and purchase counts over the exact comparison windows |
+| Return to the previous query | Restored the full category query |
+| And in October? | 1,030.42 EUR, seven movements, with October category totals |
+
+The comparison prompt uses a typed `compare_previous=N` operation. Domain transitions resolve it against the active rolling query and validate that its period matches. For a cause follow-up, `investigate_comparison` reuses the stored pair and filters; the graph reads merchants and may ask its bounded assessor to inspect supporting transactions. Thus the planner does not have to regenerate period dates or restate filters. Investigation does not add a duplicate focus to history, so restore returns to the category query.
+
+The run produced no browser JavaScript errors. Unit and graph tests cover exact window reuse, checkpointed scalar comparison reads, recovery, restore history, and the chart update operation. The corpus evaluation and hosted Gemini/Groq provider comparison remain outstanding; this run establishes the local model path only.

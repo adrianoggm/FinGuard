@@ -184,8 +184,8 @@ def test_the_answer_says_both_windows_the_inspection_and_a_partial_stop() -> Non
 
     lines = text.splitlines()
     assert lines[0] == (
-        "Comercios en los que gastas más del 2026-07-01 al 2026-07-31 frente a del 2026-06-01 al "
-        "2026-06-30:"
+        "Comercios en los que gastas más del 2026-06-01 al 2026-06-30 frente a del 2026-07-01 al "
+        "2026-07-31:"
     )
     assert lines[2:] == [
         "  En Amazon, la subida se debe a una compra: sin la de 150,00 € del 2026-07-12 no "

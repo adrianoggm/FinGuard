@@ -201,7 +201,7 @@ def answer_text(
 ) -> str:
     """The whole answer: every figure banking's, through `answer_writer`; every word a template."""
     money = answer_writer.money
-    windows = f"{answer_writer.window_of(latest)} frente a {answer_writer.window_of(earlier)}"
+    windows = f"{answer_writer.window_of(earlier)} frente a {answer_writer.window_of(latest)}"
     if not changes:
         lines = [
             f"Ningún comercio sube {windows}. En total: {money(earlier_total, currency)} antes y "

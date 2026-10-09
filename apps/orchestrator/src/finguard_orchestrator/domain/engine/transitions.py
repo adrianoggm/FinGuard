@@ -10,6 +10,7 @@ model, and the handler reports it as that.
 """
 
 import dataclasses
+from calendar import monthrange
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
@@ -23,7 +24,9 @@ from finguard_orchestrator.domain.engine.operations import (
     ChangeMeasure,
     Clarify,
     Compare,
+    ComparePrevious,
     Delegate,
+    InvestigateComparison,
     Operation,
     Patch,
     PlanFields,
@@ -49,7 +52,7 @@ from finguard_orchestrator.domain.engine.state import (
     RatioFocus,
     Scope,
 )
-from finguard_orchestrator.domain.enums import GroupBy, Metric
+from finguard_orchestrator.domain.enums import GroupBy, Metric, Period
 from finguard_orchestrator.domain.errors import DomainError, InvalidValueError
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -162,7 +165,20 @@ def apply(
         op = _fill_pending(current, op)
         if isinstance(op, (Smalltalk, Delegate, Visualize, Clarify)):
             raise InvariantViolationError("non-domain operation escaped transition dispatch")
-        if not isinstance(op, (Ask, Patch, Compare, ChangeMeasure, SelectOperand, Reset, Balance)):
+        if not isinstance(
+            op,
+            (
+                Ask,
+                Patch,
+                Compare,
+                ComparePrevious,
+                InvestigateComparison,
+                ChangeMeasure,
+                SelectOperand,
+                Reset,
+                Balance,
+            ),
+        ):
             raise InvariantViolationError("unsupported operation escaped transition dispatch")
         try:
             current, work = _applied(current, op, today, grounds)
@@ -185,7 +201,12 @@ def apply(
             # An aside answered after a question: that question is not answered, so it must not
             # become what is on screen either.
             current = resting
-    if work is not None and work.kind != "BALANCE" and not restored_previous:
+    if (
+        work is not None
+        and work.kind != "BALANCE"
+        and not restored_previous
+        and (current.focus != resting.focus or current.scope != resting.scope)
+    ):
         history = _history_after(resting)
         if resting.focus is not None:
             previous_focus = PreviousFocus(resting.focus, resting.scope)
@@ -242,7 +263,17 @@ def _fill_pending(state: DialogueState, op: Operation) -> Operation:
 
 def _applied(
     state: DialogueState,
-    op: Ask | Patch | Compare | ChangeMeasure | SelectOperand | Reset | Balance,
+    op: (
+        Ask
+        | Patch
+        | Compare
+        | ComparePrevious
+        | InvestigateComparison
+        | ChangeMeasure
+        | SelectOperand
+        | Reset
+        | Balance
+    ),
     today: date,
     grounds: Grounds,
 ) -> Applied:
@@ -257,6 +288,12 @@ def _applied(
             return _patched_focus(state, op, today, grounds)
         case Compare():
             return _compared(state, op, today, grounds)
+        case ComparePrevious():
+            return _compared_previous(state, op, today)
+        case InvestigateComparison():
+            if not isinstance(state.focus, ComparisonFocus):
+                raise _CannotApplyError(Missing.OPERAND)
+            return _on_pair(state, state.focus.comparison, percent=False)
         case ChangeMeasure(measure=measure):
             return _measured(state, measure, today)
         case SelectOperand(which=which):
@@ -387,6 +424,36 @@ def _compared(state: DialogueState, op: Compare, today: date, grounds: Grounds) 
     return _on_pair(_scoped(state, shared, grounds), pair, percent=False)
 
 
+def _compared_previous(state: DialogueState, op: ComparePrevious, today: date) -> Applied:
+    """Resolve a structured previous-window relation against the active rolling query."""
+    focus = state.focus
+    if not isinstance(focus, QueryFocus) or not isinstance(focus.plan, FinancialPlan):
+        raise _CannotApplyError(Missing.OPERAND)
+    plan = focus.plan
+    if (
+        plan.period is None
+        or plan.period.period is not Period.LAST_N_MONTHS
+        or plan.period.n != op.months
+    ):
+        raise _CannotApplyError(Missing.OPERAND)
+    latest_start = _months_before(today, op.months)
+    earlier_end = latest_start - timedelta(days=1)
+    earlier_start = _months_before(today, op.months * 2)
+    earlier = replace(plan, period=None, date_range=AbsoluteRange(earlier_start, earlier_end))
+    latest = replace(plan, period=None, date_range=AbsoluteRange(latest_start, today))
+    pair = ComparisonPlan.between(earlier, latest)
+    if pair is None:
+        raise _CannotApplyError(Missing.OPERAND)
+    return _on_pair(state, pair, percent=False)
+
+
+def _months_before(reference: date, months: int) -> date:
+    zero_based = reference.year * 12 + reference.month - 1 - months
+    year, month = divmod(zero_based, 12)
+    month += 1
+    return date(year, month, min(reference.day, monthrange(year, month)[1]))
+
+
 def _measured(state: DialogueState, measure: Measure, today: date) -> Applied:
     focus = state.focus
     if isinstance(focus, ComparisonFocus):
@@ -509,7 +576,12 @@ def _restored(state: DialogueState, steps_back: int) -> Applied:
     # answered focus to another.
     if steps_back == 1 and state.pending is not None and state.focus is not None:
         restored = replace(state, pending=None, turns=state.turns[:-1])
-        return restored, _work_for_focus(restored.focus, restored.scope.account_ids)
+        # A comparison is a new answered focus. If its follow-up opens a question, "previous
+        # query" means the query that led to that comparison; an unanswered follow-up to an
+        # ordinary query still repeats that current query.
+        if not isinstance(state.focus, ComparisonFocus) or not state.focus_history:
+            return restored, _work_for_focus(restored.focus, restored.scope.account_ids)
+        state = restored
 
     history = state.focus_history
     if len(history) >= steps_back:

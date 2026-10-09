@@ -19,11 +19,14 @@ from finguard_orchestrator.domain.engine.operations import (
     ChangeMeasure,
     Clarify,
     Compare,
+    ComparePrevious,
     Delegate,
+    InvestigateComparison,
     Operation,
     Patch,
     PlanFields,
     Reset,
+    RestorePrevious,
     SelectOperand,
     Smalltalk,
 )
@@ -33,6 +36,7 @@ from finguard_orchestrator.domain.engine.state import (
     DialogueState,
     DialogueTurn,
     Focus,
+    FocusHistoryEntry,
     Measure,
     Missing,
     Pending,
@@ -604,6 +608,58 @@ def test_compare_builds_the_pair_in_calendar_order() -> None:
 
     assert t.work == Work("COMPARE", pair(JUNE, JULY))
     assert t.state.focus == ComparisonFocus(pair(JUNE, JULY), Measure.AMOUNT)
+
+
+def test_compare_previous_resolves_equal_rolling_windows_from_active_query() -> None:
+    active = plan(
+        RelativePeriod(Period.LAST_N_MONTHS, n=3), ["RESTAURANTS"], group_by=GroupBy.CATEGORY
+    )
+    s = state_with(QueryFocus(active))
+
+    t = apply(s, [ComparePrevious(3)], today=TODAY, grounds=G)
+
+    expected = pair(
+        AbsoluteRange(date(2026, 4, 8), date(2026, 7, 7)),
+        AbsoluteRange(date(2026, 7, 8), date(2026, 10, 8)),
+    )
+    assert t.work == Work("COMPARE", expected)
+    assert t.state.focus == ComparisonFocus(expected, Measure.AMOUNT)
+
+
+def test_compare_previous_refuses_a_window_that_does_not_match_the_active_query() -> None:
+    s = state_with(QueryFocus(plan(RelativePeriod(Period.LAST_N_MONTHS, n=3), [])))
+
+    t = apply(s, [ComparePrevious(2)], today=TODAY, grounds=G)
+
+    assert t.work is None and t.reply == Clarify(Missing.OPERAND)
+    assert t.state.focus == s.focus and t.state.pending is not None
+
+
+def test_restore_from_a_comparison_follow_up_question_returns_to_the_prior_query() -> None:
+    prior = plan(JULY, ["RESTAURANTS"])
+    compared = pair(JUNE, JULY)
+    s = state_with(
+        ComparisonFocus(compared),
+        pending=Pending(Missing.OPERAND, PlanFields()),
+        focus_history=(FocusHistoryEntry(QueryFocus(prior), Scope()),),
+        turns=(DialogueTurn("A que se debe?", "elige un periodo"),),
+    )
+
+    t = apply(s, [RestorePrevious()], today=TODAY, grounds=G)
+
+    assert isinstance(t.state.focus, QueryFocus) and t.state.focus.plan == prior
+    assert t.state.pending is None
+    assert t.work == Work("QUERY", prior)
+
+
+def test_investigate_comparison_reuses_its_exact_pair() -> None:
+    compared = pair(JUNE, JULY)
+    s = state_with(ComparisonFocus(compared))
+
+    t = apply(s, [InvestigateComparison()], today=TODAY, grounds=G)
+
+    assert t.work == Work("COMPARE", compared)
+    assert t.state.focus == ComparisonFocus(compared, Measure.AMOUNT)
 
 
 def test_compare_inherits_what_it_does_not_name_from_the_focus() -> None:

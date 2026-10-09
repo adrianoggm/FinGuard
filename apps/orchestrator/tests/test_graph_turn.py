@@ -38,6 +38,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Ask,
     Compare,
     Delegate,
+    InvestigateComparison,
     Operation,
     Patch,
     PlanFields,
@@ -83,6 +84,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -294,6 +296,113 @@ async def test_the_current_engine_refuses_a_comparison_by_merchant() -> None:
     moved = apply(DialogueState(UUID(int=1)), BY_MERCHANT, today=TODAY, grounds=grounds)
 
     assert moved.work is None and moved.reply is not None
+
+
+async def test_scalar_comparison_checkpoints_both_reads_without_merchant_relabeling() -> None:
+    world = World(
+        (
+            Compare(
+                PlanFields(direction=Direction.EXPENSE),
+                PlanFields(window=JUNE),
+                PlanFields(window=JULY),
+            ),
+        )
+    )
+
+    answer = await world.ask()
+
+    assert [plan.group_by for plan in world.ledger.ran] == [GroupBy.NONE, GroupBy.NONE]
+    assert answer.result is not None
+    assert "210,00" in answer.result.text and "410,00" in answer.result.text
+    assert answer.state.active_result is not None
+    assert answer.state.active_result.comparison is not None
+    assert answer.state.active_result.comparison_groups == ((), ())
+
+
+async def test_investigate_comparison_keeps_its_periods_and_reads_merchants() -> None:
+    pair = ComparisonPlan.between(
+        FinancialPlan(Direction.EXPENSE, date_range=JUNE),
+        FinancialPlan(Direction.EXPENSE, date_range=JULY),
+    )
+    assert pair is not None
+    conversation_id = UUID(int=2)
+    world = World((InvestigateComparison(),))
+    stored = await world.store.save(
+        DialogueState(conversation_id, focus=ComparisonFocus(pair)),
+        account_id=ACCOUNT,
+        expected_version=0,
+    )
+
+    answer = await world.ask(
+        conversation_id=conversation_id,
+        version=stored.version,
+        sentence="A que se debe la diferencia?",
+    )
+
+    assert [plan.date_range for plan in world.ledger.ran] == [JUNE, JULY]
+    assert all(plan.group_by is GroupBy.MERCHANT for plan in world.ledger.ran)
+    assert answer.result is not None and "Amazon" in answer.result.text
+
+
+async def test_investigation_does_not_replace_the_query_before_a_comparison() -> None:
+    conversation_id = UUID(int=2)
+    world = World(
+        (
+            Compare(
+                PlanFields(direction=Direction.EXPENSE),
+                PlanFields(window=JUNE),
+                PlanFields(window=JULY),
+            ),
+        ),
+        (InvestigateComparison(),),
+        (RestorePrevious(),),
+    )
+    original = FinancialPlan(Direction.EXPENSE, date_range=JUNE)
+    saved = await world.store.save(
+        DialogueState(conversation_id, focus=QueryFocus(original)),
+        account_id=ACCOUNT,
+        expected_version=0,
+    )
+
+    compared = await world.ask(conversation_id=conversation_id, version=saved.version)
+    investigated = await world.ask(
+        conversation_id=conversation_id,
+        version=compared.state.version,
+        sentence="A que se debe la diferencia?",
+    )
+    restored = await world.ask(
+        conversation_id=conversation_id,
+        version=investigated.state.version,
+        sentence="Vuelve a la consulta anterior",
+    )
+
+    assert isinstance(restored.state.focus, QueryFocus)
+    assert restored.state.focus.plan == original
+    assert restored.result is not None and "2026-06-01" in restored.result.text
+
+
+async def test_scalar_comparison_resumes_at_the_failed_later_window() -> None:
+    world = World(
+        (
+            Compare(
+                PlanFields(direction=Direction.EXPENSE),
+                PlanFields(window=JUNE),
+                PlanFields(window=JULY),
+            ),
+        )
+    )
+    world.ledger.fail_on = {2: BankingUnavailableError("down")}
+
+    failed = await world.ask(request_id="comparison-retry")
+    assert failed.result is not None and failed.result.outcome == "BANKING_UNAVAILABLE"
+    assert world.ledger.attempts == 2
+
+    resumed = await world.ask(request_id="comparison-retry")
+
+    assert resumed.result is not None and resumed.result.outcome == PlanningOutcome.PLANNED.value
+    assert world.ledger.attempts == 3
+    assert [plan.date_range for plan in world.ledger.ran] == [JUNE, JULY]
+    assert len(world.interpreter.sentences) == 1
 
 
 def test_typed_period_patch_keeps_the_active_merchant_and_category_filters() -> None:

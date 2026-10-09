@@ -75,12 +75,13 @@ clear_limit=true removes a prior limit; otherwise it stays. PERIOD_AVERAGE/CUMUL
 DAY/WEEK/MONTH grouping.
 
 ## Operations
-Return {"operations":[...]} with 1-4 one-key operations, applied in order:
-ask starts a complete query; patch changes listed fields on focus/earlier/latest/pending; compare
-compares windows; measure selects a metric; select_operand selects earlier/latest; reset clears;
+Return 1-4 one-key operations in order: ask starts a query; patch changes named fields on focus,
+side or pending; compare uses explicit windows; compare_previous=N compares the active rolling N
+months with the prior N; investigate_comparison explains a shown pair by merchant, keeping its
+windows and filters. measure selects a metric; select_operand chooses a side; reset clears;
 restore_previous=N reruns history (1=newest); balance reads accounts; clarify is
 WINDOW/SUBJECT/ACCOUNT/PERSON/OPERAND; smalltalk is GREETING/THANKS/IDENTITY/HELP.
-create_visualization/update_visualization choose AUTO/BAR/LINE for result/chart (no bank call);
+create_visualization/update_visualization choose AUTO/BAR/LINE (no bank call);
 prepare_bizum(recipient, amount_minor) starts Bizum; prepare_transfer(recipient, amount_minor)
 starts a transfer to a named payee when "transferencia" is said. A new payee needs a user-written
 IBAN beside the name; deterministic code extracts it, so never output an IBAN. Null means missing;
@@ -103,21 +104,21 @@ $sentence
 SENTENCE>>>
 ## Rules
 Rules: "el último año" means counted LAST_N_MONTHS n=12, not a date range.
-"Which months had most expenses?" means EXPENSE by MONTH, top 3. Comparisons default to the last two
-complete months; named durations use equal windows. Never compare an ordinary ask. A named month is
-its whole window from the list.
-- A window that has not begun cannot be asked: delegate UNSUPPORTED. The latest begun reading is
-only for a month said by its name; a turn pointing ahead of today asks about a window that has not
-begun.
-"Why did spending rise?" compares by MERCHANT. Named comparison follow-ups keep filters and order
-periods chronologically. A follow-up patches or compares the current focus; period-only turns
-change only its window. Use target pending only when the state shows an open question; with none
-open, a correction patches focus. Explicit "return to the previous query" restores history item 1.
-"All categories/movements" clears top-N. Explicit account names must populate accounts; [] means all
-accounts. A named payee's transfer uses prepare_transfer, including a new payee named beside a
-user-written IBAN or a missing amount; Bizum uses prepare_bizum. Never invent amounts. Delegate
-other transfers and bookings.
-Visual operations stand alone; restyle a shown chart, otherwise create one.
+"Which months had most expenses?" means EXPENSE by MONTH, top 3. Compare only when asked; default to
+the last two complete months and equal named durations. A named month is its latest begun window
+from the list. Never ask for a future window; delegate UNSUPPORTED.
+"Why did spending rise?" compares by MERCHANT. For the cause of a shown comparison, use
+investigate_comparison; it keeps the exact windows and filters. Do not ask which periods when state
+shows them.
+For a rolling N-month query and its prior N months, use compare_previous=N. Named comparisons keep
+filters/order. Follow-ups change the
+current focus; period-only turns change its window. Use
+pending only for an open question; otherwise corrections patch focus. "Return to the previous query"
+restores history item 1. "All categories/movements" clears top-N. Explicit account names populate
+accounts; [] means all. Named-payee transfers use prepare_transfer, including missing amounts or a
+user-written IBAN; Bizum uses prepare_bizum. Never invent amounts. Delegate other transfers and
+bookings.
+Visuals: restyle a shown chart; else create one.
 Operations JSON only.
 """)
 
@@ -431,7 +432,7 @@ def build_prompt(
         group_by=", ".join(g.value for g in GroupBy),
         months=", ".join(_months_begun(today)) + ".",
         measures=", ".join(m.value for m in Measure),
-        examples="\n".join(_example(*example) for example in _prompt_examples(today)),
+        examples="\n".join(_example(*example) for example in _prompt_examples(today, state)),
         state=_fenced(_state(state, today, account_names)),
         sentence=_fenced(sentence),
     )
@@ -445,7 +446,7 @@ def repair_note(answer: str, problem: str) -> str:
     )
 
 
-def _prompt_examples(today: date) -> tuple[tuple[str, str, str], ...]:
+def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str, str], ...]:
     """A compact representative set; the full set remains decoder-tested below."""
     all_examples = examples(today)
     category_breakdown = (
@@ -483,45 +484,49 @@ def _prompt_examples(today: date) -> tuple[tuple[str, str, str], ...]:
             }
         ),
     )
-    account_scope = (
-        "accounts: Cuenta corriente, Hucha",
-        "Cuanto he gastado este mes en mi cuenta corriente",
-        _answer(
-            {
-                "ask": _items(
-                    direction="EXPENSE",
-                    window={"named": "THIS_MONTH"},
-                    accounts=["Cuenta corriente"],
-                )
-            }
-        ),
+    previous_three_months_comparison = (
+        "On screen: last three months by category; previous turn kept all categories",
+        "Compara estos gastos con los 3 meses anteriores",
+        _answer({"compare_previous": 3}),
     )
     restore_query = (
         "expenses by category, last three months; open question: OPERAND",
         "Vuelve a la consulta anterior",
         _answer({"restore_previous": 1}),
     )
-    pending_periods = (
-        "open comparison: which periods",
-        "Octubre y septiembre",
-        _answer(
-            {
-                "compare": {
-                    "shared": _items(direction="EXPENSE", accounts=["Cuenta corriente"]),
-                    "earlier": _items(window={"named": "LAST_MONTH"}),
-                    "latest": _items(window={"named": "THIS_MONTH"}),
-                }
-            }
-        ),
-    )
     # Keep the month-reference comparison example. It is the bridge from a prior query to a
     # comparison; without it a small model may ask for both windows even when one is on screen and
     # the other is in history. Keep the month ranking, comparison, visual and payment examples too.
-    selected = [all_examples[index] for index in (3, 7, 8, 16, 18)]
+    selected = [all_examples[index] for index in (2, 3, 7, 8, 9, 16, 18)]
     selected.insert(2, category_breakdown)
     selected.insert(3, category_month_follow_up)
-    selected.extend((account_scope, restore_query, pending_periods))
+    selected.extend((restore_query,))
+    if state.focus is None and state.pending is None:
+        selected.insert(0, all_examples[0])
+    focus = state.focus
+    if (
+        isinstance(focus, QueryFocus)
+        and isinstance(focus.plan, FinancialPlan)
+        and focus.plan.group_by is GroupBy.CATEGORY
+        and focus.plan.group_limit is None
+        and focus.plan.period is not None
+        and focus.plan.period.period is Period.LAST_N_MONTHS
+        and focus.plan.period.n == 3
+    ):
+        selected.insert(4, previous_three_months_comparison)
+    elif isinstance(focus, ComparisonFocus):
+        selected[4] = _why_comparison_example()
+    if state.active_visual is not None:
+        selected[7] = all_examples[17]
     return tuple(selected)
+
+
+def _why_comparison_example() -> tuple[str, str, str]:
+    return (
+        "an active comparison by amount",
+        "A que se debe la diferencia?",
+        _answer({"investigate_comparison": True}),
+    )
 
 
 def _months_begun(today: date) -> list[str]:

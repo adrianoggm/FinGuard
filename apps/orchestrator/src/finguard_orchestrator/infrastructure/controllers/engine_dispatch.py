@@ -1,8 +1,9 @@
-"""Where a question route asks the model-led engine first, and what the engine sends back.
+"""Compatibility seam between the question routes and conversational engines.
 
-`ORCHESTRATOR_CONVERSATION_ENGINE=model` builds an `AnswerTurnHandler` into `app.state.engine`;
-`rules` leaves it None. Each question route makes one call here before anything else, and runs
-exactly as it always did whenever that call returns None:
+`ORCHESTRATOR_CONVERSATION_ENGINE=model` builds an engine into `app.state.engine`; `rules` leaves
+it None. The rules path is the deprecated legacy coordinator, retained temporarily for rollout and
+comparison. It must not be used as a language fallback from the authoritative LangGraph path.
+Each question route makes one call here before anything else:
 
 - **the engine is off**: production, byte for byte;
 - **a workflow is on the wire** (a payment, a transfer, a booking or a confirmation under way, or
@@ -11,12 +12,15 @@ exactly as it always did whenever that call returns None:
   The one exception is a half-built payment the rules route has *set aside* (`suspended`) to
   answer a question: the engine answers the turns after it, and hands the draft back exactly as it
   was echoed, so it can still be resumed there;
-- **the engine delegates** (`Delegate`: a payment, a transfer, a booking, a chart, or a turn it
-  does not support): it saved nothing, so its focus is intact when the conversation comes back.
+- **the compatibility engine delegates** (`Delegate`: a payment, a transfer, a booking, a chart,
+  or a turn it does not support): it saved nothing, so its focus is intact when the conversation
+  comes back. The authoritative graph instead returns an explicit unavailable response and never
+  sends that sentence to the legacy coordinator for reinterpretation.
 
 The unified graph mode is authoritative: it turns currently unmigrated operations into an explicit,
 versioned response and never hands their sentence to the legacy route. The compatibility behavior
-above applies only to the older model engine while graph mode is off.
+above applies only while graph mode is off. Graph mode owns the full turn, including graph-native
+visualization and guarded payment workflows; a graph delegation is terminal for that turn.
 
 Every other turn is the engine's, answered with the same `QuestionResponse` wire shape. Its
 `conversation` carries the engine's conversation id and version, plus what it must not drop: a
@@ -137,7 +141,7 @@ async def try_engine(
     metric_tokens: MetricTokenCodec,
     request_id: str | None = None,
 ) -> QuestionResponse | None:
-    """The engine's answer to this turn, or None for the rules route to answer it.
+    """The engine's answer to this turn, or None for the deprecated compatibility route.
 
     A version other than the held one raises `StaleDialogueError` out of here, before anything
     ran; `register` writes the 409."""
@@ -312,8 +316,9 @@ async def try_engine_streaming(
 ) -> StreamingResponse | None:
     """`try_engine` for the streaming route: one stage, then the answer, in the route's frames.
 
-    The engine answers before the stream starts, because a turn it delegates has to be streamed
-    by the rules route instead, and that cannot be known until it has answered."""
+    The engine answers before the stream starts. Only the non-authoritative compatibility engine
+    can hand a turn back for legacy handling; the graph's authoritative delegations become explicit
+    responses inside `try_engine` and never enter the legacy route."""
     answer = await try_engine(engine, question, who, today, metric_tokens, request_id)
     if answer is None:
         return None
@@ -334,12 +339,11 @@ def _on_the_wire(
     """The engine's result in the routes' shape, with its state and authoritative version.
 
     Sealed for its holder like every answer the routes give (`test_the_seal_is_never_silently_
-    skipped`): the engine draws no chart today, so nothing is minted, and the day it does its
-    charts are born sealed rather than refused at their first restyle. Keep the result's typed
-    workflow state (for example a bank preview awaiting confirmation); the held value owns only
-    the canonical id and version. Replacing the result state wholesale loses the payment preview
-    between the graph and the web client, leaving prose that asks for confirmation without the
-    buttons or payload needed to answer it."""
+    skipped`). Graph-native visuals are verified and sealed by the graph before they arrive here.
+    Keep the result's typed workflow state (for example a bank preview awaiting confirmation); the
+    held value owns only the canonical id and version. Replacing the result state wholesale loses
+    the payment preview between the graph and the web client, leaving prose that asks for
+    confirmation without the buttons or payload needed to answer it."""
     conversation = replace(
         result.conversation,
         conversation_id=held.conversation_id,

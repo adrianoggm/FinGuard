@@ -69,7 +69,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
-STATE_SCHEMA_VERSION: Final = 10
+STATE_SCHEMA_VERSION: Final = 12
 ANSWER_SCHEMA_VERSION: Final = 1
 
 _CLASSES: Final[dict[str, type]] = {
@@ -78,6 +78,8 @@ _CLASSES: Final[dict[str, type]] = {
         operations.Ask,
         operations.Patch,
         operations.Compare,
+        operations.ComparePrevious,
+        operations.InvestigateComparison,
         operations.ChangeMeasure,
         operations.SelectOperand,
         operations.Reset,
@@ -197,7 +199,7 @@ def loads_state(text: str) -> DialogueState:
     """Decode current state and migrate the two earlier typed state schemas in memory."""
     value = json.loads(text)
     schema = value.get("schema_version")
-    if schema not in {1, 2, 3, 4, 5, 6, 7, 8, 9, STATE_SCHEMA_VERSION}:
+    if schema not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, STATE_SCHEMA_VERSION}:
         raise UnknownCheckpointTypeError(f"dialogue schema {value.get('schema_version')}")
     state = _decoded(value.get("state"))
     if not isinstance(state, DialogueState):

@@ -21,6 +21,8 @@ __all__ = [
     "ChangeMeasure",
     "Clarify",
     "Compare",
+    "ComparePrevious",
+    "InvestigateComparison",
     "Delegate",
     "Operation",
     "Patch",
@@ -58,6 +60,22 @@ class Compare:
     shared: PlanFields
     earlier: PlanFields
     latest: PlanFields
+
+
+@dataclass(frozen=True)
+class ComparePrevious:
+    """Compare the current rolling N-month query with the immediately preceding N months."""
+
+    months: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.months, bool) or not 1 <= self.months <= 12:
+            raise InvalidValueError("comparison months must be between 1 and 12")
+
+
+@dataclass(frozen=True)
+class InvestigateComparison:
+    """Inspect the active comparison at a useful dimension while keeping its exact scope."""
 
 
 @dataclass(frozen=True)
@@ -192,6 +210,8 @@ Operation = (
     Ask
     | Patch
     | Compare
+    | ComparePrevious
+    | InvestigateComparison
     | ChangeMeasure
     | SelectOperand
     | Reset

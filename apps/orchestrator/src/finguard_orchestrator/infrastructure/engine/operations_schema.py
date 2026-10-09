@@ -64,7 +64,9 @@ from finguard_orchestrator.domain.engine.operations import (
     ChangeMeasure,
     Clarify,
     Compare,
+    ComparePrevious,
     Delegate,
+    InvestigateComparison,
     Operation,
     Patch,
     PlanFields,
@@ -348,6 +350,20 @@ class CompareOp(_Closed):
         )
 
 
+class ComparePreviousOp(_Closed):
+    compare_previous: Annotated[int, Field(strict=True, ge=1, le=12)]
+
+    def as_operation(self) -> ComparePrevious:
+        return ComparePrevious(self.compare_previous)
+
+
+class InvestigateComparisonOp(_Closed):
+    investigate_comparison: Literal[True]
+
+    def as_operation(self) -> InvestigateComparison:
+        return InvestigateComparison()
+
+
 class MeasureOp(_Closed):
     measure: Measure
 
@@ -462,6 +478,8 @@ AnyOp = Annotated[
     Annotated[AskOp, Tag("ask")]
     | Annotated[PatchOp, Tag("patch")]
     | Annotated[CompareOp, Tag("compare")]
+    | Annotated[ComparePreviousOp, Tag("compare_previous")]
+    | Annotated[InvestigateComparisonOp, Tag("investigate_comparison")]
     | Annotated[MeasureOp, Tag("measure")]
     | Annotated[SelectOperandOp, Tag("select_operand")]
     | Annotated[ResetOp, Tag("reset")]
