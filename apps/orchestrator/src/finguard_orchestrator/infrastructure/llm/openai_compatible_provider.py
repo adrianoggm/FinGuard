@@ -49,6 +49,7 @@ symptoms, one cause — reasoning and constrained decoding interact, and neither
 """
 
 import asyncio
+import logging
 from typing import Any, Final
 
 import httpx2 as httpx
@@ -58,6 +59,7 @@ from finguard_orchestrator.domain.errors import AnswerRefusedError, ProviderFail
 # What the schema is called on the wire. The API wants a name beside the schema; nothing reads it
 # back, so it says what the object is rather than carrying an identifier.
 _SCHEMA_NAME: Final = "answer"
+logger = logging.getLogger(__name__)
 # Groq's free tier allows 8,000 tokens a minute and an engine turn reserves about 6,000, so two
 # turns typed at a normal pace meet a 429 that asks for a few seconds. Waited out once; a longer
 # wait (the daily budget says minutes) fails the turn at once rather than hold the request open.
@@ -154,6 +156,21 @@ class OpenAiCompatibleProvider:
             # body, and that body quotes the request — which contains the user's sentence. The
             # rule that nothing a person typed reaches a log file does not stop at our own logger.
             status = exc.response.status_code
+            if status == 429:
+                limits = _rate_limit_headers(exc.response)
+                logger.warning(
+                    "llm.provider_rate_limited provider=%s retry_after=%s "
+                    "remaining_requests=%s reset_requests=%s remaining_tokens=%s reset_tokens=%s",
+                    self.name,
+                    limits["retry-after"],
+                    limits["x-ratelimit-remaining-requests"],
+                    limits["x-ratelimit-reset-requests"],
+                    limits["x-ratelimit-remaining-tokens"],
+                    limits["x-ratelimit-reset-tokens"],
+                )
+                details = "; ".join(f"{name}={value}" for name, value in limits.items() if value)
+                reason = f"HTTP {status}" + (f" ({details})" if details else "")
+                raise ProviderFailedError(self.name, reason) from None
             if (refused := _refused_generation(exc.response)) is not None:
                 # Groq's strict mode checks the answer after generating it: the model did answer,
                 # in the wrong shape, and the caller may ask once more (ruling R31). What it wrote
@@ -210,6 +227,23 @@ def _short_rate_wait(response: Any) -> float | None:
     except ValueError:
         return None
     return seconds if 0 <= seconds <= _LONGEST_RATE_WAIT_SECONDS else None
+
+
+def _rate_limit_headers(response: Any) -> dict[str, str]:
+    """Only copy the numeric/reset metadata needed to diagnose a 429, never its body or prompt."""
+    names = (
+        "retry-after",
+        "x-ratelimit-remaining-requests",
+        "x-ratelimit-reset-requests",
+        "x-ratelimit-remaining-tokens",
+        "x-ratelimit-reset-tokens",
+    )
+    found: dict[str, str] = {}
+    for name in names:
+        value = response.headers.get(name, "").strip()
+        if value and len(value) <= 32 and all(char.isalnum() or char in ".:+- " for char in value):
+            found[name] = value
+    return found
 
 
 def _refused_generation(response: Any) -> str | None:

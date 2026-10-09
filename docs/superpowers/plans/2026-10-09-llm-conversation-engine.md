@@ -383,7 +383,7 @@ if (answered := await engine_dispatch.try_engine(request, body, who, today)) is 
 - [ ] **Step 2:** Recreate the orchestrator only, with `ORCHESTRATOR_CONVERSATION_ENGINE=model` (environment override, no rebuild). Replay both sets, giving `…-model-regression` and `…-model-generalization`.
 - [ ] **Step 3:** Blind judging. One judging agent per set gets the two runs labelled A and B, with no engine name, and judges every turn with the skill's rubric plus `goal_met` per conversation. Then `summarise` each.
 - [ ] **Step 4:** If the hosted quota is available, run the model engine on the generalization set with Groq `openai/gpt-oss-120b`, using `--provider-retries` as needed.
-- [ ] **Step 5:** Run `scripts/interpretation_footprint.py` and record the counts.
+- [x] **Step 5:** Run `scripts/interpretation_footprint.py` and record the counts in `docs/evaluation/2026-10-09-llm-conversation-engine.md`.
 - [ ] **Step 6:** Write `docs/evaluation/2026-10-09-llm-conversation-engine.md`. It contains:
   - the metrics table: semantic accuracy, context conservation, plan coherence (judge plus invariant violations), bank results, recovery, conversation success, latency per engine, model calls per turn, and footprint;
   - regression and generalization reported separately;

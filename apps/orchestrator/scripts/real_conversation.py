@@ -938,6 +938,9 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
         f"({latency.get('turns', 0)} turnos)",
     ]
     for engine, measured in summary["latency_by_engine"].items():
+        if not measured:
+            lines.append(f"  - motor `{engine}`: sin mediciones")
+            continue
         lines.append(
             f"  - motor `{engine}`: mediana {_seconds(measured['median'])} · "
             f"p95 {_seconds(measured['p95'])} · máx {_seconds(measured['max'])} "

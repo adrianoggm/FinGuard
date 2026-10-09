@@ -80,7 +80,8 @@ repeat). PERIOD_AVERAGE and CUMULATIVE need group_by DAY, WEEK or MONTH.
 Answer {"operations": [...]}: one to four, applied in order, each an object whose one key is the \
 operation.
 - {"ask": plan}: a new question, complete in itself; nothing is kept from the screen. A window \
-not said is not listed, and the person is asked for it.
+not said is not listed, and the person is asked for it unless the comparative-default rule below \
+applies.
 - {"patch": {"target": T, "changes": plan}}: change the fields listed. T: focus (what is on \
 screen), earlier or latest (one side of a comparison), or pending (an open question).
 - {"compare": {"shared": plan, "earlier": plan, "latest": plan}}: one question over two \
@@ -120,6 +121,17 @@ SENTENCE>>>
 - A window that has not begun cannot be asked: delegate UNSUPPORTED. The latest begun reading is \
 only for a month said by its name; a turn pointing ahead of today asks about a window that has \
 not begun.
+- For a clear comparison such as "más que antes", "más últimamente que antes" or "frente al \
+periodo anterior" with no dates, \
+compare the two latest complete calendar months: the last completed month, then the month before \
+it. State both windows in the answer. If a duration is named, compare equal complete windows of \
+that duration. If the person says "hace unos meses" without a number, compare the latest three \
+complete calendar months with the three complete months before them. Do not invent a comparison \
+for an ordinary ask with no comparative wording.
+- When that comparative meaning is clear but dates are missing, do not ask which periods or emit \
+clarify; use the default windows above. Clarify only when the comparison itself is ambiguous.
+- When the person asks which merchants explain a spending increase, include group_by MERCHANT in \
+the comparison so each merchant's totals and movement counts can be checked.
 - A turn that only makes sense against what is on screen is patch, compare, measure or \
 select_operand, not ask; resolve references to other periods against the dates shown.
 - Use target pending only when the state shows an open question; with none open, a correction \
@@ -156,6 +168,11 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
     year = today.year if month <= today.month else today.year - 1
     start = date(year, month, 1)
     end = date(year, month, monthrange(year, month)[1])
+    current_month = date(today.year, today.month, 1)
+    latest_end = current_month - timedelta(days=1)
+    latest_start = date(latest_end.year, latest_end.month, 1)
+    earlier_end = latest_start - timedelta(days=1)
+    earlier_start = date(earlier_end.year, earlier_end.month, 1)
     return (
         (
             "",
@@ -199,6 +216,60 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
                         ),
                         "latest": _items(
                             window={"range": {"start": "2025-04-01", "end": "2025-04-30"}}
+                        ),
+                    }
+                }
+            ),
+        ),
+        (
+            "",
+            "¿En qué tiendas he gastado más que en el periodo anterior?",
+            _answer(
+                {
+                    "compare": {
+                        "shared": _items(direction="EXPENSE", group_by="MERCHANT"),
+                        "earlier": _items(
+                            window={
+                                "range": {
+                                    "start": earlier_start.isoformat(),
+                                    "end": earlier_end.isoformat(),
+                                }
+                            }
+                        ),
+                        "latest": _items(
+                            window={
+                                "range": {
+                                    "start": latest_start.isoformat(),
+                                    "end": latest_end.isoformat(),
+                                }
+                            }
+                        ),
+                    }
+                }
+            ),
+        ),
+        (
+            "",
+            "¿En qué tiendas me gasto más últimamente que antes?",
+            _answer(
+                {
+                    "compare": {
+                        "shared": _items(direction="EXPENSE", group_by="MERCHANT"),
+                        "earlier": _items(
+                            window={
+                                "range": {
+                                    "start": earlier_start.isoformat(),
+                                    "end": earlier_end.isoformat(),
+                                }
+                            }
+                        ),
+                        "latest": _items(
+                            window={
+                                "range": {
+                                    "start": latest_start.isoformat(),
+                                    "end": latest_end.isoformat(),
+                                }
+                            }
                         ),
                     }
                 }

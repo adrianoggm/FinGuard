@@ -1,0 +1,195 @@
+{
+  "name": "2026-10-09-task8-current-groq-120b-v2",
+  "preflight": {
+    "services": {
+      "orchestrator": "ok",
+      "banking": "ok",
+      "gateway": "ok"
+    },
+    "version": {
+      "service": "orchestrator",
+      "sha": "task/langgraph-experiment",
+      "ref": "task/langgraph-experiment"
+    },
+    "ollama": [],
+    "newest": "2026-10-07",
+    "at": "2026-10-09T13:42:42+02:00",
+    "today": "2026-10-09",
+    "gpu": "P5, 210 MHz",
+    "head": "aaa96c01",
+    "code_under_test": "same as HEAD",
+    "problems": [],
+    "max_age_days": 3
+  },
+  "goals": {
+    "comercios-crecen-mes": "Saber en qué comercios gasta más este mes que el anterior y por qué.",
+    "supermercados-trimestre": "Entender si gasta más en supermercados por ir más veces o por gastar más cada vez.",
+    "sin-subidas-y-sin-datos": "Preguntar por subidas cuando no las hay o el banco no puede decirlo.",
+    "un-comercio-concreto": "Investigar un comercio concreto."
+  },
+  "records": [
+    {
+      "conversation": "comercios-crecen-mes",
+      "turn": 1,
+      "said": "¿En qué comercios gasto más que antes y se debe a más compras o a importes mayores?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres verlo?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.65,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "investigation",
+        "route": "QUERY",
+        "want": "Asume una ventana razonable y la dice (p. ej. el mes pasado frente al anterior, o los últimos 30 días frente a los 30 previos). Nombra los comercios cuyo gasto subió, con el gasto de cada ventana, y para cada uno dice si subió por más compras (más movimientos), por importes mayores (media por movimiento más alta) o por ambas. No inventa comercios ni cifras; no explica el motivo de fondo."
+      },
+      "error": null
+    },
+    {
+      "conversation": "comercios-crecen-mes",
+      "turn": 2,
+      "said": "¿y en cuál ha sido por una compra puntual grande?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.02,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "investigation",
+        "route": "QUERY",
+        "want": "Mira los movimientos de los comercios que subieron por importe y dice si la subida se concentra en una sola compra grande (con su fecha e importe, sacados del banco) o no. Si ningún comercio lo cumple, lo dice. Misma ventana que el turno anterior."
+      },
+      "error": null
+    },
+    {
+      "conversation": "supermercados-trimestre",
+      "turn": 1,
+      "said": "Compara mis compras en supermercados de este trimestre con el anterior",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.4,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "Supermercados, este trimestre frente al anterior, diciendo ambas ventanas y el gasto de cada una."
+      },
+      "error": null,
+      "provider_retries": 1
+    },
+    {
+      "conversation": "supermercados-trimestre",
+      "turn": 2,
+      "said": "¿qué comercios explican la diferencia? ¿voy más veces o gasto más por visita?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.2,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "investigation",
+        "route": "QUERY",
+        "want": "Conserva supermercados y las dos ventanas. Por comercio: número de compras y media por compra en cada trimestre, y si la diferencia viene de ir más veces, de gastar más por visita o de ambas. Un comercio que no aparecía en el trimestre anterior se dice como nuevo, sin atribuirle una causa."
+      },
+      "error": null,
+      "provider_retries": 1
+    },
+    {
+      "conversation": "supermercados-trimestre",
+      "turn": 3,
+      "said": "gracias",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.19,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "smalltalk",
+        "want": "Un agradecimiento breve, sin cifras y sin repetir la respuesta."
+      },
+      "error": null,
+      "provider_retries": 1
+    }
+  ],
+  "findings": []
+}

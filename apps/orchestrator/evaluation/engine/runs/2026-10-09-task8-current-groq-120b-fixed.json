@@ -1,0 +1,351 @@
+{
+  "name": "2026-10-09-task8-current-groq-120b-fixed",
+  "preflight": {
+    "services": {
+      "orchestrator": "ok",
+      "banking": "ok",
+      "gateway": "ok"
+    },
+    "version": {
+      "service": "orchestrator",
+      "sha": "task/langgraph-experiment",
+      "ref": "task/langgraph-experiment"
+    },
+    "ollama": [],
+    "newest": "2026-10-07",
+    "at": "2026-10-09T15:25:02+02:00",
+    "today": "2026-10-09",
+    "gpu": "P8, 22 MHz",
+    "head": "69ed4f5c",
+    "code_under_test": "same as HEAD",
+    "problems": [],
+    "max_age_days": 3
+  },
+  "goals": {
+    "comercios-crecen-mes": "Saber en qué comercios gasta más este mes que el anterior y por qué.",
+    "supermercados-trimestre": "Entender si gasta más en supermercados por ir más veces o por gastar más cada vez.",
+    "sin-subidas-y-sin-datos": "Preguntar por subidas cuando no las hay o el banco no puede decirlo.",
+    "un-comercio-concreto": "Investigar un comercio concreto."
+  },
+  "records": [
+    {
+      "conversation": "comercios-crecen-mes",
+      "turn": 1,
+      "said": "¿En qué comercios gasto más que antes y se debe a más compras o a importes mayores?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.49,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "investigation",
+        "route": "QUERY",
+        "want": "Asume una ventana razonable y la dice (p. ej. el mes pasado frente al anterior, o los últimos 30 días frente a los 30 previos). Nombra los comercios cuyo gasto subió, con el gasto de cada ventana, y para cada uno dice si subió por más compras (más movimientos), por importes mayores (media por movimiento más alta) o por ambas. No inventa comercios ni cifras; no explica el motivo de fondo."
+      },
+      "error": null
+    },
+    {
+      "conversation": "comercios-crecen-mes",
+      "turn": 2,
+      "said": "¿y en cuál ha sido por una compra puntual grande?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.31,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "investigation",
+        "route": "QUERY",
+        "want": "Mira los movimientos de los comercios que subieron por importe y dice si la subida se concentra en una sola compra grande (con su fecha e importe, sacados del banco) o no. Si ningún comercio lo cumple, lo dice. Misma ventana que el turno anterior."
+      },
+      "error": null
+    },
+    {
+      "conversation": "supermercados-trimestre",
+      "turn": 1,
+      "said": "Compara mis compras en supermercados de este trimestre con el anterior",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.34,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "Supermercados, este trimestre frente al anterior, diciendo ambas ventanas y el gasto de cada una."
+      },
+      "error": null
+    },
+    {
+      "conversation": "supermercados-trimestre",
+      "turn": 2,
+      "said": "¿qué comercios explican la diferencia? ¿voy más veces o gasto más por visita?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.22,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "investigation",
+        "route": "QUERY",
+        "want": "Conserva supermercados y las dos ventanas. Por comercio: número de compras y media por compra en cada trimestre, y si la diferencia viene de ir más veces, de gastar más por visita o de ambas. Un comercio que no aparecía en el trimestre anterior se dice como nuevo, sin atribuirle una causa."
+      },
+      "error": null
+    },
+    {
+      "conversation": "supermercados-trimestre",
+      "turn": 3,
+      "said": "gracias",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 20.62,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "smalltalk",
+        "want": "Un agradecimiento breve, sin cifras y sin repetir la respuesta."
+      },
+      "error": null
+    },
+    {
+      "conversation": "sin-subidas-y-sin-datos",
+      "turn": 1,
+      "said": "¿En qué tiendas me estoy gastando más últimamente que antes?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.51,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "investigation",
+        "route": "QUERY",
+        "want": "Dice las dos ventanas que compara. Si ningún comercio sube, lo dice claramente con el total de ambas ventanas, sin forzar una lista. Si algún comercio sube, lo nombra con sus cifras y la causa (más compras o importes mayores)."
+      },
+      "error": null
+    },
+    {
+      "conversation": "sin-subidas-y-sin-datos",
+      "turn": 2,
+      "said": "¿y por qué? ¿han subido los precios?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "unknown_cause",
+        "want": "Dice lo que los datos sí muestran (número de compras y media por compra) y que el banco no permite saber si los precios han subido ni ningún otro motivo de fondo. No lo afirma ni lo inventa."
+      },
+      "error": null
+    },
+    {
+      "conversation": "sin-subidas-y-sin-datos",
+      "turn": 3,
+      "said": "Hazme una transferencia de 50 euros a Marta",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.37,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "PAYMENT",
+        "want": "Sale del análisis al flujo de transferencias con su previsualización y confirmación; no ejecuta nada sin confirmar, y el análisis anterior no se pierde."
+      },
+      "error": null
+    },
+    {
+      "conversation": "un-comercio-concreto",
+      "turn": 1,
+      "said": "Gasto más en Amazon que hace unos meses?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.24,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "investigation",
+        "route": "QUERY",
+        "want": "Amazon, dos ventanas dichas (p. ej. los últimos tres meses frente a los tres anteriores), el gasto de cada una y si la diferencia viene de más compras o de importes mayores. Si Amazon no aparece en sus movimientos, lo dice sin inventar."
+      },
+      "error": null
+    },
+    {
+      "conversation": "un-comercio-concreto",
+      "turn": 2,
+      "said": "¿cuál fue la compra más grande?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.23,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "La compra más grande en Amazon en la ventana reciente, con fecha e importe del banco."
+      },
+      "error": null
+    }
+  ],
+  "findings": []
+}
