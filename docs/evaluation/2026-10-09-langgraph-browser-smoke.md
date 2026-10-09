@@ -179,3 +179,15 @@ two-period chart (Vega SVG present); “change it to lines” changed the SVG fr
 8 line marks and 0 rectangles. No browser JavaScript errors occurred. The local Ollama model was
 used for this browser pass because Groq returned HTTP 429 with a provider-specified reset over 20
 minutes away. The Groq-backed full conversation therefore remains unverified in this pass.
+
+A final six-turn Chrome pass verified these operations in one thread: Cuenta corriente this month,
+merchant breakdown, comparison with September, bar chart, line restyle, and restoration of the prior
+merchant query. The result retained the account and filters across all turns. The rendered SVG went
+from one rectangle mark to eight line marks and zero rectangles; restoring the previous query ran a
+fresh banking read. No JavaScript errors occurred.
+
+## Ten-turn hosted-model continuity after orchestrator restart (2026-10-09)
+
+Chrome exercised one conversation against the isolated graph-enabled Compose stack and seeded synthetic bank. Gemini 3.1 Flash Lite handled ten turns: September expenses in Cuenta corriente; October; comparison with September; explanation; chart; bar-to-line restyle; subscription-only comparison; gym filter; restore previous query; and September again. Results retained the account and comparison filters, the chart restyle reused the result without a banking read, and restoring a query made a fresh bank read. The orchestrator container was restarted between turns 6 and 7; the browser conversation continued successfully. No browser errors occurred. The SVG changed from bar rectangles to line marks. No payment was initiated.
+
+The same run surfaced a small-model prompt gap around answering a pending question with two named periods. The selected few-shot examples now explicitly show the October/September context and answer. Focused interpreter, graph-turn and codec tests pass (215 total). This run used the Gemini key already supplied by the user through the isolated runtime environment; no credential is stored in the repository. Groq remained rate-limited, so this is not a Groq result.

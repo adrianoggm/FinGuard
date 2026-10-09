@@ -814,9 +814,21 @@ def test_prompt_includes_the_month_named_comparison_follow_up_example() -> None:
         "Â¿Y comparado con septiembre?", EMPTY, today=TODAY, categories=CATEGORIES
     )
 
-    assert "an October expenses query, grouped by category" in prompt
+    assert "October expenses on Cuenta corriente" in prompt
     assert "comparado con septiembre" in prompt
     assert '"compare"' in prompt
+
+
+def test_prompt_includes_the_answer_to_a_pending_two_period_comparison() -> None:
+    prompt = build_prompt(
+        "Octubre y septiembre",
+        EMPTY,
+        today=TODAY,
+        categories=CATEGORIES,
+    )
+
+    assert "open question: which periods" in prompt
+    assert '"earlier"' in prompt and '"latest"' in prompt
 
 
 def test_prompt_shows_explicit_account_scope_and_restore_of_the_previous_query() -> None:

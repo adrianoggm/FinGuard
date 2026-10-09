@@ -267,12 +267,12 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             ),
         ),
         (
-            "an October expenses query, grouped by category",
+            "October expenses on Cuenta corriente; September on same account in history",
             "¿Y comparado con septiembre?",
             _answer(
                 {
                     "compare": {
-                        "shared": _items(direction="EXPENSE", group_by="CATEGORY"),
+                        "shared": _items(direction="EXPENSE", accounts=["Cuenta corriente"]),
                         "earlier": _items(window={"named": "LAST_MONTH"}),
                         "latest": _items(window={"named": "THIS_MONTH"}),
                     }
@@ -280,8 +280,7 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             ),
         ),
         (
-            "a September expenses query grouped by category; an open question asks which two "
-            "periods to compare",
+            "October on Cuenta corriente; September on same account; open question: which periods",
             "Octubre y septiembre",
             _answer(
                 {
@@ -461,16 +460,29 @@ def _prompt_examples(today: date) -> tuple[tuple[str, str, str], ...]:
         ),
     )
     restore_query = (
-        "On screen: a comparison; Previous answered query [1]: an expense query for June",
+        "comparison; history [1]: June expenses",
         "Vuelve a la consulta anterior",
         _answer({"restore_previous": 1}),
+    )
+    pending_periods = (
+        "October on Cuenta corriente; September on same account; open question: which periods",
+        "Octubre y septiembre",
+        _answer(
+            {
+                "compare": {
+                    "shared": _items(direction="EXPENSE", accounts=["Cuenta corriente"]),
+                    "earlier": _items(window={"named": "LAST_MONTH"}),
+                    "latest": _items(window={"named": "THIS_MONTH"}),
+                }
+            }
+        ),
     )
     # Keep the exact month-reference comparison example. It is the bridge from a prior query to a
     # comparison; without it a small model may ask for both windows even when one is on screen and
     # the other is in history. Keep the month ranking, comparison, visual and payment examples too.
     selected = [all_examples[index] for index in (0, 3, 7, 8, 16, 18)]
     selected.insert(2, category_breakdown)
-    selected.extend((account_scope, restore_query))
+    selected.extend((account_scope, restore_query, pending_periods))
     return tuple(selected)
 
 
