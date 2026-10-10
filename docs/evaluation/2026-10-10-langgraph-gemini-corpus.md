@@ -33,3 +33,58 @@ The focused JSON report is in the local temporary directory as `finguard-graph-g
 ## Decision
 
 The prompt repair is useful but the graph is **not ready for promotion**. The full run still exposes semantic and presentation gaps, and this diagnostic has no rules-engine control, blind judge, generalization set, or complete browser/payment promotion gate. The missing pending-plan evidence is a measurement limitation; it must not be reported as proven pending-state correctness solely because a later turn happened to work. The movement-list presentation mismatch remains a product issue to resolve in the typed operation/renderer boundary.
+
+## Follow-up after the new Gemini key and counterparty fix
+
+The next full replay used Gemini 3.1 Flash Lite with the replacement key, a freshly built local
+image, the same synthetic bank, and no request pacing. It completed **67/67 threads and 142/142
+turns**, with **16 property violations** and no provider errors. The per-turn report is in the local
+temporary directory as `finguard-gemini-counterparty-fix-full-20261010.json`. The lower count than
+the earlier 20-violation run is a diagnostic, not a causal comparison: model output can vary, and
+several code and prompt changes landed between those runs. This run still does not pass the quality
+gate.
+
+The focused retest covered three failures: a period-only reply to an open clarification, a salary
+follow-up, and a historical payment query naming someone absent from saved contacts. All six turns
+completed with zero property violations. The last case exposed a domain-boundary bug: historical
+counterparties were incorrectly resolved against the payment contact directory. Query counterparties
+now pass to the banking filter as written; saved contacts remain the payment flow's authority.
+
+The interpreter also has a bounded consistency repair for the narrow case where its typed operation
+would prepare or delegate a payment despite a past-transaction question. It asks the planner to
+correct the operation once and returns a clarification if the mismatch remains. Unit tests cover
+both correction and refusal; the full corpus did not trigger this guard. The pending-window prompt
+now includes a direct example and trims unrelated examples while retaining those for the visible
+focus. These changes were committed as `1e0469da`.
+
+The focused Python checks passed (**193 tests**) and Ruff passed. The evaluator output contains no
+latency or token measurements, and this replay has no rules-engine control or blind judge. The
+remaining violations still include query shape and metric errors, account-name grounding, inherited
+filters, and grouped comparison presentation. The graph stays behind its feature flag pending the
+full migration gates.
+
+## Repeat replay with the latest Gemini key
+
+After a short three-thread smoke (7/7 turns, one continuity expectation failure), the isolated
+Gemini 3.1 Flash Lite instance replayed the full corpus again: **67/67 threads, 142/142 turns, 16
+property violations**. The violating turn IDs and labels were identical to the preceding
+counterparty-fix replay. This is a reproducibility signal for the current failure set, not evidence
+that the fixes caused it or that the quality gate passes. In particular, both runs still fail the
+pending-payment-amount correction case.
+
+The new run recorded transient Gemini `429` responses early on, then completed the corpus without
+further rate-limit log events. No provider or transport errors appeared among the evaluator's
+violations. The run used a temporary isolated orchestrator on port 18013, shared only the synthetic
+banking/Postgres services, and was removed afterward. The regular stack on port 18000 was left
+untouched. The bounded report remains local at
+`%TEMP%/finguard-gemini-full-replay-latest-key-20261010.json`; no API key is stored in the repository.
+
+## Gemini 3.5 Flash Lite continuity smoke
+
+To avoid spending another full-corpus run on a model that might not address the known defects, a
+separate isolated instance ran three targeted conversations (**9/9 turns**). It recorded three
+violations: the same pending Bizum amount correction, bare correction, and category-catalogue
+question failures. There were no provider rate-limit events. This is enough to reject it as an
+immediate fix for these cases, but not enough to compare overall quality or promote/demote the
+model. The report is local at `%TEMP%/finguard-gemini-35-targeted-20261010.json`; the temporary
+instance was removed afterward.
