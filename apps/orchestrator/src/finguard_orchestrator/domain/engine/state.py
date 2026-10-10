@@ -9,16 +9,17 @@ against a version that is no longer current.
 """
 
 import dataclasses
-from dataclasses import dataclass, field, replace
+import json
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 from enum import StrEnum
 from typing import ClassVar
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from finguard_orchestrator.domain.constants import MAX_PAYMENT_MINOR
+from finguard_orchestrator.domain.constants import MAX_PAYMENT_MINOR, MAX_SUPPORTING_MOVEMENTS
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, ResultKind
 from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.models.chart import ChartSpec, VisualProfile
+from finguard_orchestrator.domain.models.chart import ChartSpec, VisualDataset, VisualProfile
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview
 from finguard_orchestrator.domain.models.query_answer import Group
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -27,6 +28,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.movement_list_plan import MovementListPlan
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -56,11 +58,17 @@ class Missing(StrEnum):
     PERSON = "PERSON"
     OPERAND = "OPERAND"
     CORRECTION = "CORRECTION"
+    TASK_LIMIT = "TASK_LIMIT"
 
 
 @dataclass(frozen=True)
 class QueryFocus:
     plan: FinancialPlan | TopMovements
+
+
+@dataclass(frozen=True)
+class MovementListFocus:
+    plan: MovementListPlan
 
 
 @dataclass(frozen=True)
@@ -82,7 +90,7 @@ class BalanceFocus:
     account_ids: tuple[UUID, ...] = ()
 
 
-Focus = QueryFocus | ComparisonFocus | RatioFocus | BalanceFocus
+Focus = QueryFocus | MovementListFocus | ComparisonFocus | RatioFocus | BalanceFocus
 
 
 @dataclass(frozen=True)
@@ -131,18 +139,34 @@ class PlanFields:
 
 
 @dataclass(frozen=True)
-class Pending:
-    """A question asked back, holding everything already said, so the reply only fills the gap."""
-
-    missing: Missing
-    draft: PlanFields
-
-
-@dataclass(frozen=True)
 class Scope:
     """The accounts being looked at. Empty means every account, not none."""
 
     account_ids: tuple[UUID, ...] = ()
+
+
+@dataclass(frozen=True)
+class Pending:
+    """An unfinished task: the clarification draft and its own account scope.
+
+    The active screen may belong to an older task and have a different scope. Keeping scope here
+    prevents a pending query from inheriting that screen's account filter or losing its own. The
+    opaque id lets a later turn resume the task the person named when several drafts are suspended.
+    """
+
+    missing: Missing
+    draft: PlanFields
+    scope: Scope = Scope()
+    # Equality compares the unfinished intent's content; routing uses task_id explicitly.
+    task_id: str = field(default_factory=lambda: uuid4().hex, compare=False)
+
+    def __post_init__(self) -> None:
+        try:
+            valid_id = UUID(hex=self.task_id).hex == self.task_id
+        except (TypeError, ValueError):
+            valid_id = False
+        if not valid_id:
+            raise InvalidValueError("pending task id must be an opaque UUID")
 
 
 @dataclass(frozen=True)
@@ -155,10 +179,24 @@ class PreviousFocus:
 
 @dataclass(frozen=True)
 class FocusHistoryEntry:
-    """A prior answered focus and the account selection that produced it."""
+    """A prior answered task and the account selection that produced it."""
 
     focus: Focus
     scope: Scope
+    # Stable while this entry is in history. The model can resume a named task without guessing
+    # which relative position the person meant; equality still deduplicates identical focus/scope.
+    task_id: str = field(default="", compare=False)
+
+    def __post_init__(self) -> None:
+        if not self.task_id:
+            # DialogueState fills a restart-stable, conversation-scoped id during migration.
+            return
+        try:
+            valid_id = UUID(hex=self.task_id).hex == self.task_id
+        except (TypeError, ValueError):
+            valid_id = False
+        if not valid_id:
+            raise InvalidValueError("focus task id must be an opaque UUID")
 
 
 @dataclass(frozen=True)
@@ -203,6 +241,7 @@ class FinancialArtifact:
     result_version: int = 1
     comparison: ComparisonPlan | None = None
     comparison_groups: tuple[tuple[Group, ...], tuple[Group, ...]] | None = None
+    comparison_values: tuple[int, int] | None = None
     result_kind: ResultKind = ResultKind.SCALAR
     status: ArtifactStatus = ArtifactStatus.VERIFIED
     source: ArtifactSource = ArtifactSource.BANKING_API
@@ -222,11 +261,60 @@ class FinancialArtifact:
             raise ValueError("financial comparison artifact exceeds its bounded result size")
         if (self.comparison is None) != (self.comparison_groups is None):
             raise ValueError("comparison plan and aggregates must be stored together")
+        if self.comparison_values is not None and self.comparison is None:
+            raise ValueError("comparison values need a comparison plan")
+        if self.comparison_values is not None and (
+            len(self.comparison_values) != 2
+            or any(
+                isinstance(value, bool) or not isinstance(value, int)
+                for value in self.comparison_values
+            )
+        ):
+            raise ValueError("comparison values must contain two integer sides")
+
+
+@dataclass(frozen=True)
+class MovementListArtifact:
+    """A bounded chart-ready summary of one bank-returned movement page.
+
+    It retains grouped labels and amounts, never ledger rows, descriptions, or transaction ids.
+    The title and count keep the scope honest: this visual describes the displayed page, not every
+    movement matching a wider query.
+    """
+
+    dataset: VisualDataset
+    currency: str
+    movement_count: int
+    group_by: GroupBy
+    result_version: int
+    query_id: str
+    artifact_id: str
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.movement_count <= MAX_SUPPORTING_MOVEMENTS or self.result_version < 1:
+            raise ValueError("movement visual artifact has invalid count or version")
+        if len(self.dataset.rows) > MAX_SUPPORTING_MOVEMENTS or any(
+            not row.dimension.strip()
+            or len(row.dimension) > 256
+            or isinstance(row.value_minor, bool)
+            or not isinstance(row.value_minor, int)
+            for row in self.dataset.rows
+        ):
+            raise ValueError("movement visual artifact exceeds its bounded result size")
+        if not self.dataset.rows or self.dataset.metric != "SUM":
+            raise ValueError("movement visual artifact requires summarized amount rows")
+        if not self.currency.strip():
+            raise ValueError("movement visual artifact requires a currency")
+        if self.group_by not in {GroupBy.CATEGORY, GroupBy.MERCHANT}:
+            raise ValueError("movement visual artifact needs a supported ledger dimension")
 
 
 @dataclass(frozen=True)
 class ActiveVisual:
-    """The latest verified visual over an aggregate result, with explicit lineage/versioning."""
+    """The latest verified visual over a persisted result artifact, with explicit lineage.
+
+    Versions bind edits to the exact source result.
+    """
 
     result_version: int
     version: int
@@ -292,8 +380,8 @@ class PaymentConfirmationPending:
     """
 
     preview: PaymentPreview
-    # Opaque LangGraph workflow handle. It identifies the durable pause, never authorizes a payment;
-    # the exact preview and the bank command remain the authority when a reply resumes it.
+    # Stable conversation workflow identity, independent from LangGraph checkpoint threads. It
+    # never authorizes a payment; the exact preview and bank command remain authoritative.
     workflow_id: str | None = None
     # The user-supplied, bank-grounded fields that produced this preview. Retaining the draft lets
     # the planner interpret a later correction without asking the user to repeat the payee or note.
@@ -310,24 +398,78 @@ class DialogueState:
     version: int = 0
     focus: Focus | None = None
     pending: Pending | None = None
+    # Clarifications belong to tasks, not to the conversation's single current focus. Keep
+    # bounded suspended drafts when a semantically new task takes the floor; when full, the
+    # transition refuses a new task instead of evicting one. The interpreter must name a task ID
+    # when the user returns to one, so recency never chooses the resumed goal.
+    suspended_pending: tuple[Pending, ...] = ()
     scope: Scope = Scope()
     turns: tuple[DialogueTurn, ...] = ()
     active_artifact: FinancialArtifact | None = None
+    active_movement_artifact: MovementListArtifact | None = None
     active_visual: ActiveVisual | None = None
     payment: PaymentWorkflow | None = None
     own_transfer: OwnTransferDraftPending | None = None
     previous_focus: PreviousFocus | None = None
     focus_history: tuple[FocusHistoryEntry, ...] = ()
 
-    MAX_FOCUS_HISTORY: ClassVar[int] = 8
+    # Keep enough answered tasks for the product's 10–20 turn banking sessions while still
+    # bounding both the canonical payload and the planner context.
+    MAX_FOCUS_HISTORY: ClassVar[int] = 16
+    MAX_SUSPENDED_PENDING: ClassVar[int] = 8
 
-    # What bounds the state the interpreter's prompt carries.
-    MAX_TURNS: ClassVar[int] = 8
+    # Recent utterances are clipped before entering the interpreter prompt. Keep enough for a
+    # 10–20 turn banking session while the canonical typed state remains the source of truth.
+    MAX_TURNS: ClassVar[int] = 16
 
     def __post_init__(self) -> None:
+        history = tuple(
+            entry
+            if entry.task_id
+            else replace(
+                entry,
+                task_id=_migrated_focus_task_id(self.conversation_id, entry),
+            )
+            for entry in self.focus_history
+        )
+        if history != self.focus_history:
+            object.__setattr__(self, "focus_history", history)
         if len(self.focus_history) > self.MAX_FOCUS_HISTORY:
             raise ValueError("focus history exceeds its bounded size")
+        if len(self.suspended_pending) > self.MAX_SUSPENDED_PENDING:
+            raise ValueError("suspended clarification history exceeds its bounded size")
+        task_ids = [task.task_id for task in self.suspended_pending]
+        task_ids.extend(task.task_id for task in self.focus_history)
+        if self.pending is not None:
+            task_ids.append(self.pending.task_id)
+        if len(task_ids) != len(set(task_ids)):
+            raise InvalidValueError("unfinished conversation tasks must have unique ids")
 
     def remembered(self, turn: DialogueTurn) -> "DialogueState":
         """This state with `turn` added, keeping only the last MAX_TURNS."""
         return replace(self, turns=(*self.turns, turn)[-self.MAX_TURNS :])
+
+
+def _migrated_focus_task_id(conversation_id: UUID, entry: FocusHistoryEntry) -> str:
+    """Derive an old entry's id from its typed data, not Python's display representation.
+
+    The versioned canonical JSON keeps a checkpoint's task selector stable across process restarts
+    and harmless changes to dataclass ``repr`` output. UUIDs and dates are serialized as strings;
+    StrEnum values remain their stable wire values.
+    """
+    identity = {
+        "focus_type": f"{type(entry.focus).__module__}.{type(entry.focus).__qualname__}",
+        "focus": asdict(entry.focus),
+        "scope": asdict(entry.scope),
+    }
+    canonical = json.dumps(
+        identity,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return uuid5(
+        NAMESPACE_URL,
+        f"finguard:focus-task:v1:{conversation_id}:{canonical}",
+    ).hex

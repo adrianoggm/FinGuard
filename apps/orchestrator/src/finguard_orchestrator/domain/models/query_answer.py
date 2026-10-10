@@ -10,12 +10,14 @@ decision that depends on the currency, and a float in between is how cents go mi
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from uuid import UUID
 
 from finguard_orchestrator.domain.enums import (
     CounterpartyType,
     ReceiptCategory,
     TransactionType,
 )
+from finguard_orchestrator.domain.value_objects.movement_list_plan import MovementCursor
 
 
 @dataclass(frozen=True)
@@ -79,3 +81,24 @@ class QueryAnswer:
         matched" read the same to a user and mean different things — the second is
         usually a plan that was wrong."""
         return self.movement_count == 0
+
+
+@dataclass(frozen=True)
+class MovementListAnswer:
+    """A paginated row result; unlike QueryAnswer it has no aggregate total or period."""
+
+    account_id: UUID
+    movements: tuple[Movement, ...]
+    has_more: bool
+    next_cursor: MovementCursor | None = None
+
+    def __post_init__(self) -> None:
+        if self.has_more != (self.next_cursor is not None):
+            raise ValueError("a continuing movement page must include exactly one cursor")
+        if self.next_cursor is not None and self.movements:
+            last = self.movements[-1]
+            if (
+                last.transaction_id != str(self.next_cursor.transaction_id)
+                or last.occurred_at != self.next_cursor.occurred_at
+            ):
+                raise ValueError("movement cursor must identify the final returned row")

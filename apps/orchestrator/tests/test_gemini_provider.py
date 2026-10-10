@@ -1,5 +1,6 @@
 """Gemini's OpenAI-compatible registration and FinGuard's schema boundary."""
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -47,6 +48,8 @@ class _Endpoint:
     request: dict[str, Any] | None = None
     responses: list[_Response] | None = None
     calls: int = 0
+    starts: list[float] | None = None
+    models: list[str] | None = None
 
 
 @pytest.fixture
@@ -66,6 +69,12 @@ def endpoint(monkeypatch: pytest.MonkeyPatch) -> _Endpoint:
         async def post(self, url: str, *, json: Any, headers: Any) -> _Response:
             seen.request = {"url": url, "json": json, "headers": headers}
             seen.calls += 1
+            if seen.starts is None:
+                seen.starts = []
+            seen.starts.append(asyncio.get_running_loop().time())
+            if seen.models is None:
+                seen.models = []
+            seen.models.append(json["model"])
             return (seen.responses or [_Response()]).pop(0)
 
     monkeypatch.setattr(openai_compatible_provider.httpx, "AsyncClient", FakeClient)
@@ -80,6 +89,63 @@ def test_gemini_is_an_openai_compatible_provider() -> None:
     assert (
         provider._readiness_url == "https://generativelanguage.googleapis.com/v1beta/openai/models"
     )
+    assert provider._min_request_interval_seconds == 12.0
+
+
+async def test_gemini_spaces_concurrent_generation_requests(endpoint: _Endpoint) -> None:
+    provider = GeminiProvider(api_key=KEY, min_request_interval_seconds=0.1)
+
+    async def ask() -> str:
+        return await provider.complete(
+            "hello", model="gemini-test", temperature=0, max_output_tokens=12
+        )
+
+    await asyncio.gather(ask(), ask(), ask())
+
+    assert endpoint.starts is not None
+    assert len(endpoint.starts) == 3
+    assert all(
+        later - earlier >= 0.08
+        for earlier, later in zip(endpoint.starts, endpoint.starts[1:], strict=False)
+    ), endpoint.starts
+
+
+async def test_gemini_fails_over_on_429_and_keeps_the_working_model(endpoint: _Endpoint) -> None:
+    endpoint.responses = [_Response(429), _Response(), _Response()]
+    provider = GeminiProvider(
+        api_key=KEY,
+        min_request_interval_seconds=0,
+        fallback_models=("gemini-3.6-flash", "gemini-3.7-flash"),
+    )
+
+    for _ in range(2):
+        await provider.complete(
+            "hello", model="gemini-3.5-flash-lite", temperature=0, max_output_tokens=12
+        )
+
+    assert endpoint.models == [
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.6-flash",
+    ]
+
+
+async def test_gemini_does_not_fail_over_for_a_non_rate_limit_error(
+    endpoint: _Endpoint,
+) -> None:
+    endpoint.responses = [_Response(400, body={"error": {"message": "invalid request"}})]
+    provider = GeminiProvider(
+        api_key=KEY,
+        min_request_interval_seconds=0,
+        fallback_models=("gemini-3.6-flash",),
+    )
+
+    with pytest.raises(ProviderFailedError, match="HTTP 400"):
+        await provider.complete(
+            "hello", model="gemini-3.5-flash-lite", temperature=0, max_output_tokens=12
+        )
+
+    assert endpoint.models == ["gemini-3.5-flash-lite"]
 
 
 def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None:
@@ -96,6 +162,7 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
 
     assert names == {
         "ask",
+        "ask_correction",
         "patch",
         "compare",
         "compare_previous",
@@ -106,6 +173,9 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
         "restore_previous",
         "balance",
         "list_contacts",
+        "list_categories",
+        "list_movements",
+        "patch_movement_list",
         "smalltalk",
         "delegate",
         "create_visualization",
@@ -140,6 +210,26 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
 
     own_transfer = operations["prepare_own_transfer"]
     assert own_transfer == {"anyOf": [{"type": "string"}, {"type": "null"}]}
+
+    movement_list = operations["list_movements"]
+    movement_fields = movement_list["properties"]
+    assert set(movement_fields) == {
+        "direction",
+        "accounts",
+        "categories",
+        "merchant_terms",
+        "page_size",
+        "continue_current",
+    }
+    assert movement_fields["direction"]["enum"] == ["EXPENSE", "INCOME", "ALL"]
+    assert movement_fields["accounts"] == {"type": "array", "items": {"type": "string"}}
+    assert movement_fields["merchant_terms"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+    assert movement_fields["page_size"] == {"type": "integer"}
+    assert movement_fields["continue_current"] == {"type": "boolean"}
+    assert movement_list["additionalProperties"] is False
 
     patch = operations["patch"]
     assert patch["properties"]["target"]["enum"] == ["focus", "earlier", "latest", "pending"]
@@ -183,7 +273,7 @@ async def test_complete_sends_gemini_schema_and_bearer_key(
     sent_schema = endpoint.request["json"]["response_format"]["json_schema"]["schema"]
     assert "$defs" not in sent_schema
     operations = sent_schema["properties"]["operations"]["items"]["anyOf"]
-    assert len(operations) == 18
+    assert len(operations) == 21
     patch = next(v["properties"]["patch"] for v in operations if "patch" in v["properties"])
     assert "changes" in patch["properties"]
 
@@ -230,7 +320,7 @@ async def test_complete_uses_google_retry_info_for_a_short_429(
         _Response(),
     ]
     monkeypatch.setattr(openai_compatible_provider.asyncio, "sleep", no_sleep)
-    answer = await GeminiProvider(api_key=KEY).complete(
+    answer = await GeminiProvider(api_key=KEY, min_request_interval_seconds=0).complete(
         "Buenas tardes",
         model="gemini-3.5-flash-lite",
         temperature=0,
@@ -266,7 +356,7 @@ async def test_complete_does_not_retry_daily_quota_without_short_retry_info(
     ]
 
     with pytest.raises(ProviderFailedError):
-        await GeminiProvider(api_key=KEY).complete(
+        await GeminiProvider(api_key=KEY, fallback_models=()).complete(
             "Buenas tardes",
             model="gemini-3.5-flash-lite",
             temperature=0,

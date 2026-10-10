@@ -12,14 +12,20 @@ generation-time decoding to the existing typed reader. Non-operation schemas, su
 query-planning schema, pass through unchanged.
 """
 
+import asyncio
+import logging
+import time
 from typing import Any, Final
 
+from finguard_orchestrator.domain.errors import AnswerRefusedError, ProviderFailedError
 from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
     OpenAiCompatibleProvider,
 )
 
 GEMINI: Final = "gemini"
 _DEFAULT_BASE_URL: Final = "https://generativelanguage.googleapis.com/v1beta/openai"
+_RATE_LIMIT_COOLDOWN_SECONDS: Final = 60.0
+logger = logging.getLogger(__name__)
 
 
 class GeminiProvider(OpenAiCompatibleProvider):
@@ -31,6 +37,13 @@ class GeminiProvider(OpenAiCompatibleProvider):
         api_key: str,
         base_url: str = _DEFAULT_BASE_URL,
         timeout_seconds: float = 60.0,
+        min_request_interval_seconds: float = 12.0,
+        shared_request_pacer: Any | None = None,
+        fallback_models: tuple[str, ...] = (
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+            "gemini-3.8-flash",
+        ),
     ) -> None:
         super().__init__(
             name=GEMINI,
@@ -38,7 +51,13 @@ class GeminiProvider(OpenAiCompatibleProvider):
             base_url=base_url,
             timeout_seconds=timeout_seconds,
             reasoning_headroom=0,
+            min_request_interval_seconds=min_request_interval_seconds,
+            shared_request_pacer=shared_request_pacer,
         )
+        self._fallback_models = tuple(dict.fromkeys(model for model in fallback_models if model))
+        self._active_model: str | None = None
+        self._model_lock = asyncio.Lock()
+        self._rate_limited_until: dict[str, float] = {}
 
     async def complete(
         self,
@@ -51,13 +70,63 @@ class GeminiProvider(OpenAiCompatibleProvider):
     ) -> str:
         if schema is not None:
             schema = _shallow_operations_schema(schema)
-        return await super().complete(
-            prompt,
-            model=model,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            schema=schema,
-        )
+        # One provider instance serves planner, investigator and visual-planner calls. Keep a
+        # sticky active model after a 429 so the next turn does not spend another request on the
+        # rate-limited primary. A retry only ever produces typed model output; deterministic graph
+        # validation still runs before banking can execute any operation.
+        async with self._model_lock:
+            preferred = self._active_model or model
+            order = [preferred]
+            order.extend(candidate for candidate in self._fallback_models if candidate not in order)
+            now = time.monotonic()
+            order = [
+                candidate
+                for candidate in order
+                if self._rate_limited_until.get(candidate, 0.0) <= now
+            ]
+            if not order:
+                raise ProviderFailedError(
+                    GEMINI,
+                    "HTTP 429 (all configured models are in the local rate-limit cooldown)",
+                )
+            for index, candidate in enumerate(order):
+                try:
+                    answer = await super().complete(
+                        prompt,
+                        model=candidate,
+                        temperature=temperature,
+                        max_output_tokens=max_output_tokens,
+                        schema=schema,
+                    )
+                except AnswerRefusedError:
+                    raise
+                except ProviderFailedError as failed:
+                    if not failed.reason.startswith("HTTP 429"):
+                        raise
+                    # Avoid retrying a model that just rejected a request on every subsequent
+                    # turn. The provider may omit Retry-After for exhausted quotas; a conservative
+                    # local cooldown prevents a rapid retry storm while other configured models
+                    # remain eligible. Every retry/failover still passes through the shared pacer.
+                    self._rate_limited_until[candidate] = (
+                        time.monotonic() + _RATE_LIMIT_COOLDOWN_SECONDS
+                    )
+                    if index == len(order) - 1:
+                        raise
+                    next_model = order[index + 1]
+                    logger.warning(
+                        "llm.model_failover provider=gemini from=%s to=%s reason=rate_limit",
+                        candidate,
+                        next_model,
+                    )
+                    continue
+                if candidate != preferred:
+                    logger.warning(
+                        "llm.model_failover_activated provider=gemini model=%s",
+                        candidate,
+                    )
+                self._active_model = candidate
+                return answer
+            raise AssertionError("Gemini fallback order must contain at least one model")
 
 
 def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -88,19 +157,22 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
         kind = field.get("type") if isinstance(field, dict) else None
         nullable_branches = field.get("anyOf", []) if isinstance(field, dict) else []
         if isinstance(nullable_branches, list) and nullable_branches:
-            primitive: list[dict[str, Any]] = []
+            reduced: list[dict[str, Any]] = []
             for choice in nullable_branches:
                 resolved = resolve(choice)
                 choice_type = resolved.get("type") if isinstance(resolved, dict) else None
+                if choice_type == "array":
+                    reduced.append(simple_value(resolved))
+                    continue
                 if choice_type not in {"string", "integer", "number", "boolean", "null"}:
-                    primitive = []
+                    reduced = []
                     break
                 item: dict[str, Any] = {"type": choice_type}
                 if isinstance(resolved.get("enum"), list):
                     item["enum"] = resolved["enum"]
-                primitive.append(item)
-            if primitive:
-                return {"anyOf": primitive}
+                reduced.append(item)
+            if reduced:
+                return {"anyOf": reduced}
         if not isinstance(kind, str):
             enum_choices: list[Any] = []
             variants = field.get("anyOf", []) if isinstance(field, dict) else []
@@ -164,8 +236,25 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
         }
 
     def window_value(node: Any) -> dict[str, Any]:
-        window = resolve(node)
-        branches = window.get("anyOf", []) if isinstance(window, dict) else []
+        nullable = False
+
+        def tagged_branches(source: Any) -> list[Any]:
+            nonlocal nullable
+            resolved = resolve(source)
+            if not isinstance(resolved, dict):
+                return []
+            if resolved.get("type") == "null":
+                nullable = True
+                return []
+            union = resolved.get("anyOf")
+            if not isinstance(union, list):
+                return [source]
+            branches: list[Any] = []
+            for branch in union:
+                branches.extend(tagged_branches(branch))
+            return branches
+
+        branches = tagged_branches(node)
         properties: dict[str, dict[str, Any]] = {}
         for branch in branches:
             variant = resolve(branch)
@@ -195,11 +284,12 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 }
             else:
                 properties[name] = simple_value(value)
-        return {
+        value = {
             "type": "object",
             "properties": properties,
             "additionalProperties": False,
         }
+        return {"anyOf": [value, {"type": "null"}]} if nullable else value
 
     plan_schema = field_items()
 
@@ -246,6 +336,32 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 "type": "object",
                 "properties": {key: simple_value(child) for key, child in properties.items()},
                 "required": list(properties),
+                "additionalProperties": False,
+            }
+        elif name == "list_movements" and isinstance(field, dict):
+            # This is intentionally one level deeper than the other operation bodies: without
+            # these properties Gemini emits `{}`, and the typed reader's defaults silently turn
+            # a scoped/page-size request into an unfiltered default page.
+            nested_properties = field.get("properties", {})
+            if "list_movements" in nested_properties:
+                nested = resolve(nested_properties["list_movements"])
+                nested_properties = nested.get("properties", {}) if isinstance(nested, dict) else {}
+            value = {
+                "type": "object",
+                "properties": {
+                    key: window_value(child) if key == "window" else simple_value(child)
+                    for key, child in nested_properties.items()
+                },
+                "additionalProperties": False,
+            }
+        elif name == "patch_movement_list" and isinstance(field, dict):
+            patch_properties = field.get("properties", {})
+            value = {
+                "type": "object",
+                "properties": {
+                    key: window_value(child) if key == "window" else simple_value(child)
+                    for key, child in patch_properties.items()
+                },
                 "additionalProperties": False,
             }
         elif kind == "object" and not field.get("properties"):

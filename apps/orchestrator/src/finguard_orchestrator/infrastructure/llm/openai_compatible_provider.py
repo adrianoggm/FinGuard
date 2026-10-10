@@ -70,6 +70,8 @@ _TRANSIENT_RETRY_DELAY_SECONDS: Final = 0.5
 class OpenAiCompatibleProvider:
     """Hosted inference over the OpenAI chat-completions protocol. Needs a key and egress."""
 
+    reports_provider_requests = True
+
     def __init__(
         self,
         *,
@@ -79,6 +81,8 @@ class OpenAiCompatibleProvider:
         timeout_seconds: float,
         reasoning_headroom: int,
         readiness_url: str | None = None,
+        min_request_interval_seconds: float = 0.0,
+        shared_request_pacer: Any | None = None,
     ) -> None:
         """`name` is what a catalogue entry and the planner setting say, and it names the vendor.
 
@@ -102,6 +106,43 @@ class OpenAiCompatibleProvider:
         self.timeout_seconds = timeout_seconds
         self.reasoning_headroom = reasoning_headroom
         self._readiness_url = readiness_url or f"{self._base_url}/models"
+        self._min_request_interval_seconds = max(0.0, min_request_interval_seconds)
+        self._shared_request_pacer = shared_request_pacer
+        self._request_lock = asyncio.Lock()
+        self._last_request_started: float | None = None
+
+    async def _post(self, client: Any, payload: dict[str, Any]) -> Any:
+        """Serialize and pace generation requests through local or shared provider coordination.
+
+        Every attempt, including retry and model failover, consumes a slot. The local lock protects
+        one provider instance; Gemini additionally reserves shared Postgres slots across replicas.
+        """
+        async with self._request_lock:
+            # Import locally so the generic provider remains usable without request middleware.
+            # The tally is ContextVar-backed and shared by child tasks spawned for this request.
+            from finguard_orchestrator.infrastructure.llm.counting_provider import (
+                record_provider_request,
+            )
+
+            loop = asyncio.get_running_loop()
+            pacer = self._shared_request_pacer
+            if pacer is not None and pacer.active and await pacer.wait_for_slot():
+                self._last_request_started = loop.time()
+                record_provider_request(str(payload.get("model", "unknown")), self.name)
+                return await client.post(
+                    f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
+                )
+            if self._last_request_started is not None and self._min_request_interval_seconds:
+                wait = self._min_request_interval_seconds - (
+                    loop.time() - self._last_request_started
+                )
+                if wait > 0:
+                    await asyncio.sleep(wait)
+            self._last_request_started = loop.time()
+            record_provider_request(str(payload.get("model", "unknown")), self.name)
+            return await client.post(
+                f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
+            )
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
@@ -142,15 +183,13 @@ class OpenAiCompatibleProvider:
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(
-                    f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
-                )
+                response = await self._post(client, payload)
                 if (wait := _short_rate_wait(response)) is not None:
+                    _record_provider_failure(self.name, "rate_limited")
                     await asyncio.sleep(wait)
-                    response = await client.post(
-                        f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
-                    )
+                    response = await self._post(client, payload)
                 elif 500 <= response.status_code < 600:
+                    _record_provider_failure(self.name, "upstream_5xx")
                     # Provider capacity and gateway errors are often transient. Retry this
                     # read-only model request once; never retry arbitrary 4xx or financial tools.
                     logger.warning(
@@ -159,9 +198,7 @@ class OpenAiCompatibleProvider:
                         response.status_code,
                     )
                     await asyncio.sleep(_TRANSIENT_RETRY_DELAY_SECONDS)
-                    response = await client.post(
-                        f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
-                    )
+                    response = await self._post(client, payload)
                 response.raise_for_status()
                 body = response.json()
         except httpx.HTTPStatusError as exc:
@@ -170,6 +207,7 @@ class OpenAiCompatibleProvider:
             # rule that nothing a person typed reaches a log file does not stop at our own logger.
             status = exc.response.status_code
             if status == 429:
+                _record_provider_failure(self.name, "rate_limited")
                 limits = _rate_limit_headers(exc.response)
                 provider_code, quota_ids = _rate_limit_details(exc.response)
                 logger.warning(
@@ -193,25 +231,44 @@ class OpenAiCompatibleProvider:
                 reason = f"HTTP {status}" + (f" ({details})" if details else "")
                 raise ProviderFailedError(self.name, reason) from None
             if (refused := _refused_generation(exc.response)) is not None:
+                _record_provider_failure(self.name, "schema_refusal")
                 # Groq's strict mode checks the answer after generating it: the model did answer,
                 # in the wrong shape, and the caller may ask once more (ruling R31). What it wrote
                 # travels on the error, never in its message.
                 raise AnswerRefusedError(
                     self.name, f"HTTP {status} json_validate_failed", generation=refused or None
                 ) from None
+            _record_provider_failure(self.name, "upstream_5xx" if status >= 500 else "upstream_4xx")
             raise ProviderFailedError(self.name, f"HTTP {status}") from exc
         except httpx.TimeoutException as exc:
+            _record_provider_failure(self.name, "timeout")
             raise ProviderFailedError(
                 self.name, f"timed out after {self.timeout_seconds}s"
             ) from exc
         except httpx.HTTPError as exc:
+            _record_provider_failure(self.name, "transport")
             # DNS, TLS, no route. All the same to the caller: this provider cannot answer, and the
             # fallback policy decides what that means.
             raise ProviderFailedError(self.name, f"cannot reach {self._base_url}: {exc}") from exc
         except ValueError as exc:
+            _record_provider_failure(self.name, "malformed_response")
             raise ProviderFailedError(self.name, f"malformed response: {exc}") from exc
 
-        return _answer_in(body, self.name)
+        answer = _answer_in(body, self.name)
+        from finguard_orchestrator.infrastructure.llm.counting_provider import (
+            record_successful_model,
+            record_usage,
+        )
+
+        used_model = str(payload.get("model", model))
+        record_successful_model(used_model)
+        usage = body.get("usage") if isinstance(body, dict) else None
+        if isinstance(usage, dict):
+            record_usage(
+                _usage_count(usage.get("prompt_tokens", usage.get("input_tokens"))),
+                _usage_count(usage.get("completion_tokens", usage.get("output_tokens"))),
+            )
+        return answer
 
     async def ping(self) -> bool:
         """Whether the endpoint answers *and* the key is accepted.
@@ -376,3 +433,17 @@ def _answer_in(body: Any, provider: str) -> str:
             raise ProviderFailedError(provider, "output budget exhausted before final answer")
         raise ProviderFailedError(provider, "empty answer")
     return content
+
+
+def _usage_count(value: Any) -> int | None:
+    """Accept only nonnegative integer token counters from provider usage metadata."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _record_provider_failure(provider: str, category: str) -> None:
+    """Keep attempt telemetry separate from response bodies, prompts and provider details."""
+    from finguard_orchestrator.infrastructure.llm.counting_provider import (
+        record_provider_failure,
+    )
+
+    record_provider_failure(provider, category)

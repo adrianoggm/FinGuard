@@ -189,10 +189,11 @@ class Metric(StrEnum):
 class ResultKind(StrEnum):
     """The user's requested shape of answer, independent of the calculation's metric.
 
-    COUNT is a measure; RECORDS is a collection of bank movements. Keeping these separate prevents
-    a request to show transactions from being answered with only a count. COMPARISON is represented
-    by the pair plan today, but remains in the closed result vocabulary so response artifacts have
-    one explicit discriminator across query families.
+    COUNT is a measure; RECORDS is the compatibility discriminator for older stored query plans.
+    New conversational ledger lists use the separate paginated movement-list contract, so they
+    cannot be mistaken for an aggregate. COMPARISON is represented by the pair plan today, but
+    remains in the closed result vocabulary so response artifacts have one explicit discriminator
+    across query families.
     """
 
     SCALAR = "SCALAR"

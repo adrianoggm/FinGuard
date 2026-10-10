@@ -19,8 +19,17 @@ import httpx2 as httpx
 
 from finguard_orchestrator.domain.enums import CounterpartyType, ReceiptCategory, TransactionType
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
-from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.query_answer import (
+    Group,
+    Movement,
+    MovementListAnswer,
+    QueryAnswer,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.movement_list_plan import (
+    MovementCursor,
+    MovementListPlan,
+)
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.banking.client import banking_client
 
@@ -131,6 +140,112 @@ class HttpFinancialQuery:
             # The currency belongs to the answer rather than the row, so it is attached here. The
             # assistant used to write "EUR" beside every ranked movement because nothing carried it.
             return movement_from_body(found, currency=answered.get("currency"))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise BankingUnavailableError(f"unreadable answer: {exc}") from exc
+
+    async def list_movements(
+        self,
+        plan: MovementListPlan,
+        *,
+        account_id: UUID,
+        today: date,
+        reporting_timezone: str,
+    ) -> MovementListAnswer:
+        body: dict[str, Any] = {
+            "direction": plan.direction.value,
+            "pageSize": plan.page_size,
+            "reportingTimezone": reporting_timezone,
+            "includeInternal": plan.include_internal,
+            "acrossAccounts": plan.across_accounts,
+            "categories": list(plan.categories),
+            "merchantTerms": list(plan.merchant_terms),
+            **(
+                {"accountIds": [str(item) for item in plan.account_ids]} if plan.account_ids else {}
+            ),
+        }
+        if plan.date_from is not None and plan.date_to is not None:
+            body["dateRange"] = {"from": plan.date_from.isoformat(), "to": plan.date_to.isoformat()}
+        elif plan.period is not None:
+            period: dict[str, Any] = {
+                "period": plan.period.period.value,
+                "reference": (plan.period_reference or today).isoformat(),
+                "timezone": reporting_timezone,
+            }
+            if plan.period.n is not None:
+                period["n"] = plan.period.n
+            body["period"] = period
+        if plan.cursor is not None:
+            body["cursor"] = {
+                "occurredAt": plan.cursor.occurred_at.isoformat(),
+                "transactionId": str(plan.cursor.transaction_id),
+            }
+        try:
+            async with banking_client(timeout=self.timeout_seconds) as client:
+                response = await client.post(
+                    f"{self._base_url}/v1/accounts/{account_id}/movements/list", json=body
+                )
+        except httpx.HTTPError as exc:
+            raise BankingUnavailableError(f"{self._base_url}: {exc}") from exc
+        if response.status_code == 422 or 400 <= response.status_code < 500:
+            raise QueryRejectedError(f"HTTP {response.status_code}: {_detail(response)}")
+        if response.status_code >= 500:
+            raise BankingUnavailableError(f"HTTP {response.status_code}: {_detail(response)}")
+        try:
+            payload = response.json()
+            if str(payload["accountId"]) != str(account_id):
+                raise ValueError("answer identifies a different account")
+            rows = tuple(
+                movement_from_body(row, currency=row["currency"]) for row in payload["movements"]
+            )
+            if len(rows) > plan.page_size:
+                raise ValueError("answer exceeds the requested movement page size")
+            previous_key: tuple[datetime, UUID] | None = None
+            seen_ids: set[UUID] = set()
+            for movement in rows:
+                if movement.transaction_id is None:
+                    raise ValueError("movement list row has no transaction id")
+                movement_id = UUID(movement.transaction_id)
+                if movement_id in seen_ids:
+                    raise ValueError("movement list contains a duplicate transaction")
+                seen_ids.add(movement_id)
+                key = (movement.occurred_at, movement_id)
+                if previous_key is not None:
+                    previous_at, previous_id = previous_key
+                    current_at, current_id = key
+                    if not (
+                        previous_at > current_at
+                        or (previous_at == current_at and previous_id < current_id)
+                    ):
+                        raise ValueError("movement list is not in stable newest-first order")
+                previous_key = key
+
+            has_more = payload["hasMore"]
+            if not isinstance(has_more, bool):
+                raise ValueError("hasMore must be a boolean")
+            cursor = payload.get("nextCursor")
+            next_cursor = (
+                MovementCursor(_moment(cursor["occurredAt"]), UUID(cursor["transactionId"]))
+                if cursor is not None
+                else None
+            )
+            if has_more != (next_cursor is not None):
+                raise ValueError("hasMore and nextCursor disagree")
+            if next_cursor is not None:
+                if not rows:
+                    raise ValueError("a continuing movement page cannot be empty")
+                last = rows[-1]
+                if (
+                    last.transaction_id is None
+                    or UUID(last.transaction_id) != next_cursor.transaction_id
+                    or last.occurred_at != next_cursor.occurred_at
+                ):
+                    raise ValueError("nextCursor must identify the last returned movement")
+            return MovementListAnswer(
+                account_id=account_id,
+                movements=rows,
+                has_more=has_more,
+                next_cursor=next_cursor,
+            )
         except (ValueError, KeyError, TypeError) as exc:
             raise BankingUnavailableError(f"unreadable answer: {exc}") from exc
 

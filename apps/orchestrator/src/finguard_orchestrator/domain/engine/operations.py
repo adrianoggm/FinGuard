@@ -7,13 +7,24 @@ means throughout: not said, and therefore kept.
 
 from dataclasses import dataclass
 from typing import Literal
+from uuid import UUID
 
-from finguard_orchestrator.domain.constants import MAX_PAYMENT_MINOR, MAX_RECIPIENT_NAME
+from finguard_orchestrator.domain.constants import (
+    MAX_CATEGORIES,
+    MAX_MERCHANT_LENGTH,
+    MAX_MERCHANTS,
+    MAX_PAYMENT_MINOR,
+    MAX_RECIPIENT_NAME,
+    MAX_SELECTED_ACCOUNTS,
+    MAX_SUPPORTING_MOVEMENTS,
+)
 
 # `PlanFields` lives with the state, whose pending question holds one; it is named here too because
 # it is what every operation carries.
 from finguard_orchestrator.domain.engine.state import DialogueState, Measure, Missing, PlanFields
+from finguard_orchestrator.domain.enums import Direction
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, RelativePeriod
 
 __all__ = [
     "Ask",
@@ -25,6 +36,8 @@ __all__ = [
     "InvestigateComparison",
     "ListContacts",
     "ListCategories",
+    "ListMovements",
+    "PatchMovementList",
     "AskCorrection",
     "Delegate",
     "Operation",
@@ -33,6 +46,7 @@ __all__ = [
     "PrepareTransfer",
     "PrepareOwnTransfer",
     "PlanFields",
+    "ResumeFocus",
     "Reset",
     "RestorePrevious",
     "SelectOperand",
@@ -49,10 +63,22 @@ class Ask:
 
 @dataclass(frozen=True)
 class Patch:
-    """A correction. Only the fields `changes` names move; `target` says which plan they move on."""
+    """A correction. Only named fields move; task_id identifies a suspended draft when needed."""
 
-    target: Literal["focus", "earlier", "latest", "pending"]
+    target: Literal["focus", "earlier", "latest", "pending", "suspended"]
     changes: PlanFields
+    task_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.target == "suspended":
+            try:
+                valid_id = self.task_id is not None and UUID(hex=self.task_id).hex == self.task_id
+            except (TypeError, ValueError):
+                valid_id = False
+            if not valid_id:
+                raise InvalidValueError("resuming a suspended task requires its valid task_id")
+        elif self.task_id is not None:
+            raise InvalidValueError("task_id is only valid when resuming a suspended task")
 
 
 @dataclass(frozen=True)
@@ -113,6 +139,21 @@ class RestorePrevious:
 
 
 @dataclass(frozen=True)
+class ResumeFocus:
+    """Resume one named answered task from canonical focus history."""
+
+    task_id: str
+
+    def __post_init__(self) -> None:
+        try:
+            valid_id = UUID(hex=self.task_id).hex == self.task_id
+        except (TypeError, ValueError):
+            valid_id = False
+        if not valid_id:
+            raise InvalidValueError("resuming an answered task requires its valid task_id")
+
+
+@dataclass(frozen=True)
 class Balance:
     accounts: tuple[str, ...] = ()
 
@@ -125,6 +166,105 @@ class ListContacts:
 @dataclass(frozen=True)
 class ListCategories:
     """Read FinGuard's supported spending categories without changing the current query."""
+
+
+@dataclass(frozen=True)
+class ListMovements:
+    """Start a ledger-row query or continue its saved page sequence."""
+
+    # A generic request for "movements" includes both income and expenses. The planner must
+    # narrow the list only when the user names one direction.
+    direction: Direction = Direction.ALL
+    accounts: tuple[str, ...] = ()
+    categories: tuple[str, ...] = ()
+    merchant_terms: tuple[str, ...] = ()
+    window: RelativePeriod | AbsoluteRange | None = None
+    page_size: int | None = None
+    continue_current: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.direction, Direction):
+            raise InvalidValueError("movement list direction is unsupported")
+        if self.window is not None and not isinstance(self.window, (RelativePeriod, AbsoluteRange)):
+            raise InvalidValueError("movement list window is unsupported")
+        if self.page_size is not None and (
+            isinstance(self.page_size, bool)
+            or not isinstance(self.page_size, int)
+            or not 1 <= self.page_size <= MAX_SUPPORTING_MOVEMENTS
+        ):
+            raise InvalidValueError("movement page size must be between 1 and 100")
+        filters = (*self.accounts, *self.categories, *self.merchant_terms)
+        if any(not isinstance(item, str) or not item.strip() for item in filters):
+            raise InvalidValueError("movement list filters cannot be empty strings")
+        if len(self.accounts) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError("movement list has too many selected accounts")
+        if len(self.categories) > MAX_CATEGORIES or len(self.merchant_terms) > MAX_MERCHANTS:
+            raise InvalidValueError("movement list has too many filters")
+        if any(len(item) > MAX_MERCHANT_LENGTH for item in (*self.accounts, *self.merchant_terms)):
+            raise InvalidValueError("movement list name filters are too long")
+        if self.continue_current and (
+            self.accounts or self.categories or self.merchant_terms or self.window is not None
+        ):
+            raise InvalidValueError("continuing a movement list cannot change its filters")
+
+
+@dataclass(frozen=True)
+class PatchMovementList:
+    """Change only supplied fields on the visible ledger list; empty lists clear filters."""
+
+    direction: Direction | None = None
+    accounts: tuple[str, ...] | None = None
+    categories: tuple[str, ...] | None = None
+    merchant_terms: tuple[str, ...] | None = None
+    window: RelativePeriod | AbsoluteRange | None = None
+    clear_window: bool = False
+    page_size: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.direction is not None and not isinstance(self.direction, Direction):
+            raise InvalidValueError("movement list direction is unsupported")
+        if self.window is not None and not isinstance(self.window, (RelativePeriod, AbsoluteRange)):
+            raise InvalidValueError("movement list window is unsupported")
+        if self.page_size is not None and (
+            isinstance(self.page_size, bool)
+            or not isinstance(self.page_size, int)
+            or not 1 <= self.page_size <= MAX_SUPPORTING_MOVEMENTS
+        ):
+            raise InvalidValueError("movement page size must be between 1 and 100")
+        filters = (*(self.accounts or ()), *(self.categories or ()), *(self.merchant_terms or ()))
+        if any(not isinstance(item, str) or not item.strip() for item in filters):
+            raise InvalidValueError("movement list filters cannot be empty strings")
+        if len(self.accounts or ()) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError("movement list has too many selected accounts")
+        if (
+            len(self.categories or ()) > MAX_CATEGORIES
+            or len(self.merchant_terms or ()) > MAX_MERCHANTS
+        ):
+            raise InvalidValueError("movement list has too many filters")
+        if any(
+            len(item) > MAX_MERCHANT_LENGTH
+            for item in (*(self.accounts or ()), *(self.merchant_terms or ()))
+        ):
+            raise InvalidValueError("movement list name filters are too long")
+        if self.window is not None and self.clear_window:
+            raise InvalidValueError("movement list patch cannot set and clear its window")
+        if not isinstance(self.clear_window, bool):
+            raise InvalidValueError("clear_window must be a boolean")
+        if (
+            all(
+                value is None
+                for value in (
+                    self.direction,
+                    self.accounts,
+                    self.categories,
+                    self.merchant_terms,
+                    self.window,
+                    self.page_size,
+                )
+            )
+            and not self.clear_window
+        ):
+            raise InvalidValueError("movement list patch must change at least one field")
 
 
 @dataclass(frozen=True)
@@ -234,10 +374,13 @@ Operation = (
     | ChangeMeasure
     | SelectOperand
     | Reset
+    | ResumeFocus
     | RestorePrevious
     | Balance
     | ListContacts
     | ListCategories
+    | ListMovements
+    | PatchMovementList
     | AskCorrection
     | Clarify
     | Smalltalk

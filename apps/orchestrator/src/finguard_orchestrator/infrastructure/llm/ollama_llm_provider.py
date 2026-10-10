@@ -51,6 +51,7 @@ class OllamaLlmProvider:
     """Local inference. No API key, no network egress, no request leaves the machine."""
 
     name = "ollama"
+    reports_provider_requests = True
 
     def __init__(
         self,
@@ -107,6 +108,11 @@ class OllamaLlmProvider:
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                from finguard_orchestrator.infrastructure.llm.counting_provider import (
+                    record_provider_request,
+                )
+
+                record_provider_request(model, self.name)
                 response = await client.post(f"{self._base_url}/api/generate", json=payload)
                 response.raise_for_status()
                 body = response.json()
@@ -136,6 +142,16 @@ class OllamaLlmProvider:
         answer = body.get("response")
         if not isinstance(answer, str) or not answer.strip():
             raise ProviderFailedError(self.name, "empty answer")
+        from finguard_orchestrator.infrastructure.llm.counting_provider import (
+            record_successful_model,
+            record_usage,
+        )
+
+        record_successful_model(model)
+        record_usage(
+            _usage_count(body.get("prompt_eval_count")),
+            _usage_count(body.get("eval_count")),
+        )
         return answer
 
     async def ping(self) -> bool:
@@ -147,3 +163,7 @@ class OllamaLlmProvider:
                 return response.status_code == 200
         except httpx.HTTPError:
             return False
+
+
+def _usage_count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None

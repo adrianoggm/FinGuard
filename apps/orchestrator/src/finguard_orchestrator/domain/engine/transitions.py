@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Final, Literal, assert_never
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from finguard_orchestrator.domain.engine.grounding import Grounds, Unknown, ground
 from finguard_orchestrator.domain.engine.operations import (
@@ -27,13 +27,16 @@ from finguard_orchestrator.domain.engine.operations import (
     ComparePrevious,
     Delegate,
     InvestigateComparison,
+    ListMovements,
     Operation,
     Patch,
+    PatchMovementList,
     PlanFields,
     PrepareBizum,
     PrepareOwnTransfer,
     Reset,
     RestorePrevious,
+    ResumeFocus,
     SelectOperand,
     Smalltalk,
     Visualize,
@@ -46,13 +49,14 @@ from finguard_orchestrator.domain.engine.state import (
     FocusHistoryEntry,
     Measure,
     Missing,
+    MovementListFocus,
     Pending,
     PreviousFocus,
     QueryFocus,
     RatioFocus,
     Scope,
 )
-from finguard_orchestrator.domain.enums import GroupBy, Metric, Period, ResultKind
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, ResultKind
 from finguard_orchestrator.domain.errors import DomainError, InvalidValueError
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -60,6 +64,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.movement_list_plan import MovementListPlan
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
@@ -74,12 +79,18 @@ class InvariantViolationError(DomainError):
     code = "invariant_violation"
 
 
+class SuspendedTaskLimitError(DomainError):
+    """A new task cannot take the floor without silently losing an older clarification."""
+
+    code = "suspended_task_limit"
+
+
 @dataclass(frozen=True)
 class Work:
     """What the turn asks the bank. Empty `account_ids` means every account."""
 
-    kind: Literal["QUERY", "COMPARE", "RATIO", "BALANCE"]
-    plan: FinancialPlan | TopMovements | ComparisonPlan | RatioPlan | None
+    kind: Literal["QUERY", "COMPARE", "RATIO", "BALANCE", "MOVEMENT_LIST", "NO_MORE_MOVEMENTS"]
+    plan: FinancialPlan | TopMovements | ComparisonPlan | RatioPlan | MovementListPlan | None
     account_ids: tuple[UUID, ...] = ()
 
 
@@ -145,23 +156,70 @@ def apply(
             # The legacy route accepts the operation through its existing chart adapter. The
             # LangGraph route intercepts it earlier and executes it against canonical artifacts.
             return Transition(state, None, Delegate("CHART"))
-        if isinstance(op, RestorePrevious):
+        if current.pending is not None and isinstance(
+            op,
+            (
+                Ask,
+                Compare,
+                ComparePrevious,
+                ListMovements,
+                PatchMovementList,
+                RestorePrevious,
+                ResumeFocus,
+            ),
+        ):
+            # These operations take the conversational floor. Balance and courtesy are asides;
+            # patches that answer the current clarification remain attached to their owner.
             try:
-                current, work = _restored(current, op.steps_back)
+                current = suspend_pending_task(current)
+            except SuspendedTaskLimitError:
+                return Transition(resting, None, Clarify(Missing.TASK_LIMIT))
+            resting = current
+        if isinstance(op, (RestorePrevious, ResumeFocus)):
+            try:
+                current, work = (
+                    _restored(current, op.steps_back)
+                    if isinstance(op, RestorePrevious)
+                    else _resumed_focus(current, op.task_id)
+                )
             except _CannotApplyError as question:
                 return Transition(resting, None, question.clarify)
             restored_previous = True
             continue
         if isinstance(op, (PrepareBizum, PrepareOwnTransfer)):
             raise InvariantViolationError("payment operation escaped graph dispatch")
-        op = _fill_pending(current, op)
         if isinstance(op, Clarify):
             # Only what it asks for (ruling R21). A name to quote comes from grounding, which
             # found it in the holder's catalogues; from the model it is free text, and quoting
             # it would show the person the model's words, a figure among them. Persist the open
             # question even when it came from an empty answer to an existing clarification.
-            open_question = Pending(op.missing, op.draft)
-            return Transition(replace(resting, pending=open_question), None, Clarify(op.missing))
+            # A clarification belongs to the task already open, when there is one. Otherwise
+            # it follows the visible focus whose correction/continuation is being discussed.
+            active_pending = resting.pending
+            if active_pending is not None and not op.draft.named():
+                # A malformed/empty model answer is a recovery question, not authority to erase
+                # the unfinished task's fields or change which answer it is waiting for.
+                open_question = active_pending
+                clarification = Clarify(
+                    active_pending.missing,
+                    op.about,
+                    op.candidates,
+                    active_pending.draft,
+                )
+            elif active_pending is not None:
+                # A further clarification is still the same task. Keep its captured account
+                # scope and stable identity, and merge only the fields this operation supplied.
+                open_question = Pending(
+                    op.missing,
+                    active_pending.draft.merged(op.draft),
+                    active_pending.scope,
+                    active_pending.task_id,
+                )
+                clarification = Clarify(op.missing, op.about, op.candidates, open_question.draft)
+            else:
+                open_question = Pending(op.missing, op.draft, resting.scope)
+                clarification = Clarify(op.missing, op.about, op.candidates, op.draft)
+            return Transition(replace(resting, pending=open_question), None, clarification)
         if isinstance(op, (Smalltalk, Delegate, Visualize, Clarify)):
             raise InvariantViolationError("non-domain operation escaped transition dispatch")
         if not isinstance(
@@ -176,6 +234,8 @@ def apply(
                 SelectOperand,
                 Reset,
                 Balance,
+                ListMovements,
+                PatchMovementList,
             ),
         ):
             raise InvariantViolationError("unsupported operation escaped transition dispatch")
@@ -184,10 +244,11 @@ def apply(
         except _CannotApplyError as question:
             # One operation that cannot apply makes the whole turn a question. Half a turn run
             # would answer something nobody asked; only the question it opens is kept.
-            pending = (
-                question.pending
-                or resting.pending
-                or Pending(question.clarify.missing, PlanFields())
+            pending = question.pending or (
+                Pending(question.clarify.missing, PlanFields(), Scope())
+                if isinstance(op, Ask)
+                else resting.pending
+                or Pending(question.clarify.missing, PlanFields(), resting.scope)
             )
             return Transition(replace(resting, pending=pending), None, question.clarify)
         except InvalidValueError:
@@ -222,52 +283,6 @@ def apply(
     return Transition(current, work, None if work else courtesy)
 
 
-def _fill_pending(state: DialogueState, op: Operation) -> Operation:
-    """Route a typed answer to an open clarification into its saved draft.
-
-    Models sometimes describe a short clarification reply as a new ask (or a focus patch).
-    The operation still identifies the field the person supplied; when it supplies only the
-    field that the open question requested, applying it to the pending draft is unambiguous.
-    Complete new asks remain new asks.
-    """
-    pending = state.pending
-    if pending is None:
-        return op
-    if isinstance(op, Ask):
-        changes = op.fields
-        if not changes.named():
-            return Clarify(pending.missing, draft=pending.draft)
-    elif isinstance(op, Patch) and op.target in {"focus", "pending"}:
-        changes = op.changes
-    else:
-        return op
-    fields = changes.named()
-    if pending.missing is Missing.CORRECTION and fields:
-        return Patch("focus", changes)
-    if pending.missing is Missing.ACCOUNT and fields:
-        # A period or filter can arrive while account scope is still unresolved. Accumulate it on
-        # the pending draft, then ask for the account again; there is no focus to patch yet.
-        return Patch("pending", changes)
-    if pending.missing is Missing.WINDOW:
-        expected = frozenset({"window"})
-        fills_gap = fields == expected
-    elif pending.missing is Missing.SUBJECT:
-        subject = frozenset({"direction", "categories", "merchants", "merchant_terms", "people"})
-        expected = subject | {"group_by", "metric", "limit"}
-        fills_gap = bool(fields & subject) and fields <= expected
-    elif pending.missing is Missing.ACCOUNT:
-        expected = frozenset({"accounts"})
-        fills_gap = bool(fields) and fields <= expected
-    elif pending.missing is Missing.PERSON:
-        expected = frozenset({"people"})
-        fills_gap = bool(fields) and fields <= expected
-    else:
-        fills_gap = False
-    if fills_gap:
-        return Patch("pending", changes)
-    return op
-
-
 def _applied(
     state: DialogueState,
     op: (
@@ -280,6 +295,8 @@ def _applied(
         | SelectOperand
         | Reset
         | Balance
+        | ListMovements
+        | PatchMovementList
     ),
     today: date,
     grounds: Grounds,
@@ -287,10 +304,52 @@ def _applied(
     match op:
         case Ask(fields=said):
             return _asked(state, said, today, grounds)
-        case Patch(target="pending", changes=changes):
-            if state.pending is None:
-                raise _CannotApplyError(Missing.SUBJECT)
-            return _asked(state, state.pending.draft.merged(changes), today, grounds)
+        case Patch(target=target, changes=changes, task_id=task_id) if target in {
+            "pending",
+            "suspended",
+        }:
+            if target == "pending":
+                pending = state.pending
+                if pending is None:
+                    raise _CannotApplyError(Missing.SUBJECT)
+            else:
+                if not state.suspended_pending:
+                    raise _CannotApplyError(Missing.SUBJECT)
+                if task_id is None:
+                    # Choosing the newest suspended task by recency would silently guess which
+                    # user goal the model meant. The prompt exposes stable IDs for explicit
+                    # resumption, so an omitted ID is an incomplete operation.
+                    raise _CannotApplyError(Missing.SUBJECT)
+                task_index = next(
+                    (
+                        index
+                        for index, candidate in enumerate(state.suspended_pending)
+                        if candidate.task_id == task_id
+                    ),
+                    -1,
+                )
+                if task_index < 0:
+                    raise _CannotApplyError(Missing.SUBJECT)
+                pending = state.suspended_pending[task_index]
+                suspended = (
+                    *state.suspended_pending[:task_index],
+                    *state.suspended_pending[task_index + 1 :],
+                )
+                if state.pending is not None:
+                    if len(suspended) >= DialogueState.MAX_SUSPENDED_PENDING:
+                        # Never make room by evicting a different unfinished clarification.
+                        # Keep the original state and ask the user to complete or resume one.
+                        raise _CannotApplyError(Missing.TASK_LIMIT)
+                    suspended = (*suspended, state.pending)
+                state = replace(state, pending=None, suspended_pending=suspended)
+            return _asked(
+                state,
+                pending.draft.merged(changes),
+                today,
+                grounds,
+                task_scope=pending.scope,
+                task_id=pending.task_id,
+            )
         case Patch():
             return _patched_focus(state, op, today, grounds)
         case Compare():
@@ -315,6 +374,7 @@ def _applied(
                 pending=None,
                 previous_focus=None,
                 focus_history=(),
+                suspended_pending=(),
                 own_transfer=None,
             ), None
         case Balance(accounts=names):
@@ -325,28 +385,47 @@ def _applied(
                 return state, Work("BALANCE", None, ())
             accounts = _grounded(PlanFields(accounts=names), grounds).accounts or ()
             return state, Work("BALANCE", None, _account_ids(accounts, grounds))
+        case ListMovements() as operation:
+            return _listed_movements(state, operation, today, grounds)
+        case PatchMovementList() as operation:
+            return _patched_movement_list(state, operation, today, grounds)
         case _:
             assert_never(op)
 
 
-def _asked(state: DialogueState, said: PlanFields, today: date, grounds: Grounds) -> Applied:
+def _asked(
+    state: DialogueState,
+    said: PlanFields,
+    today: date,
+    grounds: Grounds,
+    *,
+    task_scope: Scope | None = None,
+    task_id: str | None = None,
+) -> Applied:
     if said.clear_limit:
         raise _CannotApplyError(Missing.SUBJECT)
+    # A new Ask starts a new task with an unscoped default. A pending patch resumes the scope
+    # captured by that task, independently of the older result still visible on screen.
+    owner_scope = task_scope if task_scope is not None else Scope()
     grounded = ground(said, grounds)
     if isinstance(grounded, Unknown):
         raise _CannotApplyError(
             grounded.kind,
             grounded.name,
-            pending=Pending(grounded.kind, said),
+            pending=Pending(grounded.kind, said, owner_scope, task_id or uuid4().hex),
             candidates=grounded.candidates,
         )
+    task_state = _scoped(replace(state, scope=owner_scope), grounded, grounds)
     try:
         plan = _built(grounded, today)
     except _CannotApplyError as gap:
         # Kept with everything already said, so «en julio» alone completes it.
         missing = gap.clarify.missing
-        raise _CannotApplyError(missing, pending=Pending(missing, grounded)) from None
-    return _on_query(_scoped(state, grounded, grounds), plan)
+        raise _CannotApplyError(
+            missing,
+            pending=Pending(missing, grounded, task_state.scope, task_id or uuid4().hex),
+        ) from None
+    return _on_query(task_state, plan)
 
 
 def _patched_focus(state: DialogueState, op: Patch, today: date, grounds: Grounds) -> Applied:
@@ -417,10 +496,27 @@ def _compared(state: DialogueState, op: Compare, today: date, grounds: Grounds) 
         # A comparison has one scope. Accounts per side would compare accounts, which no plan here
         # can say, and keeping only one of them would drop the other without a word.
         raise _CannotApplyError(Missing.OPERAND)
-    anchor = _anchor(state.focus)
+    # A fully specified pair is a new comparison. Reusing the visible query as its base silently
+    # carried old merchant/category filters into unrelated requests (for example, after checking
+    # Bizum history). A follow-up comparison leaves at least one window open and inherits the
+    # active focus, as in «y comparado con junio?» or a category change on an existing pair.
+    requested_earlier, requested_latest = shared.merged(earlier), shared.merged(latest)
+    explicit_pair = requested_earlier.window is not None and requested_latest.window is not None
+    has_subject = any(replace(fields, window=None).named() for fields in (shared, earlier, latest))
+    fresh_comparison = explicit_pair and has_subject
+    active_anchor = _anchor(state.focus)
+    anchor = None if fresh_comparison else active_anchor
+    inherited_direction = (
+        active_anchor.direction
+        if fresh_comparison and isinstance(active_anchor, FinancialPlan)
+        else None
+    )
+    base = replace(state, scope=Scope()) if fresh_comparison and shared.accounts is None else state
     sides: list[Plan] = []
     for side in (earlier, latest):
         said = shared.merged(side)
+        if fresh_comparison and said.direction is None and inherited_direction is not None:
+            said = replace(said, direction=inherited_direction)
         if anchor is not None:
             sides.append(_patched(anchor, said, today))
         elif said.window is None:
@@ -428,7 +524,7 @@ def _compared(state: DialogueState, op: Compare, today: date, grounds: Grounds) 
         else:
             sides.append(_built(said, today))
     pair = _as_said(_paired(*sides), shared, earlier, latest)
-    return _on_pair(_scoped(state, shared, grounds), pair, percent=False)
+    return _on_pair(_scoped(base, shared, grounds), pair, percent=False)
 
 
 def _compared_previous(state: DialogueState, op: ComparePrevious, today: date) -> Applied:
@@ -535,6 +631,16 @@ def _on_query(state: DialogueState, plan: Plan) -> Applied:
     return state, Work("QUERY", plan, state.scope.account_ids)
 
 
+def suspend_pending_task(state: DialogueState) -> DialogueState:
+    """Move the clarification into bounded history or refuse to discard an existing task."""
+    if state.pending is None:
+        return state
+    if len(state.suspended_pending) >= DialogueState.MAX_SUSPENDED_PENDING:
+        raise SuspendedTaskLimitError("all suspended clarification slots are occupied")
+    suspended = (*state.suspended_pending, state.pending)
+    return replace(state, pending=None, suspended_pending=suspended)
+
+
 def _on_ratio(state: DialogueState, ratio: RatioPlan) -> Applied:
     state = replace(state, focus=RatioFocus(ratio), pending=None)
     return state, Work("RATIO", ratio, state.scope.account_ids)
@@ -569,10 +675,41 @@ def _append_history(
     history: tuple[FocusHistoryEntry, ...], focus: Focus, scope: Scope
 ) -> tuple[FocusHistoryEntry, ...]:
     """Move a focus to the newest history position without keeping duplicate plans."""
-    entry = FocusHistoryEntry(focus, scope)
+    entry = next(
+        (existing for existing in history if existing.focus == focus and existing.scope == scope),
+        None,
+    ) or FocusHistoryEntry(focus, scope)
     return (*tuple(existing for existing in history if existing != entry), entry)[
         -DialogueState.MAX_FOCUS_HISTORY :
     ]
+
+
+def _resumed_focus(state: DialogueState, task_id: str) -> Applied:
+    """Resume one explicitly named answered task, never whichever task happens to be newest."""
+    task_index = next(
+        (index for index, entry in enumerate(state.focus_history) if entry.task_id == task_id),
+        -1,
+    )
+    if task_index < 0:
+        raise _CannotApplyError(Missing.SUBJECT)
+    selected = state.focus_history[task_index]
+    remaining = (
+        *state.focus_history[:task_index],
+        *state.focus_history[task_index + 1 :],
+    )
+    if state.focus is not None:
+        remaining = _append_history(remaining, state.focus, state.scope)
+    restored = replace(
+        state,
+        focus=selected.focus,
+        scope=selected.scope,
+        focus_history=remaining,
+        previous_focus=PreviousFocus(remaining[-1].focus, remaining[-1].scope)
+        if remaining
+        else None,
+        pending=None,
+    )
+    return restored, _work_for_focus(selected.focus, selected.scope.account_ids)
 
 
 def _restored(state: DialogueState, steps_back: int) -> Applied:
@@ -625,6 +762,8 @@ def _work_for_focus(focus: Focus | None, account_ids: tuple[UUID, ...]) -> Work:
     match focus:
         case QueryFocus(plan=plan):
             return Work("QUERY", plan, account_ids)
+        case MovementListFocus(plan=plan):
+            return Work("MOVEMENT_LIST", plan, account_ids)
         case ComparisonFocus(comparison=pair, measure=Measure.PERCENT_CHANGE):
             ratio = RatioPlan(part=pair.latest, whole=pair.earlier, kind=RatioKind.PERCENT_CHANGE)
             return Work("RATIO", ratio, account_ids)
@@ -635,6 +774,119 @@ def _work_for_focus(focus: Focus | None, account_ids: tuple[UUID, ...]) -> Work:
         case BalanceFocus(account_ids=ids):
             return Work("BALANCE", None, ids)
     assert_never(focus)
+
+
+def _listed_movements(
+    state: DialogueState, operation: ListMovements, today: date, grounds: Grounds
+) -> Applied:
+    if operation.continue_current:
+        focus = state.focus
+        if not isinstance(focus, MovementListFocus):
+            raise _CannotApplyError(Missing.SUBJECT)
+        if focus.plan.cursor is None:
+            return state, Work("NO_MORE_MOVEMENTS", None, focus.plan.account_ids)
+        # Pagination advances the saved query. Its direction, window, account and filters come
+        # from the canonical focus; repeated/default operation fields cannot rewrite that query.
+        plan = replace(focus.plan, page_size=operation.page_size or focus.plan.page_size)
+        continued = replace(state, focus=MovementListFocus(plan), pending=None)
+        return continued, Work("MOVEMENT_LIST", plan, plan.account_ids)
+
+    fields = _grounded(
+        PlanFields(
+            direction=operation.direction,
+            accounts=operation.accounts or None,
+            categories=operation.categories or None,
+            merchant_terms=operation.merchant_terms or None,
+        ),
+        grounds,
+    )
+    scoped = _scoped(state, fields, grounds)
+    window = operation.window
+    if isinstance(window, AbsoluteRange) and window.start > today:
+        raise _CannotApplyError(Missing.WINDOW)
+    if fields.accounts is None:
+        # A new list starts a new task; a prior account filter is not silently inherited.
+        scoped = replace(scoped, scope=Scope())
+    plan = MovementListPlan(
+        direction=fields.direction or Direction.ALL,
+        page_size=operation.page_size or 20,
+        period=window if isinstance(window, RelativePeriod) else None,
+        period_reference=today if isinstance(window, RelativePeriod) else None,
+        date_from=window.start if isinstance(window, AbsoluteRange) else None,
+        date_to=window.end if isinstance(window, AbsoluteRange) else None,
+        account_ids=scoped.scope.account_ids,
+        across_accounts=not bool(scoped.scope.account_ids),
+        categories=fields.categories or (),
+        merchant_terms=fields.merchant_terms or (),
+    )
+    listed = replace(scoped, focus=MovementListFocus(plan), pending=None)
+    return listed, Work("MOVEMENT_LIST", plan, plan.account_ids)
+
+
+def _patched_movement_list(
+    state: DialogueState, operation: PatchMovementList, today: date, grounds: Grounds
+) -> Applied:
+    focus = state.focus
+    if not isinstance(focus, MovementListFocus):
+        raise _CannotApplyError(Missing.SUBJECT)
+    fields = _grounded(
+        PlanFields(
+            direction=operation.direction,
+            accounts=operation.accounts,
+            categories=operation.categories,
+            merchant_terms=operation.merchant_terms,
+        ),
+        grounds,
+    )
+    previous = focus.plan
+    if isinstance(operation.window, AbsoluteRange) and operation.window.start > today:
+        raise _CannotApplyError(Missing.WINDOW)
+    period: RelativePeriod | None
+    period_reference: date | None
+    date_from: date | None
+    date_to: date | None
+    if operation.clear_window:
+        period = period_reference = date_from = date_to = None
+    elif isinstance(operation.window, RelativePeriod):
+        period, period_reference, date_from, date_to = operation.window, today, None, None
+    elif isinstance(operation.window, AbsoluteRange):
+        period, period_reference, date_from, date_to = (
+            None,
+            None,
+            operation.window.start,
+            operation.window.end,
+        )
+    else:
+        period, period_reference, date_from, date_to = (
+            previous.period,
+            previous.period_reference,
+            previous.date_from,
+            previous.date_to,
+        )
+    account_ids = (
+        previous.account_ids if fields.accounts is None else _account_ids(fields.accounts, grounds)
+    )
+    plan = replace(
+        previous,
+        direction=fields.direction or previous.direction,
+        page_size=operation.page_size or previous.page_size,
+        cursor=None,
+        period=period,
+        period_reference=period_reference,
+        date_from=date_from,
+        date_to=date_to,
+        account_ids=account_ids,
+        across_accounts=(
+            previous.across_accounts if fields.accounts is None else not bool(account_ids)
+        ),
+        categories=previous.categories if fields.categories is None else fields.categories,
+        merchant_terms=(
+            previous.merchant_terms if fields.merchant_terms is None else fields.merchant_terms
+        ),
+    )
+    scope = state.scope if fields.accounts is None else Scope(account_ids)
+    updated = replace(state, scope=scope, focus=MovementListFocus(plan), pending=None)
+    return updated, Work("MOVEMENT_LIST", plan, plan.account_ids)
 
 
 def _anchor(focus: Focus | None) -> Plan | None:
@@ -703,8 +955,51 @@ def _account_ids(names: tuple[str, ...], grounds: Grounds) -> tuple[UUID, ...]:
 
 def _patched(base: Plan, changes: PlanFields, today: date) -> Plan:
     """`base` with the fields `changes` names and, checked rather than assumed, nothing else."""
-    patched = _built(_fields_of(base).merged(changes), today)
-    _check_kept(base, patched, changes.named())
+    base_fields = _fields_of(base)
+    fields = base_fields.merged(changes)
+    derived_result_kind = False
+    derived_limit_clear = False
+    if changes.group_by is not None:
+        # The user chose the dimension; the compatible result shape follows from that domain
+        # choice. The model may omit or stale-copy result_kind; neither should turn a clear
+        # regrouping into an incomplete query. A time series has no top-N contract, so drop an
+        # inherited limit. An explicitly changed limit on a calendar dimension is a ranking.
+        group_by = fields.group_by or GroupBy.NONE
+        if group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
+            if changes.limit is not None and fields.limit is not None:
+                result_kind = ResultKind.RANKING
+            else:
+                result_kind = ResultKind.TIME_SERIES
+                derived_limit_clear = fields.limit is not None
+                fields = replace(fields, limit=None)
+        elif group_by is GroupBy.NONE:
+            result_kind = ResultKind.RANKING if fields.limit is not None else ResultKind.SCALAR
+        else:
+            result_kind = ResultKind.RANKING if fields.limit is not None else ResultKind.BREAKDOWN
+        fields = replace(fields, result_kind=result_kind)
+        derived_result_kind = True
+    # Removing top-N from a grouped ranking changes its result shape to the complete breakdown.
+    # This is a mechanical contract repair: `clear_limit` already expresses the user's choice;
+    # without it, the retained RANKING kind would be invalid once the rank is gone.
+    if (
+        changes.clear_limit
+        and fields.result_kind is ResultKind.RANKING
+        and fields.group_by
+        in {
+            GroupBy.CATEGORY,
+            GroupBy.MERCHANT,
+            GroupBy.COUNTERPARTY,
+            GroupBy.ACCOUNT,
+        }
+    ):
+        fields = replace(fields, result_kind=ResultKind.BREAKDOWN)
+    patched = _built(fields, today)
+    allowed_changes = changes.named()
+    if derived_result_kind or fields.result_kind != base_fields.result_kind:
+        allowed_changes = allowed_changes | {"result_kind"}
+    if derived_limit_clear or fields.limit != base_fields.limit:
+        allowed_changes = allowed_changes | {"clear_limit"}
+    _check_kept(base, patched, allowed_changes)
     return patched
 
 
@@ -724,7 +1019,7 @@ _MOVES: Final[dict[str, frozenset[str]]] = {
     "result_kind": frozenset({"result_kind"}),
     "group_by": frozenset({"group_by"}),
     "limit": frozenset({"group_limit", "rank"}),
-    "clear_limit": frozenset({"group_limit", "rank"}),
+    "clear_limit": frozenset({"group_limit", "rank", "result_kind"}),
 }
 
 

@@ -5,10 +5,11 @@ models validate what comes back. A shape written twice is two shapes the first t
 changes.
 
 The models are a projection of `domain/engine/operations.py` and nothing more: one object per
-operation, each closed (`additionalProperties: false`), with every enum the domain has and every
-list bounded by the domain's own ceiling. Categories are closed too, to the keys this deployment
-has, so an invented one is unreachable for a decoder that honours the schema and refused for one
-that does not.
+operation, each closed (`additionalProperties: false`), with the values that operation can safely
+request and every list bounded by the domain's own ceiling. In particular, ledger rows have their
+own `list_movements` operation; the legacy `RECORDS` result discriminator is deliberately absent
+from analytical asks. Categories are closed too, to the keys this deployment has, so an invented
+one is unreachable for a decoder that honours the schema and refused for one that does not.
 
 **Every union is externally tagged** (ruling R24): a branch is an object with one key, its name,
 so `{"ask": [...]}`, `{"measure": "COUNT"}`, `{"window": {"named": "LAST_MONTH"}}`. Groq's
@@ -57,6 +58,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_PERIOD_DAYS,
     MAX_RANK,
     MAX_SELECTED_ACCOUNTS,
+    MAX_SUPPORTING_MOVEMENTS,
 )
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
@@ -69,14 +71,17 @@ from finguard_orchestrator.domain.engine.operations import (
     InvestigateComparison,
     ListCategories,
     ListContacts,
+    ListMovements,
     Operation,
     Patch,
+    PatchMovementList,
     PlanFields,
     PrepareBizum,
     PrepareOwnTransfer,
     PrepareTransfer,
     Reset,
     RestorePrevious,
+    ResumeFocus,
     SelectOperand,
     Smalltalk,
     Visualize,
@@ -151,10 +156,11 @@ Names = Annotated[tuple[Name, ...], Field(max_length=MAX_MERCHANTS)]
 AccountNames = Annotated[tuple[Name, ...], Field(max_length=MAX_SELECTED_ACCOUNTS)]
 NamedPeriod = Annotated[Period, AfterValidator(_named), WithJsonSchema(_periods(counted=False))]
 CountedPeriod = Annotated[Period, AfterValidator(_counted), WithJsonSchema(_periods(counted=True))]
+QueryResultKind = Literal["SCALAR", "RANKING", "BREAKDOWN", "TIME_SERIES"]
 
 # The domain's literals, restated because a type checker cannot read them off a dataclass. A test
 # holds each to the dataclass field it mirrors.
-Target = Literal["focus", "earlier", "latest", "pending"]
+Target = Literal["focus", "earlier", "latest", "pending", "suspended"]
 Side = Literal["earlier", "latest"]
 Courtesy = Literal["GREETING", "THANKS", "IDENTITY", "HELP"]
 Elsewhere = Literal["PAYMENT", "TRANSFER", "BOOKING", "CHART", "UNSUPPORTED"]
@@ -260,7 +266,7 @@ class GroupByItem(_Closed):
 
 
 class ResultKindItem(_Closed):
-    result_kind: ResultKind
+    result_kind: QueryResultKind
 
 
 class LimitItem(_Closed):
@@ -294,7 +300,11 @@ def _said(item: FieldItem) -> tuple[str, Any]:
     """The item's field and its value as `PlanFields` holds it."""
     (name,) = type(item).model_fields
     value = getattr(item, name)
-    return name, value.as_window() if isinstance(item, WindowItem) else value
+    if isinstance(item, WindowItem):
+        value = value.as_window()
+    elif isinstance(item, ResultKindItem):
+        value = ResultKind(value)
+    return name, value
 
 
 def _once_each(items: tuple[FieldItem, ...]) -> tuple[FieldItem, ...]:
@@ -322,6 +332,7 @@ def _plan_fields(items: tuple[FieldItem, ...]) -> PlanFields:
 class PatchBody(_Closed):
     target: Target
     changes: Fields
+    task_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")] | None = None
 
 
 class CompareBody(_Closed):
@@ -350,7 +361,11 @@ class PatchOp(_Closed):
     patch: PatchBody
 
     def as_operation(self) -> Patch:
-        return Patch(self.patch.target, _plan_fields(self.patch.changes))
+        return Patch(
+            self.patch.target,
+            _plan_fields(self.patch.changes),
+            self.patch.task_id,
+        )
 
 
 class CompareOp(_Closed):
@@ -405,6 +420,13 @@ class RestorePreviousOp(_Closed):
         return RestorePrevious(self.restore_previous)
 
 
+class ResumeFocusOp(_Closed):
+    resume_focus: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+
+    def as_operation(self) -> ResumeFocus:
+        return ResumeFocus(self.resume_focus)
+
+
 class BalanceOp(_Closed):
     balance: AccountNames
 
@@ -424,6 +446,58 @@ class ListCategoriesOp(_Closed):
 
     def as_operation(self) -> ListCategories:
         return ListCategories()
+
+
+class MovementListFields(_Closed):
+    direction: Direction = Direction.ALL
+    accounts: AccountNames = ()
+    categories: Categories = ()
+    merchant_terms: Names = ()
+    window: Window | None = None
+    page_size: Annotated[int, Field(strict=True, ge=1, le=MAX_SUPPORTING_MOVEMENTS)] | None = None
+    continue_current: bool = False
+
+
+class ListMovementsOp(_Closed):
+    list_movements: MovementListFields
+
+    def as_operation(self) -> ListMovements:
+        fields = self.list_movements
+        return ListMovements(
+            direction=fields.direction,
+            accounts=fields.accounts,
+            categories=fields.categories,
+            merchant_terms=fields.merchant_terms,
+            window=fields.window.as_window() if fields.window is not None else None,
+            page_size=fields.page_size,
+            continue_current=fields.continue_current,
+        )
+
+
+class MovementListPatchFields(_Closed):
+    direction: Direction | None = None
+    accounts: AccountNames | None = None
+    categories: Categories | None = None
+    merchant_terms: Names | None = None
+    window: Window | None = None
+    clear_window: bool = False
+    page_size: Annotated[int, Field(strict=True, ge=1, le=MAX_SUPPORTING_MOVEMENTS)] | None = None
+
+
+class PatchMovementListOp(_Closed):
+    patch_movement_list: MovementListPatchFields
+
+    def as_operation(self) -> PatchMovementList:
+        fields = self.patch_movement_list
+        return PatchMovementList(
+            direction=fields.direction,
+            accounts=fields.accounts,
+            categories=fields.categories,
+            merchant_terms=fields.merchant_terms,
+            window=fields.window.as_window() if fields.window is not None else None,
+            clear_window=fields.clear_window,
+            page_size=fields.page_size,
+        )
 
 
 class AskCorrectionOp(_Closed):
@@ -509,9 +583,12 @@ AnyOp = Annotated[
     | Annotated[SelectOperandOp, Tag("select_operand")]
     | Annotated[ResetOp, Tag("reset")]
     | Annotated[RestorePreviousOp, Tag("restore_previous")]
+    | Annotated[ResumeFocusOp, Tag("resume_focus")]
     | Annotated[BalanceOp, Tag("balance")]
     | Annotated[ListContactsOp, Tag("list_contacts")]
     | Annotated[ListCategoriesOp, Tag("list_categories")]
+    | Annotated[ListMovementsOp, Tag("list_movements")]
+    | Annotated[PatchMovementListOp, Tag("patch_movement_list")]
     | Annotated[AskCorrectionOp, Tag("ask_correction")]
     | Annotated[SmalltalkOp, Tag("smalltalk")]
     | Annotated[DelegateOp, Tag("delegate")]

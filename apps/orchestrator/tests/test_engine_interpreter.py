@@ -10,7 +10,7 @@ import json
 import logging
 import traceback
 import typing
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -28,6 +28,7 @@ from finguard_orchestrator.domain.engine.operations import (
     InvestigateComparison,
     ListCategories,
     ListContacts,
+    ListMovements,
     Operation,
     Patch,
     PlanFields,
@@ -49,6 +50,7 @@ from finguard_orchestrator.domain.engine.state import (
     FocusHistoryEntry,
     Measure,
     Missing,
+    MovementListFocus,
     PaymentDraftPending,
     Pending,
     QueryFocus,
@@ -76,6 +78,10 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
     RelativePeriod,
+)
+from finguard_orchestrator.domain.value_objects.movement_list_plan import (
+    MovementCursor,
+    MovementListPlan,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
@@ -627,7 +633,7 @@ def test_categories_are_the_catalogue_keys_only() -> None:
     category_enums = [
         node["enum"] for node in nodes(schema) if "RESTAURANTS" in node.get("enum", ())
     ]
-    assert len(category_enums) == 2  # categories and excluded_categories
+    assert len(category_enums) == 3  # ask filters, excluded categories, and movement-list filters
     assert all(found == list(CATALOGUE) for found in category_enums)
 
 
@@ -733,6 +739,8 @@ def test_operations_are_keyed_by_their_name() -> None:
         "balance",
         "list_contacts",
         "list_categories",
+        "list_movements",
+        "patch_movement_list",
         "ask_correction",
         "smalltalk",
         "delegate",
@@ -773,6 +781,82 @@ def test_list_contacts_is_a_typed_read_operation() -> None:
 
 def test_list_categories_is_a_typed_product_operation() -> None:
     assert read('{"operations":[{"list_categories":true}]}', CATALOGUE) == (ListCategories(),)
+
+
+def test_recent_movements_are_a_periodless_list_operation() -> None:
+    payload = (
+        '{"operations":[{"list_movements":{"direction":"EXPENSE","accounts":[],'
+        '"categories":[],"merchant_terms":[],"page_size":20,"continue_current":false}}]}'
+    )
+    assert read(payload, CATALOGUE) == (ListMovements(page_size=20),)
+
+
+def test_recent_movement_list_defaults_omitted_optional_filters() -> None:
+    assert read(
+        '{"operations":[{"list_movements":{"page_size":5}}]}',
+        CATALOGUE,
+    ) == (ListMovements(page_size=5),)
+
+
+def test_recent_movement_prompt_applies_requested_page_size_and_account() -> None:
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    assert "page_size=N (default 20) and named filters" in prompt
+    assert '"accounts":["Cuenta corriente"]' in prompt
+    assert '"page_size":5' in prompt
+
+
+def test_movement_list_focus_prompt_exposes_continuation_not_cursor_values() -> None:
+    state = DialogueState(
+        UUID(int=1),
+        focus=MovementListFocus(
+            MovementListPlan(
+                page_size=20,
+                cursor=MovementCursor(datetime(2026, 10, 7, tzinfo=UTC), UUID(int=9)),
+            )
+        ),
+    )
+    prompt = build_prompt(
+        "Dame otros 10",
+        state,
+        today=TODAY,
+        categories={category: category for category in CATALOGUE},
+    )
+
+    assert "movement list" in prompt.lower()
+    assert "more rows available" in prompt.lower()
+    assert "list_movements" in prompt
+
+
+def test_movement_list_focus_prompt_switches_account_without_asking_for_a_period() -> None:
+    state = DialogueState(
+        UUID(int=1),
+        focus=MovementListFocus(MovementListPlan(page_size=20)),
+    )
+    prompt = build_prompt(
+        "¿Y los de la Hucha?",
+        state,
+        today=TODAY,
+        categories={category: category for category in CATALOGUE},
+    )
+
+    assert "Y los de la Hucha?" in prompt
+    assert '"accounts":["Hucha"]' in prompt
+    assert '"page_size":20' in prompt
+    assert '"continue_current":false' in prompt
+
+
+def test_exhausted_movement_list_prompt_keeps_pagination_turn_typed() -> None:
+    state = DialogueState(UUID(int=1), focus=MovementListFocus(MovementListPlan(page_size=20)))
+    prompt = build_prompt(
+        "Dame otros 10",
+        state,
+        today=TODAY,
+        categories={category: category for category in CATALOGUE},
+    )
+
+    assert "end of list" in prompt
+    assert '"continue_current":true' in prompt
 
 
 def test_ask_correction_is_a_typed_conversation_operation() -> None:
@@ -1042,8 +1126,8 @@ def test_prompt_teaches_a_category_change_as_a_patch_of_the_active_query() -> No
 
     assert "On screen: a query" in prompt
     assert '"patch":{"target":"focus","changes":[{"categories":["RESTAURANTS"]}]}' in prompt
-    assert "Patch only fields a follow-up names" in prompt
-    assert "otherwise keep the active query's scope and window" in prompt
+    assert "patches change only named fields" in prompt
+    assert "A period-only follow-up moves the active window" in prompt
 
 
 def test_prompt_changes_an_active_average_to_a_total_without_losing_its_window() -> None:
@@ -1063,25 +1147,23 @@ def test_prompt_changes_an_active_average_to_a_total_without_losing_its_window()
     )
 
     assert '"patch":{"target":"focus","changes":[{"metric":"SUM"}]}' in prompt
-    assert "never carry AVERAGE/COUNT into it" in prompt
+    assert "never carry AVERAGE/COUNT into them" in prompt
 
 
 def test_prompt_treats_a_past_person_to_person_payment_as_a_query() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
 
-    assert "Cuanto le envie a mi hermana" in prompt
-    assert '"people":["mi hermana"]' in prompt
-    assert '"metric":"SUM"' in prompt
-    assert '"n":3' in prompt
+    assert "a past person-to-person payment is an expense query" in prompt
+    assert "with people + SUM" in prompt
 
 
 def test_prompt_treats_same_month_last_year_as_a_shift_not_a_comparison() -> None:
     prompt = build_prompt("Y el ano anterior?", EMPTY, today=TODAY, categories=CATEGORIES)
 
     compact = " ".join(prompt.split())
-    assert 'Shift an explicit window back a year for "previous year"' in compact
+    assert '"previous year" shifts the window back one year' in compact
     assert "compare only when requested" in compact
-    assert "ratio needs unavailable data" in " ".join(prompt.split())
+    assert "required ratio data is unavailable" in " ".join(prompt.split())
 
 
 def test_structured_previous_window_operation_decodes_to_a_bounded_month_count() -> None:
@@ -1102,7 +1184,7 @@ def test_why_on_an_active_comparison_inspects_the_same_windows_by_merchant() -> 
 
     assert "an active comparison by amount" in prompt
     assert '"investigate_comparison":true' in prompt
-    assert "Do not ask which periods when state shows them." in " ".join(prompt.split())
+    assert "Do not ask for periods already shown." in " ".join(prompt.split())
 
 
 def test_prompt_maps_last_year_to_a_rolling_twelve_month_window() -> None:
@@ -1131,13 +1213,13 @@ def test_prompt_includes_the_month_named_comparison_follow_up_example() -> None:
 
 def test_prompt_distinguishes_largest_movement_from_group_total_and_counts() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+    compact = " ".join(prompt.split())
 
-    assert "Highest individual expense" in prompt
-    assert "Never assume a missing window" in prompt
-    assert "Balances use `balance` without a period" in prompt
+    assert "Top individual = limit 1 without grouping" in prompt
+    assert "Never guess a missing window; ask." in compact
+    assert "Balances use balance without a period" in compact
     assert "visualize/update_visualization AUTO/BAR/LINE" in prompt
-    assert "no `group_by`" in prompt
-    assert "`group_by=MERCHANT, limit=1`" in prompt
+    assert "top merchant total = MERCHANT + limit 1" in compact
     assert '"metric":"COUNT"' in prompt
     assert '"direction":"ALL"' in prompt
 
@@ -1264,8 +1346,8 @@ def test_pending_is_only_for_a_question_the_state_shows_open() -> None:
     rules = prompt[prompt.index("## Rules") :]
 
     normalized = " ".join(rules.split())
-    assert "Use pending only for an open question; otherwise patch focus." in normalized
-    assert "If a question is open, patch its missing field on pending" in normalized
+    assert "Clarification replies fill pending and retain the draft" in normalized
+    assert "without an open question, patch focus" in normalized
 
 
 def test_pending_window_shows_a_period_only_patch_example() -> None:
@@ -1333,6 +1415,64 @@ def test_an_active_chart_makes_visual_changes_updates_instead_of_new_charts() ->
     assert "A requested change to its presentation MUST use update_visualization" in current_state
     assert "create_visualization only when no chart is active" in current_state
     assert '"update_visualization":"LINE"' in prompt
+
+
+def test_an_active_chart_regroups_by_requerying_the_financial_focus() -> None:
+    state = dataclasses.replace(
+        EMPTY,
+        focus=QueryFocus(
+            FinancialPlan(
+                Direction.EXPENSE,
+                period=RelativePeriod(Period.LAST_N_MONTHS, 3),
+                group_by=GroupBy.CATEGORY,
+            )
+        ),
+        active_visual=ActiveVisual(1, 1, ChartSpec("bar", ()), VisualProfile((), "SUM", "money")),
+    )
+
+    prompt = build_prompt("AgrÃºpalo por mes", state, today=TODAY, categories=CATEGORIES)
+
+    assert '"group_by":"MONTH"' in prompt
+    assert '"result_kind":"TIME_SERIES"' in prompt
+    assert '"update_visualization":"AUTO"' in prompt
+    assert "so the graph reruns and redraws it" in prompt
+
+
+def test_category_breakdown_without_a_chart_can_be_regrouped_by_month() -> None:
+    state = dataclasses.replace(
+        EMPTY,
+        focus=QueryFocus(
+            FinancialPlan(
+                Direction.EXPENSE,
+                period=RelativePeriod(Period.LAST_N_MONTHS, 3),
+                group_by=GroupBy.CATEGORY,
+                result_kind=ResultKind.BREAKDOWN,
+            )
+        ),
+    )
+
+    prompt = build_prompt("Por meses mejor", state, today=TODAY, categories=CATEGORIES)
+
+    assert '"patch":{"target":"focus"' in prompt
+    assert '"group_by":"MONTH"' in prompt
+    assert '"result_kind":"TIME_SERIES"' in prompt
+
+
+def test_prompt_maps_common_grocery_aliases_to_the_category() -> None:
+    prompt = build_prompt("Cuanto gaste en el super?", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    assert "GROCERIES: supermercado" in prompt
+    assert "super/s\u00faper" in prompt
+    assert "supermercados" in prompt
+
+
+def test_prompt_distinguishes_new_period_queries_from_elliptical_followups() -> None:
+    prompt = build_prompt("gastos de julio", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    compact = " ".join(prompt.split())
+    assert "A named subject + window starts a new ask" in compact
+    assert "a bare period follow-up patches focus" in compact
+    assert "Changing category clears old merchant filters" in compact
 
 
 RESTAURANTS_JULY = FinancialPlan(Direction.EXPENSE, date_range=JULY, categories=("RESTAURANTS",))

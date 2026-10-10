@@ -2,8 +2,13 @@ from datetime import date
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
+from finguard_orchestrator.domain.models.query_answer import (
+    Movement,
+    MovementListAnswer,
+    QueryAnswer,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.movement_list_plan import MovementListPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 
@@ -37,6 +42,15 @@ class FinancialQueryPort(Protocol):
         reporting_timezone: str,
         movements: int | None = None,
     ) -> QueryAnswer: ...
+
+    async def list_movements(
+        self,
+        plan: MovementListPlan,
+        *,
+        account_id: UUID,
+        today: date,
+        reporting_timezone: str,
+    ) -> MovementListAnswer: ...
 
     async def ranked(
         self,
