@@ -205,20 +205,6 @@ test-unit:
     uv run --directory apps/voice-gateway pytest -q -m "not integration"
     uv run --directory apps/a2a-gateway pytest -q -m "not integration"
     uv run --directory apps/simulated-gym-agent pytest -q -m "not integration"
-# Accuracy of the query engine given a correct plan (phase 2)
-# Accuracy of turning a Spanish sentence into a plan (phase 3). The model name must belong to
-# the selected provider; hosted providers read their credentials from apps/orchestrator/.env.
-evaluate-planning model="qwen2.5-coder:7b" provider="ollama" tpm="0":
-    uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --tpm {{ tpm }}
-# Local wording changes must produce local plan changes. Hosted providers need their credentials
-# in apps/orchestrator/.env; tpm=8000 is what Groq's free tier publishes and the pace comes from it.
-evaluate-metamorphic model="qwen3.5:9b" provider="ollama" tpm="0":
-    uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --dataset metamorphic --tpm {{ tpm }}
-# Robustness is a real gate only when both sides of the safety trade are bounded. The two numbers
-# are required arguments until a stable-GPU baseline has been measured and signed in docs/next.md;
-# choosing them in advance would be inventing a release claim rather than measuring one.
-evaluate-robustness robustness_floor over_refusal_ceiling model="qwen3.5:9b" provider="ollama" tpm="0":
-    uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --dataset robustness --tpm {{ tpm }} --robustness-floor {{ robustness_floor }} --over-refusal-ceiling {{ over_refusal_ceiling }}
 # The visual planner in shadow against the annotated cases. Three runs with the GPU alone, then the
 # minimum -- one run is not a number. P95 latency is the budget candidate for docs/next.md.
 # `model` defaults to the shipped, measured planner (evaluation/planning/RESULTS.md), not to
@@ -235,16 +221,6 @@ evaluate-visual model="qwen3.5:9b" *args:
 # `ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS=2048 just evaluate-a2a`, and `ollama ps` should say 100% GPU.
 evaluate-a2a model="qwen3.5:9b" *args:
     uv run --directory apps/orchestrator python scripts/evaluate_a2a.py --model {{ model }} {{ args }}
-# The whole path over HTTP: question in, figure and sentence out. Needs the compose stack
-# up, because the point is to exercise the deployed service and not the handler.
-# Properties rather than accuracy, so a non-zero exit is a bug and not a long tail.
-evaluate-e2e token dataset="dev":
-    uv run --directory apps/orchestrator python scripts/evaluate_e2e.py --token {{ token }} --dataset {{ dataset }}
-# Several turns of one conversation, echoed back the way the client does it. The defects this
-# catches live *between* sentences — a clarification that restarts, a follow-up that loses its
-# window — and nothing single-turn can see any of them.
-evaluate-conversations token:
-    uv run --directory apps/orchestrator python scripts/evaluate_e2e.py --token {{ token }} --dataset conversations
 # Separate from lint/typecheck/test because those iterate over the Python services and npm
 # answers all three at once. `build` runs tsc a second time on purpose: vite strips types
 # without checking them, so the build is what proves the bundle it emits compiles.

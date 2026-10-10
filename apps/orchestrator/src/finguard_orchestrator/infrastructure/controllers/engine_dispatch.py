@@ -1,84 +1,52 @@
-"""Compatibility seam between the question routes and conversational engines.
+"""The seam between the question routes and the LangGraph runtime.
 
-`ORCHESTRATOR_CONVERSATION_ENGINE=model` builds an engine into `app.state.engine`; `rules` leaves
-it None. The rules path is the deprecated legacy coordinator, retained temporarily for rollout and
-comparison. It must not be used as a language fallback from the authoritative LangGraph path.
-Each question route makes one call here before anything else:
+LangGraph is the only conversational runtime. Each question route makes one call here:
 
-- **the engine is off**: production, byte for byte;
-- **a workflow is on the wire** (a payment, a transfer, a booking or a confirmation under way, or
-  a question the rules route asked): it was opened on that route and its next turn is that
-  route's, whatever its words are, so the engine is not even asked (spec decision 4, ruling R26).
-  The one exception is a half-built payment the rules route has *set aside* (`suspended`) to
-  answer a question: the engine answers the turns after it, and hands the draft back exactly as it
-  was echoed, so it can still be resumed there;
-- **the compatibility engine delegates** (`Delegate`: a payment, a transfer, a booking, a chart,
-  or a turn it does not support): it saved nothing, so its focus is intact when the conversation
-  comes back. The authoritative graph instead returns an explicit unavailable response and never
-  sends that sentence to the legacy coordinator for reinterpretation.
+- **a workflow from the retired rules coordinator is on the wire** (an older client still holding
+  a payment, transfer, booking or question that coordinator opened): it is not part of the graph's
+  canonical state, so it is refused with an explicit answer and never executed. A stale "sí" must
+  not confirm anything;
+- **the graph delegates** (an operation it has no node for): the answer says so and the canonical
+  state and version stay untouched;
+- **otherwise** the graph's answer goes out in the `QuestionResponse` wire shape, carrying its
+  conversation id and version.
 
-The unified graph mode is authoritative: it turns currently unmigrated operations into an explicit,
-versioned response and never hands their sentence to the legacy route. The compatibility behavior
-above applies only while graph mode is off. Graph mode owns the full turn, including graph-native
-visualization and guarded payment workflows; a graph delegation is terminal for that turn.
+A version other than the one the graph holds is a 409 with the holder's current conversation
+(`StaleDialogueError`, turned into the response by `register`). A conversation the graph holds
+nothing of starts again under a new id (ruling R27).
 
-Every other turn is the engine's, answered with the same `QuestionResponse` wire shape. Its
-`conversation` carries the engine's conversation id and version, plus what it must not drop: a
-set-aside payment draft, and a gym search's sealed offers in the conversation they were sealed for.
-Nothing else: the analytics memory is the engine's own, server-side, and
-the rules route's would be stale beside it. A turn the
-engine hands over comes back holding that id and version, because the rules route builds every
-answer from the conversation it was given and the mapper carries `version` through unchanged.
-
-A version other than the one the engine holds for this conversation is a 409 with the holder's
-current conversation (the handler raises `StaleDialogueError` before anything runs; `register`
-turns it into the response). A conversation the engine holds nothing of, after a restart or under
-someone else's id, simply starts again under a new id (ruling R27).
-
-**Every answer says who gave it and what it cost**, on both routes and both engines:
-`X-FinGuard-Engine: rules|model` names the engine that answered the turn (a delegated turn is the
-rules route's), `X-FinGuard-Financial-Reads` the graph's query and balance calls when available,
-and
-`X-FinGuard-Model-Calls` the logical calls counted by the provider wrapper
-(`counting_provider`). `X-FinGuard-Provider-Requests` counts actual outbound generation HTTP
-attempts, including retries and model failover. `X-FinGuard-Models-Attempted` preserves their
-ordered model IDs and duplicates, while `X-FinGuard-Models-Used` records successful model outputs.
-When the provider returns usage metadata, `X-FinGuard-Prompt-Tokens` and
-`X-FinGuard-Completion-Tokens` report its numeric token counts, and `X-FinGuard-Token-Reports`
-states how many responses contributed usage. Missing usage is left absent, never reported as zero.
-On the stream the headers leave before the first frame:
-the engine has answered by then, so its count is exact; the rules route's planner runs inside the
-stream, so a rules answer there carries no count at all rather than a partial one. The measurement
-runner reads the JSON route, where both are exact.
+**Every answer says what it cost**, on both routes: `X-FinGuard-Engine: model`,
+`X-FinGuard-Financial-Reads` the graph's query and balance calls, `X-FinGuard-Model-Calls` the
+logical calls counted by the provider wrapper (`counting_provider`) and
+`X-FinGuard-Provider-Requests` the actual outbound HTTP attempts, retries and failover included.
+`X-FinGuard-Models-Attempted` keeps their ordered model ids, `X-FinGuard-Models-Used` the
+successful ones. With provider usage metadata, `X-FinGuard-Prompt-Tokens`,
+`X-FinGuard-Completion-Tokens` and `X-FinGuard-Token-Reports` report it; missing usage is left
+absent, never reported as zero.
 """
 
 import json
 import logging
 from collections.abc import AsyncIterator, Mapping
-from contextlib import nullcontext, suppress
+from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import date
-from typing import Annotated, Any, Final, Literal
-from uuid import UUID
+from typing import Any, Final
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import MutableHeaders
 
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.application.graph.budgets import MAX_MODEL_CALLS
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
-from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import QueryRejectedError
-from finguard_orchestrator.domain.models.conversation import Conversation, Workflow
+from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
-from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
-    ConversationPayload,
     QuestionRequest,
     QuestionResponse,
 )
@@ -104,286 +72,102 @@ PROVIDER_FAILURES_HEADER: Final = "X-FinGuard-Provider-Failures"
 PROVIDER_TERMINAL_FAILURE_HEADER: Final = "X-FinGuard-Provider-Terminal-Failure"
 _STREAM_ROUTE: Final = "/v1/questions/stream"
 _QUESTION_ROUTES: Final = frozenset({"/v1/questions", _STREAM_ROUTE})
-# A payment the rules route set aside to answer a question: the fields that hold it, echoed back
-# unchanged by an engine answer so the draft survives the turns the engine takes.
-_SET_ASIDE: Final = (
-    "workflow",
-    "awaiting",
-    "payment",
-    "candidates",
-    "suspended",
-    "transfer_to",
-    "transfer_amount_minor",
-    "intent_id",
-    "recipient",
-    "amount_minor",
-    "currency",
-    "concept",
-    "rail",
-    "recipient_iban",
-    "booking_id",
-    "booking_slot",
-    "booking_agent_name",
-    "booking_context_id",
-)
 # The directory and the contacts are read before the sentence is: a refusal there means the turn
 # was never interpreted, so it must not say it was («He entendido la pregunta…»).
 _UNREAD: Final = "No he podido leer tus cuentas y tus contactos: el banco ha rechazado la consulta."
 
 
-def _the_engine(request: Request) -> ConversationTurnHandler | None:
-    engine: ConversationTurnHandler | None = request.app.state.engine
-    settings = request.app.state.settings
-    graph_enabled = settings.conversation_graph == "on" or getattr(
-        request.app.state, "conversation_graph_enabled", False
-    )
-    model_engine_enabled = settings.conversation_engine == "model"
-    if engine is None and (model_engine_enabled or graph_enabled):
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "The conversation graph is enabled but no graph handler is available."
-                if graph_enabled
-                else "The model conversation engine has no handler; legacy fallback is disabled."
-            ),
-        )
-    if graph_enabled and not getattr(engine, "authoritative", False):
-        # A non-authoritative handler in graph mode is a composition error, not permission to
-        # continue into the compatibility route. Fail before either HTTP endpoint reads language.
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "The conversation graph is configured but the active handler is not authoritative."
-            ),
-        )
-    return engine
-
-
-# The route parameter. None is allowed only when the explicit compatibility configuration selected
-# the legacy route; a missing configured model or graph handler is an availability error.
-Engine = Annotated[ConversationTurnHandler | None, Depends(_the_engine)]
-
-
 @dataclass
 class _Answered:
-    by: Literal["rules", "model"] = "rules"
     financial_reads: int | None = None
 
 
 _answered: ContextVar[_Answered | None] = ContextVar("finguard_answered_by", default=None)
-
-
-def _answered_by(engine: Literal["rules", "model"]) -> None:
-    if (answered := _answered.get()) is not None:
-        answered.by = engine
-
-
-def refuse_legacy_fallback(engine: ConversationTurnHandler | None, answer: object | None) -> None:
-    """Fail closed if authoritative graph routing ever declines to answer a question.
-
-    A graph delegation should already have become an explicit response in `try_engine`. If a
-    future regression returns `None`, the route must not continue into legacy interpretation.
-    """
-    if getattr(engine, "authoritative", False) and answer is None:
-        raise HTTPException(
-            status_code=503,
-            detail="The conversation graph did not answer this turn; legacy fallback is disabled.",
-        )
+# The graph's delegations, said in words: an operation it has no node for yet.
+_UNAVAILABLE: Final = {
+    "CHART": "Todavía no puedo crear gráficos desde esta conversación.",
+    "PAYMENT": "Los pagos aún no están disponibles en este flujo conversacional.",
+    "TRANSFER": "Las transferencias aún no están disponibles en este flujo conversacional.",
+    "BOOKING": "Las reservas aún no están disponibles en este flujo conversacional.",
+    "UNSUPPORTED": "Todavía no puedo resolver esa operación desde esta conversación.",
+}
+_RETIRED_WORKFLOW: Final = (
+    "Esta operación pertenece a una conversación iniciada con el flujo anterior. "
+    "No puedo continuarla ni ejecutarla desde el nuevo flujo; empieza de nuevo la gestión."
+)
 
 
 async def try_engine(
-    engine: ConversationTurnHandler | None,
+    engine: ConversationTurnHandler,
     question: QuestionRequest,
     who: Caller,
     today: date,
     metric_tokens: MetricTokenCodec,
     request_id: str | None = None,
-) -> QuestionResponse | None:
-    """The engine's answer to this turn, or None for the deprecated compatibility route.
+) -> QuestionResponse:
+    """The graph's answer to this turn.
 
     A version other than the held one raises `StaleDialogueError` out of here, before anything
     ran; `register` writes the 409."""
     echoed = question.conversation
-    if engine is None:
-        return None
-    graph_owns_workflow = False
-    if (
-        echoed is not None
-        and _owned_by_the_rules(echoed)
-        and getattr(engine, "authoritative", False)
-        and echoed.conversation_id is not None
-        and (owns_workflow := getattr(engine, "owns_workflow", None)) is not None
-    ):
-        graph_owns_workflow = await owns_workflow(
-            echoed.conversation_id,
-            account_id=who.account_id,
-            workflow=echoed.workflow,
-        )
-    if echoed is not None and _owned_by_the_rules(echoed) and not graph_owns_workflow:
-        if not getattr(engine, "authoritative", False):
-            return None
-        # A workflow opened by the legacy coordinator is not part of the graph's canonical state.
-        # Never route its reply back to that coordinator while graph mode is authoritative: in
-        # particular, a stale "sí" must not confirm a payment through the old command handler.
-        _answered_by("model")
-        refused = AskFinancialQuestionResult(
-            outcome=PlanningOutcome.INVALID_DOMAIN.value,
-            text=(
-                "Esta operación pertenece a una conversación iniciada con el flujo anterior. "
-                "No puedo continuarla ni ejecutarla desde el nuevo flujo; conserva la sesión "
-                "para resolverla en el mismo flujo que la inició."
-            ),
-        )
-        held = Conversation(
-            conversation_id=echoed.conversation_id,
-            version=echoed.version,
-        )
-        return _carrying(echoed, _on_the_wire(refused, held, who, metric_tokens))
     conversation_id = echoed.conversation_id if echoed is not None else None
     version = echoed.version if echoed is not None else None
-    # Whatever the engine answers, refuses or fails with is the engine's, until it hands over.
-    _answered_by("model")
+    if echoed is not None and echoed.workflow is not None:
+        owns_workflow = conversation_id is not None and await engine.owns_workflow(
+            conversation_id, account_id=who.account_id, workflow=echoed.workflow
+        )
+        if not owns_workflow:
+            refused = AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value, text=_RETIRED_WORKFLOW
+            )
+            held = Conversation(conversation_id=conversation_id, version=version)
+            return _on_the_wire(refused, held, who, metric_tokens)
     try:
-        answer_kwargs: dict[str, Any] = {
-            "conversation_id": conversation_id,
-            "version": version,
-            "account_id": who.account_id,
-            "today": today,
-            "reporting_timezone": who.reporting_timezone,
-        }
-        if getattr(engine, "supports_idempotency", False):
-            answer_kwargs["request_id"] = request_id
-        if getattr(engine, "supports_caller_scopes", False):
-            answer_kwargs["caller_scopes"] = who.scopes
-        budget = provider_request_budget(MAX_MODEL_CALLS) if engine is not None else nullcontext()
-        with budget:
+        with provider_request_budget(MAX_MODEL_CALLS):
             turn = await engine.answer(
                 question.question,
-                **answer_kwargs,
+                conversation_id=conversation_id,
+                version=version,
+                account_id=who.account_id,
+                today=today,
+                reporting_timezone=who.reporting_timezone,
+                request_id=request_id,
+                caller_scopes=who.scopes,
             )
         if (answered := _answered.get()) is not None:
             answered.financial_reads = turn.financial_reads
     except QueryRejectedError:
-        # The handler catches a bank that is down, not one that refuses: answered here, and
-        # nothing was saved, so the client keeps the id and version it sent.
+        # The graph catches a bank that is down, not one that refuses: answered here, and nothing
+        # was saved, so the client keeps the id and version it sent.
         unread = AskFinancialQuestionResult(
             outcome=PlanningOutcome.INVALID_DOMAIN.value, text=_UNREAD
         )
         held = Conversation(conversation_id=conversation_id, version=version)
-        return _carrying(echoed, _on_the_wire(unread, held, who, metric_tokens))
+        return _on_the_wire(unread, held, who, metric_tokens)
+    held = Conversation(conversation_id=turn.state.conversation_id, version=turn.state.version)
     if turn.result is None:
+        # Never sent back through a second natural-language planner: the boundary is visible to
+        # the user and canonical state and version stay untouched.
         logger.info("engine.delegated to=%s", turn.delegate_to)
-        if getattr(engine, "authoritative", False):
-            # The unified graph must never send its unresolved operation back through a
-            # second natural-language planner. Until the capability has a graph node, make
-            # that boundary visible to the user and leave canonical state/version untouched.
-            explanations = {
-                "CHART": "Todavía no puedo crear gráficos desde esta conversación.",
-                "PAYMENT": "Los pagos aún no están disponibles en este flujo conversacional.",
-                "TRANSFER": (
-                    "Las transferencias aún no están disponibles en este flujo conversacional."
-                ),
-                "BOOKING": "Las reservas aún no están disponibles en este flujo conversacional.",
-                "UNSUPPORTED": "Todavía no puedo resolver esa operación desde esta conversación.",
-            }
-            unavailable = AskFinancialQuestionResult(
-                outcome=PlanningOutcome.INVALID_DOMAIN.value,
-                text=explanations.get(turn.delegate_to or "", explanations["UNSUPPORTED"]),
-            )
-            held = Conversation(
-                conversation_id=turn.state.conversation_id, version=turn.state.version
-            )
-            return _carrying(echoed, _on_the_wire(unavailable, held, who, metric_tokens))
-        _answered_by("rules")
-        if turn.delegate_to == "CHART":
-            _hand_over_the_screen(question, turn.state)
-        return None
-    state = turn.state
-    held = Conversation(conversation_id=state.conversation_id, version=state.version)
-    answer = _on_the_wire(turn.result, held, who, metric_tokens)
-    # A graph-owned confirmation has just been consumed or kept pending by the graph. Carrying the
-    # echoed payment fields here would resurrect a cancelled/paid preview from the client payload.
-    return answer if graph_owns_workflow else _carrying(echoed, answer)
-
-
-def _carrying(echoed: ConversationPayload | None, answer: QuestionResponse) -> QuestionResponse:
-    """The engine's answer, holding what it must hand back untouched from the echoed conversation:
-    a payment the rules route set aside (only that workflow reaches the engine), and the sealed
-    offers of a gym search while the conversation is still the one they were sealed for (M-3)."""
-    if echoed is None or answer.conversation is None:
-        return answer
-    carried: dict[str, object] = {}
-    if echoed.workflow is not None:
-        carried.update({field: getattr(echoed, field) for field in _SET_ASIDE})
-    if (
-        echoed.activity_offers is not None
-        and answer.conversation.conversation_id == echoed.conversation_id
-    ):
-        carried["activity_offers"] = echoed.activity_offers
-    if not carried:
-        return answer
-    conversation = answer.conversation.model_copy(update=carried)
-    return answer.model_copy(update={"conversation": conversation})
-
-
-def _hand_over_the_screen(question: QuestionRequest, state: DialogueState) -> None:
-    """A chart is the rules route's to draw, of what is on screen (ruling R28), and what is on
-    screen is the engine's: its focus goes into the conversation that route is about to read, as the
-    plan or the pair it answered last, read from the same accounts the engine read it from. The
-    rules route's chart code is not touched; only the context it is handed is."""
-    focus, accounts = state.focus, state.scope.account_ids
-    # The renderer receives typed context. The user's visual request is never rewritten as a new
-    # natural-language financial question for another planner.
-    screen: dict[str, object]
-    if isinstance(focus, QueryFocus):
-        screen = {"last_plan": conversation_mapper.plan_payload(_read_from(focus.plan, accounts))}
-    elif isinstance(focus, ComparisonFocus):
-        pair = focus.comparison
-        screen = {
-            "last_comparison_earlier": conversation_mapper.plan_payload(
-                _read_from(pair.earlier, accounts)
-            ),
-            "last_comparison_latest": conversation_mapper.plan_payload(
-                _read_from(pair.latest, accounts)
-            ),
-        }
-    else:
-        return
-    echoed = question.conversation.model_dump() if question.conversation is not None else {}
-    question.conversation = ConversationPayload.model_validate({**echoed, **screen})
-
-
-def _read_from(
-    plan: FinancialPlan | TopMovements, accounts: tuple[UUID, ...]
-) -> FinancialPlan | TopMovements:
-    """`plan` as the engine executed it: from the accounts selected, or every one when none is."""
-    return replace(
-        plan, across_accounts=not accounts, only_account_id=None, only_account_ids=accounts
-    )
-
-
-def _owned_by_the_rules(echoed: ConversationPayload) -> bool:
-    """Whether the turn belongs to a workflow the rules route opened (ruling R26)."""
-    set_aside = echoed.workflow is Workflow.PAYMENT_IN_PROGRESS and echoed.suspended
-    return echoed.workflow is not None and not set_aside
+        unavailable = AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text=_UNAVAILABLE.get(turn.delegate_to or "", _UNAVAILABLE["UNSUPPORTED"]),
+        )
+        return _on_the_wire(unavailable, held, who, metric_tokens)
+    return _on_the_wire(turn.result, held, who, metric_tokens)
 
 
 async def try_engine_streaming(
-    engine: ConversationTurnHandler | None,
+    engine: ConversationTurnHandler,
     question: QuestionRequest,
     who: Caller,
     today: date,
     metric_tokens: MetricTokenCodec,
     request_id: str | None = None,
-) -> StreamingResponse | None:
+) -> StreamingResponse:
     """`try_engine` for the streaming route: one stage, then the answer, in the route's frames.
-
-    The engine answers before the stream starts. Only the non-authoritative compatibility engine
-    can hand a turn back for legacy handling; the graph's authoritative delegations become explicit
-    responses inside `try_engine` and never enter the legacy route."""
+    The graph answers before the stream starts, so the headers carry exact counts."""
     answer = await try_engine(engine, question, who, today, metric_tokens, request_id)
-    if answer is None:
-        return None
 
     async def frames() -> AsyncIterator[str]:
         yield _sse({"type": "stage", "name": "interpreting", "detail": None})
@@ -424,8 +208,8 @@ def _sse(payload: Mapping[str, object]) -> str:
 
 
 class _Reported:
-    """Says, on every answer of the two question routes, which engine answered and how many model
-    calls the request made. Raw ASGI, like `RecordingTurns`, so the tally it reads is the one this
+    """Says, on every answer of the two question routes, how many model calls and bank reads the
+    request made. Raw ASGI, like `RecordingTurns`, so the tally it reads is the one this
     request counted into, whatever task the route ran its calls in."""
 
     def __init__(self, app: Any) -> None:
@@ -443,36 +227,31 @@ class _Reported:
                 async def reported(message: Any) -> None:
                     if message["type"] == "http.response.start":
                         headers = MutableHeaders(scope=message)
-                        headers.append(ENGINE_HEADER, answered.by)
-                        # The rules route streams its planner's calls after this message leaves:
-                        # no count there rather than a partial one (M-5).
-                        if answered.by == "model" or scope["path"] != _STREAM_ROUTE:
-                            headers.append(MODEL_CALLS_HEADER, str(calls.count))
-                            headers.append(PROVIDER_REQUESTS_HEADER, str(calls.provider_requests))
+                        headers.append(ENGINE_HEADER, "model")
+                        headers.append(MODEL_CALLS_HEADER, str(calls.count))
+                        headers.append(PROVIDER_REQUESTS_HEADER, str(calls.provider_requests))
+                        headers.append(
+                            MODELS_ATTEMPTED_HEADER,
+                            ",".join(calls.attempted_models or []),
+                        )
+                        headers.append(
+                            MODELS_USED_HEADER,
+                            ",".join(calls.successful_models or []),
+                        )
+                        if calls.provider_failures:
                             headers.append(
-                                MODELS_ATTEMPTED_HEADER,
-                                ",".join(calls.attempted_models or []),
+                                PROVIDER_FAILURES_HEADER,
+                                ",".join(calls.provider_failures),
                             )
+                        if calls.terminal_provider_failure:
                             headers.append(
-                                MODELS_USED_HEADER,
-                                ",".join(calls.successful_models or []),
+                                PROVIDER_TERMINAL_FAILURE_HEADER,
+                                calls.terminal_provider_failure,
                             )
-                            if calls.provider_failures:
-                                headers.append(
-                                    PROVIDER_FAILURES_HEADER,
-                                    ",".join(calls.provider_failures),
-                                )
-                            if calls.terminal_provider_failure:
-                                headers.append(
-                                    PROVIDER_TERMINAL_FAILURE_HEADER,
-                                    calls.terminal_provider_failure,
-                                )
-                            if calls.token_reports:
-                                headers.append(PROMPT_TOKENS_HEADER, str(calls.prompt_tokens))
-                                headers.append(
-                                    COMPLETION_TOKENS_HEADER, str(calls.completion_tokens)
-                                )
-                                headers.append(TOKEN_REPORTS_HEADER, str(calls.token_reports))
+                        if calls.token_reports:
+                            headers.append(PROMPT_TOKENS_HEADER, str(calls.prompt_tokens))
+                            headers.append(COMPLETION_TOKENS_HEADER, str(calls.completion_tokens))
+                            headers.append(TOKEN_REPORTS_HEADER, str(calls.token_reports))
                         if answered.financial_reads is not None:
                             headers.append(FINANCIAL_READS_HEADER, str(answered.financial_reads))
                     await send(message)

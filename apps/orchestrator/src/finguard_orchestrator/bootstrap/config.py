@@ -6,10 +6,8 @@ from uuid import UUID
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from finguard_orchestrator.domain.models.conversation import AccountScopeDefault
 from finguard_orchestrator.domain.models.visual_plan import VisualMode
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure import TomlModelCatalogue
 
@@ -58,14 +56,6 @@ class Settings(BaseSettings):
     # Both were constants inside the adapter, which made them parameters and not
     # configuration — a slower machine needed a commit.
     banking_timeout_seconds: float
-    # How many times a *read* against banking is attempted before the failure becomes visible
-    # state. Reads have no side effects, so one immediate retry recovers a short transport
-    # interruption; a second failure lets the user decide whether to try again.
-    #
-    # Operational policy, so it lives here rather than beside the code that uses it. Commands
-    # deliberately do not retry at all: their outcome may be indeterminate after a timeout, and
-    # this number must never be able to reach them.
-    banking_read_attempts: int = 2
     supporting_movements: int
 
     # Where the local runtime listens. Configurable because inside a container 127.0.0.1
@@ -370,80 +360,6 @@ class Settings(BaseSettings):
     # in a group the guard does not cover. See evaluation/planning/RESULTS.md.
     planner_model: str
 
-    # Deterministic rules to switch off, by name. Empty means every rule is on, which is
-    # the only sane default: a guard that is off by accident reads like a control while
-    # enforcing nothing.
-    #
-    # It exists so each rule's worth can be measured rather than argued. Every one of them
-    # refuses something, so every one can be wrong in the expensive direction — turning a
-    # question the pipeline answers into a dead end — and "is this rule earning its place?"
-    # deserves a number. `scripts/evaluate_planning.py --ablate` produces that number by
-    # replaying each policy over one recorded set of model answers.
-    #
-    # A name this build does not have is a startup error, not a shrug: the quiet outcome
-    # is an operator who believes a rule is off, measures with it on, and concludes it is
-    # worthless.
-    disabled_guards: tuple[str, ...] = ()
-
-    # Who reads a turn: the rules, the rules with a model watching, or the model.
-    #
-    #   router   the deterministic rules alone. Today's behaviour, and the default.
-    #   shadow   both. The rules still decide and the model's opinion becomes a log line, which is
-    #            the number that has to exist before anybody argues about the third value. Costs a
-    #            model call per turn and changes no answer.
-    #   hybrid   the rules keep every turn they recognise; the model may widen only their catch-all
-    #            and may never create a payment or own-account transfer.
-    #   model    `Promoted`: the model decides everything except a payment, which the rules keep.
-    #
-    # Named modes rather than booleans because "shadow and promoted" is not a thing — a model
-    # cannot both be watched and be the authority, and a pair of switches would let somebody
-    # configure that and get one of them silently ignored.
-    #
-    # The case for `model` is measured and it is lopsided. On the 879-turn corpus the rules score
-    # 100 % by construction — their answers *are* its labels — so that corpus can never show them
-    # failing, and the model's 91.5 % on it is a disagreement rate with the rules rather than an
-    # error rate. On 96 sentences written by something that had never seen this vocabulary, the
-    # rules reach 37 and `Promoted` reaches 86. See test_the_same_question_said_differently.py.
-    #
-    # 86 and not the 88 the model scores alone, because nobody can run the model alone: two of the
-    # sentences it read as payments are refused by the rule above. Both are worth the refusal —
-    # "puedo hacerlo por bizum, ¿verdad?" and "¿cómo lo hago?" ask how the thing works rather than
-    # instructing anybody to send money — so the two points are the rule doing its job, not its
-    # price.
-    #
-    # **And then the other side was measured, and `model` is not ready.** Replaying all 133
-    # episodes through `Promoted` — 900 turns, the tool each one reached — costs 35 failures, and
-    # two of them move money:
-    #
-    #   * "Déjalo" is read as manners, so the transfer it was cancelling stays open, and the "500"
-    #     in the next turn lands inside it. Two episodes, and it is the failure this service exists
-    #     to make impossible.
-    #   * "¿Qué traspaso al fondo?" and "mueve 200 € a la cuenta de la empresa" — a question and an
-    #     account the holder does not have — both come back as transfers. `Promoted` refuses to let
-    #     a model start a PAYMENT and says nothing about OWN_TRANSFER, which is the same decision
-    #     one rail over. A hole in the rule, found by measuring rather than by reading it.
-    #   * The short balance vocabulary regresses: "saldo", "dinero disponible" and "¿cuánto tenía?"
-    #     stop reaching the balance, and "cuánto he gastado con cada tarjeta" stops reaching the
-    #     wallet and answers with the account total — the exact defect the wallet intent fixed.
-    #
-    # The other 23 are one shape: the model over-specifies when the reading depends on the turn
-    # before. "¿Y en la hucha?" after a question about spending is a narrowed *query*, and the
-    # model calls it a balance. That is the interpreter's prompt, not the arrangement, and it is
-    # where the work goes before this is worth revisiting.
-    #
-    # So the honest summary is that neither reader dominates. The rules lose to phrasing and the
-    # model loses to context, and the corpus and the drift set each only measure one of those.
-    #
-    # Still not the default, and now for a second reason. Flipping how every turn in production is
-    # read is the operator's call rather than a value shipped in a settings class; and on today's
-    # numbers there is no case for flipping it.
-    turn_interpreter: Literal["router", "shadow", "hybrid", "model"] = "router"
-
-    # Transitional compatibility selector. `rules` explicitly opts into the deprecated legacy
-    # coordinator; `model` uses typed operations. The normal runtime is LangGraph, with canonical
-    # state/checkpoints in PostgreSQL and protected actions delegated to existing guarded bank
-    # commands. No provider or graph failure may silently select the legacy coordinator.
-    conversation_engine: Literal["rules", "model"] = "model"
     # The engine's model, on the planner's provider (`planner_provider`). None means the planner's
     # own model, so pointing the planner at a hosted provider moves the engine with it.
     engine_model: str | None = None
@@ -453,28 +369,6 @@ class Settings(BaseSettings):
     # Zero for the planner's reason: an interpretation that varies between identical turns cannot
     # be measured.
     engine_temperature: float = Field(default=0.0, ge=0)
-    # Graph-off is an explicit compatibility mode only. Graph turns require PostgreSQL for
-    # canonical state, idempotency reservations and LangGraph checkpoints. In graph mode, supported
-    # visual and protected payment workflows stay in the graph; unsupported work is explicit and
-    # never reinterpreted by the legacy route.
-    conversation_graph: Literal["off", "on"] = "on"
-
-    # What a spending or income question means when it names no account and the conversation has
-    # chosen none.
-    #
-    #   all   every account the holder has, which is what «¿cuánto gasté?» means to whoever asks
-    #         it — and the answer says so («Consultado en todas tus cuentas.»), unless the person
-    #         asked for every account in those words.
-    #   ask   «¿En qué cuenta quieres consultarlo?» first, as every thread began until 2026-10-07.
-    #
-    # `all` since spec §3.5 (conversation state, slice 1). Live that day, «¿Cuánto llevo gastado en
-    # Spotify?» was asked which account and then which period before any figure: two questions
-    # about things the person had an ordinary meaning for. `ask` keeps that question one variable
-    # away for a deployment that wants it. Neither touches an account the sentence names, a choice
-    # the person already made in the conversation, a balance (every account, listed) or a payment
-    # (the credential's own account).
-    account_scope_default: AccountScopeDefault = "all"
-
     # The visual planner's ladder. `hybrid` lets the model choose a presentation only after the
     # domain verifier accepts it; abstentions, invalid proposals and provider failures use the
     # deterministic floor. Its provider/model can be configured separately from query planning.
@@ -590,10 +484,6 @@ class Settings(BaseSettings):
                 scopes=frozenset(granted),
             )
         return table
-
-    def guard_policy(self) -> GuardPolicy:
-        """Validates the names as it builds it, so a typo fails at startup."""
-        return GuardPolicy(disabled=frozenset(self.disabled_guards))
 
     def catalogue(self) -> TomlModelCatalogue:
         if self.llm_catalogue_file is None:

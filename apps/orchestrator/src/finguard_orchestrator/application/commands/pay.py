@@ -14,7 +14,7 @@ yes. Every other path — a question, an ungrounded reading, a "sí pero 30", a 
 ends in a sentence and no movement.
 """
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.command_bus import Command
@@ -30,17 +30,12 @@ from finguard_orchestrator.domain.errors import (
 )
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
-from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.domain.ports.payment_gateway import PaymentGatewayPort
-from finguard_orchestrator.domain.ports.payment_reader import PaymentReaderPort
 from finguard_orchestrator.domain.services import (
     confirmation,
-    payment_router,
-    payment_words,
     payment_writer,
 )
-from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
-from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 
 # Banking's code for a balance that does not cover the payment. Matched on the code, never on the
@@ -120,22 +115,6 @@ class PaymentAnswer:
 
 
 @dataclass(frozen=True)
-class PreparePaymentCommand(Command[PaymentAnswer]):
-    """A sentence that asks to pay somebody. Moves nothing.
-
-    `idempotency_key` comes from the edge rather than being made here, for the same reason `today`
-    does on the question path: a handler that invents one cannot be replayed.
-    """
-
-    sentence: str
-    account_id: UUID
-    idempotency_key: str
-    # The payment already under way, echoed by the caller. This service keeps no conversation, so a
-    # half-built payment lives in the client's hands exactly like a half-built query does.
-    pending: PaymentDraft | None = None
-
-
-@dataclass(frozen=True)
 class PrepareChosenPaymentCommand(Command[PaymentAnswer]):
     """A payment built from explicit fields, never interpreted by a model.
 
@@ -200,19 +179,6 @@ def _drafted(draft: PaymentDraft) -> SpokenPaymentDraft:
         currency=draft.currency,
         concept=draft.concept,
         rail=draft.rail.value,
-    )
-
-
-def _asking_for(draft: PaymentDraft) -> PaymentAnswer:
-    """The question a half-built payment still needs answered, carrying itself.
-
-    Which slot is missing decides the question, and the draft travels with it — a question the
-    client cannot answer in context is the defect this whole path exists to fix.
-    """
-    return PaymentAnswer(
-        outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
-        text=payment_writer.still_missing(draft),
-        draft=_drafted(draft),
     )
 
 
@@ -386,196 +352,6 @@ class PrepareChosenPaymentHandler:
                 text=payment_writer.not_understood(),
                 reason=str(refused),
             )
-        return await _previewed(
-            self._bank, request, account_id=command.account_id, key=command.idempotency_key
-        )
-
-
-class PreparePaymentHandler:
-    """Reads a sentence into a payment, or continues one that is already under way.
-
-    The second half is what the reported conversation needed. "¿De cuánto quieres hacerle el bizum a
-    Marta?" followed by "15 euros" used to start again from nothing: the recipient was thrown away
-    with the question, and a sentence with money and no payment verb is not a payment, so it reached
-    the financial planner.
-
-    A continuation never consults the model. Both slots a payment can be missing are closed
-    vocabularies — an amount is a grammar, and a recipient is this account's own contact list — so
-    there is nothing to infer, and the turn that answers a question should not be able to be read as
-    a different intent.
-    """
-
-    def __init__(
-        self,
-        reader: PaymentReaderPort,
-        bank: PaymentGatewayPort,
-        policy: GuardPolicy = EVERY_RULE,
-        *,
-        contacts: ContactDirectoryPort,
-    ) -> None:
-        self._reader = reader
-        self._bank = bank
-        self._policy = policy
-        self._contacts = contacts
-
-    async def handle(self, command: PreparePaymentCommand) -> PaymentAnswer:
-        if command.pending is not None:
-            continued = await self._continue(command)
-            if continued is not None:
-                return continued
-
-        reading = await self._reader.read(command.sentence, policy=self._policy)
-
-        # Concepts are user-owned text. When the sentence marks one explicitly, the deterministic
-        # reader is authoritative over a model that may truncate ``viaje a Malaga`` or append
-        # ``por bizum``. The directory is what lets it distinguish a trailing payee from a place.
-        explicit_concept = payment_words.concept_in(command.sentence)
-        directory: tuple[Contact, ...] | None = None
-        if explicit_concept is not None:
-            directory = await self._contacts.all_of(command.account_id)
-            explicit_concept = payment_words.concept_in(command.sentence, directory)
-            if reading.request is not None:
-                reading = replace(
-                    reading,
-                    request=replace(reading.request, concept=explicit_concept),
-                )
-            elif reading.draft is not None:
-                reading = replace(
-                    reading,
-                    draft=replace(reading.draft, concept=explicit_concept),
-                )
-
-        # Stamped here, from the sentence, on whatever the reader produced. The rail is not
-        # in the prompt and not in the schema: "bizum" and "transferencia" are a closed
-        # vocabulary of two, and letting a decoder choose between them would be letting it
-        # choose how money leaves an account. The reader reads who and how much.
-        rail = payment_words.rail_in(command.sentence)
-
-        if not reading.is_payable:
-            # On the draft too, so the rail survives the turn that asks for the amount:
-            # "hazme una transferencia a Elena" then "200 euros" is still a transfer, and
-            # the second sentence names no rail at all.
-            drafted = replace(reading.draft, rail=rail) if reading.draft else None
-            return _declined(reading.outcome, reading.question, reading.reason, drafted)
-
-        assert reading.request is not None  # is_payable is exactly this condition
-
-        return await _previewed(
-            self._bank,
-            replace(reading.request, rail=rail),
-            account_id=command.account_id,
-            key=command.idempotency_key,
-            # So an ambiguous name comes back with identifiers rather than as prose to retype.
-            directory=(
-                directory
-                if directory is not None
-                else await self._contacts.all_of(command.account_id)
-            ),
-        )
-
-    async def _chosen(
-        self, pending: PaymentDraft, account_id: UUID
-    ) -> "PaymentDraft | PaymentAnswer":
-        """The draft with the picked contact's name on it, or a refusal.
-
-        The identifier came back from a client, so it is looked up in this account's own
-        directory rather than believed. Banking checks it again — that is the boundary that
-        matters — and doing it here answers an unknown contact with a sentence, not a round trip.
-
-        The name is filled in from the directory because everything downstream says it: the
-        confirmation prompt, the grounding check, the question that asks for the amount. What the
-        identifier changes is who gets paid, not what the assistant calls them.
-        """
-        directory = await self._contacts.all_of(account_id)
-        found = next((c for c in directory if c.contact_id == pending.recipient_contact_id), None)
-        if found is None:
-            return PaymentAnswer(
-                outcome=PaymentOutcome.REFUSED.value,
-                text=payment_writer.not_a_contact_chosen(),
-                reason="contact_not_found",
-            )
-        return replace(pending, recipient_name=found.display_name)
-
-    async def _continue(self, command: PreparePaymentCommand) -> PaymentAnswer | None:
-        """The pending payment plus whatever this sentence adds, or None if it adds nothing.
-
-        None is the useful answer as often as an answer is: "no sé" fills no slot, and a sentence
-        nobody can read deterministically belongs on the ordinary path.
-        """
-        if command.pending is None:
-            raise RuntimeError("continuing a payment that is not pending")
-        pending = command.pending
-        # An identifier with no name beside it is a choice that has not been applied yet: this
-        # service fills the name in from its own directory, so a draft carrying both has been
-        # through here already. That is what makes the choice *this turn's* new information without
-        # anything having to remember which turn it arrived on — and it is why a later sentence
-        # about something else still falls through to the ordinary path.
-        chose = pending.recipient_contact_id is not None and pending.recipient_name is None
-        if chose:
-            chosen = await self._chosen(pending, command.account_id)
-            if isinstance(chosen, PaymentAnswer):
-                return chosen
-            pending = chosen
-        missing = pending.missing
-
-        amount = payment_words.amount_in(command.sentence)
-        concept = payment_words.concept_in(command.sentence)
-        clears_concept = payment_words.clears_concept(command.sentence)
-        directory: tuple[Contact, ...] = ()
-        if concept is not None or PaymentField.RECIPIENT in missing:
-            directory = await self._contacts.all_of(command.account_id)
-            concept = payment_words.concept_in(command.sentence, directory)
-        named: tuple[Contact, ...] = ()
-        if PaymentField.RECIPIENT in missing:
-            # Only when the recipient is what is missing. Otherwise a sentence that happens to
-            # mention a contact — "los 15 de la cena con Marta" — would silently change who is
-            # being paid.
-            named = payment_words.contacts_in(command.sentence, directory)
-
-        if amount is None and not named and not chose and concept is None and not clears_concept:
-            if payment_router.resumes(command.sentence):
-                # An explicit resumption adds no field and is not nothing: it is the turn that
-                # brings the payment back. Falling through here read the sentence afresh, and
-                # "continuar con el bizum" names nobody — so the reader found no recipient and the
-                # Bizum started over, having been suspended precisely to avoid that.
-                #
-                # It asks for whatever is still missing, which is the question the payment was
-                # holding when the subject changed.
-                return _asking_for(pending)
-            return None
-
-        if clears_concept:
-            # `filled_with` treats None as "not supplied", correctly for ordinary continuations.
-            # Here absence is the explicit new value, so apply it before merging the other fields.
-            pending = replace(pending, concept=None)
-
-        if len(named) > 1:
-            # Ambiguous, and this is the one place that can say so with the names in hand. Banking
-            # refuses to choose too, and reaching it would spend a round trip to be told the same
-            # thing without the candidates.
-            drafted = pending.filled_with(PaymentDraft(amount_minor=amount, concept=concept))
-            return PaymentAnswer(
-                outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
-                text=payment_writer.several_candidates(tuple(c.display_name for c in named)),
-                draft=_drafted(drafted),
-                candidates=[
-                    SpokenCandidate(str(c.contact_id), c.display_name, c.phone) for c in named
-                ],
-            )
-
-        turn = PaymentDraft(
-            recipient_name=named[0].display_name if named else None,
-            amount_minor=amount,
-            # Read on the same turn as the amount, because it arrives in the same breath: "pues 15
-            # euros con concepto de comida a Marta" answered the amount question and carried the
-            # note, and reading one without the other lost it exactly where it was written.
-            concept=concept,
-        )
-        drafted = pending.filled_with(turn)
-        request = drafted.into_request()
-        if request is None:
-            return _asking_for(drafted)
-
         return await _previewed(
             self._bank, request, account_id=command.account_id, key=command.idempotency_key
         )

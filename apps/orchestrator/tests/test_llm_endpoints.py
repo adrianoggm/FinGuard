@@ -5,9 +5,9 @@ from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from support import BACKUP, PRIMARY, catalogue
 
-from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
 from finguard_orchestrator.application.bus.command_bus import CommandBus
 from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.application.commands.replace_llm_policy import (
@@ -27,9 +27,9 @@ from finguard_orchestrator.bootstrap.dependencies import (
     get_query_bus,
 )
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest
 
 
 @pytest.fixture(autouse=True)
@@ -158,14 +158,12 @@ def test_ready_reports_on_what_the_financial_endpoint_needs() -> None:
         "catalogue_provider",
         "planner",
         "banking",
+        "conversation_runtime",
+        "persistence",
     }
     settings = app.state.settings
-    assert body["financial_path"] == {
-        "engine": settings.conversation_engine,
-        "graph": settings.conversation_graph,
-        "provider": settings.planner_provider,
-        "model": settings.engine_model or settings.planner_model,
-    }
+    assert body["financial_path"]["provider"] == settings.planner_provider
+    assert body["financial_path"]["model"] == (settings.engine_model or settings.planner_model)
 
 
 def test_ready_is_false_while_financial_questions_are_disabled() -> None:
@@ -176,6 +174,8 @@ def test_ready_is_false_while_financial_questions_are_disabled() -> None:
     previous_enabled = app.state.questions_enabled
     previous_planner = app.state.planner_probe
     previous_banking = app.state.banking_probe
+    previous_engine = getattr(app.state, "engine", None)
+    previous_persistence = getattr(app.state, "persistence_probe", None)
     # Swapped to the provider this build can talk to, so the only false check is the one
     # under test. It used to rely on an earlier test having done this swap — which is why
     # it started failing the moment /admin needed a scope, several tests away.
@@ -183,12 +183,17 @@ def test_ready_is_false_while_financial_questions_are_disabled() -> None:
     app.state.questions_enabled = False
     app.state.planner_probe = ReadyProbe()
     app.state.banking_probe = ReadyProbe()
+    # Any non-None graph counts as built; /ready never calls it.
+    app.state.engine = object()
+    app.state.persistence_probe = ReadyProbe()
     try:
         response = client.get("/ready")
     finally:
         app.state.questions_enabled = previous_enabled
         app.state.planner_probe = previous_planner
         app.state.banking_probe = previous_banking
+        app.state.engine = previous_engine
+        app.state.persistence_probe = previous_persistence
 
     assert response.status_code == 503
     assert response.json()["checks"] == {
@@ -196,6 +201,8 @@ def test_ready_is_false_while_financial_questions_are_disabled() -> None:
         "catalogue_provider": True,
         "planner": True,
         "banking": True,
+        "conversation_runtime": True,
+        "persistence": True,
     }
 
 
@@ -221,82 +228,21 @@ def test_ready_says_whether_payments_are_on_without_that_making_it_unready() -> 
     assert "payments" not in body["checks"]
 
 
-class _AsksForAPeriod:
-    """A planner that always needs a clarification -- enough to prove `/v1/questions` reached the
-    real pipeline, without scripting a figure this test never checks."""
-
-    async def plan(self, sentence, *, context):
-        return PlanningResult.needs_clarification("¿De qué periodo?")
-
-
-class _UnreachableLedger:
-    async def run(self, plan, *, account_id, today, reporting_timezone, movements=None):
-        raise AssertionError("a clarification turn never reaches the ledger")
-
-    async def ranked(self, ranking, *, account_id, today, reporting_timezone):
-        raise AssertionError("a clarification turn never reaches the ledger")
-
-
-class _UnreachableAccounts:
-    async def of(self, account_id, *, today, reporting_timezone):
-        raise AssertionError("no balance question in this test")
-
-
-class _NoContacts:
-    async def all_of(self, account_id):
-        return ()
-
-
-class _UnreachableCards:
-    async def all_of(self, account_id, *, since, today, timezone):
-        raise AssertionError("no card question in this test")
-
-    async def charges_on(self, account_id, card_id, *, since, today, timezone, limit):
-        raise AssertionError("no card question in this test")
-
-
 def test_a_request_may_state_its_viewport_and_a_request_that_does_not_still_works() -> None:
     """`extra="forbid"` means a field must be *declared* to be accepted, and declared means an
     old client that omits it keeps working.
 
-    This file's own fixtures stop short of `/v1/questions`: `_wired` above only wires the admin
-    buses, and questions are off by default (`ORCHESTRATOR_QUESTIONS_ENABLED=false` in
-    `.env.defaults`). So this wires just enough of the real `AskFinancialQuestionHandler` -- a
-    planner that always asks a clarifying question, never a ledger -- to earn a genuine 200.
-    Settling for `without.status_code in {200, 422}` would pass exactly the same way if the
-    planner never ran at all, which is the failure mode an undeclared `viewport` also produces --
-    so the honest assertion here is the outright one.
+    Asked of the request contract itself: the route in front of it now needs a built graph and an
+    Idempotency-Key, and a missing graph answers 503 before the body's own 422 is ever reported, so
+    a status code there could not tell a declared `viewport` from an undeclared one.
     """
-    handler = AskFinancialQuestionHandler(
-        _AsksForAPeriod(),
-        _UnreachableLedger(),
-        accounts=_UnreachableAccounts(),
-        contacts=_NoContacts(),
-        cards=_UnreachableCards(),
+    without = QuestionRequest(question="¿cuánto gasté este mes?")
+    assert without.viewport == "DESKTOP"
+
+    with_viewport = QuestionRequest(
+        question="¿cuánto gasté este mes?", viewport="MOBILE", max_visible_rows=5
     )
-    queries = QueryBus()
-    queries.register(AskFinancialQuestionQuery, handler)
-    app.dependency_overrides[get_query_bus] = lambda: queries
-    previous_enabled = app.state.questions_enabled
-    app.state.questions_enabled = True
-    try:
-        without = client.post("/v1/questions", json={"question": "¿cuánto gasté este mes?"})
-        assert without.status_code == 200
+    assert (with_viewport.viewport, with_viewport.max_visible_rows) == ("MOBILE", 5)
 
-        with_viewport = client.post(
-            "/v1/questions",
-            json={
-                "question": "¿cuánto gasté este mes?",
-                "viewport": "MOBILE",
-                "max_visible_rows": 5,
-            },
-        )
-        assert with_viewport.status_code == 200
-
-        rejected = client.post(
-            "/v1/questions",
-            json={"question": "¿cuánto gasté este mes?", "viewport": "WATCH"},
-        )
-        assert rejected.status_code == 422
-    finally:
-        app.state.questions_enabled = previous_enabled
+    with pytest.raises(ValidationError):
+        QuestionRequest(question="¿cuánto gasté este mes?", viewport="WATCH")

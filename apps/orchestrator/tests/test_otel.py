@@ -33,25 +33,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from finguard_orchestrator.application import (
-    AskFinancialQuestionHandler,
-    AskFinancialQuestionQuery,
-    QueryBus,
-)
+from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.bootstrap.config import Settings
-from finguard_orchestrator.bootstrap.dependencies import (
-    authenticated_caller,
-    get_ask_handler,
-    get_query_bus,
-    reporting_today,
-)
+from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, reporting_today
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.enums import Direction, Period
-from finguard_orchestrator.domain.models.planning_context import PlanningContext
-from finguard_orchestrator.domain.models.planning_result import PlanningResult
-from finguard_orchestrator.domain.models.query_answer import QueryAnswer
+from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.banking import client as banking_client
 from finguard_orchestrator.observability import JsonLines, Step, TurnRecord, Verdict, otel, record
@@ -60,7 +47,6 @@ from finguard_orchestrator.observability.decisions import Consultation, Decision
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
-THREE_MONTHS = RelativePeriod(period=Period.LAST_N_MONTHS, n=3)
 
 # The same sentence `test_logging.py` uses, for the same reason: what somebody typed, who they pay
 # and the note they wrote about it, all in one string that can be searched for afterwards.
@@ -356,17 +342,14 @@ def test_an_exporter_that_raises_does_not_take_down_the_turn(monkeypatch) -> Non
 # --- the property that matters most ------------------------------------------------------------
 
 
-class RecordingPlanner:
-    """A planner that records a decision, standing in for the ten seams a sibling is writing.
+class RecordingGraph:
+    """A graph that records a decision and hands the turn on.
 
-    The point of the test below is the middleware and the record, not the call sites — so this is
-    the smallest thing that puts a real `record()` inside a real turn on a real route.
+    The point of the tests below is the middleware and the record, not the graph's nodes -- so
+    this is the smallest thing that puts a real `record()` inside a real turn on a real route.
     """
 
-    def __init__(self, result: PlanningResult) -> None:
-        self._result = result
-
-    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
+    async def answer(self, *_: object, **__: object) -> EngineAnswer:
         record(
             Step.PLANNER,
             Verdict.AGREED,
@@ -375,58 +358,20 @@ class RecordingPlanner:
             now="LAST_N_MONTHS:3",
             detail="fake-model",
         )
-        return self._result
-
-
-class FakeLedger:
-    async def run(self, plan, *, account_id, today, reporting_timezone="Europe/Madrid", **kw):
-        return QueryAnswer(currency="EUR", total_minor=189_597, movement_count=12)
-
-    async def ranked(self, ranking, *, account_id, today, reporting_timezone):
-        return None
-
-
-class FakeAccounts:
-    async def of(self, account_id, *, today, reporting_timezone):
-        raise AssertionError("not this path")
-
-
-class FakeContacts:
-    async def all_of(self, account_id):
-        return ()
-
-
-class NoCards:
-    async def all_of(self, account_id, **kwargs):
-        from finguard_orchestrator.domain.models.card import Wallet
-
-        return Wallet(since=date(2026, 7, 7))
-
-    async def charges_on(self, account_id, card_id, **kwargs):
-        return ()
+        return EngineAnswer(None, DialogueState(uuid.UUID(int=1), version=1), "CHART", 0, {})
 
 
 @pytest.fixture(autouse=True)
 def _restore():
     app.dependency_overrides.clear()
+    previous = getattr(app.state, "engine", None)
     yield
+    app.state.engine = previous
     app.dependency_overrides.clear()
 
 
 def wired() -> TestClient:
-    handler = AskFinancialQuestionHandler(
-        RecordingPlanner(
-            PlanningResult.planned(FinancialPlan(direction=Direction.EXPENSE, period=THREE_MONTHS))
-        ),
-        FakeLedger(),
-        accounts=FakeAccounts(),
-        contacts=FakeContacts(),
-        cards=NoCards(),  # type: ignore[arg-type]
-    )
-    bus = QueryBus()
-    bus.register(AskFinancialQuestionQuery, handler)
-    app.dependency_overrides[get_query_bus] = lambda: bus
-    app.dependency_overrides[get_ask_handler] = lambda: handler
+    app.state.engine = RecordingGraph()
     app.dependency_overrides[reporting_today] = lambda: TODAY
     app.dependency_overrides[authenticated_caller] = lambda: Caller(
         holder_reference="ES-0001",
@@ -434,7 +379,7 @@ def wired() -> TestClient:
         scopes=frozenset({Scope.QUESTIONS_READ}),
     )
     app.state.questions_enabled = True
-    return TestClient(app)
+    return TestClient(app, headers={"Idempotency-Key": "otel-attempt"})
 
 
 def test_a_turn_is_recorded_with_tracing_off(monkeypatch) -> None:
@@ -723,82 +668,6 @@ def test_the_turn_span_says_which_conversation_it_belongs_to(exported: Exported)
 
     assert exported.span("turn").attributes["conversation.id"] == identifier
     assert "conversation.id" not in exported.span("explicit_facts.enforce").attributes
-
-
-def test_a_real_turn_falls_through_the_readers_in_order(monkeypatch) -> None:
-    """**Measured against the live cascade rather than a hand-built tree.**
-
-    The reasoning falls through nineteen readers in a fixed order, and this is what says so against
-    the running service instead of against a tree somebody built by hand.
-
-    **The line that changed, and why.** This used to assert `path.count(...) > 1` —
-    `_direct_period_comparison` asked once by the cascade and three times more from inside the
-    readers that call `_a_comparison_owns_it`. Twenty-two consultations for a question about last
-    quarter's spending, three of them pure waste. Those three are gone: `reader_registry` gives
-    every reader a precondition, and `_natural_period_aggregate_plan`,
-    `_deterministic_breakdown_plan` and `_average_plan` cannot claim a sentence with no natural
-    period, no breakdown and no average in it, so none of them runs and none of them asks.
-
-    Nineteen roots is unchanged, because the precondition is checked *inside* the frame: every
-    reader is still consulted, still appears in the tree, and still records what it claimed. What
-    the count now measures is that the repeats are gone rather than that they are there —
-    `test_a_real_callback_nests_without_anyone_programming_it` below is where nesting is still
-    asserted, on the path where a reader genuinely does consult another.
-    """
-    sealed: list[TurnRecord] = []
-    monkeypatch.setattr(
-        otel, "export_turn", lambda record, **kwargs: sealed.append(record), raising=True
-    )
-
-    wired().post("/v1/questions", json={"question": "¿cuánto gasté en los últimos 3 meses?"})
-
-    (turn,) = [record for record in sealed if record.decisions]
-    path = [found.reader for root in turn.consulted for _, found in root.walk()]
-    assert path[0] == "_ratio_request", "the cascade's first reader, and the order is the point"
-    assert len(turn.consulted) == 19, "nineteen readers the cascade asks directly"
-    assert len(path) == 19, "and no reader consulted from inside another, on this sentence"
-    assert path.count("_direct_period_comparison") == 1, "asked once, where it was asked four times"
-    assert not turn.where(Step.RECOGNISER), "and none of them claimed, so none of them counted"
-
-
-def test_a_real_callback_nests_without_anyone_programming_it(monkeypatch) -> None:
-    """The percent-change path, end to end. `_ratio_request` claims on the strength of
-    `_direct_period_comparison`, and the two `CLAIMED` decisions the counter records are unchanged
-    — what is new is that the tree above them says which one asked the other."""
-    sealed: list[TurnRecord] = []
-    monkeypatch.setattr(
-        otel, "export_turn", lambda record, **kwargs: sealed.append(record), raising=True
-    )
-
-    wired().post(
-        "/v1/questions", json={"question": "¿En qué porcentaje gasté menos en julio que en junio?"}
-    )
-
-    (turn,) = [record for record in sealed if record.decisions]
-    (root,) = turn.consulted
-    assert [(depth, found.reader) for depth, found in root.walk()] == [
-        (0, "_ratio_request"),
-        (1, "_direct_period_comparison"),
-    ]
-    assert all(found.claimed for _, found in root.walk())
-    claims = turn.where(Step.RECOGNISER)
-    assert len(claims) == 2, "the two flat CLAIMED rows are exactly as they were"
-    assert {claim.verdict for claim in claims} == {Verdict.CLAIMED}
-
-
-def test_a_real_turn_carries_its_conversation_across_two_requests() -> None:
-    """The round trip that makes N turns one trace. The client echoes the payload back untouched,
-    which is what it already does with every other field on it."""
-    client = wired()
-    question = {"question": "¿cuánto gasté en los últimos 3 meses?"}
-
-    first = client.post("/v1/questions", json=question).json()["conversation"]
-    second = client.post("/v1/questions", json={**question, "conversation": first}).json()[
-        "conversation"
-    ]
-
-    assert first["conversation_id"] is not None
-    assert second["conversation_id"] == first["conversation_id"]
 
 
 def test_only_one_module_imports_opentelemetry() -> None:

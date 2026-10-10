@@ -25,7 +25,7 @@ from typing import Any
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import evaluate_planning  # noqa: E402
+import evaluation_runtime  # noqa: E402
 from export_chart_fixtures import FAMILY_DATASETS  # noqa: E402
 
 from finguard_orchestrator.bootstrap.config import Settings, get_settings  # noqa: E402
@@ -278,9 +278,9 @@ def _report(results: Results, stable: Stability) -> str:
     latency += "   <- P95 is the budget candidate"
     timeouts = results.fallback_reasons.get("timeout", 0)
     if timeouts:
-        # Included in the P50/P95 above, not excluded from it -- `evaluate_planning`'s formula is
-        # shared for consistency (finding 8). A censored run otherwise reads as "6s is enough" when
-        # the model needed more: this count is what tells a reader the P95 is self-fulfilling.
+        # Included in the P50/P95 above, not excluded from it (finding 8). A censored run otherwise
+        # reads as "6s is enough" when the model needed more: this count is what tells a reader the
+        # P95 is self-fulfilling.
         latency += f" ({timeouts} at the budget ceiling)"
 
     held = f"{stable.held} / {stable.pairs}"
@@ -362,7 +362,7 @@ def _sample_line(cases: list[Case]) -> str:
 async def run(args: argparse.Namespace) -> int:
     cases = load_cases(CASES_PATH)
     try:
-        provider = evaluate_planning.build_provider(args.provider, None, False, None)
+        provider = evaluation_runtime.build_provider(args.provider, None, False, None)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -389,7 +389,7 @@ async def run(args: argparse.Namespace) -> int:
     settings = get_settings()
     temperature, max_output_tokens = settings.visual_planner_sampling()
 
-    manifest = await evaluate_planning.run_manifest(CASES_PATH, provider, args.model, len(cases))
+    manifest = await evaluation_runtime.run_manifest(CASES_PATH, provider, args.model, len(cases))
     manifest["visual_planner"] = {
         "provider": args.provider,
         "model": args.model,

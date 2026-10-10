@@ -10,10 +10,10 @@ from dataclasses import replace
 from uuid import UUID
 
 import pytest
+from support.memory_dialogue_store import MemoryDialogueStore
 
 from finguard_orchestrator.domain.engine.state import DialogueState, DialogueTurn
 from finguard_orchestrator.domain.ports.dialogue_store import DialogueStorePort, StaleDialogueError
-from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
 
 ID = UUID(int=1)
 HOLDER = UUID(int=100)

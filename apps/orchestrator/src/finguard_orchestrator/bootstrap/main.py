@@ -43,13 +43,11 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyCommand,
     ResetLlmPolicyHandler,
 )
-from finguard_orchestrator.application.commands.book_activity import BookActivityHandler
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
-from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
 from finguard_orchestrator.bootstrap.config import get_settings
+from finguard_orchestrator.bootstrap.graph_wiring import graph_engine
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
-from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.ports.visual_planner import VisualPlannerPort
 from finguard_orchestrator.domain.services import category_words
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
@@ -74,20 +72,12 @@ from finguard_orchestrator.infrastructure import (
 )
 from finguard_orchestrator.infrastructure.controllers import engine_dispatch
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
-from finguard_orchestrator.infrastructure.expert_agents.http_expert_agents import HttpExpertAgents
-from finguard_orchestrator.infrastructure.expert_agents.llm_reply_normaliser import (
-    LlmReplyNormaliser,
-)
-from finguard_orchestrator.infrastructure.expert_agents.llm_skill_classifier import (
-    LlmSkillClassifier,
-)
 from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import (
     CLOUDFLARE,
     cloudflare_workers_ai,
 )
 from finguard_orchestrator.infrastructure.llm.counting_provider import (
     CountingProvider,
-    calls_so_far,
 )
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.llm.gemini import GEMINI, GeminiProvider
@@ -137,13 +127,6 @@ logger = logging.getLogger(__name__)
 # and `::1` compare equal here without a second form of the same address to maintain.
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
-# The expert agents' two development credentials, used only when a gateway is configured and its
-# setting is blank -- each logged at WARNING, and the pairwise key refused for a non-loopback
-# origin. The gateway token is the gateway's own development default (`apps/a2a-gateway`,
-# config.py), stated twice because the services share no code.
-_DEVELOPMENT_PAIRWISE_KEY = b"development-only-pairwise-key-32bytes!"
-_DEVELOPMENT_GATEWAY_TOKEN = "development-only-a2a-gateway-token"
-
 
 def _is_loopback_origin(origin: str) -> bool:
     hostname = urlsplit(origin).hostname
@@ -168,9 +151,7 @@ def create_app() -> FastAPI:
     async def lifespan(service: FastAPI) -> AsyncIterator[None]:
         pool = None
         if (
-            settings.metrics_enabled
-            or settings.conversation_graph == "on"
-            or settings.gemini_api_key is not None
+            settings.metrics_enabled or settings.gemini_api_key is not None or graph_factory
         ) and settings.database_url:
             import asyncpg
 
@@ -184,9 +165,9 @@ def create_app() -> FastAPI:
         saver_context = None
         saver_open = False
         try:
-            if settings.conversation_graph == "on":
-                if not settings.database_url or graph_factory is None:
-                    raise ValueError("conversation_graph=on requires DATABASE_URL")
+            if graph_factory is not None:
+                if not settings.database_url:
+                    raise ValueError("the conversation graph requires DATABASE_URL")
                 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
                 from finguard_orchestrator.infrastructure.engine.postgres_dialogue_store import (
@@ -213,14 +194,6 @@ def create_app() -> FastAPI:
                 graph_runtime = graph_factory(
                     dialogue_store, PostgresTurnReservations(pool), checkpointer
                 )
-                if not getattr(graph_runtime, "authoritative", False):
-                    raise RuntimeError(
-                        "conversation_graph=on requires an authoritative LangGraph runtime"
-                    )
-                if getattr(service.state, "ask_handler", None) is not None:
-                    raise RuntimeError(
-                        "conversation_graph=on cannot construct the legacy question handler"
-                    )
                 service.state.engine = graph_runtime
             yield
         finally:
@@ -246,33 +219,24 @@ def create_app() -> FastAPI:
     )
 
     settings = get_settings()
-    if settings.conversation_graph != "on":
-        logger.warning(
-            "conversation.compatibility_runtime_enabled engine=%s graph=off; "
-            "LangGraph is the supported conversational runtime",
-            settings.conversation_engine,
-        )
     gemini_pacer = PostgresRequestPacer(
         provider=GEMINI,
         interval_seconds=settings.gemini_min_request_interval_seconds,
     )
-    if settings.conversation_graph == "on" and sys.platform == "win32":
+    if sys.platform == "win32":
         # psycopg's async connection requires selector-based IO on native Windows. Uvicorn
-        # creates its loop after importing this module, so choose it here, before startup.
+        # creates its loop after importing this module, so choose it here, before startup. A loop
+        # already running (a test building the app) keeps its own: it never opens the lifespan.
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        else:
-            raise RuntimeError(
-                "conversation_graph must be configured before starting the Windows event loop"
-            )
     if settings.metrics_enabled and (
         not settings.database_url or not settings.metrics_signing_keys
     ):
         raise ValueError("metrics_enabled requires DATABASE_URL and METRICS_SIGNING_KEYS")
-    if settings.conversation_graph == "on" and not settings.database_url:
-        raise ValueError("conversation_graph=on requires DATABASE_URL")
+    if not settings.database_url:
+        raise ValueError("DATABASE_URL is required: the conversation graph persists in PostgreSQL")
     catalogue = settings.catalogue()
     # The registry builds providers with no arguments; the one that needs configuration
     # gets it here, in the only place allowed to know what the deployment looks like.
@@ -371,31 +335,6 @@ def create_app() -> FastAPI:
         base_url=settings.banking_base_url,
         timeout_seconds=settings.banking_timeout_seconds,
     )
-    # This legacy turn reader belongs only to the compatibility coordinator. LangGraph receives
-    # typed operations from LlmTurnOperations and must not build a second sentence interpreter.
-    interpreter: TurnInterpreterPort | None = None
-    if settings.conversation_graph != "on":
-        from finguard_orchestrator.domain.services.turn_interpreters import (
-            Deterministic,
-            Hybrid,
-            Promoted,
-            Shadowed,
-        )
-        from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
-            LlmTurnInterpreter,
-        )
-
-        rules: TurnInterpreterPort = Deterministic()
-        interpreter = rules
-        if settings.turn_interpreter != "router":
-            reading = LlmTurnInterpreter(planner_provider, model=settings.planner_model)
-            if settings.turn_interpreter == "shadow":
-                interpreter = Shadowed(rules, reading)
-            elif settings.turn_interpreter == "hybrid":
-                interpreter = Hybrid(reading, rules)
-            else:
-                interpreter = Promoted(reading, rules)
-
     # One adapter for both readers of the wallet, like the balance and the address book. The chat
     # answering "cuánto llevo con cada tarjeta" from a different window than the screen shows would
     # be two figures on one phone, which is the failure those two were unified to avoid.
@@ -419,46 +358,6 @@ def create_app() -> FastAPI:
         mode=settings.visual_planner,
         budget_seconds=settings.visual_planner_budget_seconds,
     )
-    asking: AskFinancialQuestionHandler | None = None
-    if settings.conversation_graph != "on":
-        from finguard_orchestrator.application import (
-            AskFinancialQuestionHandler,
-            AskFinancialQuestionQuery,
-        )
-        from finguard_orchestrator.infrastructure.planning.llm_query_planner import (
-            LlmQueryPlanner,
-        )
-
-        asking = AskFinancialQuestionHandler(
-            LlmQueryPlanner(
-                planner_provider,
-                model=settings.planner_model,
-                temperature=settings.planner_temperature,
-                max_output_tokens=settings.planner_max_output_tokens,
-                categories=settings.categories,
-            ),
-            banking,
-            # Validated here, so a rule name this build does not have stops the service
-            # rather than silently leaving the rule on.
-            settings.guard_policy(),
-            # "¿Cuánto dinero tengo?" and "¿a quién puedo hacer un bizum?" are answered from these,
-            # with no model in the path.
-            accounts=accounts,
-            account_directory=account_directory,
-            contacts=contacts,
-            cards=cards,
-            read_attempts=settings.banking_read_attempts,
-            # Only used when a caller did not classify the turn itself. Both HTTP routes do, so
-            # this is unreachable on the live path. It prevents the handler and edge from
-            # reading a sentence two different ways when somebody adds a third caller.
-            interpreter=interpreter,
-            visual_policy=visual_policy,
-            # Every account, or the account question first, when no account is named or chosen.
-            # A deployment's choice; see `Settings.account_scope_default`.
-            account_scope_default=settings.account_scope_default,
-        )
-
-        query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.
     # Browsing the account: the movement list, the search field and the breakdown a finance
     # screen draws. All three build their plan in code — a screen has already said everything
@@ -498,30 +397,6 @@ def create_app() -> FastAPI:
             )
         ),
     )
-    if settings.conversation_graph != "on":
-        from finguard_orchestrator.application import (
-            PreparePaymentCommand,
-            PreparePaymentHandler,
-        )
-        from finguard_orchestrator.infrastructure.payments.llm_payment_reader import (
-            LlmPaymentReader,
-        )
-
-        paying = PreparePaymentHandler(
-            LlmPaymentReader(
-                planner_provider,
-                model=settings.planner_model,
-                temperature=settings.planner_temperature,
-                max_output_tokens=settings.planner_max_output_tokens,
-            ),
-            HttpPayments(
-                base_url=settings.banking_base_url,
-                timeout_seconds=settings.banking_timeout_seconds,
-            ),
-            settings.guard_policy(),
-            contacts=contacts,
-        )
-        command_bus.register(PreparePaymentCommand, paying)
     # The form path shares the gateway and skips the reader: nothing to read, nothing to ground.
     command_bus.register(
         PrepareChosenPaymentCommand,
@@ -555,13 +430,10 @@ def create_app() -> FastAPI:
 
     app.state.query_bus = query_bus
     app.state.command_bus = command_bus
-    # Reached directly by the streaming route: a bus answers once, a stream does not.
-    app.state.ask_handler = asking
     app.state.metrics_executor = financial_metric_executor(banking, present)
     # Readiness reports on what /v1/questions needs, not on what /v1/messages needs.
     app.state.questions_enabled = settings.questions_enabled
     app.state.payments_enabled = settings.payments_enabled
-    app.state.conversation_graph_enabled = settings.conversation_graph == "on"
     app.state.metrics_enabled = settings.metrics_enabled
     # The vocabulary a screen may offer. The same list the decoder is constrained to, so a
     # category a chip produces is one the assistant can name back.
@@ -570,8 +442,6 @@ def create_app() -> FastAPI:
     # somebody wants from a running service is always another one of these.
     app.state.settings = settings
     app.state.planner_probe = planner_provider
-    # Read by both question routes, which classify the turn once and carry the answer down.
-    app.state.turn_interpreter = interpreter
     app.state.banking_probe = banking
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
     # and that is a swap of this one line.
@@ -615,141 +485,40 @@ def create_app() -> FastAPI:
         settings.metrics_signing_active if configured_metric_keys else "default",
     )
 
-    # A2A expert agents (spec §3.2): **without the gateway's URL the capability does not exist** --
-    # nothing is built, and a timetable question or a booking is answered by saying no agents are
-    # configured.
-    expert_searches: SearchActivitiesHandler | None = None
-    expert_bookings: BookActivityHandler | None = None
-    if settings.a2a_gateway_url is not None:
-        pairwise = settings.a2a_pairwise_key
-        # The signing-key refusal above, for the other key this service derives what it sends
-        # third parties from: on the development key, anybody who reads this repository can compute
-        # every holder's `memberRef` at every gym -- the join the pairwise reference exists to stop.
-        if pairwise is None and any(
-            not _is_loopback_origin(origin) for origin in settings.web_origins
-        ):
-            raise ValueError(
-                "ORCHESTRATOR_A2A_PAIRWISE_KEY is required to serve a non-loopback origin with an "
-                "A2A gateway: every memberRef would be derived under the development key"
-            )
-        if pairwise is None:
-            logger.warning(
-                "every memberRef sent to an expert agent is derived under the development "
-                "pairwise key: set ORCHESTRATOR_A2A_PAIRWISE_KEY"
-            )
-        gateway_token = settings.a2a_gateway_token
-        if gateway_token is None:
-            logger.warning(
-                "the A2A gateway is called with its development token: set "
-                "ORCHESTRATOR_A2A_GATEWAY_TOKEN"
-            )
-        # The planner's provider and model read the cards and the replies: one knob for the one
-        # model this service trusts with a closed schema, like the payment reader beside it.
-        gateway = HttpExpertAgents(
-            base_url=settings.a2a_gateway_url,
-            token=(
-                gateway_token.get_secret_value()
-                if gateway_token is not None
-                else _DEVELOPMENT_GATEWAY_TOKEN
-            ),
-            timeout_seconds=settings.a2a_agent_budget_seconds,
-        )
-        # One classifier for both: it caches each card's reading by digest, so the card a search
-        # classified is not read again for the booking that follows it.
-        classifier = LlmSkillClassifier(
+    # LangGraph is the only conversational runtime. The typed operation interpreter reads each
+    # turn; the graph owns sequencing, durable state and execution. Its PostgreSQL store,
+    # reservations and checkpointer exist only once the lifespan has opened the pool, so the
+    # engine is built there from this factory.
+    operations = LlmTurnOperations(
+        planner_provider,
+        model=settings.engine_model or settings.planner_model,
+        temperature=settings.engine_temperature,
+        max_output_tokens=settings.engine_max_output_tokens,
+        categories={key: category_words.name_of(key) for key in settings.categories},
+    )
+
+    def build_graph(
+        store: object, reservations: object, checkpointer: object
+    ) -> ConversationTurnHandler:
+        return graph_engine(
+            settings,
+            operations,
             planner_provider,
-            model=settings.planner_model,
-            temperature=settings.planner_temperature,
-            max_output_tokens=settings.planner_max_output_tokens,
+            banking,
+            accounts,
+            account_directory,
+            contacts,
+            store,  # type: ignore[arg-type]
+            reservations,  # type: ignore[arg-type]
+            checkpointer,  # type: ignore[arg-type]
+            visual_policy,
+            command_bus,
         )
-        normaliser = LlmReplyNormaliser(
-            planner_provider,
-            model=settings.planner_model,
-            temperature=settings.planner_temperature,
-            max_output_tokens=settings.planner_max_output_tokens,
-        )
-        pairwise_key = (
-            pairwise.get_secret_value().encode()
-            if pairwise is not None
-            else _DEVELOPMENT_PAIRWISE_KEY
-        )
-        expert_searches = SearchActivitiesHandler(
-            gateway,
-            classifier,
-            normaliser,
-            pairwise_key=pairwise_key,
-            budget_seconds=settings.a2a_agent_budget_seconds,
-        )
-        expert_bookings = BookActivityHandler(
-            gateway,
-            classifier,
-            normaliser,
-            pairwise_key=pairwise_key,
-            budget_seconds=settings.a2a_agent_budget_seconds,
-        )
-    # Read by both question routes through one helper (`expert_agent_turns`, spec §14 A11).
-    app.state.expert_searches = expert_searches
-    app.state.expert_bookings = expert_bookings
 
-    # Transitional engine selection. `rules` still builds the deprecated conversational
-    # coordinator. `model` builds the structured interpreter; with graph mode on, LangGraph owns
-    # sequencing, durable state and execution, and neither legacy conversational handler is built.
-    # Both paths reuse the same banking adapters.
-    engine: ConversationTurnHandler | None = None
-    if settings.conversation_engine == "model":
-        operations = LlmTurnOperations(
-            planner_provider,
-            model=settings.engine_model or settings.planner_model,
-            temperature=settings.engine_temperature,
-            max_output_tokens=settings.engine_max_output_tokens,
-            categories={key: category_words.name_of(key) for key in settings.categories},
-        )
-        if settings.conversation_graph != "on":
-            # The process-local handler/store exist only for an explicit compatibility runtime.
-            # The normal graph deployment must not import or instantiate this non-durable path.
-            from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
-            from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import (
-                MemoryDialogueStore,
-            )
-
-            engine = AnswerTurnHandler(
-                operations,
-                # Single instance only: a restart forgets every conversation (see the store).
-                MemoryDialogueStore(),
-                banking,
-                accounts,
-                account_directory,
-                contacts,
-                frozenset(settings.categories),
-                count_calls=calls_so_far,
-            )
-    if settings.conversation_graph == "on":
-        if settings.conversation_engine != "model":
-            raise ValueError(
-                "conversation_graph=on requires ORCHESTRATOR_CONVERSATION_ENGINE=model"
-            )
-        from finguard_orchestrator.bootstrap.graph_wiring import graph_engine
-
-        def build_graph(
-            store: object, reservations: object, checkpointer: object
-        ) -> ConversationTurnHandler:
-            return graph_engine(
-                settings,
-                operations,
-                planner_provider,
-                banking,
-                accounts,
-                account_directory,
-                contacts,
-                store,  # type: ignore[arg-type]
-                reservations,  # type: ignore[arg-type]
-                checkpointer,  # type: ignore[arg-type]
-                visual_policy,
-                command_bus,
-            )
-
-        graph_factory = build_graph
-    app.state.engine = engine
+    graph_factory = build_graph
+    app.state.engine = None
+    # The visual ladder the graph is built with, readable where the wiring is asserted.
+    app.state.visual_policy = visual_policy
 
     # Before the routers, because a rejected preflight never reaches one. The web client cannot
     # call this service at all without it: a browser refuses a cross-origin request unless the
@@ -792,25 +561,12 @@ def create_app() -> FastAPI:
     engine_dispatch.register(app)
 
     app.include_router(assistant_router)
-    # Register exactly one owner for conversational question paths. The graph router has no
-    # dependency on the legacy question controller and fails closed on a missing graph runtime.
-    app.include_router(
-        graph_question_router if settings.conversation_graph == "on" else _legacy_question_router()
-    )
+    app.include_router(graph_question_router)
     app.include_router(payments_router)
     app.include_router(admin_router)
     app.include_router(metrics_router)
     register_error_handlers(app)
     return app
-
-
-def _legacy_question_router():
-    """Load the compatibility controller only for an explicitly non-graph deployment."""
-    from finguard_orchestrator.infrastructure.controllers.llm_controller import (
-        legacy_question_router,
-    )
-
-    return legacy_question_router
 
 
 app = create_app()

@@ -1,8 +1,7 @@
 """Lazy public API for the application layer.
 
 The package keeps its stable re-export names without importing every use case at process startup.
-This matters for the graph runtime: importing a shared query bus must not also import the retired
-conversational handler and all of its linguistic readers.
+
 """
 
 from importlib import import_module
@@ -26,8 +25,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "PrepareChosenPaymentHandler": ("commands.pay", "PrepareChosenPaymentHandler"),
     "PrepareOwnTransferCommand": ("commands.pay", "PrepareOwnTransferCommand"),
     "PrepareOwnTransferHandler": ("commands.pay", "PrepareOwnTransferHandler"),
-    "PreparePaymentCommand": ("commands.pay", "PreparePaymentCommand"),
-    "PreparePaymentHandler": ("commands.pay", "PreparePaymentHandler"),
     "ReplaceLlmPolicyCommand": ("commands.replace_llm_policy", "ReplaceLlmPolicyCommand"),
     "ReplaceLlmPolicyHandler": ("commands.replace_llm_policy", "ReplaceLlmPolicyHandler"),
     "ResetLlmPolicyCommand": ("commands.replace_llm_policy", "ResetLlmPolicyCommand"),
@@ -36,11 +33,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "AnswerMessageHandler": ("queries.answer_message", "AnswerMessageHandler"),
     "AnswerMessageQuery": ("queries.answer_message", "AnswerMessageQuery"),
     "AnswerMessageResult": ("queries.answer_message", "AnswerMessageResult"),
-    "AskFinancialQuestionHandler": (
-        "queries.ask_financial_question",
-        "AskFinancialQuestionHandler",
-    ),
-    "Stage": ("queries.ask_financial_question", "Stage"),
     "BreakdownResult": ("queries.browse_account", "BreakdownResult"),
     "GetBreakdownHandler": ("queries.browse_account", "GetBreakdownHandler"),
     "GetBreakdownQuery": ("queries.browse_account", "GetBreakdownQuery"),
@@ -75,7 +67,6 @@ __all__ = [
     "AnswerMessageHandler",
     "AnswerMessageQuery",
     "AnswerMessageResult",
-    "AskFinancialQuestionHandler",
     "AskFinancialQuestionQuery",
     "AskFinancialQuestionResult",
     "BreakdownResult",
@@ -115,8 +106,6 @@ __all__ = [
     "PrepareChosenPaymentHandler",
     "PrepareOwnTransferCommand",
     "PrepareOwnTransferHandler",
-    "PreparePaymentCommand",
-    "PreparePaymentHandler",
     "Query",
     "QueryBus",
     "QueryHandler",
@@ -125,7 +114,6 @@ __all__ = [
     "ResetLlmPolicyCommand",
     "ResetLlmPolicyHandler",
     "SpokenPlan",
-    "Stage",
     "WalletResult",
 ]
 
@@ -169,8 +157,6 @@ if TYPE_CHECKING:
         PrepareChosenPaymentHandler,
         PrepareOwnTransferCommand,
         PrepareOwnTransferHandler,
-        PreparePaymentCommand,
-        PreparePaymentHandler,
     )
     from finguard_orchestrator.application.commands.replace_llm_policy import (
         ReplaceLlmPolicyCommand,
@@ -183,10 +169,6 @@ if TYPE_CHECKING:
         AnswerMessageHandler,
         AnswerMessageQuery,
         AnswerMessageResult,
-    )
-    from finguard_orchestrator.application.queries.ask_financial_question import (
-        AskFinancialQuestionHandler,
-        Stage,
     )
     from finguard_orchestrator.application.queries.browse_account import (
         BreakdownResult,

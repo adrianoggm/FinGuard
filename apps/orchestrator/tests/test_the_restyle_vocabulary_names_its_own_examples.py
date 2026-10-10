@@ -10,15 +10,26 @@ A-10's pair is the opposite failure: `_FINANCIAL` matched a bare axis noun ("cat
 "gastos") beside a style word and refused the turn `VISUAL_AMBIGUOUS` -- a question about a chart
 that names its own axis, misread as "you asked to change two things at once".
 
-Probed directly against `interpret_visual`, with `CHARTED.visual_contexts` standing in for a
+Probed directly against `interpret_visual`, with one breakdown chart's context standing in for a
 chart already on screen (§3.1's own contexts) -- no route, no ledger, no model.
 """
 
-from test_visual_follow_up import CHARTED
+from support.visual_planners import BREAKDOWN_PROFILE
 
+from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
+from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
 from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
 
-CONTEXTS = CHARTED.visual_contexts
+SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
+assert SPEC is not None
+CONTEXTS = (
+    Conversation()
+    .with_visual_context(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE))
+    .visual_contexts
+)
 
 
 def test_a_plural_mark_word_is_a_restyle() -> None:

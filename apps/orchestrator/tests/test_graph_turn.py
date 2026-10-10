@@ -18,6 +18,8 @@ from uuid import UUID
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from support.episodes import ACCOUNT, INTENT, PIGGY, Accounts, Bank, Contacts, Directory
+from support.memory_dialogue_store import MemoryDialogueStore
+from support.memory_turn_reservations import MemoryTurnReservations
 
 from finguard_orchestrator.application import CommandBus
 from finguard_orchestrator.application.commands.pay import (
@@ -28,11 +30,11 @@ from finguard_orchestrator.application.commands.pay import (
     PrepareOwnTransferCommand,
     PrepareOwnTransferHandler,
 )
-from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler, EngineAnswer
 from finguard_orchestrator.application.engine.executor import QueryRun
+from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.application.graph import codec, graph_turn, investigation
 from finguard_orchestrator.application.graph import graph as investigation_graph
-from finguard_orchestrator.application.graph.graph import GraphPorts
+from finguard_orchestrator.application.graph.graph_state import GraphPorts
 from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.domain.constants import MAX_SUPPORTING_MOVEMENTS
 from finguard_orchestrator.domain.engine.grounding import Grounds
@@ -117,11 +119,7 @@ from finguard_orchestrator.domain.value_objects.movement_list_plan import (
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import ChartVisualizationResponse
-from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
 from finguard_orchestrator.infrastructure.graph.llm_assessor import LlmInvestigationAssessor
-from finguard_orchestrator.infrastructure.graph.memory_turn_reservations import (
-    MemoryTurnReservations,
-)
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
 
 TODAY = date(2026, 8, 5)
@@ -1668,43 +1666,6 @@ async def test_query_and_visualization_compose_in_one_turn_without_hiding_the_br
     assert rendered.plan_context.artifact_id == answer.state.active_artifact.artifact_id
     assert answer.state.active_visual.view_id == rendered.plan_context.view_id
     assert len(world.ledger.ran) == 1
-
-
-async def test_an_ordinary_question_is_answered_as_the_engine_answers_it() -> None:
-    world = World(GROCERIES_IN_JULY)
-    canonical = AnswerTurnHandler(
-        Interpreter(Calls(), GROCERIES_IN_JULY),
-        MemoryDialogueStore(),
-        MerchantLedger(),
-        Accounts(),
-        Directory(),
-        Contacts(),
-        frozenset({"GROCERIES", "RESTAURANTS"}),
-    )
-
-    answer = await world.ask()
-    control = await canonical.answer(
-        SENTENCE,
-        conversation_id=None,
-        version=None,
-        account_id=ACCOUNT,
-        today=TODAY,
-        reporting_timezone="Europe/Madrid",
-    )
-
-    assert replace(answer.result, plan_context=None) == control.result
-    trace = question_to_dto(answer.result).plan_context
-    assert trace is not None
-    assert trace.start == "2026-07-01" and trace.end == "2026-07-31"
-    assert trace.direction == "EXPENSE"
-    # The graph keeps a bounded bank aggregate in its canonical state for native chart operations;
-    # the legacy adapter remains frozen and has no such reusable artifact yet.
-    assert (
-        replace(answer.state, conversation_id=control.state.conversation_id, active_artifact=None)
-        == control.state
-    )
-    assert answer.state.active_artifact is not None
-    assert world.assessor.seen == []
 
 
 async def test_ordinary_bank_execution_is_checkpointed_before_presentation() -> None:

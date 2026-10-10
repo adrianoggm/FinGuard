@@ -64,45 +64,27 @@ async def ready(request: Request, queries: Queries) -> JSONResponse:
     catalogue = await queries.ask(GetLlmCatalogueQuery())
     provider = catalogue.active.model.provider
     settings = request.app.state.settings
-    engine = getattr(request.app.state, "engine", None)
-    legacy_handler = getattr(request.app.state, "ask_handler", None)
-    authoritative_graph = bool(getattr(engine, "authoritative", False))
-    if settings.conversation_graph == "on":
-        runtime_matches_config = authoritative_graph and legacy_handler is None
-        active_runtime = (
-            "langgraph"
-            if runtime_matches_config
-            else "unexpected_legacy_handler"
-            if authoritative_graph and legacy_handler is not None
-            else "missing_or_non_authoritative"
-        )
-    elif settings.conversation_engine == "model":
-        runtime_matches_config = engine is not None and not authoritative_graph
-        active_runtime = "model_engine" if runtime_matches_config else "missing_or_unexpected"
-    else:
-        runtime_matches_config = legacy_handler is not None and engine is None
-        active_runtime = "legacy" if runtime_matches_config else "missing_or_unexpected"
-
+    # The graph is built by the lifespan once PostgreSQL is open; until then it is missing.
+    graph_ready = getattr(request.app.state, "engine", None) is not None
+    persistence_probe = getattr(request.app.state, "persistence_probe", None)
     checks = {
         "questions_enabled": bool(request.app.state.questions_enabled),
         "catalogue_provider": provider in catalogue.available_providers,
         "planner": await request.app.state.planner_probe.ping(),
         "banking": await request.app.state.banking_probe.ping(),
-        "conversation_runtime": runtime_matches_config,
+        "conversation_runtime": graph_ready,
+        "persistence": await persistence_probe.ping() if persistence_probe is not None else False,
     }
-    if settings.conversation_graph == "on":
-        persistence_probe = getattr(request.app.state, "persistence_probe", None)
-        checks["persistence"] = (
-            await persistence_probe.ping() if persistence_probe is not None else False
-        )
     body: dict[str, object] = {
         "status": "ok" if all(checks.values()) else "unavailable",
         "provider": provider,
         "financial_path": {
-            "engine": settings.conversation_engine,
-            "graph": settings.conversation_graph,
-            "active_runtime": active_runtime,
-            "authoritative": authoritative_graph,
+            # Kept in the shape the evaluation runner and the browser checks read; LangGraph is
+            # the only runtime, so only `active_runtime` and `authoritative` can vary.
+            "engine": "model",
+            "graph": "on",
+            "active_runtime": "langgraph" if graph_ready else "missing",
+            "authoritative": graph_ready,
             "provider": settings.planner_provider,
             "model": settings.engine_model or settings.planner_model,
         },

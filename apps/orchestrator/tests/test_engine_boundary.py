@@ -2,11 +2,11 @@
 
 Checked two ways (ruling R18), because each misses what the other sees:
 
-- **statically**, on the source: no engine module imports a reader, the rules handler, any of the
-  vocabularies the spec lists, or `planning_context` (whose focus types share the engine's names,
-  ruling R2). A package `__init__` that loads one of them transitively is not consultation;
+- **statically**, on the source: no engine or graph module imports any of the vocabularies the
+  spec lists, or `planning_context` (whose focus types share the engine's names, ruling R2). A
+  package `__init__` that loads one of them transitively is not consultation;
 - **at runtime**, over HTTP: every function and method those modules define is replaced by a wire
-  that raises, references bound elsewhere by `from M import f` included, and an engine turn must
+  that raises, references bound elsewhere by `from M import f` included, and a graph turn must
   still answer on both routes with nothing tripped. This is what "the new flow does not consult
   the readers" means, which an import list alone cannot show.
 
@@ -19,8 +19,8 @@ import ast
 import importlib
 import inspect
 import json
-import pkgutil
 import sys
+import uuid
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -29,39 +29,35 @@ from typing import Any, NoReturn
 
 import pytest
 from support.episodes import Accounts, Contacts, Directory, a_stack
+from support.memory_dialogue_store import MemoryDialogueStore
 
 import finguard_orchestrator
-from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.engine.operations import Ask, Patch, PlanFields
 from finguard_orchestrator.domain.enums import Direction
+from finguard_orchestrator.domain.services import expert_agent_words
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
-from finguard_orchestrator.infrastructure.controllers import llm_controller
-from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
 from finguard_orchestrator.infrastructure.llm.counting_provider import calls_so_far
 
 PKG = "finguard_orchestrator"
 SRC = Path(finguard_orchestrator.__file__).parent
-READERS = f"{PKG}.application.queries.readers"
 # The spec's list, word for word, as modules.
-LINGUISTIC = (
-    f"{PKG}.application.queries.ask_financial_question",
-    *(
-        f"{PKG}.domain.services.{name}"
-        for name in (
-            "turn_arbiter",
-            "window_words",
-            "account_words",
-            "payment_words",
-            "merchant_words",
-            "explicit_facts",
-            "continuation_patch",
-            "plan_verifier",
-            "capability_guard",
-            "intent_lexicon",
-            "query_recovery",
-        )
-    ),
+# The rules handler, its readers and `query_recovery` were deleted with the rules route; what is
+# left of the list still exists and is still out of bounds.
+LINGUISTIC = tuple(
+    f"{PKG}.domain.services.{name}"
+    for name in (
+        "turn_arbiter",
+        "window_words",
+        "account_words",
+        "payment_words",
+        "merchant_words",
+        "explicit_facts",
+        "continuation_patch",
+        "plan_verifier",
+        "capability_guard",
+        "intent_lexicon",
+    )
 )
 NEVER_IMPORTED = frozenset({*LINGUISTIC, f"{PKG}.domain.models.planning_context"})
 # Every module of the engine, and the two this task added around it.
@@ -106,11 +102,7 @@ def imported(path: Path) -> set[str]:
 
 
 def forbidden(path: Path) -> set[str]:
-    return {
-        name
-        for name in imported(path)
-        if name in NEVER_IMPORTED or name == READERS or name.startswith(f"{READERS}.")
-    }
+    return {name for name in imported(path) if name in NEVER_IMPORTED}
 
 
 # --- statically ---------------------------------------------------------------------------------
@@ -127,10 +119,10 @@ def test_the_graph_imports_nothing_linguistic() -> None:
 
 
 def test_the_check_sees_an_import_when_there_is_one() -> None:
-    """The control: the rules route imports half the list, and the same check says so."""
-    seen = forbidden(SRC / "infrastructure" / "controllers" / "llm_controller.py")
+    """The control: the financial turn imports two of the list, and the same check says so."""
+    seen = forbidden(SRC / "application" / "queries" / "financial_turn.py")
     assert f"{PKG}.domain.services.turn_arbiter" in seen
-    assert f"{READERS}.visual_follow_up" in seen
+    assert f"{PKG}.domain.models.planning_context" in seen
 
 
 def test_category_words_only_names_categories() -> None:
@@ -165,21 +157,6 @@ def _where(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:
     if isinstance(parent, ast.Call) and node in parent.args:
         return f"{ast.unparse(parent.func)}(...)"
     return ast.unparse(parent)
-
-
-def test_the_sentence_reaches_only_the_interpreter_and_the_remembered_turn() -> None:
-    """R19. `AnswerTurnHandler.answer` hands the sentence to the interpreter, and keeps it, as said,
-    in the turn the next prompt quotes. Nothing deterministic receives it."""
-    tree = _tree(SRC / "application" / "engine" / "answer_turn.py")
-    parents = _parents(tree)
-
-    uses = sorted(
-        _where(node, parents)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Name) and node.id == "sentence"
-    )
-
-    assert uses == ["DialogueTurn(said=)", "self._interpreter.interpret(...)"]
 
 
 def test_the_graph_limits_sentence_uses_and_normalizes_confirmation_before_checkpoint() -> None:
@@ -252,7 +229,7 @@ def test_no_other_engine_step_takes_a_sentence() -> None:
         for path in ENGINE
         if path.parent.name == "engine"
         and path.parent.parent.name in ("domain", "application")
-        and path.name not in ("answer_turn.py", "turn_handler.py")
+        and path.name != "turn_handler.py"
     ]
     named = {
         path.name
@@ -285,15 +262,7 @@ class Tripped(BaseException):  # noqa: N818
 
 
 def _boundary() -> list[ModuleType]:
-    readers = importlib.import_module(READERS)
-    return [
-        *(importlib.import_module(name) for name in LINGUISTIC),
-        readers,
-        *(
-            importlib.import_module(f"{READERS}.{found.name}")
-            for found in pkgutil.iter_modules(readers.__path__)
-        ),
-    ]
+    return [importlib.import_module(name) for name in LINGUISTIC]
 
 
 def arm(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -387,53 +356,11 @@ def test_the_wires_are_live(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(Tripped):
         getattr(window_words, reader)("julio")
-    # `llm_controller` holds `record_context_untrusted` from the rules handler by name.
+    # `expert_agent_words` holds `window_in` from `window_words` by name.
     with pytest.raises(Tripped):
-        llm_controller.record_context_untrusted(None)
+        expert_agent_words.window_in("julio")
 
     assert len(tripped) == 2
-
-
-def test_a_rules_turn_trips_them(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The control over HTTP: with the engine off, the same question reaches the readers."""
-    stack = a_stack()
-    tripped = arm(monkeypatch)
-
-    with pytest.raises(BaseException):  # noqa: B017 - whatever the stack makes of `Tripped`
-        stack.client.post("/v1/questions", json={"question": TURNS[0][0]})
-
-    assert tripped
-
-
-@pytest.mark.parametrize("route", QUESTION_ROUTES)
-def test_an_engine_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, route: str) -> None:
-    stack = a_stack()
-    app.state.engine = AnswerTurnHandler(
-        Scripted(*(operations for _, operations in TURNS)),
-        MemoryDialogueStore(),
-        stack.ledger,
-        Accounts(),  # type: ignore[arg-type]
-        Directory(),
-        Contacts(),
-        frozenset({"RESTAURANTS", "LEISURE"}),
-        count_calls=calls_so_far,
-    )
-    tripped = arm(monkeypatch)
-
-    answers = []
-    conversation = None
-    for sentence, _ in TURNS:
-        response = stack.client.post(
-            route, json={"question": sentence, "conversation": conversation}
-        )
-        assert response.status_code == 200
-        assert response.headers["x-finguard-engine"] == "model"
-        answers.append(answer_of(response.text))
-        conversation = answers[-1]["conversation"]
-
-    assert tripped == []
-    assert [answer["outcome"] for answer in answers] == ["PLANNED", "PLANNED"]
-    assert answers[1]["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
 
 
 class Inspecting:
@@ -478,14 +405,12 @@ def test_a_graph_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, route:
     follow-up, and a comparison by merchant that is assessed, inspects a purchase and is assessed
     again (R45)."""
     from langgraph.checkpoint.memory import InMemorySaver
+    from support.memory_turn_reservations import MemoryTurnReservations
 
-    from finguard_orchestrator.application.graph.graph import GraphPorts
+    from finguard_orchestrator.application.graph.graph_state import GraphPorts
     from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
     from finguard_orchestrator.domain.engine.operations import Compare
     from finguard_orchestrator.domain.enums import GroupBy
-    from finguard_orchestrator.infrastructure.graph.memory_turn_reservations import (
-        MemoryTurnReservations,
-    )
 
     june = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
     by_merchant = (
@@ -527,8 +452,11 @@ def test_a_graph_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, route:
     answers = []
     conversation = None
     for sentence, _ in turns:
+        # A graph turn is durable and needs the caller's own attempt key, a fresh one per turn.
         response = stack.client.post(
-            route, json={"question": sentence, "conversation": conversation}
+            route,
+            json={"question": sentence, "conversation": conversation},
+            headers={"Idempotency-Key": str(uuid.uuid4())},
         )
         assert response.status_code == 200
         assert response.headers["x-finguard-engine"] == "model"

@@ -21,7 +21,7 @@ from finguard_orchestrator.infrastructure.expert_agents.agent_prompt import (
 from finguard_orchestrator.infrastructure.expert_agents.llm_skill_classifier import (
     LlmSkillClassifier,
 )
-from finguard_orchestrator.infrastructure.planning.llm_query_planner import STRUCTURE_REPAIR
+from finguard_orchestrator.infrastructure.llm.structure_repair import STRUCTURE_REPAIR
 
 TIMETABLE = AgentSkill(
     "timetable",

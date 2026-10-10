@@ -121,10 +121,6 @@ class _Turn:
 class GraphTurnHandler:
     """Answers a conversational turn through the unified LangGraph flow."""
 
-    supports_idempotency = True
-    supports_caller_scopes = True
-    authoritative = True
-
     def __init__(
         self,
         ports: GraphPorts,

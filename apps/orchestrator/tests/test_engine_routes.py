@@ -1,24 +1,22 @@
-"""The model-led engine behind `ORCHESTRATOR_CONVERSATION_ENGINE`, on the two question routes.
+"""The LangGraph runtime on the two question routes.
 
-Driven over HTTP on the episodes stack: its fake ledger, accounts, directory and contacts, the real
-payment path behind it, and an interpreter that is either scripted (it returns the operations a
-test gives it) or the real adapter over a canned model. What is under test is the seam: which turns
-the engine answers, which it hands to the rules route, what travels on the wire between them, and
-what each response says about who answered and how many model calls it cost.
+Driven over HTTP on the episodes stack: its fake ledger, accounts, directory and contacts, and an
+interpreter that is either scripted (it returns the operations a test gives it) or the real adapter
+over a canned model. What is under test is the seam: what the graph answers, what it refuses
+before it runs, what travels on the wire, and what each response says about who answered and how
+many model calls it cost.
 """
 
 import asyncio
-import hashlib
 import json
+import uuid
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import pytest
-from fastapi import HTTPException
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import ValidationError
 from support.episodes import (
@@ -30,9 +28,11 @@ from support.episodes import (
     Stack,
     a_stack,
 )
+from support.memory_dialogue_store import MemoryDialogueStore
+from support.memory_turn_reservations import MemoryTurnReservations
 
-from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler, EngineAnswer
-from finguard_orchestrator.application.graph.graph import GraphPorts
+from finguard_orchestrator.application.engine.turn_result import EngineAnswer
+from finguard_orchestrator.application.graph.graph_state import GraphPorts
 from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.bootstrap.config import Settings, get_settings
@@ -46,13 +46,12 @@ from finguard_orchestrator.domain.engine.operations import (
     PlanFields,
     Visualize,
 )
-from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
+from finguard_orchestrator.domain.engine.state import DialogueState, QueryFocus
 from finguard_orchestrator.domain.enums import Direction, GroupBy, PaymentOutcome, Rail
 from finguard_orchestrator.domain.errors import QueryRejectedError
 from finguard_orchestrator.domain.models.account_summary import Holding
 from finguard_orchestrator.domain.models.conversation import (
     Conversation,
-    FinancialClarification,
     PaymentConfirmation,
     Workflow,
 )
@@ -65,24 +64,20 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
-    FinancialPlanDraft,
 )
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.controllers import engine_dispatch
-from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
-from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
-from finguard_orchestrator.infrastructure.graph.memory_turn_reservations import (
-    MemoryTurnReservations,
-)
 from finguard_orchestrator.infrastructure.llm.counting_provider import (
     CountingProvider,
     calls_so_far,
     counting_calls,
+    record_provider_request,
+    record_successful_model,
+    record_usage,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
@@ -93,12 +88,13 @@ ROUTES = (JSON_ROUTE, STREAM_ROUTE)
 JULY = AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31))
 CATEGORIES = frozenset({"RESTAURANTS", "LEISURE", "GROCERIES", "TRANSPORT_FUEL", "SALARY"})
 SOMEBODY_ELSE = UUID(int=200)
+# Three whole months, so a breakdown by month has the time axis a line chart needs.
+SPRING = AbsoluteRange(date(2026, 5, 1), date(2026, 7, 31))
 
 RESTAURANTS_IN_JULY = (
     Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, categories=("RESTAURANTS",))),
 )
 AND_IN_LEISURE = (Patch("focus", PlanFields(categories=("LEISURE",))),)
-TO_PAYMENTS = (Delegate("PAYMENT"),)
 
 
 def ran(*categories: str) -> FinancialPlan:
@@ -150,19 +146,38 @@ class Refusing(Directory):
         return await super().all_of()
 
 
+class NoInvestigation:
+    """These conversations never compare by merchant, so nothing should be assessed."""
+
+    async def assess(self, _: object) -> object:
+        raise AssertionError("this conversation needs no investigation")
+
+
 def engine_on(
     stack: Stack, interpreter: object, *, directory: Directory | None = None
-) -> AnswerTurnHandler:
-    """The engine as the composition root builds it under `model`, on the stack's own fakes."""
-    engine = AnswerTurnHandler(
-        interpreter,  # type: ignore[arg-type]
-        MemoryDialogueStore(),
-        stack.ledger,
-        Accounts(),  # type: ignore[arg-type]
-        directory or Directory(),
-        Contacts(),
-        CATEGORIES,
-        count_calls=calls_so_far,
+) -> GraphTurnHandler:
+    """The graph as the composition root builds it, on the stack's own fakes and in memory."""
+    engine = GraphTurnHandler(
+        GraphPorts(
+            interpreter,  # type: ignore[arg-type]
+            NoInvestigation(),  # type: ignore[arg-type]
+            MemoryDialogueStore(),
+            stack.ledger,  # type: ignore[arg-type]
+            Accounts(),  # type: ignore[arg-type]
+            directory or Directory(),  # type: ignore[arg-type]
+            Contacts(),  # type: ignore[arg-type]
+            CATEGORIES,
+            visual_policy=VisualPlanningPolicy(
+                model=None,
+                fallback=DeterministicVisualPlanner(),
+                verifier=verify,
+                mode="deterministic",
+                budget_seconds=1,
+            ),
+            count_calls=calls_so_far,
+        ),
+        MemoryTurnReservations(),
+        InMemorySaver(),
     )
     app.state.engine = engine
     return engine
@@ -190,7 +205,13 @@ class Turn:
 def post(
     stack: Stack, route: str, question: str, conversation: dict[str, Any] | None = None
 ) -> Turn:
-    response = stack.client.post(route, json={"question": question, "conversation": conversation})
+    # A graph turn is durable and needs the caller's own attempt key; a fresh one per call, so
+    # every post is a new turn and never the replay of an earlier one.
+    response = stack.client.post(
+        route,
+        json={"question": question, "conversation": conversation},
+        headers={"Idempotency-Key": str(uuid.uuid4())},
+    )
     if route == STREAM_ROUTE and response.status_code == 200:
         frames = [
             json.loads(line.removeprefix("data: "))
@@ -212,103 +233,10 @@ def _restore(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     app.dependency_overrides.clear()
 
 
-# --- the flag off ------------------------------------------------------------------------------
-
-# The clean-tree output at 48f18b4c, before this conversation-engine change: the same three turns,
-# one conversation, the same stack. A body that moves by one byte with the engine off is a change
-# to production, which the flag exists to rule out. Re-pin only for a deliberate change to the rules
-# route itself, never for one made in the engine's name.
-FIXED_ID = "00000000-0000-4000-8000-00000000c0de"
-RULES_TURNS = (
-    "¿cuánto gasté en restaurantes en julio?",
-    "¿y en ocio?",
-    "hazle un bizum de 20 a Marta Solis",
-)
-PINNED = {
-    JSON_ROUTE: (
-        "0833eaf6a1848ec2b528e3e25dd51c5e35d2f89c0f2bdf6a813829fcfdfd5978",
-        "74eec4f1304c4b7901a50ce2089640a3108b110d0ccbc90936ed0b9066a6e1f7",
-        "83ad6887068f7a094446fbb5a148e55e58bce695205f34d59a8b40ed9ed8852e",
-    ),
-    STREAM_ROUTE: (
-        "acb33b81952cf2249f1b2b166a9d0730ff4c9a10863a8e08fa584f93c4816cc7",
-        "7ee2573f4af185f2ab4db4f5c3a09ea147703825272e79d8f207c4ff0a56619e",
-        "9bdfe0c3fee6316d5b842e787d1b84e9824d16468df3fcb8f6dda40d6c7fb700",
-    ),
-}
-
-
-@pytest.mark.parametrize("route", ROUTES)
-def test_flag_off_keeps_rules_byte_identical(route: str) -> None:
-    stack = a_stack(account_scope_default="all")
-    conversation: dict[str, Any] = {"conversation_id": FIXED_ID}
-
-    for sentence, pinned in zip(RULES_TURNS, PINNED[route], strict=True):
-        body: dict[str, Any] = {"question": sentence, "conversation": conversation}
-        if route == STREAM_ROUTE:
-            body["channel"] = "TEXT"
-        response = stack.client.post(route, json=body)
-
-        assert response.status_code == 200
-        assert hashlib.sha256(response.content).hexdigest() == pinned, response.text
-        # The stream's headers leave before the rules route's planner runs: no count rather
-        # than a partial one (M-5).
-        assert (
-            response.headers["x-finguard-engine"],
-            response.headers.get("x-finguard-model-calls"),
-        ) == ("rules", None if route == STREAM_ROUTE else "0")
-        frames = [
-            json.loads(line.removeprefix("data: "))
-            for line in response.text.splitlines()
-            if line.startswith("data: ")
-        ]
-        conversation = frames[-1]["conversation"] if frames else response.json()["conversation"]
-        assert "version" not in conversation
-
-
-def test_langgraph_is_what_ships() -> None:
-    """The production default is graph-backed; the suite chooses compatibility mode separately."""
-    assert Settings.model_fields["conversation_engine"].default == "model"
-    assert Settings.model_fields["conversation_graph"].default == "on"
-    shipped = (Path(__file__).resolve().parents[1] / ".env.defaults").read_text(encoding="utf-8")
-    assert "\nORCHESTRATOR_CONVERSATION_ENGINE=model\n" in shipped
-    assert "\nORCHESTRATOR_CONVERSATION_GRAPH=on\n" in shipped
-
-
-@pytest.mark.parametrize("chosen", ["rules", "model"])
-def test_the_setting_decides_whether_an_engine_is_built(
-    monkeypatch: pytest.MonkeyPatch, chosen: str
-) -> None:
-    """Through `create_app`, because what could break is the wiring."""
-    monkeypatch.setenv("ORCHESTRATOR_CONVERSATION_ENGINE", chosen)
-    monkeypatch.setenv("ORCHESTRATOR_ENGINE_MODEL", "")
-    get_settings.cache_clear()
-    try:
-        built = create_app()
-        settings = get_settings()
-    finally:
-        get_settings.cache_clear()
-
-    engine = built.state.engine
-    if chosen == "rules":
-        assert engine is None
-        return
-    assert isinstance(engine, AnswerTurnHandler)
-    interpreter = engine._interpreter  # noqa: SLF001
-    assert isinstance(interpreter, LlmTurnOperations)
-    # No engine model of its own: the planner's, on the planner's provider, counted.
-    assert interpreter._model == settings.planner_model  # noqa: SLF001
-    assert isinstance(interpreter._provider, CountingProvider)  # noqa: SLF001
-    assert (interpreter._temperature, interpreter._max_output_tokens) == (  # noqa: SLF001
-        settings.engine_temperature,
-        settings.engine_max_output_tokens,
-    )
-    assert engine._count_calls is calls_so_far  # noqa: SLF001
-
-
 def test_every_provider_the_app_builds_is_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Through `create_app`, because what could break is the wiring. The graph itself is built in
+    the lifespan, once PostgreSQL is open, so before it there is no engine to answer at all."""
     monkeypatch.setenv("ORCHESTRATOR_ENGINE_MODEL", "an-engine-model")
-    monkeypatch.setenv("ORCHESTRATOR_CONVERSATION_ENGINE", "model")
     get_settings.cache_clear()
     try:
         built = create_app()
@@ -316,7 +244,7 @@ def test_every_provider_the_app_builds_is_counted(monkeypatch: pytest.MonkeyPatc
         get_settings.cache_clear()
 
     assert isinstance(built.state.planner_probe, CountingProvider)
-    assert built.state.engine._interpreter._model == "an-engine-model"  # noqa: SLF001
+    assert built.state.engine is None
 
 
 # --- the engine answers -------------------------------------------------------------------------
@@ -335,8 +263,6 @@ def test_engine_answers_a_query_over_http(route: str) -> None:
     assert turn.body["text"].startswith("465,56 € en restaurantes del 2026-07-01 al 2026-07-31")
     assert turn.body["plan"] == "del 2026-07-01 al 2026-07-31, gastos, restaurantes"
     assert stack.ledger.plans == [ran("RESTAURANTS")]
-    # The rules route never ran: its planner was not asked.
-    assert stack.planner.asked == []
     assert UUID(turn.conversation["conversation_id"])
     assert turn.conversation["version"] == 1
     assert turn.engine == ("model", "0")
@@ -346,41 +272,29 @@ def test_engine_answers_a_query_over_http(route: str) -> None:
 
 
 @pytest.mark.parametrize("route", ROUTES)
-def test_payment_is_delegated_and_focus_survives(route: str) -> None:
-    """Review Focus 5: a payment in the middle of an engine conversation is the rules route's, and
-    the engine's focus, its conversation id and its version are where they were afterwards."""
+def test_a_delegation_is_said_and_the_focus_survives(route: str) -> None:
+    """An operation the graph has no node for is answered in words, never sent to a second
+    planner. The graph remembers it said so, and the focus is where it was: the next follow-up
+    still moves July's restaurants."""
     stack = a_stack()
-    interpreter = Scripted(RESTAURANTS_IN_JULY, TO_PAYMENTS, AND_IN_LEISURE)
+    interpreter = Scripted(RESTAURANTS_IN_JULY, (Delegate("UNSUPPORTED"),), AND_IN_LEISURE)
     engine_on(stack, interpreter)
 
     asked = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
     engine_id = asked.conversation["conversation_id"]
-    previewed = post(stack, route, "hazle un bizum de 20 a Marta Solis Vega", asked.conversation)
+    delegated = post(stack, route, "¿cuánto gasté este mes y cuánto ingresé?", asked.conversation)
 
-    # The rules route's preview, carrying the engine's id and version untouched.
-    assert previewed.body["outcome"] == "AWAITING_CONFIRMATION"
-    assert previewed.conversation["workflow"] == "PAYMENT_CONFIRMATION"
-    assert (previewed.conversation["conversation_id"], previewed.conversation["version"]) == (
+    assert delegated.status == 200
+    assert delegated.body["outcome"] == "UNSUPPORTED"
+    assert "Todavía no puedo resolver esa operación" in delegated.body["text"]
+    assert (delegated.conversation["conversation_id"], delegated.conversation["version"]) == (
         engine_id,
-        1,
+        2,
     )
-    assert len(stack.bank.prepared) == 1
-    assert previewed.engine[0] == "rules"
+    assert delegated.engine[0] == "model"
+    assert stack.ledger.plans == [ran("RESTAURANTS")]
 
-    # A money workflow on the wire owns its turn: the engine is not even asked.
-    refused = post(stack, route, "no", previewed.conversation)
-    assert refused.body["outcome"] == "CANCELLED"
-    assert stack.bank.cancelled == [INTENT]
-    assert refused.conversation["workflow"] is None
-    assert (refused.conversation["conversation_id"], refused.conversation["version"]) == (
-        engine_id,
-        1,
-    )
-    assert refused.engine[0] == "rules"
-    assert len(interpreter.seen) == 2
-
-    # And the engine picks up where it left off: the patch moves July's subject, nothing else.
-    patched = post(stack, route, "¿y en ocio?", refused.conversation)
+    patched = post(stack, route, "¿y en ocio?", delegated.conversation)
     assert patched.body["outcome"] == "PLANNED"
     assert patched.body["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
     assert interpreter.seen[-1].focus == QueryFocus(
@@ -389,75 +303,12 @@ def test_payment_is_delegated_and_focus_survives(route: str) -> None:
     assert stack.ledger.plans == [ran("RESTAURANTS"), ran("LEISURE")]
     assert (patched.conversation["conversation_id"], patched.conversation["version"]) == (
         engine_id,
-        2,
+        3,
     )
-    # The engine's memory is its own, server-side: none of the rules route's rides beside it.
-    assert (patched.conversation["last_plan"], patched.conversation["turns"]) == (None, [])
-    assert patched.engine[0] == "model"
 
 
-@pytest.mark.parametrize("route", ROUTES)
-def test_authoritative_graph_never_falls_back_for_legacy_payment_workflow(route: str) -> None:
-    """A stale payment preview must not reach the legacy confirmation handler in graph mode."""
-    stack = a_stack()
-    preview = post(stack, route, "hazle un bizum de 20 euros a Marta Solis Vega")
-    assert preview.body["outcome"] == "AWAITING_CONFIRMATION"
-
-    class AuthoritativeGraph:
-        authoritative = True
-
-        async def answer(self, *_: object, **__: object) -> object:
-            raise AssertionError("legacy workflow must be refused before graph invocation")
-
-    app.state.engine = AuthoritativeGraph()
-    refused = post(stack, route, "sí", preview.conversation)
-
-    assert refused.status == 200
-    assert refused.body["outcome"] == "INVALID_DOMAIN"
-    assert "No puedo continuarla ni ejecutarla" in refused.body["text"]
-    assert refused.conversation["workflow"] == "PAYMENT_CONFIRMATION"
-    assert refused.conversation["intent_id"] == preview.conversation["intent_id"]
-    assert stack.bank.confirmed == []
-    assert refused.engine == ("model", "0")
-
-
-def test_authoritative_graph_fails_closed_if_dispatch_returns_no_answer() -> None:
-    """A future graph delegation regression must not enter the legacy language route."""
-
-    class Graph:
-        authoritative = True
-
-    with pytest.raises(HTTPException) as raised:
-        engine_dispatch.refuse_legacy_fallback(Graph(), None)
-
-    assert raised.value.status_code == 503
-    assert "legacy fallback is disabled" in str(raised.value.detail)
-
-
-@pytest.mark.parametrize("route", ROUTES)
-def test_graph_mode_fails_closed_if_the_handler_is_missing(route: str) -> None:
-    stack = a_stack()
-    previous_engine = app.state.engine
-    previous_graph = app.state.conversation_graph_enabled
-    app.state.engine = None
-    app.state.conversation_graph_enabled = True
-    try:
-        response = stack.client.post(route, json={"question": "¿cuánto gasté este mes?"})
-
-        assert response.status_code == 503
-        assert "no graph handler is available" in response.json()["detail"]
-        assert stack.ledger.ran == []
-    finally:
-        app.state.engine = previous_engine
-        app.state.conversation_graph_enabled = previous_graph
-        app.dependency_overrides.clear()
-
-
-@pytest.mark.parametrize("route", ROUTES)
-def test_authoritative_graph_resumes_its_own_payment_confirmation(route: str) -> None:
-    stack = a_stack()
-    conversation_id = UUID(int=800)
-    payload = conversation_mapper.to_payload(
+def _a_payment_preview_on_the_wire(conversation_id: UUID) -> dict[str, Any]:
+    return conversation_mapper.to_payload(
         Conversation(
             conversation_id=conversation_id,
             version=3,
@@ -470,9 +321,57 @@ def test_authoritative_graph_resumes_its_own_payment_confirmation(route: str) ->
         )
     ).model_dump(mode="json")
 
-    class Graph:
-        authoritative = True
 
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_payment_workflow_the_graph_does_not_own_is_refused(route: str) -> None:
+    """A preview an older client still holds from the retired coordinator: a stale «sí» must not
+    confirm anything, so it is refused in words before the graph is even invoked."""
+    stack = a_stack()
+    preview = _a_payment_preview_on_the_wire(UUID(int=801))
+
+    class Graph:
+        async def owns_workflow(self, *_: object, **__: object) -> bool:
+            return False
+
+        async def answer(self, *_: object, **__: object) -> object:
+            raise AssertionError("a workflow the graph does not own must be refused before it")
+
+    app.state.engine = Graph()
+    refused = post(stack, route, "sí", preview)
+
+    assert refused.status == 200
+    assert refused.body["outcome"] == "INVALID_DOMAIN"
+    assert "No puedo continuarla ni ejecutarla" in refused.body["text"]
+    # The answer keeps the conversation's id and version and carries no workflow back: there is
+    # nothing left on the wire a client could confirm.
+    assert (refused.conversation["conversation_id"], refused.conversation["version"]) == (
+        str(UUID(int=801)),
+        3,
+    )
+    assert refused.conversation["workflow"] is None
+    assert stack.bank.confirmed == []
+    assert refused.engine == ("model", "0")
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_the_routes_fail_closed_if_the_graph_is_missing(route: str) -> None:
+    stack = a_stack()
+    app.state.engine = None
+
+    turn = post(stack, route, "¿cuánto gasté este mes?")
+
+    assert turn.status == 503
+    assert "not available" in turn.body["detail"]
+    assert stack.ledger.ran == []
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_the_graph_resumes_its_own_payment_confirmation(route: str) -> None:
+    stack = a_stack()
+    conversation_id = UUID(int=800)
+    payload = _a_payment_preview_on_the_wire(conversation_id)
+
+    class Graph:
         async def owns_workflow(
             self, received_id: UUID, *, account_id: UUID, workflow: Workflow
         ) -> bool:
@@ -525,10 +424,11 @@ def test_stale_version_is_409_with_current_state(route: str) -> None:
 
 
 @pytest.mark.parametrize("route", ROUTES)
-def test_another_holders_id_gets_a_fresh_conversation(route: str) -> None:
-    """Ruling R20 on the wire: someone else's conversation id names nothing of theirs."""
+def test_another_holders_id_names_nothing_of_theirs(route: str) -> None:
+    """Ruling R20 on the wire: the store is keyed by account, so someone else's conversation id
+    names an empty conversation of one's own and never theirs."""
     stack = a_stack()
-    interpreter = Scripted(RESTAURANTS_IN_JULY, AND_IN_LEISURE, AND_IN_LEISURE, AND_IN_LEISURE)
+    interpreter = Scripted(RESTAURANTS_IN_JULY, AND_IN_LEISURE, AND_IN_LEISURE)
     engine_on(stack, interpreter)
     theirs = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
     holder = app.dependency_overrides[authenticated_caller]
@@ -538,14 +438,14 @@ def test_another_holders_id_gets_a_fresh_conversation(route: str) -> None:
         scopes=frozenset({Scope.QUESTIONS_READ}),
     )
 
-    # With their version: a fresh conversation of one's own (R27), read against an empty state.
-    fresh = post(stack, route, "¿y en ocio?", theirs.conversation)
-    assert fresh.status == 200
-    assert fresh.conversation["conversation_id"] != theirs.conversation["conversation_id"]
-    assert fresh.conversation["version"] == 1
-    assert (interpreter.seen[-1].focus, interpreter.seen[-1].turns) == (None, ())
+    # With their version: stale against the empty state this account holds under that id, and
+    # the 409 hands back that empty state, not theirs. Refused before anything ran.
+    stale = post(stack, route, "¿y en ocio?", theirs.conversation)
+    assert stale.status == 409
+    assert stale.body["conversation"]["version"] == 0
+    assert len(interpreter.seen) == 1
 
-    # Without one: a fresh conversation, read against an empty state.
+    # Without one: read against an empty state of one's own.
     mine = post(
         stack,
         route,
@@ -553,7 +453,6 @@ def test_another_holders_id_gets_a_fresh_conversation(route: str) -> None:
         {"conversation_id": theirs.conversation["conversation_id"]},
     )
     assert mine.status == 200
-    assert mine.conversation["conversation_id"] != theirs.conversation["conversation_id"]
     assert mine.conversation["version"] == 1
     assert (interpreter.seen[-1].focus, interpreter.seen[-1].turns) == (None, ())
     assert stack.ledger.plans == [ran("RESTAURANTS")]
@@ -566,9 +465,9 @@ def test_another_holders_id_gets_a_fresh_conversation(route: str) -> None:
 
 
 @pytest.mark.parametrize("route", ROUTES)
-def test_an_unknown_id_gets_a_new_id_that_the_client_adopts(route: str) -> None:
-    """Never saved, forgotten by a restart, or minted by the rules route: a new conversation under
-    a new id, which the next turn echoes and the engine then finds."""
+def test_an_unknown_id_without_a_version_is_adopted(route: str) -> None:
+    """An explicit id is part of the conversation's identity: one the graph holds nothing of is
+    started under that same id, never silently forked under another."""
     stack = a_stack()
     interpreter = Scripted(RESTAURANTS_IN_JULY, AND_IN_LEISURE)
     engine_on(stack, interpreter)
@@ -579,9 +478,9 @@ def test_an_unknown_id_gets_a_new_id_that_the_client_adopts(route: str) -> None:
     )
     second = post(stack, route, "¿y en ocio?", first.conversation)
 
-    assert first.conversation["conversation_id"] != unknown
+    assert first.conversation["conversation_id"] == unknown
     assert first.conversation["version"] == 1
-    assert second.conversation["conversation_id"] == first.conversation["conversation_id"]
+    assert second.conversation["conversation_id"] == unknown
     assert second.conversation["version"] == 2
     assert stack.ledger.plans == [ran("RESTAURANTS"), ran("LEISURE")]
 
@@ -600,7 +499,6 @@ def test_a_rejected_directory_read_is_answered_honestly_and_saves_nothing(route:
     assert refused.status == 200
     assert refused.body["outcome"] == "INVALID_DOMAIN"
     assert "el banco ha rechazado" in refused.body["text"]
-    assert "He entendido" not in refused.body["text"]
     assert refused.conversation["conversation_id"] == first.conversation["conversation_id"]
     assert refused.conversation["version"] == 1
     assert refused.engine[0] == "model"
@@ -611,6 +509,26 @@ def test_a_rejected_directory_read_is_answered_honestly_and_saves_nothing(route:
     retried = post(stack, route, "¿y en ocio?", refused.conversation)
     assert retried.conversation["version"] == 2
     assert stack.ledger.plans == [ran("RESTAURANTS"), ran("LEISURE")]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the graph answers a refused directory read with the presenter's «He entendido la "
+    "pregunta…» before `engine_dispatch` can say the sentence was never read (`_UNREAD`)",
+)
+def test_a_rejected_directory_read_does_not_claim_the_sentence_was_understood() -> None:
+    # The directory and the contacts are read before the sentence is: the interpreter is never
+    # asked, so the answer must not say it understood anything.
+    stack = a_stack()
+    directory = Refusing()
+    interpreter = Scripted(RESTAURANTS_IN_JULY)
+    engine_on(stack, interpreter, directory=directory)
+    directory.refusing = True
+
+    refused = post(stack, JSON_ROUTE, "¿cuánto gasté en restaurantes en julio?")
+
+    assert interpreter.seen == []
+    assert "He entendido" not in refused.body["text"]
 
 
 # --- what each response says about itself -------------------------------------------------------
@@ -627,14 +545,28 @@ ASKS_RESTAURANTS_IN_JULY = {
         }
     ]
 }
-DELEGATES_THE_PAYMENT = {"operations": [{"delegate": "PAYMENT"}]}
+DELEGATES_IT = {"operations": [{"delegate": "UNSUPPORTED"}]}
 
 
-def an_adapter(*answers: object) -> LlmTurnOperations:
+class Hosted(Canned):
+    """A canned model that reports what a hosted provider does: each logical call is one HTTP
+    attempt to a named model, with the usage the provider returned."""
+
+    reports_provider_requests = True
+
+    async def complete(self, prompt: str, **kwargs: object) -> str:
+        record_provider_request("a-model", self.name)
+        answer = await super().complete(prompt, **kwargs)
+        record_successful_model("a-model")
+        record_usage(120, 30)
+        return answer
+
+
+def an_adapter(provider: Canned) -> LlmTurnOperations:
     """The real interpreter adapter, over a canned model wrapped as the composition root wraps
     every provider it builds."""
     return LlmTurnOperations(
-        CountingProvider(Canned(*answers)),
+        CountingProvider(provider),
         model="a-model",
         temperature=0.0,
         max_output_tokens=600,
@@ -645,37 +577,51 @@ def an_adapter(*answers: object) -> LlmTurnOperations:
 @pytest.mark.parametrize("route", ROUTES)
 def test_headers_report_engine_and_model_calls(route: str) -> None:
     stack = a_stack()
-    engine_on(stack, an_adapter(ASKS_RESTAURANTS_IN_JULY, DELEGATES_THE_PAYMENT))
+    engine_on(stack, an_adapter(Canned(ASKS_RESTAURANTS_IN_JULY, DELEGATES_IT)))
 
     answered = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
-    delegated = post(stack, route, "hazle un bizum de 20 a Marta Solis Vega", answered.conversation)
+    delegated = post(
+        stack, route, "¿cuánto gasté este mes y cuánto ingresé?", answered.conversation
+    )
 
     assert answered.body["outcome"] == "PLANNED"
     assert answered.engine == ("model", "1")
-    # The engine's call is counted on the turn the rules route went on to answer; on the stream
-    # that route's own calls come after the headers, so no count is sent at all (M-5).
-    assert delegated.body["outcome"] == "AWAITING_CONFIRMATION"
-    assert delegated.engine == ("rules", None if route == STREAM_ROUTE else "1")
+    # A delegation still read the sentence once: that call is this turn's, answered or not. The
+    # graph answers before the stream starts, so both routes carry the exact count.
+    assert delegated.body["outcome"] == "UNSUPPORTED"
+    assert delegated.engine == ("model", "1")
+    # A local model reports no usage, and missing usage is left absent, never reported as zero.
+    assert "x-finguard-prompt-tokens" not in answered.headers
 
 
-def test_the_rules_engine_reports_its_own_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Engine-agnostic: the planner's call goes through the same counted provider. Asserted on the
-    JSON route, whose headers leave after the answer; the stream's leave before its first frame,
-    and the rules route's planner runs inside the stream (see `engine_dispatch`)."""
+@pytest.mark.parametrize("route", ROUTES)
+def test_headers_report_provider_requests_models_and_tokens(route: str) -> None:
     stack = a_stack()
-    provider = CountingProvider(Canned("{}"))
-    planned = stack.planner.plan
+    engine_on(stack, an_adapter(Hosted(ASKS_RESTAURANTS_IN_JULY)))
 
-    async def plan_after_a_model_call(sentence: str, **context: Any) -> Any:
-        await provider.complete("plan", model="m", temperature=0.0, max_output_tokens=8)
-        return await planned(sentence, **context)
-
-    monkeypatch.setattr(stack.planner, "plan", plan_after_a_model_call)
-
-    turn = post(stack, JSON_ROUTE, "¿cuánto gasté en restaurantes en julio?")
+    turn = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
 
     assert turn.body["outcome"] == "PLANNED"
-    assert turn.engine == ("rules", "1")
+    assert {
+        name: turn.headers.get(f"x-finguard-{name}")
+        for name in (
+            "model-calls",
+            "provider-requests",
+            "models-attempted",
+            "models-used",
+            "prompt-tokens",
+            "completion-tokens",
+            "token-reports",
+        )
+    } == {
+        "model-calls": "1",
+        "provider-requests": "1",
+        "models-attempted": "a-model",
+        "models-used": "a-model",
+        "prompt-tokens": "120",
+        "completion-tokens": "30",
+        "token-reports": "1",
+    }
 
 
 async def test_calls_made_in_tasks_the_request_spawned_are_the_requests() -> None:
@@ -701,200 +647,56 @@ async def test_outside_a_request_nothing_is_counted() -> None:
     assert provider.name == "canned"
 
 
-# --- what a handed-over turn hands back ---------------------------------------------------------
-
-
 @pytest.mark.parametrize("route", ROUTES)
-def test_a_delegated_compound_read_keeps_the_engine_conversation(route: str) -> None:
-    """R25: a compound read is the rules route's, and its later clauses are read in a context
-    built for them; that context must still be the engine's conversation, or the next engine turn
-    starts a new one."""
-    stack = a_stack()
-    interpreter = Scripted(RESTAURANTS_IN_JULY, (Delegate("UNSUPPORTED"),), AND_IN_LEISURE)
-    engine_on(stack, interpreter)
-    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
-    engine_id = first.conversation["conversation_id"]
-
-    compound = post(stack, route, "Cuanto gaste este mes y cuanto ingrese?", first.conversation)
-    followed = post(stack, route, "¿y en ocio?", compound.conversation)
-
-    assert compound.body["outcome"] == "COMPOUND"
-    assert compound.engine[0] == "rules"
-    assert (compound.conversation["conversation_id"], compound.conversation["version"]) == (
-        engine_id,
-        1,
-    )
-    assert followed.body["outcome"] == "PLANNED"
-    assert (followed.conversation["conversation_id"], followed.conversation["version"]) == (
-        engine_id,
-        2,
-    )
-
-
-# --- a workflow on the wire (R26) ---------------------------------------------------------------
-
-DRAFT_KEYS = ("workflow", "payment", "candidates", "awaiting", "suspended")
-
-
-@pytest.mark.parametrize("route", ROUTES)
-def test_a_suspended_bizum_lets_the_engine_answer_and_rides_along(route: str) -> None:
-    """A half-built Bizum the rules route set aside for a question keeps nothing else on that
-    route: the engine answers the next analytics turn, and hands the draft back untouched so it
-    can still be resumed there."""
-    stack = a_stack()
-    interpreter = Scripted(RESTAURANTS_IN_JULY, TO_PAYMENTS, AND_IN_LEISURE)
-    engine_on(stack, interpreter)
-    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
-    drafted = post(stack, route, "hazle un bizum de 20 a Marta", first.conversation)
-    assert drafted.conversation["workflow"] == "PAYMENT_IN_PROGRESS"
-
-    # Open and not set aside: still the payment's turn, on the rules route.
-    aside = post(stack, route, "¿cuánto gasté en restaurantes en julio?", drafted.conversation)
-    assert aside.engine[0] == "rules" and len(interpreter.seen) == 2
-    assert aside.conversation["suspended"] is True
-
-    answered = post(stack, route, "¿y en ocio?", aside.conversation)
-
-    assert answered.engine[0] == "model"
-    assert answered.body["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
-    assert answered.conversation["version"] == 2
-    assert {key: answered.conversation[key] for key in DRAFT_KEYS} == {
-        key: aside.conversation[key] for key in DRAFT_KEYS
-    }
-
-
-@pytest.mark.parametrize("route", ROUTES)
-def test_an_open_rules_question_is_answered_by_the_rules_route(route: str) -> None:
-    """M-1: a question the rules route asked is answered where it was asked."""
-    stack = a_stack()
-    interpreter = Scripted()
-    engine_on(stack, interpreter)
-    asked = conversation_mapper.to_payload(
-        Conversation(
-            conversation_id=UUID(int=77),
-            version=3,
-            active=FinancialClarification(
-                draft=FinancialPlanDraft(direction=Direction.EXPENSE, categories=("RESTAURANTS",))
-            ),
-        )
-    ).model_dump(mode="json")
-
-    turn = post(stack, route, "en julio", asked)
-
-    assert turn.engine[0] == "rules"
-    assert interpreter.seen == []
-
-
-@pytest.mark.parametrize("route", ROUTES)
-def test_a_preview_owns_the_next_turn_even_an_analytics_one(route: str) -> None:
-    """M-7: a payment awaiting a yes is not suspended by a question; the rules route answers it
-    and the preview stays open."""
-    stack = a_stack()
-    interpreter = Scripted(RESTAURANTS_IN_JULY, TO_PAYMENTS)
-    engine_on(stack, interpreter)
-    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
-    previewed = post(stack, route, "hazle un bizum de 20 a Marta Solis Vega", first.conversation)
-
-    turn = post(stack, route, "¿y en ocio?", previewed.conversation)
-
-    assert turn.engine[0] == "rules"
-    assert len(interpreter.seen) == 2
-    assert turn.conversation["workflow"] == "PAYMENT_CONFIRMATION"
-    assert stack.bank.confirmed == []
-
-
-@pytest.mark.parametrize("route", ROUTES)
-def test_a_forgotten_conversation_starts_again_without_a_409(route: str) -> None:
-    """R27: after a restart the store holds nothing; an open tab's next turn is answered under a
-    new id, which it adopts, instead of a 409 on every turn."""
+def test_a_forgotten_conversation_is_a_409_the_client_can_adopt(route: str) -> None:
+    """After a restart the store holds nothing: the version an open tab sends is stale against the
+    empty state, and the 409 hands back that state under the same id, so the next turn adopts it
+    instead of a 409 on every turn."""
     stack = a_stack()
     engine_on(stack, Scripted(RESTAURANTS_IN_JULY))
     first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
     engine_on(stack, Scripted(RESTAURANTS_IN_JULY))  # a new process: an empty store
 
-    again = post(stack, route, "¿cuánto gasté en restaurantes en julio?", first.conversation)
+    stale = post(stack, route, "¿cuánto gasté en restaurantes en julio?", first.conversation)
+    again = post(
+        stack, route, "¿cuánto gasté en restaurantes en julio?", stale.body["conversation"]
+    )
 
+    assert stale.status == 409
+    assert stale.body["conversation"]["conversation_id"] == first.conversation["conversation_id"]
+    assert stale.body["conversation"]["version"] == 0
     assert again.status == 200
-    assert again.conversation["conversation_id"] != first.conversation["conversation_id"]
+    assert again.conversation["conversation_id"] == first.conversation["conversation_id"]
     assert again.conversation["version"] == 1
 
 
-@pytest.mark.parametrize("route", ROUTES)
-def test_a_chart_of_what_is_on_screen_is_drawn_from_the_engines_plan(
-    route: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """R28: «ponlo en un gráfico» after an engine answer is the rules route's to draw, and the
-    plan it is handed as the one on screen is the engine's, read from the same accounts."""
-    stack = a_stack()
-    engine_on(stack, Scripted(RESTAURANTS_IN_JULY, (Delegate("CHART"),)))
-    handed: list[object] = []
-    planned = stack.planner.plan
-
-    async def plan(sentence: str, *, context: Any) -> Any:
-        handed.append(context.continuation.plan if context.continuation else None)
-        return await planned(sentence, context=context)
-
-    monkeypatch.setattr(stack.planner, "plan", plan)
-    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
-
-    charted = post(stack, route, "ponlo en un gráfico", first.conversation)
-
-    assert charted.engine[0] == "rules"
-    assert handed == [ran("RESTAURANTS")]
-    assert charted.conversation["conversation_id"] == first.conversation["conversation_id"]
-
-
 def test_graph_visual_operations_render_and_restyle_over_http_without_bank_reads() -> None:
-    stack = a_stack(account_scope_default="all")
+    stack = a_stack()
     stack.ledger.groups_for_next_turn = (
-        Group("Alimentación", 30_000, 3),
-        Group("Restaurantes", 18_000, 2),
-        Group("Transporte", 9_000, 1),
+        Group("2026-05", 30_000, 3),
+        Group("2026-06", 18_000, 2),
+        Group("2026-07", 9_000, 1),
     )
-    operations = Scripted(
-        (Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, group_by=GroupBy.CATEGORY)),),
-        (Visualize("ACTIVE_RESULT", "AUTO"),),
-        (Visualize("ACTIVE_CHART", "LINE"),),
-    )
-
-    class UnusedAssessor:
-        async def assess(self, _: object) -> object:
-            raise AssertionError("this read-only chart conversation needs no investigation")
-
-    stack_engine = GraphTurnHandler(
-        GraphPorts(
-            operations,
-            UnusedAssessor(),  # type: ignore[arg-type]
-            MemoryDialogueStore(),
-            stack.ledger,  # type: ignore[arg-type]
-            Accounts(),  # type: ignore[arg-type]
-            Directory(),  # type: ignore[arg-type]
-            Contacts(),  # type: ignore[arg-type]
-            CATEGORIES,
-            visual_policy=VisualPlanningPolicy(
-                model=None,
-                fallback=DeterministicVisualPlanner(),
-                verifier=verify,
-                mode="deterministic",
-                budget_seconds=1,
-            ),
-            count_calls=calls_so_far,
+    engine_on(
+        stack,
+        Scripted(
+            (Ask(PlanFields(direction=Direction.EXPENSE, window=SPRING, group_by=GroupBy.MONTH)),),
+            (Visualize("ACTIVE_RESULT", "AUTO"),),
+            (Visualize("ACTIVE_CHART", "BAR"),),
         ),
-        MemoryTurnReservations(),
-        InMemorySaver(),
     )
-    app.state.engine = stack_engine
 
-    queried = post(stack, JSON_ROUTE, "desglosa gastos por categorías de julio")
+    queried = post(stack, JSON_ROUTE, "desglosa mis gastos por meses de mayo a julio")
     bank_reads = len(stack.ledger.ran)
     created = post(stack, JSON_ROUTE, "enséñamelo en un gráfico", queried.conversation)
-    restyled = post(stack, JSON_ROUTE, "cámbialo a líneas", created.conversation)
+    restyled = post(stack, JSON_ROUTE, "cámbialo a barras", created.conversation)
 
     assert queried.status == created.status == restyled.status == 200
     assert created.body["visualization"]["kind"] == "chart"
-    assert created.body["visualization"]["spec"]["mark"]["type"] == "bar"
+    # Months are a time axis: the deterministic planner draws them as a line.
+    assert created.body["visualization"]["spec"]["mark"]["type"] == "line"
     assert restyled.body["visualization"]["kind"] == "chart"
-    assert restyled.body["visualization"]["spec"]["mark"]["type"] == "line"
+    assert restyled.body["visualization"]["spec"]["mark"]["type"] == "bar"
     assert created.conversation["version"] == 2
     assert restyled.conversation["version"] == 3
     assert len(stack.ledger.ran) == bank_reads
@@ -935,76 +737,26 @@ def test_graph_payment_confirmation_state_survives_the_http_mapping() -> None:
     assert answer.conversation.version == 4
 
 
-def test_graph_mode_closes_the_parallel_payment_http_surface() -> None:
+def test_the_direct_payment_routes_are_closed() -> None:
+    """Payments go through the unified conversation alone: a second, parallel way to prepare one
+    would be a workflow the graph never sees."""
     stack = a_stack()
-    previous_graph = app.state.conversation_graph_enabled
-    previous_payments = app.state.payments_enabled
-    app.state.conversation_graph_enabled = True
-    app.state.payments_enabled = True
-    try:
-        response = stack.client.post(
-            "/v1/payments/chosen",
-            headers={"Idempotency-Key": "parallel-workflow-is-disabled"},
-            json={
-                "recipient_name": "Marta Solis Vega",
-                "amount_minor": 2_000,
-                "currency": "EUR",
-            },
-        )
 
-        assert response.status_code == 503
-        assert response.json()["code"] == "feature_disabled"
-        assert "unified conversation" in response.json()["detail"]
-        assert stack.bank.prepared == []
-        assert stack.bank.confirmed == []
-    finally:
-        app.state.conversation_graph_enabled = previous_graph
-        app.state.payments_enabled = previous_payments
-        app.dependency_overrides.clear()
-
-
-def test_a_pair_on_screen_is_handed_over_as_the_last_comparison() -> None:
-    june = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
-    pair = ComparisonPlan(
-        FinancialPlan(direction=Direction.EXPENSE, date_range=june, categories=("LEISURE",)),
-        FinancialPlan(direction=Direction.EXPENSE, date_range=JULY, categories=("LEISURE",)),
-    )
-    question = QuestionRequest(question="ponlo en un gráfico")
-
-    engine_dispatch._hand_over_the_screen(  # noqa: SLF001
-        question, DialogueState(UUID(int=5), version=2, focus=ComparisonFocus(pair))
+    response = stack.client.post(
+        "/v1/payments/chosen",
+        headers={"Idempotency-Key": "parallel-workflow-is-disabled"},
+        json={
+            "recipient_name": "Marta Solis Vega",
+            "amount_minor": 2_000,
+            "currency": "EUR",
+        },
     )
 
-    assert question.conversation is not None
-    handed = conversation_mapper.to_domain(question.conversation).last_comparison
-    assert handed == ComparisonPlan(
-        replace(pair.earlier, across_accounts=True), replace(pair.latest, across_accounts=True)
-    )
-
-
-@pytest.mark.parametrize("route", ROUTES)
-def test_a_searchs_offers_ride_through_an_engine_answer_in_the_same_conversation(
-    route: str,
-) -> None:
-    """M-3: the sealed offers of a gym search are bound to the conversation id; an engine answer in
-    that same conversation hands them back, so a later booking still finds them."""
-    stack = a_stack()
-    engine_on(stack, Scripted(RESTAURANTS_IN_JULY, AND_IN_LEISURE, AND_IN_LEISURE))
-    first = post(stack, route, "¿cuánto gasté en restaurantes en julio?")
-    offers = {"slots": [], "agent_names": [], "contexts": [], "token": "o1.abc.def"}
-
-    same = post(stack, route, "¿y en ocio?", {**first.conversation, "activity_offers": offers})
-    elsewhere = post(
-        stack,
-        route,
-        "¿y en ocio?",
-        {"conversation_id": str(UUID(int=99)), "activity_offers": offers},
-    )
-
-    assert same.conversation["activity_offers"] == offers
-    # A new conversation: offers sealed for another id would never verify, so none ride along.
-    assert elsewhere.conversation["conversation_id"] != str(UUID(int=99))
-    assert elsewhere.conversation["activity_offers"] is None
+    assert response.status_code == 503
+    assert response.json()["code"] == "feature_disabled"
+    assert "unified conversation" in response.json()["detail"]
+    assert stack.bank.prepared == []
+    assert stack.bank.confirmed == []
 
 
 @pytest.mark.parametrize("field", ["engine_temperature", "engine_max_output_tokens"])

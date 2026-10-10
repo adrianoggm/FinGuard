@@ -59,7 +59,7 @@ from zoneinfo import ZoneInfo
 import yaml  # type: ignore[import-untyped]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import evaluate_planning  # noqa: E402
+import evaluation_runtime  # noqa: E402
 
 from finguard_orchestrator.bootstrap.config import Settings, get_settings  # noqa: E402
 from finguard_orchestrator.domain.models.expert_agents import (  # noqa: E402
@@ -548,7 +548,7 @@ def _yes(value: bool) -> str:
 async def run(args: argparse.Namespace) -> int:
     now, cases = load_cases(CASES_PATH)
     try:
-        provider = evaluate_planning.build_provider(args.provider, None, False, None)
+        provider = evaluation_runtime.build_provider(args.provider, None, False, None)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -573,7 +573,7 @@ async def run(args: argparse.Namespace) -> int:
     settings = get_settings()
     temperature = settings.planner_temperature
     max_output_tokens = settings.planner_max_output_tokens
-    manifest = await evaluate_planning.run_manifest(CASES_PATH, provider, args.model, len(cases))
+    manifest = await evaluation_runtime.run_manifest(CASES_PATH, provider, args.model, len(cases))
     manifest["date"] = datetime.now(UTC).isoformat(timespec="seconds")
     manifest["judged_at"] = now.isoformat()
     manifest["normaliser"] = {

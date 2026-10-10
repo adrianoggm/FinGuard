@@ -30,37 +30,12 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
-from finguard_orchestrator.application import (
-    AskFinancialQuestionHandler,
-    AskFinancialQuestionQuery,
-    QueryBus,
-)
-from finguard_orchestrator.application.queries.ask_financial_question import (
-    record_visual_decision,
-    record_visual_decision_refused,
-)
-from finguard_orchestrator.bootstrap.dependencies import (
-    authenticated_caller,
-    get_ask_handler,
-    get_query_bus,
-    reporting_today,
-)
+from finguard_orchestrator.application.engine.turn_result import EngineAnswer
+from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, reporting_today
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome
-from finguard_orchestrator.domain.models.chart import (
-    ChartEncoding,
-    ChartSpec,
-    VisualContext,
-    VisualField,
-    VisualProfile,
-)
-from finguard_orchestrator.domain.models.planning_context import PlanningContext
-from finguard_orchestrator.domain.models.planning_result import PlanningResult
-from finguard_orchestrator.domain.models.query_answer import QueryAnswer
-from finguard_orchestrator.domain.models.visual_plan import Rejection
-from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
+from finguard_orchestrator.domain.engine.state import DialogueState
+from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.observability import (
     REDACTED,
@@ -80,26 +55,6 @@ from finguard_orchestrator.observability import (
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
-THREE_MONTHS = RelativePeriod(period=Period.LAST_N_MONTHS, n=3)
-
-# A minimal breakdown bar, just enough to construct a `VisualDecision`/`VisualContext` for the two
-# `Step.VISUAL_PLANNER` rows `record_visual_decision`/`record_visual_decision_refused` produce --
-# the invariant sweep below is the only reader, and it never inspects the chart itself.
-_VISUAL_SPEC = ChartSpec(
-    "bar",
-    (
-        ChartEncoding("x", "value_minor", "quantitative"),
-        ChartEncoding("y", "dimension", "nominal"),
-    ),
-)
-_VISUAL_PROFILE = VisualProfile(
-    fields=(
-        VisualField("dimension", "nominal", "dimension", 2),
-        VisualField("value_minor", "quantitative", "measure", 2),
-    ),
-    metric="SUM",
-    unit="money",
-)
 
 # The same sentence `test_logging.py` uses, and for the same reason: what somebody typed, who they
 # pay, and the note they wrote about it, in one line. Kept identical on purpose — the two records
@@ -125,61 +80,25 @@ PROSE = (
 )
 
 
-class NoCards:
-    async def all_of(self, account_id, **kwargs):
-        from finguard_orchestrator.domain.models.card import Wallet
+class Delegating:
+    """A graph that hands every turn on: a real request in flight on the real question route,
+    without scripting an answer this module never reads."""
 
-        return Wallet(since=date(2026, 7, 7))
-
-    async def charges_on(self, account_id, card_id, **kwargs):
-        return ()
-
-
-class FakePlanner:
-    def __init__(self, result: PlanningResult) -> None:
-        self._result = result
-
-    async def plan(self, sentence: str, *, context: PlanningContext):
-        return self._result
-
-
-class FakeLedger:
-    async def run(self, plan, *, account_id, today, reporting_timezone="Europe/Madrid", **kw):
-        return QueryAnswer(currency="EUR", total_minor=189_597, movement_count=12)
-
-    async def ranked(self, ranking, *, account_id, today, reporting_timezone):
-        return None
-
-
-class FakeAccounts:
-    async def of(self, account_id, *, today, reporting_timezone):
-        raise AssertionError("not this path")
-
-
-class FakeContacts:
-    async def all_of(self, account_id):
-        return ()
+    async def answer(self, *_: object, **__: object) -> EngineAnswer:
+        return EngineAnswer(None, DialogueState(uuid.UUID(int=1), version=1), "CHART", 0, {})
 
 
 @pytest.fixture(autouse=True)
 def _restore():
     app.dependency_overrides.clear()
+    previous = getattr(app.state, "engine", None)
     yield
+    app.state.engine = previous
     app.dependency_overrides.clear()
 
 
-def wired(planned: FinancialPlan) -> TestClient:
-    handler = AskFinancialQuestionHandler(
-        FakePlanner(PlanningResult.planned(planned)),
-        FakeLedger(),
-        accounts=FakeAccounts(),
-        contacts=FakeContacts(),
-        cards=NoCards(),  # type: ignore[arg-type]
-    )
-    bus = QueryBus()
-    bus.register(AskFinancialQuestionQuery, handler)
-    app.dependency_overrides[get_query_bus] = lambda: bus
-    app.dependency_overrides[get_ask_handler] = lambda: handler
+def wired() -> TestClient:
+    app.state.engine = Delegating()
     app.dependency_overrides[reporting_today] = lambda: TODAY
     app.dependency_overrides[authenticated_caller] = lambda: Caller(
         holder_reference="ES-0001",
@@ -187,7 +106,7 @@ def wired(planned: FinancialPlan) -> TestClient:
         scopes=frozenset({Scope.QUESTIONS_READ}),
     )
     app.state.questions_enabled = True
-    return TestClient(app)
+    return TestClient(app, headers={"Idempotency-Key": "decisions-attempt"})
 
 
 def everything_in(sealed: TurnRecord) -> str:
@@ -235,7 +154,7 @@ def test_nothing_the_holder_wrote_reaches_a_decision() -> None:
     the real pipeline recorded as well. Today that is nothing; the moment Section 2 wires a seam
     that puts a merchant name in `now`, this is the test that goes red.
     """
-    client = wired(FinancialPlan(direction=Direction.EXPENSE, period=THREE_MONTHS))
+    client = wired()
 
     with recording_turn() as turn:
         response = client.post("/v1/questions", json={"question": PRIVATE})
@@ -353,12 +272,7 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
     Raising there fires on the data rather than the branch, so a miswired call site would pass
     every test whose fixtures happened to agree and take down a turn on the first one that did not.
     Swept here instead, where the same mistake is caught and nothing is at risk.
-
-    I3 (fix round 2) is why the sweep runs over `record_visual_decision`'s own real branches too,
-    not only hand-built rows: a `patch` row used to hard-code `changed=False` regardless of `was`
-    and `now`, which fabricated rows built to already agree could never catch.
     """
-    context = VisualContext("chart-1", _VISUAL_SPEC, _VISUAL_PROFILE)
     with recording_turn() as turn:
         record(
             Step.ENFORCE,
@@ -370,17 +284,6 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
         )
         record(Step.ENFORCE, Verdict.AGREED, changed=False, field="metric", was="SUM", now="SUM")
         record(Step.CAPABILITY_GUARD, Verdict.DECLINED, changed=True, field="family", now="AVERAGE")
-        record_visual_decision(
-            VisualDecision(
-                spec=_VISUAL_SPEC,
-                profile=_VISUAL_PROFILE,
-                source="patch",
-                accepted=True,
-                valid=True,
-            ),
-            was="deterministic",
-        )
-        record_visual_decision_refused(context, Rejection("order", "ordering does not apply"))
 
     for decision in turn.sealed().decisions:
         if decision.was is not None and decision.now is not None:
@@ -388,36 +291,6 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
                 f"{decision.step} reports changed={decision.changed} "
                 f"while moving {decision.was!r} to {decision.now!r}"
             )
-
-
-def test_a_refused_patch_records_the_origin_it_can_know() -> None:
-    """F3 (fix wave 2): `record_visual_decision_refused`'s `now` used to fabricate
-    `"deterministic"` for a context whose `decision` is `None` -- true only by accident, exactly
-    the shortcut I2 (fix wave) already refused for the accepted path's `was`. `VisualContext.
-    decision` is turn-local (Wave 4's provenance, §4): a context that crossed the wire and came
-    back always has `decision is None`, even though a decision did produce the chart on screen.
-    A refusal over that context must record `now=None`, the same honesty `record_visual_decision`
-    already gives `was`, never an invented "deterministic". A same-turn refusal, whose context
-    still carries the `VisualDecision` that produced the chart on screen, reports that source.
-    """
-    round_tripped = VisualContext("chart-1", _VISUAL_SPEC, _VISUAL_PROFILE)
-    with recording_turn() as turn:
-        record_visual_decision_refused(round_tripped, Rejection("order", "no ranking rule"))
-    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
-    assert decision.now is None
-
-    same_turn = VisualContext(
-        "chart-1",
-        _VISUAL_SPEC,
-        _VISUAL_PROFILE,
-        decision=VisualDecision(
-            spec=_VISUAL_SPEC, profile=_VISUAL_PROFILE, source="llm", accepted=True, valid=True
-        ),
-    )
-    with recording_turn() as turn2:
-        record_visual_decision_refused(same_turn, Rejection("order", "no ranking rule"))
-    (decision2,) = turn2.sealed().where(Step.VISUAL_PLANNER)
-    assert decision2.now == "llm"
 
 
 def test_the_changed_decisions_are_readable_as_a_group() -> None:

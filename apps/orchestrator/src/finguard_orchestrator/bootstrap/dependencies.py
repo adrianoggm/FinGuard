@@ -3,19 +3,15 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from datetime import date
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import Depends, Header, Request
 
 from finguard_orchestrator.application import CommandBus, QueryBus
 from finguard_orchestrator.domain.errors import FeatureDisabledError
 from finguard_orchestrator.domain.ports.caller_identity import CallerIdentityPort
-from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
-
-if TYPE_CHECKING:
-    from finguard_orchestrator.application import AskFinancialQuestionHandler
 
 
 def get_query_bus(request: Request) -> QueryBus:
@@ -27,17 +23,6 @@ def get_query_bus(request: Request) -> QueryBus:
 def get_command_bus(request: Request) -> CommandBus:
     bus: CommandBus = request.app.state.command_bus
     return bus
-
-
-def get_ask_handler(request: Request) -> AskFinancialQuestionHandler | None:
-    """The compatibility handler for the legacy streaming route, if that path is enabled.
-
-    A bus is request and response: one message in, one answer out. A stream is a
-    different shape. Graph mode does not construct the handler; the route must have already been
-    answered by the graph or fail closed before reaching its compatibility path.
-    """
-    handler: AskFinancialQuestionHandler | None = request.app.state.ask_handler
-    return handler
 
 
 async def authenticated_caller(
@@ -74,10 +59,9 @@ def payments_enabled(request: Request) -> None:
     """
     if not request.app.state.payments_enabled:
         raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
-    if getattr(request.app.state, "conversation_graph_enabled", False):
-        raise FeatureDisabledError(
-            "direct payment routes are disabled in graph mode; use the unified conversation"
-        )
+    # LangGraph owns every payment workflow, so the direct form routes stay closed: a preview
+    # built outside the conversation would be one the graph's confirmation never saw.
+    raise FeatureDisabledError("direct payment routes are disabled; use the unified conversation")
 
 
 def metrics_enabled(request: Request) -> None:
@@ -113,17 +97,6 @@ def payments_available(request: Request) -> bool:
     """
     enabled: bool = request.app.state.payments_enabled
     return enabled
-
-
-def turn_interpreter(request: Request) -> TurnInterpreterPort:
-    """Whatever reads a turn on this deployment.
-
-    Which one is a startup decision, and the point of the port is that the routes cannot tell:
-    deterministic today, the same rules with a model shadowing them when the shadow is switched on,
-    a model deciding once the numbers say so. One place chooses; nothing downstream changes.
-    """
-    interpreter: TurnInterpreterPort = request.app.state.turn_interpreter
-    return interpreter
 
 
 def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> date:

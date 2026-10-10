@@ -30,7 +30,7 @@ from finguard_orchestrator.infrastructure.expert_agents.agent_prompt import (
     classifier_prompt,
     classifier_schema,
 )
-from finguard_orchestrator.infrastructure.planning.llm_query_planner import STRUCTURE_REPAIR
+from finguard_orchestrator.infrastructure.llm.structure_repair import STRUCTURE_REPAIR
 
 logger = logging.getLogger(__name__)
 

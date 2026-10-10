@@ -1,6 +1,6 @@
 """Implements VisualPlannerPort against the model already loaded, with a different prompt.
 
-Mirrors `LlmQueryPlanner`: one call, one structure repair with the same `STRUCTURE_REPAIR`
+One call, one structure repair with the shared `STRUCTURE_REPAIR`
 suffix, and a `ProviderFailedError` when the provider will not honour the schema twice -- which is
 a provider failure, not an abstention, and the policy records it as one. `budget_seconds` is
 accepted and unused here: the policy enforces it with `wait_for`, because only the policy holds the
@@ -20,7 +20,7 @@ from finguard_orchestrator.domain.models.visual_plan import (
     VisualPlanDraft,
 )
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
-from finguard_orchestrator.infrastructure.planning.llm_query_planner import STRUCTURE_REPAIR
+from finguard_orchestrator.infrastructure.llm.structure_repair import STRUCTURE_REPAIR
 from finguard_orchestrator.infrastructure.planning.visual_answer import (
     VisualAnswer,
     parse_visual_answer,

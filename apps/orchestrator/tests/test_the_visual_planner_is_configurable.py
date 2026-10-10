@@ -11,7 +11,6 @@ about *which* model and sampling the adapter is built with, and that a blank set
 
 import pytest
 
-from finguard_orchestrator.application import AskFinancialQuestionQuery
 from finguard_orchestrator.bootstrap.config import Settings, get_settings
 from finguard_orchestrator.bootstrap.main import create_app
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
@@ -36,8 +35,7 @@ def test_the_setting_chooses_whether_a_model_is_built(
 
     # Asserted through create_app because what could break is the wiring: private attributes read
     # bare rather than through a public accessor nothing else needs.
-    handler = app.state.query_bus._handlers[AskFinancialQuestionQuery]
-    policy = handler._visual_policy
+    policy = app.state.visual_policy
     assert policy is not None and policy._mode == mode
     assert isinstance(policy._model, LlmVisualPlanner) is builds_adapter
 
@@ -55,8 +53,7 @@ def test_the_visual_planner_falls_back_to_the_financial_planners_model(monkeypat
     try:
         app = create_app()
         settings = get_settings()
-        handler = app.state.query_bus._handlers[AskFinancialQuestionQuery]
-        visual = handler._visual_policy._model
+        visual = app.state.visual_policy._model
         assert visual._model == settings.planner_model
         assert (visual._temperature, visual._max_output_tokens) == (
             settings.planner_temperature,
@@ -78,8 +75,7 @@ def test_the_visual_planner_takes_its_own_model_and_sampling_when_named(monkeypa
     try:
         app = create_app()
         settings = get_settings()
-        handler = app.state.query_bus._handlers[AskFinancialQuestionQuery]
-        visual = handler._visual_policy._model
+        visual = app.state.visual_policy._model
         assert (visual._model, visual._temperature, visual._max_output_tokens) == (
             "other:1b",
             0.0,
@@ -87,8 +83,9 @@ def test_the_visual_planner_takes_its_own_model_and_sampling_when_named(monkeypa
         )
         # By name: every provider the app builds is wrapped to count its calls.
         assert visual._provider.name == EchoLlmProvider.name
-        assert handler._planner._model == settings.planner_model  # untouched
-        assert handler._planner._provider.name != EchoLlmProvider.name
+        # The financial planner keeps its own provider: only the visual one was redirected.
+        assert settings.planner_model != "other:1b"
+        assert app.state.planner_probe.name != EchoLlmProvider.name
     finally:
         get_settings.cache_clear()
 

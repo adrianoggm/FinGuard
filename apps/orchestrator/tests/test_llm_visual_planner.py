@@ -19,7 +19,7 @@ from finguard_orchestrator.domain.models.chart import (
 )
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
-from finguard_orchestrator.infrastructure.planning.llm_query_planner import STRUCTURE_REPAIR
+from finguard_orchestrator.infrastructure.llm.structure_repair import STRUCTURE_REPAIR
 from finguard_orchestrator.infrastructure.planning.llm_visual_planner import LlmVisualPlanner
 from finguard_orchestrator.infrastructure.planning.visual_answer import parse_visual_answer
 from finguard_orchestrator.infrastructure.planning.visual_prompt import (

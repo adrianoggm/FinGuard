@@ -1,8 +1,6 @@
 """Question HTTP routes owned exclusively by the LangGraph runtime.
 
-These routes deliberately do not import the legacy question controller. In graph mode the
-composition root mounts this router instead of the compatibility question router, so a graph
-failure cannot continue into legacy language interpretation.
+LangGraph is the only conversational runtime; a missing graph is a 503, never a fallback.
 """
 
 from datetime import date
@@ -38,17 +36,14 @@ def _metric_token_codec(request: Request) -> MetricTokenCodec:
     return codec
 
 
-def _authoritative_graph(request: Request) -> ConversationTurnHandler:
-    engine = getattr(request.app.state, "engine", None)
-    if not getattr(engine, "authoritative", False):
-        raise HTTPException(
-            status_code=503,
-            detail="The conversation graph is configured but no authoritative graph is available.",
-        )
+def _the_graph(request: Request) -> ConversationTurnHandler:
+    engine: ConversationTurnHandler | None = getattr(request.app.state, "engine", None)
+    if engine is None:
+        raise HTTPException(status_code=503, detail="The conversation graph is not available.")
     return engine
 
 
-Graph = Annotated[ConversationTurnHandler, Depends(_authoritative_graph)]
+Graph = Annotated[ConversationTurnHandler, Depends(_the_graph)]
 MetricTokens = Annotated[MetricTokenCodec, Depends(_metric_token_codec)]
 
 
@@ -65,16 +60,9 @@ async def ask(
     metric_tokens: MetricTokens,
     engine: Graph,
 ) -> QuestionResponse:
-    answer = await engine_dispatch.try_engine(
+    return await engine_dispatch.try_engine(
         engine, body, who, today, metric_tokens, request_id=attempt
     )
-    engine_dispatch.refuse_legacy_fallback(engine, answer)
-    if answer is None:
-        raise HTTPException(
-            status_code=503,
-            detail="The conversation graph did not answer this turn; legacy fallback is disabled.",
-        )
-    return answer
 
 
 @router.post(
@@ -90,13 +78,6 @@ async def ask_streaming(
     metric_tokens: MetricTokens,
     engine: Graph,
 ) -> StreamingResponse:
-    response = await engine_dispatch.try_engine_streaming(
+    return await engine_dispatch.try_engine_streaming(
         engine, body, who, today, metric_tokens, request_id=attempt
     )
-    engine_dispatch.refuse_legacy_fallback(engine, response)
-    if response is None:
-        raise HTTPException(
-            status_code=503,
-            detail="The conversation graph did not answer this turn; legacy fallback is disabled.",
-        )
-    return response

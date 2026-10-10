@@ -25,7 +25,6 @@ from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     PrepareChosenPaymentCommand,
     PrepareOwnTransferCommand,
-    PreparePaymentCommand,
 )
 from finguard_orchestrator.bootstrap.dependencies import (
     attempt_key,
@@ -39,7 +38,6 @@ from finguard_orchestrator.infrastructure.dto.payment_dto import (
     ChosenPaymentRequest,
     ConfirmPaymentRequest,
     OwnTransferRequest,
-    PaymentRequestBody,
     PaymentResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import payment_mapper
@@ -54,28 +52,6 @@ Attempt = Annotated[str, Depends(attempt_key)]
 payments_router = APIRouter(
     prefix="/v1/payments", tags=["payments"], dependencies=[Depends(payments_enabled)]
 )
-
-
-@payments_router.post("", summary="Read a payment from a sentence and preview it")
-async def prepare(
-    request: PaymentRequestBody,
-    who: MayPrepare,
-    commands: Commands,
-    attempt: Attempt,
-) -> PaymentResponse:
-    """Answers with what the user is being asked to approve, and moves nothing.
-
-    Send `Idempotency-Key` and a resend of this attempt is the same preview rather than a second
-    one. It is the header banking requires, and it is optional here only so a client written before
-    it keeps working — `attempt_key` says what that costs.
-    """
-    command = PreparePaymentCommand(
-        sentence=request.sentence,
-        account_id=who.account_id,
-        idempotency_key=attempt,
-    )
-    answer = await commands.dispatch(command)
-    return payment_mapper.answer_to_dto(answer)
 
 
 @payments_router.post("/chosen", summary="Prepare a payment built in a form")

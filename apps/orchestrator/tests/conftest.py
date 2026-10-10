@@ -25,9 +25,9 @@ os.environ.setdefault("ORCHESTRATOR_DEV_TOKENS", f'["{TEST_TOKEN}:{TEST_HOLDER}:
 
 # Ruling R30: the suite is the same on every tree. A developer's `.env` is read after
 # `.env.defaults` and wins, and one that switched the engine to `model` on `groq` once sent the
-# suite's sentences to a hosted model. The broad compatibility suite explicitly mounts the legacy
-# routes; graph-specific tests opt into LangGraph in their own app. Hosted credentials stay blank,
-# and tests about another deployment set their own configuration with `monkeypatch.setenv`.
+# suite's sentences to a hosted model. So the settings that choose a model are pinned to their
+# shipped values and hosted credentials stay blank; a test about another deployment sets its own
+# configuration with `monkeypatch.setenv`.
 _SHIPPED = Path(__file__).resolve().parents[1] / ".env.defaults"
 _PINNED = (
     "ENGINE_MODEL",
@@ -35,7 +35,6 @@ _PINNED = (
     "ENGINE_TEMPERATURE",
     "PLANNER_PROVIDER",
     "PLANNER_MODEL",
-    "TURN_INTERPRETER",
     "VISUAL_PLANNER",
     "VISUAL_PLANNER_PROVIDER",
     "VISUAL_PLANNER_MODEL",
@@ -45,11 +44,12 @@ for _line in _SHIPPED.read_text(encoding="utf-8").splitlines():
     _key, _, _value = _line.partition("=")
     if _key.removeprefix("ORCHESTRATOR_") in _PINNED and _key.startswith("ORCHESTRATOR_"):
         os.environ[_key] = _value
-# These process-wide routes exercise the explicit compatibility runtime. Product defaults are
-# model/on and are verified separately; keeping this app on legacy prevents the old route suite
-# from accidentally claiming coverage of LangGraph.
-os.environ["ORCHESTRATOR_CONVERSATION_ENGINE"] = "rules"
-os.environ["ORCHESTRATOR_CONVERSATION_GRAPH"] = "off"
+# `create_app()` refuses to start without a database, because the graph persists there. The suite
+# builds the app without running its lifespan, so nothing ever connects to this address; the tests
+# that need PostgreSQL bring their own.
+os.environ.setdefault(
+    "ORCHESTRATOR_DATABASE_URL", "postgresql+asyncpg://finguard-tests:unused@127.0.0.1:1/unused"
+)
 for _secret in ("GROQ_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
     os.environ[f"ORCHESTRATOR_{_secret}"] = ""
 

@@ -10,9 +10,6 @@ the registry, never imported by name.
 call site `register(app)` alone did not say what was being registered.
 """
 
-from importlib import import_module
-from typing import Any
-
 from finguard_orchestrator.infrastructure.banking.http_account_summary import HttpAccountSummary
 from finguard_orchestrator.infrastructure.banking.http_accounts import HttpAccounts
 from finguard_orchestrator.infrastructure.banking.http_cards import HttpCards
@@ -49,8 +46,6 @@ __all__ = [
     "HttpFinancialQuery",
     "HttpMovementCategories",
     "HttpPayments",
-    "LlmPaymentReader",
-    "LlmQueryPlanner",
     "ProviderRegistry",
     "TomlModelCatalogue",
     "account_router",
@@ -60,23 +55,3 @@ __all__ = [
     "payments_router",
     "register_error_handlers",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    lazy = {
-        "LlmPaymentReader": (
-            "finguard_orchestrator.infrastructure.payments.llm_payment_reader",
-            "LlmPaymentReader",
-        ),
-        "LlmQueryPlanner": (
-            "finguard_orchestrator.infrastructure.planning.llm_query_planner",
-            "LlmQueryPlanner",
-        ),
-    }
-    try:
-        module_name, attribute = lazy[name]
-    except KeyError as exc:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
-    value = getattr(import_module(module_name), attribute)
-    globals()[name] = value
-    return value

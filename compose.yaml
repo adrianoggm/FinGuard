@@ -132,12 +132,6 @@ services:
       # The model chooses chart presentation when its proposal passes the domain verifier;
       # rejected or unavailable proposals use the deterministic floor.
       ORCHESTRATOR_VISUAL_PLANNER: hybrid
-      # The deterministic router remains authoritative wherever it recognises a turn. A model only
-      # widens its generic catch-all, and cannot create a payment or an own-account transfer.
-      ORCHESTRATOR_TURN_INTERPRETER: hybrid
-      # A question that names no account reads every account; `ask` puts «¿En qué cuenta…?» back
-      # in front of it. Stated so the switch is visible beside the other two.
-      ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT: all
       # Identity, first layer of the security stack (§12.1). A development token table,
       # not the design: §12.2 asks for OAuth with short-lived tokens. What matters is
       # that the account now comes from the credential, so a caller cannot name one.

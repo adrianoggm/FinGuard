@@ -25,17 +25,9 @@ from datetime import date
 
 import pytest
 
-from finguard_orchestrator.application import (
-    AskFinancialQuestionHandler,
-    AskFinancialQuestionQuery,
-)
-from finguard_orchestrator.domain.enums import Spoken
-from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.card import Card, Wallet
+from finguard_orchestrator.domain.services import answer_writer
 from finguard_orchestrator.domain.services.intent_router import Intent, route
-
-ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
-TODAY = date(2026, 8, 6)
 
 WALLET = Wallet(
     since=date(2026, 7, 7),
@@ -68,56 +60,6 @@ WALLET = Wallet(
         ),
     ),
 )
-
-
-class Cards:
-    def __init__(self, wallet: Wallet | None = WALLET) -> None:
-        self._wallet = wallet
-        self.asked = 0
-
-    async def all_of(self, account_id: uuid.UUID, **kwargs: object) -> Wallet:
-        self.asked += 1
-        if self._wallet is None:
-            raise BankingUnavailableError("the ledger is not there")
-        return self._wallet
-
-    async def charges_on(self, account_id: uuid.UUID, card_id: uuid.UUID, **kwargs: object):
-        return ()
-
-
-class UnusedPlanner:
-    """A card question that reaches this is the defect, so reaching it is the failure."""
-
-    async def plan(self, sentence: str, **kwargs: object) -> object:
-        raise AssertionError(f"the planner was asked about {sentence!r}")
-
-
-class UnusedLedger:
-    async def run(self, plan: object, **kwargs: object) -> object:
-        raise AssertionError("a plan was run for a question about cards")
-
-
-class NoAccounts:
-    async def of(self, account_id: uuid.UUID, **kwargs: object) -> object:
-        raise AssertionError("the balance was read")
-
-
-class NoContacts:
-    async def all_of(self, account_id: uuid.UUID) -> tuple[()]:
-        return ()
-
-
-async def ask(sentence: str, cards: Cards | None = None):
-    handler = AskFinancialQuestionHandler(
-        UnusedPlanner(),  # type: ignore[arg-type]
-        UnusedLedger(),  # type: ignore[arg-type]
-        accounts=NoAccounts(),  # type: ignore[arg-type]
-        contacts=NoContacts(),  # type: ignore[arg-type]
-        cards=cards or Cards(),  # type: ignore[arg-type]
-    )
-    return await handler.handle(
-        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
-    )
 
 
 # --- which sentences are about the wallet ------------------------------------------------
@@ -156,40 +98,27 @@ def test_these_are_not(said: str) -> None:
 # --- and what the answer says --------------------------------------------------------------
 
 
-async def test_the_wallet_is_answered_without_a_model() -> None:
-    """The planner raises if it is reached, so this passing is the whole point."""
-    said = await ask("¿qué tarjetas tengo?")
+def test_the_wallet_names_every_card() -> None:
+    said = answer_writer.cards(WALLET)
 
-    assert said.outcome == Spoken.CARDS.value
-    assert "Visa Clásica" in said.text and "Visa Oro" in said.text
+    assert "Visa Clásica" in said and "Visa Oro" in said
 
 
-async def test_the_kind_is_said_in_the_words_people_filter_by() -> None:
+def test_the_kind_is_said_in_the_words_people_filter_by() -> None:
     """ "De crédito" is what the question asks for, and VISA is not an answer to it."""
-    said = await ask("¿qué tarjetas tengo de crédito?")
+    said = answer_writer.cards(WALLET)
 
-    assert "débito" in said.text and "crédito" in said.text
-
-
-async def test_each_card_carries_what_it_has_been_charged() -> None:
-    """The second reported question, answered by the same turn as the first. It used to come back
-    with the account total — 868,97 € across 21 movements, none of which was a card."""
-    said = await ask("¿cuánto he gastado con cada tarjeta este mes?")
-
-    assert "868,97" in said.text and "21 cargos" in said.text
-    assert "120,50" in said.text and "3 cargos" in said.text
+    assert "débito" in said and "crédito" in said
 
 
-async def test_an_empty_wallet_says_so_rather_than_refusing() -> None:
-    said = await ask("¿qué tarjetas tengo?", Cards(Wallet(since=date(2026, 7, 7))))
+def test_each_card_carries_what_it_has_been_charged() -> None:
+    """The second reported question, answered by the same sentence as the first. It used to come
+    back with the account total — 868,97 € across 21 movements, none of which was a card."""
+    said = answer_writer.cards(WALLET)
 
-    assert "No tienes tarjetas" in said.text
+    assert "868,97" in said and "21 cargos" in said
+    assert "120,50" in said and "3 cargos" in said
 
 
-async def test_a_bank_that_cannot_answer_is_not_a_refusal_about_the_product() -> None:
-    """An outage and "this service does not do cards" read completely differently to somebody
-    deciding whether to try again."""
-    said = await ask("¿qué tarjetas tengo?", Cards(None))
-
-    assert "Vuelve a intentarlo" in said.text
-    assert "no puedo" not in said.text.lower()
+def test_an_empty_wallet_says_so_rather_than_refusing() -> None:
+    assert "No tienes tarjetas" in answer_writer.cards(Wallet(since=date(2026, 7, 7)))

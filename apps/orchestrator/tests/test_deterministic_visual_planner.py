@@ -1,16 +1,7 @@
 """The floor, measured as a move: today's chart, decided one layer up."""
 
-import uuid
-from datetime import date
-
 import pytest
 
-from finguard_orchestrator.application import (
-    AskFinancialQuestionHandler,
-    AskFinancialQuestionQuery,
-)
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
-from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ROWS_THAT_FIT,
@@ -23,21 +14,12 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     VisualRow,
 )
-from finguard_orchestrator.domain.models.planning_result import PlanningResult
-from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
     _sort_for,
 )
-from finguard_orchestrator.domain.services.visual_plan_verifier import verify
-from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
-from finguard_orchestrator.domain.value_objects.financial_plan import (
-    FinancialPlan,
-    RelativePeriod,
-)
-from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
@@ -626,114 +608,3 @@ def test_a_recurrence_timeline_is_dispatched_before_the_derived_chart() -> None:
         ("tooltip", "occurred_at"),
         ("tooltip", "value_minor"),
     }
-
-
-# --- the wiring, driven rather than asserted ----------------------------------------------------
-#
-# The decision moved out of `llm_mapper`, so the thing that can rot now is the *call*: a handler
-# that stops deciding leaves `visual_decision` at `None`, the mapper draws nothing, and every test
-# that hands the mapper a Result it decided itself stays green. So this one drives a real turn.
-
-ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
-TODAY = date(2026, 8, 21)
-
-
-class _Planner:
-    def __init__(self, plan: FinancialPlan) -> None:
-        self._plan = plan
-
-    async def plan(self, sentence: str, *, context: object) -> PlanningResult:
-        return PlanningResult.planned(self._plan)
-
-
-class _Ledger:
-    async def run(
-        self,
-        plan: object,
-        *,
-        account_id: uuid.UUID,
-        today: date,
-        reporting_timezone: str = "Europe/Madrid",
-        **kw: object,
-    ) -> QueryAnswer:
-        return QueryAnswer(
-            currency="EUR",
-            total_minor=35_293,
-            movement_count=5,
-            groups=(Group("GROCERIES", 24_908, 3), Group("RESTAURANTS", 10_385, 2)),
-        )
-
-    async def ranked(self, ranking: object, **kw: object) -> None:
-        return None
-
-
-class _Accounts:
-    async def of(self, account_id: uuid.UUID, **kw: object) -> None:
-        raise AssertionError("not this path")
-
-
-class _Contacts:
-    async def all_of(self, account_id: uuid.UUID) -> tuple[()]:
-        return ()
-
-
-class _NoCards:
-    async def all_of(self, account_id: uuid.UUID, **kw: object) -> Wallet:
-        return Wallet(since=date(2026, 7, 7))
-
-    async def charges_on(self, account_id: uuid.UUID, card_id: object, **kw: object) -> tuple[()]:
-        return ()
-
-
-class _RecordingVisualFloor:
-    def __init__(self) -> None:
-        self.presentations: list[PresentationContext] = []
-
-    def plan(self, profile: VisualProfile, presentation: PresentationContext) -> ChartSpec | None:
-        self.presentations.append(presentation)
-        return DeterministicVisualPlanner().plan(profile, presentation)
-
-
-@pytest.mark.asyncio
-async def test_a_real_turn_carries_the_decision_and_the_mapper_draws_it() -> None:
-    """The handler decides and the mapper renders. Both halves, on one turn."""
-    handler = AskFinancialQuestionHandler(
-        _Planner(
-            FinancialPlan(
-                direction=Direction.EXPENSE,
-                period=RelativePeriod(Period.LAST_MONTH),
-                group_by=GroupBy.CATEGORY,
-                metric=Metric.SUM,
-            )
-        ),
-        _Ledger(),
-        accounts=_Accounts(),
-        contacts=_Contacts(),
-        cards=_NoCards(),
-    )
-    floor = _RecordingVisualFloor()
-    handler._visual_policy = VisualPlanningPolicy(  # type: ignore[assignment]
-        model=None,
-        fallback=floor,  # type: ignore[arg-type]
-        verifier=verify,
-        mode="deterministic",
-        budget_seconds=1.0,
-    )
-    presentation = PresentationContext("VOICE", "MOBILE", 5)
-
-    result = await handler.handle(
-        AskFinancialQuestionQuery(
-            sentence="¿Cuánto gasté por categoría el mes pasado?",
-            account_id=ACCOUNT,
-            today=TODAY,
-            presentation=presentation,
-        )
-    )
-
-    assert result.visual_dataset is not None
-    assert result.visual_decision is not None
-    assert result.visual_decision.source == "deterministic"
-    assert result.visual_decision.spec.mark == "bar"
-    assert floor.presentations == [presentation]
-    visualization = question_to_dto(result).visualization
-    assert visualization is not None and visualization.kind == "chart"

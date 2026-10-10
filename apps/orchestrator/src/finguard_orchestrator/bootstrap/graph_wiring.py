@@ -5,7 +5,7 @@ from typing import Any
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from finguard_orchestrator.application import CommandBus
-from finguard_orchestrator.application.graph.graph import GraphPorts
+from finguard_orchestrator.application.graph.graph_state import GraphPorts
 from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.bootstrap.config import Settings
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort

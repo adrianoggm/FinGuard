@@ -47,25 +47,6 @@ def test_an_unknown_rule_name_is_refused_at_construction() -> None:
         GuardPolicy(disabled=frozenset({"AVERGE"}))
 
 
-def test_a_deployment_can_switch_a_rule_off_without_an_edit() -> None:
-    from finguard_orchestrator.bootstrap.config import Settings
-
-    policy = Settings(disabled_guards=("RATIO", "FORECAST")).guard_policy()
-
-    assert not policy.allows("RATIO")
-    assert policy.allows("AVERAGE")
-
-
-def test_a_typo_in_the_configuration_stops_the_service() -> None:
-    """Rather than starting with the rule quietly on. Measuring a rule you believe is off
-    produces a number that says it is worthless, which is the worst possible outcome of
-    making them measurable at all."""
-    from finguard_orchestrator.bootstrap.config import Settings
-
-    with pytest.raises(InvalidValueError, match="unknown"):
-        Settings(disabled_guards=("RATIOO",)).guard_policy()
-
-
 def test_the_rule_names_are_discoverable() -> None:
     # An ablation loop needs to enumerate them, and so does anybody writing the
     # configuration. Neither should have to read the regexes.
