@@ -75,7 +75,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     SpokenContactResponse,
     VisualContextPayload,
 )
-from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
+from finguard_orchestrator.infrastructure.mappers.plan_mapper import (
     draft_to_domain,
     plan_to_domain,
 )

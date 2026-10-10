@@ -26,7 +26,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.dto.llm_dto import PlanPayload, QuestionRequest
-from finguard_orchestrator.infrastructure.mappers.llm_mapper import plan_to_domain
+from finguard_orchestrator.infrastructure.mappers.plan_mapper import plan_to_domain
 from finguard_orchestrator.infrastructure.planning.prompt import build_prompt
 
 TODAY = date(2026, 7, 15)
