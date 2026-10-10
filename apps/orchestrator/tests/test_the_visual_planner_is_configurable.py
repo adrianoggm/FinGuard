@@ -42,15 +42,9 @@ def test_the_setting_chooses_whether_a_model_is_built(
     assert isinstance(policy._model, LlmVisualPlanner) is builds_adapter
 
 
-def test_the_rules_are_what_ships() -> None:
-    """Asked of the class, not an instance, so a developer who has flipped their own `.env` does
-    not fail a test about what the code ships with.
-
-    `shadow`/`hybrid`/`promoted` all put a model call on a turn that reaches a chart; this
-    field's own config comment promises it stays `deterministic` until three runs of
-    `just evaluate-visual` say otherwise, and nothing else enforces that promise.
-    """
-    assert Settings.model_fields["visual_planner"].default == "deterministic"
+def test_verified_model_planning_is_what_ships() -> None:
+    """The default accepts verified model proposals and retains deterministic fallback."""
+    assert Settings.model_fields["visual_planner"].default == "hybrid"
 
 
 def test_the_visual_planner_falls_back_to_the_financial_planners_model(monkeypatch) -> None:  # noqa: ANN001

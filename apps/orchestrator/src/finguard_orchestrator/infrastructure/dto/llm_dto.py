@@ -976,6 +976,8 @@ class SpokenMovementResponse(_Payload):
     # showed every expense as an income, because a query filtered by EXPENSE returns positives.
     amount_minor: int
     direction: str
+    transaction_id: str | None = None
+    currency: str | None = None
     merchant_name: str | None = None
     category: str | None = None
     transaction_type: str | None = None
@@ -1090,7 +1092,7 @@ class SaveCandidate(_Payload):
 
 
 class PlanContextTraceResponse(_Payload):
-    """The non-sensitive fields of the query that produced an answer, for display and evaluation."""
+    """Safe query trace fields plus flags for filters intentionally omitted from the response."""
 
     direction: str
     period: str | None = None
@@ -1105,6 +1107,8 @@ class PlanContextTraceResponse(_Payload):
     result_kind: str | None = Field(default=None, exclude_if=lambda value: value is None)
     group_limit: int | None = None
     rank: int | None = None
+    account_scoped: bool = False
+    has_unrepresented_filters: bool = False
     query_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     artifact_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     view_id: str | None = Field(default=None, exclude_if=lambda value: value is None)

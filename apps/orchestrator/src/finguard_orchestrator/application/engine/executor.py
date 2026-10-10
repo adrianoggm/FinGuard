@@ -20,12 +20,17 @@ from finguard_orchestrator.domain.engine.transitions import Work
 from finguard_orchestrator.domain.enums import Metric, ResultKind
 from finguard_orchestrator.domain.errors import DomainError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
-from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
+from finguard_orchestrator.domain.models.query_answer import (
+    Movement,
+    MovementListAnswer,
+    QueryAnswer,
+)
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.services import answer_writer, cumulative_calculator
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.movement_list_plan import MovementListPlan
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
@@ -58,6 +63,17 @@ class RankingRun:
 
 
 @dataclass(frozen=True)
+class MovementListRun:
+    plan: MovementListPlan
+    answer: MovementListAnswer
+
+
+@dataclass(frozen=True)
+class NoMoreMovementsRun:
+    """The active ledger list has no cursor; answer without repeating a bank read."""
+
+
+@dataclass(frozen=True)
 class PairRun:
     pair: ComparisonPlan
     earlier: QueryAnswer
@@ -80,7 +96,9 @@ class BalanceRun:
     selected: tuple[Holding, ...] | None
 
 
-Executed = QueryRun | RankingRun | PairRun | RatioRun | BalanceRun
+Executed = (
+    QueryRun | RankingRun | MovementListRun | NoMoreMovementsRun | PairRun | RatioRun | BalanceRun
+)
 
 
 async def execute(
@@ -108,6 +126,8 @@ async def execute(
         )
 
     ids = work.account_ids
+    if work.kind == "NO_MORE_MOVEMENTS":
+        return NoMoreMovementsRun()
     match work.plan:
         case None:
             found = await summary.of(account_id, today=today, reporting_timezone=reporting_timezone)
@@ -124,6 +144,14 @@ async def execute(
             if plan.metric is Metric.CUMULATIVE:
                 answer = cumulative_calculator.accumulate(answer, plan.group_by)
             return QueryRun(plan, answer)
+        case MovementListPlan() as plan:
+            answer = await queries.list_movements(
+                plan,
+                account_id=account_id,
+                today=today,
+                reporting_timezone=reporting_timezone,
+            )
+            return MovementListRun(plan, answer)
         case TopMovements() as top:
             # Phase 1 reads a rank as "the N largest" (ruling R5), one position at a time as the
             # rules route does, and stops at the first position the window does not hold.

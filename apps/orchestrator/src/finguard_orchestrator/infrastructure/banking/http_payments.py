@@ -13,6 +13,8 @@ happen" and "the payment may have happened":
     409 insufficient_funds  the balance refused it. Nothing moved
     410 intent_expired      the preview is stale; a new one is needed
     409 intent_not_confirmable  already paid or cancelled. **Nothing else must be assumed here**
+    409 intent_recipient_snapshot_missing  old pending Bizum, known unconfirmed;
+        prepare a new preview
     5xx / transport         unknown. The confirmation may have executed, and the caller says so
 
 The last two are why this is a function with tests rather than an `if` inside a request: getting
@@ -48,6 +50,7 @@ INSUFFICIENT_FUNDS = "insufficient_funds"
 INTENT_EXPIRED = "intent_expired"
 INTENT_NOT_CONFIRMABLE = "intent_not_confirmable"
 INTENT_NOT_FOUND = "intent_not_found"
+INTENT_RECIPIENT_SNAPSHOT_MISSING = "intent_recipient_snapshot_missing"
 
 
 class HttpPayments:
@@ -149,6 +152,8 @@ def refusal_for(status: int, body: dict[str, Any]) -> Exception | None:
         return RecipientNotFoundError(_named(body))
     if code == INSUFFICIENT_FUNDS:
         return PaymentRefusedError(INSUFFICIENT_FUNDS)
+    if code == INTENT_RECIPIENT_SNAPSHOT_MISSING:
+        return PaymentRefusedError("recipient_snapshot_missing")
     if code in (INTENT_EXPIRED, INTENT_NOT_CONFIRMABLE, INTENT_NOT_FOUND):
         return IntentGoneError(str(code))
     # A 4xx we do not recognise is our request being wrong. It is a refusal — nothing moved — and it

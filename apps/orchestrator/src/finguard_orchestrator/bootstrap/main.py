@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import sys
@@ -11,8 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from finguard_orchestrator.application import (
     AnswerMessageHandler,
     AnswerMessageQuery,
-    AskFinancialQuestionHandler,
-    AskFinancialQuestionQuery,
     CategoriseMovementCommand,
     CategoriseMovementHandler,
     CommandBus,
@@ -37,8 +37,6 @@ from finguard_orchestrator.application import (
     PrepareChosenPaymentHandler,
     PrepareOwnTransferCommand,
     PrepareOwnTransferHandler,
-    PreparePaymentCommand,
-    PreparePaymentHandler,
     QueryBus,
     ReplaceLlmPolicyCommand,
     ReplaceLlmPolicyHandler,
@@ -46,7 +44,6 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyHandler,
 )
 from finguard_orchestrator.application.commands.book_activity import BookActivityHandler
-from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
 from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
@@ -58,12 +55,6 @@ from finguard_orchestrator.domain.services import category_words
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
-from finguard_orchestrator.domain.services.turn_interpreters import (
-    Deterministic,
-    Hybrid,
-    Promoted,
-    Shadowed,
-)
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.infrastructure import (
@@ -74,26 +65,21 @@ from finguard_orchestrator.infrastructure import (
     HttpFinancialQuery,
     HttpMovementCategories,
     HttpPayments,
-    LlmPaymentReader,
-    LlmQueryPlanner,
     ProviderRegistry,
     admin_router,
     assistant_router,
+    graph_question_router,
     payments_router,
     register_error_handlers,
 )
 from finguard_orchestrator.infrastructure.controllers import engine_dispatch
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
-from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
 from finguard_orchestrator.infrastructure.expert_agents.http_expert_agents import HttpExpertAgents
 from finguard_orchestrator.infrastructure.expert_agents.llm_reply_normaliser import (
     LlmReplyNormaliser,
 )
 from finguard_orchestrator.infrastructure.expert_agents.llm_skill_classifier import (
     LlmSkillClassifier,
-)
-from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
-    LlmTurnInterpreter,
 )
 from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import (
     CLOUDFLARE,
@@ -108,6 +94,9 @@ from finguard_orchestrator.infrastructure.llm.gemini import GEMINI, GeminiProvid
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
 from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
     OpenAiCompatibleProvider,
+)
+from finguard_orchestrator.infrastructure.llm.postgres_request_pacer import (
+    PostgresRequestPacer,
 )
 from finguard_orchestrator.infrastructure.metrics.memory_repository import (
     MemorySavedMetricRepository,
@@ -179,11 +168,15 @@ def create_app() -> FastAPI:
     async def lifespan(service: FastAPI) -> AsyncIterator[None]:
         pool = None
         if (
-            settings.metrics_enabled or settings.conversation_graph == "on"
+            settings.metrics_enabled
+            or settings.conversation_graph == "on"
+            or settings.gemini_api_key is not None
         ) and settings.database_url:
             import asyncpg
 
             pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=5)
+        if gemini_pacer is not None:
+            gemini_pacer.set_pool(pool)
         if settings.metrics_enabled and pool is not None:
             service.state.metrics_repository = PostgresSavedMetricRepository(
                 pool, settings.metrics_max_saved
@@ -199,6 +192,9 @@ def create_app() -> FastAPI:
                 from finguard_orchestrator.infrastructure.engine.postgres_dialogue_store import (
                     PostgresDialogueStore,
                 )
+                from finguard_orchestrator.infrastructure.graph.postgres_readiness_probe import (
+                    PostgresGraphReadinessProbe,
+                )
                 from finguard_orchestrator.infrastructure.graph.postgres_turn_reservations import (
                     PostgresTurnReservations,
                 )
@@ -212,15 +208,27 @@ def create_app() -> FastAPI:
                 checkpointer = await saver_context.__aenter__()
                 saver_open = True
                 await checkpointer.setup()
+                service.state.persistence_probe = PostgresGraphReadinessProbe(pool)
                 dialogue_store = PostgresDialogueStore(pool)
-                service.state.engine = graph_factory(
+                graph_runtime = graph_factory(
                     dialogue_store, PostgresTurnReservations(pool), checkpointer
                 )
+                if not getattr(graph_runtime, "authoritative", False):
+                    raise RuntimeError(
+                        "conversation_graph=on requires an authoritative LangGraph runtime"
+                    )
+                if getattr(service.state, "ask_handler", None) is not None:
+                    raise RuntimeError(
+                        "conversation_graph=on cannot construct the legacy question handler"
+                    )
+                service.state.engine = graph_runtime
             yield
         finally:
             if saver_context is not None and saver_open:
                 await saver_context.__aexit__(None, None, None)
             if pool is not None:
+                if gemini_pacer is not None:
+                    gemini_pacer.set_pool(None)
                 await pool.close()
 
     app = FastAPI(
@@ -238,6 +246,16 @@ def create_app() -> FastAPI:
     )
 
     settings = get_settings()
+    if settings.conversation_graph != "on":
+        logger.warning(
+            "conversation.compatibility_runtime_enabled engine=%s graph=off; "
+            "LangGraph is the supported conversational runtime",
+            settings.conversation_engine,
+        )
+    gemini_pacer = PostgresRequestPacer(
+        provider=GEMINI,
+        interval_seconds=settings.gemini_min_request_interval_seconds,
+    )
     if settings.conversation_graph == "on" and sys.platform == "win32":
         # psycopg's async connection requires selector-based IO on native Windows. Uvicorn
         # creates its loop after importing this module, so choose it here, before startup.
@@ -291,6 +309,9 @@ def create_app() -> FastAPI:
             api_key=gemini_key.get_secret_value(),
             base_url=settings.gemini_base_url,
             timeout_seconds=settings.gemini_timeout_seconds,
+            min_request_interval_seconds=settings.gemini_min_request_interval_seconds,
+            fallback_models=settings.gemini_fallback_models,
+            shared_request_pacer=gemini_pacer,
         )
     if (cf_token := settings.cloudflare_api_token) is not None and (
         cf_account := settings.cloudflare_account_id
@@ -350,19 +371,30 @@ def create_app() -> FastAPI:
         base_url=settings.banking_base_url,
         timeout_seconds=settings.banking_timeout_seconds,
     )
-    # How a turn is read, chosen once. The rules always exist — under `shadow` they still decide
-    # and under `model` they keep the payments and catch the outages — so this builds one and then
-    # decides what stands in front of it. See `Shadowed`, `Hybrid` and `Promoted`.
-    rules: TurnInterpreterPort = Deterministic()
-    interpreter = rules
-    if settings.turn_interpreter != "router":
-        reading = LlmTurnInterpreter(planner_provider, model=settings.planner_model)
-        if settings.turn_interpreter == "shadow":
-            interpreter = Shadowed(rules, reading)
-        elif settings.turn_interpreter == "hybrid":
-            interpreter = Hybrid(reading, rules)
-        else:
-            interpreter = Promoted(reading, rules)
+    # This legacy turn reader belongs only to the compatibility coordinator. LangGraph receives
+    # typed operations from LlmTurnOperations and must not build a second sentence interpreter.
+    interpreter: TurnInterpreterPort | None = None
+    if settings.conversation_graph != "on":
+        from finguard_orchestrator.domain.services.turn_interpreters import (
+            Deterministic,
+            Hybrid,
+            Promoted,
+            Shadowed,
+        )
+        from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
+            LlmTurnInterpreter,
+        )
+
+        rules: TurnInterpreterPort = Deterministic()
+        interpreter = rules
+        if settings.turn_interpreter != "router":
+            reading = LlmTurnInterpreter(planner_provider, model=settings.planner_model)
+            if settings.turn_interpreter == "shadow":
+                interpreter = Shadowed(rules, reading)
+            elif settings.turn_interpreter == "hybrid":
+                interpreter = Hybrid(reading, rules)
+            else:
+                interpreter = Promoted(reading, rules)
 
     # One adapter for both readers of the wallet, like the balance and the address book. The chat
     # answering "cuánto llevo con cada tarjeta" from a different window than the screen shows would
@@ -389,6 +421,14 @@ def create_app() -> FastAPI:
     )
     asking: AskFinancialQuestionHandler | None = None
     if settings.conversation_graph != "on":
+        from finguard_orchestrator.application import (
+            AskFinancialQuestionHandler,
+            AskFinancialQuestionQuery,
+        )
+        from finguard_orchestrator.infrastructure.planning.llm_query_planner import (
+            LlmQueryPlanner,
+        )
+
         asking = AskFinancialQuestionHandler(
             LlmQueryPlanner(
                 planner_provider,
@@ -441,23 +481,6 @@ def create_app() -> FastAPI:
     # The payment path. Its own reader, its own prompt and its own schema: extracting who
     # and how much is a different job from planning a query, and sharing one prompt for both
     # would mean tuning either one moved the other.
-    paying = PreparePaymentHandler(
-        LlmPaymentReader(
-            planner_provider,
-            model=settings.planner_model,
-            temperature=settings.planner_temperature,
-            max_output_tokens=settings.planner_max_output_tokens,
-        ),
-        HttpPayments(
-            base_url=settings.banking_base_url,
-            timeout_seconds=settings.banking_timeout_seconds,
-        ),
-        settings.guard_policy(),
-        # The same directory the conversation and the payment form read. A recipient is resolved
-        # against it without a model, which is what lets "Marta Solis Vega" answer "¿a quién?".
-        contacts=contacts,
-    )
-
     command_bus = CommandBus()
     command_bus.register(
         ReplaceLlmPolicyCommand, ReplaceLlmPolicyHandler(policies, catalogue, available)
@@ -475,7 +498,30 @@ def create_app() -> FastAPI:
             )
         ),
     )
-    command_bus.register(PreparePaymentCommand, paying)
+    if settings.conversation_graph != "on":
+        from finguard_orchestrator.application import (
+            PreparePaymentCommand,
+            PreparePaymentHandler,
+        )
+        from finguard_orchestrator.infrastructure.payments.llm_payment_reader import (
+            LlmPaymentReader,
+        )
+
+        paying = PreparePaymentHandler(
+            LlmPaymentReader(
+                planner_provider,
+                model=settings.planner_model,
+                temperature=settings.planner_temperature,
+                max_output_tokens=settings.planner_max_output_tokens,
+            ),
+            HttpPayments(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            ),
+            settings.guard_policy(),
+            contacts=contacts,
+        )
+        command_bus.register(PreparePaymentCommand, paying)
     # The form path shares the gateway and skips the reader: nothing to read, nothing to ground.
     command_bus.register(
         PrepareChosenPaymentCommand,
@@ -659,6 +705,13 @@ def create_app() -> FastAPI:
             categories={key: category_words.name_of(key) for key in settings.categories},
         )
         if settings.conversation_graph != "on":
+            # The process-local handler/store exist only for an explicit compatibility runtime.
+            # The normal graph deployment must not import or instantiate this non-durable path.
+            from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
+            from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import (
+                MemoryDialogueStore,
+            )
+
             engine = AnswerTurnHandler(
                 operations,
                 # Single instance only: a restart forgets every conversation (see the store).
@@ -739,11 +792,25 @@ def create_app() -> FastAPI:
     engine_dispatch.register(app)
 
     app.include_router(assistant_router)
+    # Register exactly one owner for conversational question paths. The graph router has no
+    # dependency on the legacy question controller and fails closed on a missing graph runtime.
+    app.include_router(
+        graph_question_router if settings.conversation_graph == "on" else _legacy_question_router()
+    )
     app.include_router(payments_router)
     app.include_router(admin_router)
     app.include_router(metrics_router)
     register_error_handlers(app)
     return app
+
+
+def _legacy_question_router():
+    """Load the compatibility controller only for an explicitly non-graph deployment."""
+    from finguard_orchestrator.infrastructure.controllers.llm_controller import (
+        legacy_question_router,
+    )
+
+    return legacy_question_router
 
 
 app = create_app()

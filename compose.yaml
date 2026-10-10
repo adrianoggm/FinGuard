@@ -38,6 +38,10 @@ services:
     build:
       context: .
       dockerfile: apps/banking-api/Dockerfile
+      args:
+        BUILD_SHA: ${FINGUARD_SHA:-unknown}
+        BUILD_REF: ${FINGUARD_REF:-unknown}
+        BUILD_SOURCE_SHA256: ${FINGUARD_BANKING_SOURCE_SHA256:-unknown}
     profiles: ["core", "poc", "voice"]
     environment:
       BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@postgres:5432/finguard_banking
@@ -88,6 +92,7 @@ services:
         # so "which build am I talking to" is one request rather than an inference.
         BUILD_SHA: ${FINGUARD_SHA:-unknown}
         BUILD_REF: ${FINGUARD_REF:-unknown}
+        BUILD_SOURCE_SHA256: ${FINGUARD_ORCHESTRATOR_SOURCE_SHA256:-unknown}
     profiles: ["core", "poc", "voice"]
     # The same file the host reads, so a credential lives in exactly one place whichever way
     # the service is started. The Dockerfile deliberately does not COPY it — a secret baked
@@ -124,11 +129,9 @@ services:
       ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS: "120"
       ORCHESTRATOR_BANKING_TIMEOUT_SECONDS: "10"
       ORCHESTRATOR_SUPPORTING_MOVEMENTS: "10"
-      # Who draws a chart: `deterministic` until the Task 9 runbook's three `evaluate-visual`
-      # runs (docs/superpowers/plans/2026-09-05-visual-planner-shadow.md) say otherwise. This
-      # key exists so that runbook's flip step has something real to flip -- `bootstrap/main.py`
-      # reads `settings.visual_planner` from this exact variable when wiring the app.
-      ORCHESTRATOR_VISUAL_PLANNER: deterministic
+      # The model chooses chart presentation when its proposal passes the domain verifier;
+      # rejected or unavailable proposals use the deterministic floor.
+      ORCHESTRATOR_VISUAL_PLANNER: hybrid
       # The deterministic router remains authoritative wherever it recognises a turn. A model only
       # widens its generic catch-all, and cannot create a payment or an own-account transfer.
       ORCHESTRATOR_TURN_INTERPRETER: hybrid

@@ -217,6 +217,14 @@ def nothing_was_sent() -> str:
     return "No he enviado nada. Vuelve a intentarlo."
 
 
+def recipient_snapshot_missing() -> str:
+    """A pending legacy preview cannot be safely reused; banking confirms nothing moved."""
+    return (
+        "No he enviado nada. La vista previa anterior no permite verificar el destinatario. "
+        "Prepara el Bizum de nuevo y revisa el número antes de confirmarlo."
+    )
+
+
 def no_longer_live() -> str:
     """Expired, cancelled, or already paid — one sentence, because they mean the same thing to
     whoever is looking at the preview. Notably it does not say which: "ya lo has pagado" invites

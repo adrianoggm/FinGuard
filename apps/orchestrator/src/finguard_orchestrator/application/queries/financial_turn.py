@@ -167,6 +167,8 @@ class SpokenMovement:
     # it here is why every expense in the chat rendered as "+22,11 €" — money coming in.
     amount_minor: int
     direction: str
+    transaction_id: str | None = None
+    currency: str | None = None
     merchant_name: str | None = None
     category: str | None = None
     transaction_type: str | None = None

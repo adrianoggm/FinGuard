@@ -37,6 +37,26 @@ class NoModelAvailableError(DomainError):
         super().__init__(f"no model could answer; attempted: {attempted}")
 
 
+class TurnCheckpointExpiredError(DomainError):
+    """A request-local graph checkpoint exceeded retention and cannot be resumed safely."""
+
+    code = "turn_checkpoint_expired"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "this turn can no longer be resumed; send it again with a new idempotency key"
+        )
+
+
+class CheckpointCleanupUnavailableError(DomainError):
+    """A stale checkpoint could not be removed, so its reservation remains fenced."""
+
+    code = "checkpoint_cleanup_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__("conversation recovery is temporarily unavailable; retry this request")
+
+
 class ProviderFailedError(DomainError):
     """A provider could not answer. With FAIL it reaches the caller; with NEXT it is
     what triggers the next attempt."""

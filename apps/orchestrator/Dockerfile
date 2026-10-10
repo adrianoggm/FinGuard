@@ -36,8 +36,10 @@ ENV PATH="/app/.venv/bin:$PATH"
 # invalidate every layer on every commit and ship history into a runtime image.
 ARG BUILD_SHA=unknown
 ARG BUILD_REF=unknown
+ARG BUILD_SOURCE_SHA256=unknown
 ENV ORCHESTRATOR_BUILD_SHA=$BUILD_SHA
 ENV ORCHESTRATOR_BUILD_REF=$BUILD_REF
+ENV ORCHESTRATOR_BUILD_SOURCE_SHA256=$BUILD_SOURCE_SHA256
 
 USER finguard
 EXPOSE 8000

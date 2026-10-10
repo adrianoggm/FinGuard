@@ -1,16 +1,21 @@
+from __future__ import annotations
+
 import uuid
 from collections.abc import Callable
 from datetime import date
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, Header, Request
 
-from finguard_orchestrator.application import AskFinancialQuestionHandler, CommandBus, QueryBus
+from finguard_orchestrator.application import CommandBus, QueryBus
 from finguard_orchestrator.domain.errors import FeatureDisabledError
 from finguard_orchestrator.domain.ports.caller_identity import CallerIdentityPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
+
+if TYPE_CHECKING:
+    from finguard_orchestrator.application import AskFinancialQuestionHandler
 
 
 def get_query_bus(request: Request) -> QueryBus:
@@ -156,6 +161,17 @@ def attempt_key(
     visibly, and so the header appears in the schema.
     """
     return idempotency_key or str(uuid.uuid4())
+
+
+def required_attempt_key(
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
+) -> str:
+    """Require a caller-stable key for a durable graph turn and its HTTP retries.
+
+    Compatibility routes retain ``attempt_key`` for clients predating the header. The graph cannot
+    mint a replacement per request: that would make a retry a second checkpoint/reservation.
+    """
+    return idempotency_key
 
 
 def requires(scope: Scope) -> Callable[[Caller], Caller]:

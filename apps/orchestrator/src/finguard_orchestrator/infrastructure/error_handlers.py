@@ -17,12 +17,14 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from finguard_orchestrator.domain.errors import (
+    CheckpointCleanupUnavailableError,
     DomainError,
     FeatureDisabledError,
     NoModelAvailableError,
     NotAuthenticatedError,
     NotAuthorisedError,
     ProviderFailedError,
+    TurnCheckpointExpiredError,
 )
 
 _STATUS_BY_CODE = {
@@ -34,6 +36,8 @@ _STATUS_BY_CODE = {
     "unknown_provider": 422,
     NoModelAvailableError.code: 503,
     ProviderFailedError.code: 502,
+    TurnCheckpointExpiredError.code: 410,
+    CheckpointCleanupUnavailableError.code: 503,
 }
 _DEFAULT_STATUS = 400
 

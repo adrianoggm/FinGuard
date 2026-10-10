@@ -1219,6 +1219,11 @@ def _group_comparison_value(group: Group, metric: Metric) -> int:
     return group.total_minor
 
 
+def comparison_group_value(group: Group, metric: Metric) -> int:
+    """The numeric value for one group in a period comparison, in the requested unit."""
+    return _group_comparison_value(group, metric)
+
+
 def _group_comparison_figure(group: Group, metric: Metric, currency: str) -> str:
     value = _group_comparison_value(group, metric)
     if metric is Metric.COUNT:

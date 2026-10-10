@@ -15,3 +15,5 @@ class EngineAnswer:
     delegate_to: str | None
     model_calls: int
     stages_ms: dict[str, int]
+    # Exact financial query/summary reads in this graph turn; catalogue reads are separate.
+    financial_reads: int | None = None

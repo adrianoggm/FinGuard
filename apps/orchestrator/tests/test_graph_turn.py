@@ -17,7 +17,7 @@ from uuid import UUID
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from support.episodes import ACCOUNT, INTENT, Accounts, Bank, Contacts, Directory
+from support.episodes import ACCOUNT, INTENT, PIGGY, Accounts, Bank, Contacts, Directory
 
 from finguard_orchestrator.application import CommandBus
 from finguard_orchestrator.application.commands.pay import (
@@ -39,12 +39,14 @@ from finguard_orchestrator.domain.engine.grounding import Grounds
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
     AskCorrection,
+    Balance,
     Clarify,
     Compare,
     Delegate,
     InvestigateComparison,
     ListCategories,
     ListContacts,
+    ListMovements,
     Operation,
     Patch,
     PlanFields,
@@ -52,6 +54,7 @@ from finguard_orchestrator.domain.engine.operations import (
     PrepareOwnTransfer,
     PrepareTransfer,
     RestorePrevious,
+    Smalltalk,
     Visualize,
 )
 from finguard_orchestrator.domain.engine.state import (
@@ -60,6 +63,7 @@ from finguard_orchestrator.domain.engine.state import (
     DialogueState,
     DialogueTurn,
     Missing,
+    MovementListFocus,
     PaymentConfirmationPending,
     PaymentDraftPending,
     Pending,
@@ -75,10 +79,16 @@ from finguard_orchestrator.domain.enums import (
     PlanningOutcome,
     Rail,
     ResultKind,
+    Spoken,
 )
 from finguard_orchestrator.domain.errors import BankingUnavailableError, NotAuthorisedError
 from finguard_orchestrator.domain.models.conversation import Workflow
-from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.query_answer import (
+    Group,
+    Movement,
+    MovementListAnswer,
+    QueryAnswer,
+)
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.ports.investigation_assessor import (
     AssessmentFailedError,
@@ -101,6 +111,10 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.movement_list_plan import (
+    MovementCursor,
+    MovementListPlan,
+)
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import ChartVisualizationResponse
 from finguard_orchestrator.infrastructure.engine.memory_dialogue_store import MemoryDialogueStore
@@ -114,6 +128,7 @@ TODAY = date(2026, 8, 5)
 MAY = AbsoluteRange(date(2026, 5, 1), date(2026, 5, 31))
 JUNE = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
 JULY = AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31))
+AUGUST = AbsoluteRange(date(2026, 8, 1), date(2026, 8, 31))
 SENTENCE = "¿En qué comercios gasto más que antes y se debe a más compras o a importes mayores?"
 BY_MERCHANT = (
     Compare(
@@ -131,6 +146,7 @@ FIGURES: dict[AbsoluteRange, tuple[Group, ...]] = {
     MAY: (Group("Mercadona", 8_000, 3), Group("Amazon", 3_000, 1), Group("Cepsa", 4_000, 2)),
     JUNE: (Group("Mercadona", 10_000, 4), Group("Amazon", 5_000, 1), Group("Cepsa", 6_000, 2)),
     JULY: (Group("Mercadona", 15_000, 6), Group("Amazon", 17_000, 2), Group("Cepsa", 9_000, 2)),
+    AUGUST: (Group("Mercadona", 11_000, 4), Group("Amazon", 4_000, 1), Group("Cepsa", 5_000, 2)),
 }
 LARGEST = {"Amazon": 15_000, "Cepsa": 4_000}
 GROUNDED_AMAZON = "En Amazon, la subida se debe a una compra: sin la de 150,00 € del 2026-07-12"
@@ -196,6 +212,7 @@ class MerchantLedger:
         self.failures: list[Exception] = []
         self.fail_on: dict[int, Exception] = {}
         self.attempts = 0
+        self.listed: list[MovementListPlan] = []
 
     async def run(
         self, plan: FinancialPlan, *, movements: int | None = None, **_: object
@@ -221,6 +238,23 @@ class MerchantLedger:
             return None
         moment = datetime(2026, 7, 12, 18, 30, tzinfo=UTC)
         return Movement(moment, f"Compra privada en {merchant}", LARGEST[merchant], "EXPENSE")
+
+    async def list_movements(self, plan: MovementListPlan, **_: object) -> MovementListAnswer:
+        self._fail()
+        self.listed.append(plan)
+        first = plan.cursor is None
+        row_id = UUID(int=91 if first else 92)
+        moment = datetime(2026, 7, 5 if first else 4, 10, tzinfo=UTC)
+        row = Movement(
+            moment,
+            f"Movimiento {row_id.int}",
+            1200,
+            "EXPENSE",
+            transaction_id=str(row_id),
+            currency="EUR",
+        )
+        cursor = MovementCursor(moment, row_id) if first else None
+        return MovementListAnswer(ACCOUNT, (row,), has_more=first, next_cursor=cursor)
 
     def _fail(self) -> None:
         self.attempts += 1
@@ -351,6 +385,209 @@ async def test_a_period_clarification_resumes_the_typed_movement_list() -> None:
     assert world.ledger.ran[-1].direction is Direction.ALL
     assert world.ledger.ran[-1].metric is Metric.COUNT
     assert "movimientos" in second.result.text
+
+
+@pytest.mark.asyncio
+async def test_movement_list_pages_continue_from_the_persisted_focus_cursor() -> None:
+    world = World(
+        (ListMovements(page_size=1),),
+        (ListMovements(page_size=1, continue_current=True),),
+        (ListMovements(page_size=1, continue_current=True),),
+    )
+
+    first = await world.ask(request_id="page-1", sentence="Enséñame los últimos gastos")
+
+    assert first.result is not None and len(first.result.movements) == 1
+    rendered_first = question_to_dto(first.result)
+    assert rendered_first.movements[0].transaction_id == str(UUID(int=91))
+    assert rendered_first.movements[0].currency == "EUR"
+    assert isinstance(first.state.focus, MovementListFocus)
+    first_cursor = first.state.focus.plan.cursor
+    assert first_cursor == MovementCursor(datetime(2026, 7, 5, 10, tzinfo=UTC), UUID(int=91))
+
+    second = await world.ask(
+        conversation_id=first.state.conversation_id,
+        version=first.state.version,
+        request_id="page-2",
+        sentence="Dame otros gastos",
+    )
+
+    assert second.result is not None and len(second.result.movements) == 1
+    assert second.result.movements[0].transaction_id == str(UUID(int=92))
+    assert world.ledger.listed[1].cursor == first_cursor
+    assert isinstance(second.state.focus, MovementListFocus)
+    assert second.state.focus.plan.cursor is None
+
+    third = await world.ask(
+        conversation_id=second.state.conversation_id,
+        version=second.state.version,
+        request_id="page-3",
+        sentence="Dame otros gastos",
+    )
+    assert third.result is not None
+    assert "No hay movimientos más antiguos" in third.result.text
+    assert len(world.ledger.listed) == 2
+
+
+@pytest.mark.asyncio
+async def test_new_list_task_switches_account_and_next_financial_task_drops_that_filter() -> None:
+    world = World(
+        (ListMovements(page_size=1),),
+        (ListMovements(accounts=("Hucha",), page_size=1),),
+        (ListMovements(page_size=1, continue_current=True),),
+        (
+            Ask(
+                PlanFields(
+                    direction=Direction.EXPENSE,
+                    window=AUGUST,
+                    categories=("RESTAURANTS",),
+                )
+            ),
+        ),
+    )
+    first = await world.ask(request_id="session-list-1", sentence="Últimos gastos")
+    second = await world.ask(
+        conversation_id=first.state.conversation_id,
+        version=first.state.version,
+        request_id="session-list-2",
+        sentence="¿Y los de Hucha?",
+    )
+    third = await world.ask(
+        conversation_id=second.state.conversation_id,
+        version=second.state.version,
+        request_id="session-list-3",
+        sentence="Dame otros 10",
+    )
+    fourth = await world.ask(
+        conversation_id=third.state.conversation_id,
+        version=third.state.version,
+        request_id="session-list-4",
+        sentence="¿Cuánto gasté en restaurantes este mes?",
+    )
+
+    assert world.ledger.listed[0].across_accounts is True
+    assert world.ledger.listed[1].account_ids == (PIGGY,)
+    assert world.ledger.listed[2].account_ids == (PIGGY,)
+    assert world.ledger.listed[2].cursor == MovementCursor(
+        datetime(2026, 7, 5, 10, tzinfo=UTC), UUID(int=91)
+    )
+    assert world.ledger.ran[-1].across_accounts is True
+    assert fourth.state.scope.account_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_ten_turn_banking_session_keeps_context_and_never_confirms_a_cancelled_bizum() -> (
+    None
+):
+    """A scripted session acceptance: the graph carries state across distinct user goals.
+
+    The interpreter is scripted on purpose. This exercises graph/state/bank/payment contracts;
+    provider interpretation and human UX need separate evaluations with real conversation data.
+    """
+
+    class CategoryLedger(MerchantLedger):
+        async def run(self, plan: FinancialPlan, **kwargs: object) -> QueryAnswer:
+            answer = await super().run(plan, **kwargs)
+            return replace(
+                answer,
+                groups=(
+                    Group("HOUSING_RENT", 4_000, 1),
+                    Group("GROCERIES", 2_000, 2),
+                    Group("RESTAURANTS", 1_500, 1),
+                ),
+            )
+
+    world = World(
+        (Balance(),),
+        (ListMovements(accounts=("Cuenta corriente",), page_size=2),),
+        (ListMovements(accounts=("Hucha",), page_size=2),),
+        (ListMovements(page_size=2, continue_current=True),),
+        (
+            Ask(
+                PlanFields(
+                    direction=Direction.EXPENSE,
+                    window=JULY,
+                    categories=("RESTAURANTS",),
+                    group_by=GroupBy.CATEGORY,
+                )
+            ),
+        ),
+        (
+            Compare(
+                PlanFields(
+                    direction=Direction.EXPENSE,
+                    categories=("RESTAURANTS",),
+                    group_by=GroupBy.CATEGORY,
+                ),
+                PlanFields(window=JUNE),
+                PlanFields(window=JULY),
+            ),
+        ),
+        (Visualize("ACTIVE_RESULT", "BAR"),),
+        (Delegate("UNSUPPORTED"),),
+        (PrepareBizum("Aitor Beltran Diaz", 1_500),),
+    )
+    world.ledger = CategoryLedger()
+    world.handler = world.build()
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+    session: EngineAnswer | None = None
+    seen: list[EngineAnswer] = []
+
+    async def turn(
+        sentence: str,
+        request_id: str,
+        *,
+        caller_scopes: frozenset[str] = frozenset(),
+    ) -> EngineAnswer:
+        nonlocal session
+        answer = await world.ask(
+            conversation_id=session.state.conversation_id if session else None,
+            version=session.state.version if session else None,
+            request_id=request_id,
+            sentence=sentence,
+            caller_scopes=caller_scopes,
+        )
+        session = answer
+        seen.append(answer)
+        return answer
+
+    balances = await turn("Â¿CÃ³mo estÃ¡n mis cuentas?", "session-balance")
+    corriente = await turn(
+        "EnsÃ©Ã±ame mis Ãºltimos 20 gastos de Cuenta corriente", "session-current"
+    )
+    hucha = await turn("Â¿Y los de la Hucha?", "session-hucha")
+    more = await turn("Dame otros 10", "session-more")
+    restaurants = await turn(
+        "Â¿CuÃ¡nto gastÃ© en restaurantes el mes pasado?", "session-restaurants"
+    )
+    compared = await turn("CompÃ¡ralo con junio", "session-compare")
+    chart = await turn("Ponme una grÃ¡fica", "session-chart")
+    unsupported = await turn("Â¿QuÃ© porcentaje de mi sueldo se va en ocio?", "session-unsupported")
+    preview = await turn("EnvÃ­a 15 euros a Aitor", "session-bizum", caller_scopes=scopes)
+    cancelled = await turn("No, mejor d\u00e9jalo", "session-cancel", caller_scopes=scopes)
+
+    assert balances.result is not None and "cuentas" in balances.result.text.lower()
+    assert corriente.result is not None and corriente.result.movements
+    assert hucha.result is not None and hucha.result.movements
+    assert more.result is not None and more.result.movements
+    assert world.ledger.listed[1].account_ids == (PIGGY,)
+    assert world.ledger.listed[2].account_ids == (PIGGY,)
+    assert world.ledger.listed[2].cursor == MovementCursor(
+        datetime(2026, 7, 5, 10, tzinfo=UTC), UUID(int=91)
+    )
+    assert restaurants.result is not None and "410,00" in restaurants.result.text
+    assert compared.result is not None
+    assert chart.result is not None and chart.result.visual_decision is not None
+    assert unsupported.result is not None
+    assert unsupported.result.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert preview.result is not None
+    assert preview.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert cancelled.result is not None
+    assert cancelled.result.outcome == PaymentOutcome.CANCELLED.value
+    assert bank.confirmed == []
+    assert bank.cancelled == [INTENT]
+    assert [answer.state.version for answer in seen] == list(range(1, 11))
 
 
 @pytest.mark.asyncio
@@ -1091,6 +1328,42 @@ async def test_a_money_flow_is_refused_without_bank_reads_or_execution(to: Any) 
     assert world.assessor.seen == []
 
 
+@pytest.mark.asyncio
+async def test_payment_capability_question_explains_preview_and_never_prepares_a_payment() -> None:
+    world = World((Delegate("PAYMENT"),))
+    bank = with_payment_commands(world)
+
+    answer = await world.ask(
+        sentence="¿Puedes hacer Bizums?",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert answer.result is not None
+    assert answer.result.outcome == Spoken.GUIDANCE.value
+    assert "contactos guardados" in answer.result.text
+    assert "No se envía hasta que confirmes" in answer.result.text
+    assert bank.prepared == []
+    assert bank.confirmed == []
+    assert world.ledger.ran == [] and world.ledger.listed == []
+
+
+@pytest.mark.asyncio
+async def test_help_explains_available_bizums_without_preparing_one() -> None:
+    world = World((Smalltalk("HELP"),))
+    bank = with_payment_commands(world)
+
+    answer = await world.ask(
+        sentence="¿Puedes hacer Bizums?",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert answer.result is not None
+    assert answer.result.outcome == Spoken.IDENTITY.value
+    assert "preparar un Bizum" in answer.result.text
+    assert "No se envía hasta que confirmes" in answer.result.text
+    assert bank.prepared == [] and bank.confirmed == []
+
+
 async def test_an_unsupported_operation_keeps_its_distinct_outcome_and_context() -> None:
     world = World(GROCERIES_IN_JULY, (Delegate("UNSUPPORTED"),))
     initial = await world.ask(request_id="query", sentence="gastos de supermercado en julio")
@@ -1171,6 +1444,105 @@ async def test_chart_operation_reuses_the_prior_banking_result_and_keeps_continu
     assert next_turn.state.version == 4
     assert next_turn.result is not None
     assert len(world.interpreter.sentences) == 4
+
+
+async def test_analytical_chart_regroup_reruns_banking_and_replaces_the_chart() -> None:
+    class ReshapeLedger(MerchantLedger):
+        async def run(self, plan: FinancialPlan, **kwargs: object) -> QueryAnswer:
+            self._fail()
+            self.ran.append(plan)
+            self.requested_movements.append(kwargs.get("movements"))  # type: ignore[arg-type]
+            groups = (
+                (Group("2026-06", 8_000, 3), Group("2026-07", 12_000, 4))
+                if plan.group_by is GroupBy.MONTH
+                else (
+                    Group("HOUSING_RENT", 5_000, 1),
+                    Group("GROCERIES", 4_000, 2),
+                    Group("RESTAURANTS", 3_000, 2),
+                    Group("TRANSPORT_FUEL", 2_000, 1),
+                    Group("TRANSFER_BIZUM", 1_500, 1),
+                    Group("SUBSCRIPTIONS", 1_200, 1),
+                    Group("HEALTH", 1_000, 1),
+                    Group("TRANSPORT_PUBLIC", 800, 1),
+                    Group("LEISURE", 1_500, 1),
+                )
+            )
+            return QueryAnswer("EUR", 20_000, 7, groups=groups)
+
+    window = RelativePeriod(Period.LAST_N_MONTHS, 3)
+    world = World(
+        (Ask(PlanFields(direction=Direction.EXPENSE, window=window, group_by=GroupBy.CATEGORY)),),
+        (Visualize("ACTIVE_RESULT", "AUTO"),),
+        (
+            Patch(
+                "focus",
+                PlanFields(group_by=GroupBy.MONTH, result_kind=ResultKind.TIME_SERIES),
+            ),
+            Visualize("ACTIVE_CHART", "AUTO"),
+        ),
+    )
+    world.ledger = ReshapeLedger()
+    world.handler = world.build()
+
+    query = await world.ask(request_id="query", sentence="gastos por categorÃ­a en tres meses")
+    chart = await world.ask(
+        conversation_id=query.state.conversation_id,
+        version=query.state.version,
+        request_id="chart",
+        sentence="ensÃ©Ã±amelo en un grÃ¡fico",
+    )
+    reads_before_reshape = len(world.ledger.ran)
+    reshaped = await world.ask(
+        conversation_id=chart.state.conversation_id,
+        version=chart.state.version,
+        request_id="reshape",
+        sentence="agrÃºpalo por mes",
+    )
+
+    assert len(world.ledger.ran) == reads_before_reshape + 1
+    assert world.ledger.ran[-1].group_by is GroupBy.MONTH
+    assert world.ledger.ran[-1].result_kind is ResultKind.TIME_SERIES
+    assert reshaped.result is not None and reshaped.result.visual_decision is not None
+    assert reshaped.result.visual_dataset is not None
+    assert [row.dimension for row in reshaped.result.visual_dataset.rows] == [
+        "2026-06",
+        "2026-07",
+    ]
+    assert reshaped.state.active_artifact is not None
+    assert reshaped.state.active_artifact.plan.group_by is GroupBy.MONTH
+    assert reshaped.state.active_visual is not None
+    assert (
+        reshaped.state.active_visual.result_version == reshaped.state.active_artifact.result_version
+    )
+    assert reshaped.state.version == chart.state.version + 1
+
+
+async def test_regroup_and_update_chart_is_refused_when_no_chart_is_active() -> None:
+    regroup = (
+        Patch(
+            "focus",
+            PlanFields(group_by=GroupBy.MONTH, result_kind=ResultKind.TIME_SERIES),
+        ),
+        Visualize("ACTIVE_CHART", "AUTO"),
+    )
+    world = World(
+        (Ask(PlanFields(direction=Direction.EXPENSE, window=JULY)),),
+        regroup,
+    )
+    first = await world.ask(request_id="query", sentence="gastos en tres meses")
+    reads_before = len(world.ledger.ran)
+
+    refused = await world.ask(
+        conversation_id=first.state.conversation_id,
+        version=first.state.version,
+        request_id="no-chart",
+        sentence="agrÃºpalo por mes",
+    )
+
+    assert len(world.ledger.ran) == reads_before
+    assert refused.state.focus == first.state.focus
+    assert refused.state.active_visual is None
+    assert refused.state.version == first.state.version + 1
 
 
 async def test_category_chart_uses_human_readable_labels() -> None:
@@ -1662,6 +2034,39 @@ async def test_listing_contacts_keeps_a_pending_bizum_draft_in_graph_state() -> 
     assert 'con el concepto "tapas"' in resolved.result.text
     assert bank.prepared[0].amount_minor == 1_500
     assert bank.prepared[0].recipient_contact_id == UUID("55555555-5555-5555-5555-555555555555")
+    assert bank.confirmed == []
+
+
+@pytest.mark.asyncio
+async def test_no_cancels_an_ambiguous_bizum_draft_without_another_model_or_bank_call() -> None:
+    world = World((PrepareBizum("Marta", 2_000),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+
+    draft = await world.ask(
+        sentence="Haz un bizum a Marta de 20 euros",
+        request_id="ambiguous-marta-draft",
+        caller_scopes=scopes,
+    )
+    assert isinstance(draft.state.payment, PaymentDraftPending)
+    assert draft.state.payment.candidate_contact_ids
+    calls_before_cancel = world.calls.count
+
+    cancelled = await world.ask(
+        conversation_id=draft.state.conversation_id,
+        version=draft.state.version,
+        sentence="no",
+        request_id="cancel-ambiguous-marta-draft",
+        caller_scopes=scopes,
+    )
+
+    assert cancelled.result is not None
+    assert cancelled.result.outcome == PaymentOutcome.CANCELLED.value
+    assert "No se ha enviado nada" in cancelled.result.text
+    assert cancelled.state.payment is None
+    assert cancelled.state.version == draft.state.version + 1
+    assert world.calls.count == calls_before_cancel
+    assert bank.prepared == []
     assert bank.confirmed == []
 
 

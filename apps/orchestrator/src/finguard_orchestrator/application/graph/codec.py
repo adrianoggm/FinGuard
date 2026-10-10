@@ -29,6 +29,7 @@ from finguard_orchestrator.domain.engine.state import (
     DialogueTurn,
     Measure,
     Missing,
+    MovementListFocus,
     Pending,
     QueryFocus,
     RatioFocus,
@@ -58,6 +59,7 @@ from finguard_orchestrator.domain.services import deterministic_visual_planner
 from finguard_orchestrator.domain.value_objects import (
     comparison_plan,
     financial_plan,
+    movement_list_plan,
     payment_draft,
     ratio_plan,
     top_movements,
@@ -71,8 +73,9 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
-STATE_SCHEMA_VERSION: Final = 17
-ANSWER_SCHEMA_VERSION: Final = 1
+STATE_SCHEMA_VERSION: Final = 25
+ANSWER_SCHEMA_VERSION: Final = 2
+_PREVIOUS_ANSWER_SCHEMA_VERSION: Final = 1
 
 _CLASSES: Final[dict[str, type]] = {
     cls.__name__: cls
@@ -89,6 +92,8 @@ _CLASSES: Final[dict[str, type]] = {
         operations.Balance,
         operations.ListContacts,
         operations.ListCategories,
+        operations.ListMovements,
+        operations.PatchMovementList,
         operations.AskCorrection,
         operations.Clarify,
         operations.Smalltalk,
@@ -97,6 +102,7 @@ _CLASSES: Final[dict[str, type]] = {
         operations.PrepareBizum,
         operations.PrepareTransfer,
         operations.PrepareOwnTransfer,
+        operations.ResumeFocus,
         PlanFields,
         RelativePeriod,
         AbsoluteRange,
@@ -106,6 +112,7 @@ _CLASSES: Final[dict[str, type]] = {
         RatioPlan,
         DialogueState,
         QueryFocus,
+        MovementListFocus,
         ComparisonFocus,
         RatioFocus,
         BalanceFocus,
@@ -152,6 +159,7 @@ _SERIALIZATION_MODULES = (
     payment_draft,
     ratio_plan,
     top_movements,
+    movement_list_plan,
     enums,
 )
 for _module in _SERIALIZATION_MODULES:
@@ -212,6 +220,15 @@ def loads_state(text: str) -> DialogueState:
     if schema not in {*range(1, STATE_SCHEMA_VERSION), STATE_SCHEMA_VERSION}:
         raise UnknownCheckpointTypeError(f"dialogue schema {value.get('schema_version')}")
     stored_state = value.get("state", {}).get("f", {})
+    if schema < 19 and isinstance(stored_state.get("pending"), dict):
+        # Earlier schemas kept one shared scope for both the visible result and any open
+        # clarification. Preserve that captured scope when migrating; new turns store the scope
+        # on Pending so the two tasks can diverge safely.
+        pending_fields = stored_state["pending"].get("f", {})
+        if "scope" not in pending_fields:
+            pending_fields["scope"] = stored_state.get(
+                "scope", {"$type": "Scope", "f": {"account_ids": {"$tuple": []}}}
+            )
     if schema < STATE_SCHEMA_VERSION and "active_result" in stored_state:
         stored_state["active_artifact"] = stored_state.pop("active_result")
         _migrate_financial_artifact(stored_state.get("active_artifact"))
@@ -273,7 +290,10 @@ def dumps_answer(answer: EngineAnswer) -> str:
 
 def loads_answer(text: str) -> EngineAnswer:
     value = json.loads(text)
-    if value.get("schema_version") != ANSWER_SCHEMA_VERSION:
+    if value.get("schema_version") not in {
+        _PREVIOUS_ANSWER_SCHEMA_VERSION,
+        ANSWER_SCHEMA_VERSION,
+    }:
         raise UnknownCheckpointTypeError(f"answer schema {value.get('schema_version')}")
     answer = _decoded(value.get("answer"))
     if not isinstance(answer, EngineAnswer):

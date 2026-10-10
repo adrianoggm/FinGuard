@@ -1,5 +1,4 @@
-"""LangGraph rollout wiring: opt-in beside the model interpreter; legacy stays the default until
-the ADR-013 promotion gates are closed."""
+"""LangGraph is the shipped runtime; compatibility selection and wiring stay explicit."""
 
 import os
 import subprocess
@@ -14,11 +13,18 @@ from finguard_orchestrator.bootstrap.config import Settings, get_settings
 from finguard_orchestrator.bootstrap.main import create_app
 
 
-def test_the_graph_is_off_by_default_and_as_shipped() -> None:
-    assert Settings.model_fields["conversation_graph"].default == "off"
-    shipped = (Path(__file__).resolve().parents[1] / ".env.defaults").read_text(encoding="utf-8")
-    assert "\nORCHESTRATOR_CONVERSATION_GRAPH=off\n" in shipped
-    assert get_settings().conversation_graph == "off"
+def test_langgraph_is_the_code_and_shipped_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    defaults = Path(__file__).resolve().parents[1] / ".env.defaults"
+    shipped = defaults.read_text(encoding="utf-8")
+    assert Settings.model_fields["conversation_engine"].default == "model"
+    assert Settings.model_fields["conversation_graph"].default == "on"
+    assert "\nORCHESTRATOR_CONVERSATION_ENGINE=model\n" in shipped
+    assert "\nORCHESTRATOR_CONVERSATION_GRAPH=on\n" in shipped
+    # Ignore the compatibility suite's process-level override and any developer `.env`.
+    monkeypatch.delenv("ORCHESTRATOR_CONVERSATION_ENGINE", raising=False)
+    monkeypatch.delenv("ORCHESTRATOR_CONVERSATION_GRAPH", raising=False)
+    assert Settings(_env_file=defaults).conversation_engine == "model"
+    assert Settings(_env_file=defaults).conversation_graph == "on"
 
 
 def built(monkeypatch: pytest.MonkeyPatch, engine: str, graph: str) -> Any:

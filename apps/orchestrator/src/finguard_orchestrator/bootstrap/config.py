@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     #
     # Where the A2A gateway listens (apps/a2a-gateway). **Without it the capability does not
     # exist**: no agent is asked and the turn says no external agents are configured. Fail closed,
-    # like the visual planner staying `deterministic` by default. Blank is absent -- see
+    # like the visual planner using `hybrid` by default. Blank is absent -- see
     # `_a_blank_key_is_no_key`.
     a2a_gateway_url: str | None = None
     # The gateway's shared bearer token, and the key under which each gym's pairwise `memberRef` is
@@ -195,6 +195,18 @@ class Settings(BaseSettings):
     # validates every field before a transition or bank query can run.
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     gemini_timeout_seconds: float = 60.0
+    # Free-tier quotas are shared across planner, visual and assessor calls and models can have
+    # limits as low as 5 RPM. Pace all Gemini requests at no more than that rate, including retries
+    # and failovers. When DATABASE_URL is configured, Postgres shares the schedule across replicas;
+    # otherwise the provider uses its per-process pacer. Do not allow runtime config to disable it.
+    gemini_min_request_interval_seconds: float = Field(default=12.0, ge=12.0)
+    # All candidates support this service's text + strict JSON-schema request path. Live/audio
+    # models are intentionally excluded: they do not support Structured Outputs.
+    gemini_fallback_models: tuple[str, ...] = (
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
+        "gemini-3.8-flash",
+    )
 
     # The API root the account path is hung off. A default for the same reason Groq's base URL
     # is one — the endpoint is the vendor's, not the deployment's — and a field at all so a
@@ -264,6 +276,7 @@ class Settings(BaseSettings):
     # pass one, and it is what a local `uvicorn` run reports.
     build_sha: str = "unknown"
     build_ref: str = "unknown"
+    build_source_sha256: str = "unknown"
 
     # The home screen's window and movement count. Product decisions about what a bank app shows
     # when it opens, so configuration rather than constants in the adapter that uses them.
@@ -426,13 +439,11 @@ class Settings(BaseSettings):
     # numbers there is no case for flipping it.
     turn_interpreter: Literal["router", "shadow", "hybrid", "model"] = "router"
 
-    # Transitional engine selector. `rules` builds the deprecated legacy coordinator. `model`
-    # builds the typed-operation interpreter. With `conversation_graph=off`, the latter still uses
-    # its in-memory store and legacy payment routing; with the graph on, LangGraph is authoritative,
-    # canonical state/checkpoints are in PostgreSQL, and graph-owned protected actions use the
-    # existing guarded banking commands. Keep the compatibility default until the ADR-013 promotion
-    # gates (full corpus, browser workflows, recovery and operational review) are closed.
-    conversation_engine: Literal["rules", "model"] = "rules"
+    # Transitional compatibility selector. `rules` explicitly opts into the deprecated legacy
+    # coordinator; `model` uses typed operations. The normal runtime is LangGraph, with canonical
+    # state/checkpoints in PostgreSQL and protected actions delegated to existing guarded bank
+    # commands. No provider or graph failure may silently select the legacy coordinator.
+    conversation_engine: Literal["rules", "model"] = "model"
     # The engine's model, on the planner's provider (`planner_provider`). None means the planner's
     # own model, so pointing the planner at a hosted provider moves the engine with it.
     engine_model: str | None = None
@@ -442,12 +453,11 @@ class Settings(BaseSettings):
     # Zero for the planner's reason: an interpretation that varies between identical turns cannot
     # be measured.
     engine_temperature: float = Field(default=0.0, ge=0)
-    # Migration switch: graph turns use PostgreSQL for canonical state, idempotency reservations
-    # and LangGraph checkpoints. It requires `conversation_engine=model` and DATABASE_URL. It stays
-    # off until the ADR-013 promotion gates are complete. In graph mode the graph owns supported
-    # visual and protected payment workflows; unsupported operations return explicitly and are
+    # Graph-off is an explicit compatibility mode only. Graph turns require PostgreSQL for
+    # canonical state, idempotency reservations and LangGraph checkpoints. In graph mode, supported
+    # visual and protected payment workflows stay in the graph; unsupported work is explicit and
     # never reinterpreted by the legacy route.
-    conversation_graph: Literal["off", "on"] = "off"
+    conversation_graph: Literal["off", "on"] = "on"
 
     # What a spending or income question means when it names no account and the conversation has
     # chosen none.
@@ -465,11 +475,10 @@ class Settings(BaseSettings):
     # (the credential's own account).
     account_scope_default: AccountScopeDefault = "all"
 
-    # The visual planner's ladder, the same four rungs the turn interpreter climbs. `shadow` runs
-    # the model beside the floor and shows the floor, which is how the baseline comparison is
-    # collected before anything is risked. Promotion is a measured decision (docs/next.md), not a
-    # default: this stays `deterministic` until three runs of `just evaluate-visual` say otherwise.
-    visual_planner: VisualMode = "deterministic"
+    # The visual planner's ladder. `hybrid` lets the model choose a presentation only after the
+    # domain verifier accepts it; abstentions, invalid proposals and provider failures use the
+    # deterministic floor. Its provider/model can be configured separately from query planning.
+    visual_planner: VisualMode = "hybrid"
     # Spent before the floor answers, so it is added latency on every turn the model runs.
     # `6.0` is a guess, not a measurement: Task 9's runbook
     # (docs/superpowers/plans/2026-09-05-visual-planner-shadow.md) has never been run, so no
@@ -484,7 +493,7 @@ class Settings(BaseSettings):
     visual_planner_budget_seconds: float = Field(default=6.0, gt=0)
 
     # The visual planner's own provider, model and sampling. `None` means "the financial
-    # planner's", which is what shipped and what `deterministic` mode never reads. Naming one
+    # planner's". Naming one
     # here lets "try a bigger chart model" move nothing else: the financial planner's model was
     # chosen against its own evaluation (evaluation/planning/RESULTS.md), and one knob for both
     # would hide which one moved. A blank value in the environment is "unset" -- see

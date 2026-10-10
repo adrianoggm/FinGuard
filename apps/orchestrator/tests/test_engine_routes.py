@@ -214,10 +214,10 @@ def _restore(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 # --- the flag off ------------------------------------------------------------------------------
 
-# What both routes answered at f4f82e1c, before any of the engine's wiring existed: the same three
-# turns, one conversation, the same stack. A body that moves by one byte with the engine off is a
-# change to production, which the flag exists to rule out. Re-pin only for a deliberate change to
-# the rules route itself, never for one made in the engine's name.
+# The clean-tree output at 48f18b4c, before this conversation-engine change: the same three turns,
+# one conversation, the same stack. A body that moves by one byte with the engine off is a change
+# to production, which the flag exists to rule out. Re-pin only for a deliberate change to the rules
+# route itself, never for one made in the engine's name.
 FIXED_ID = "00000000-0000-4000-8000-00000000c0de"
 RULES_TURNS = (
     "¿cuánto gasté en restaurantes en julio?",
@@ -226,14 +226,14 @@ RULES_TURNS = (
 )
 PINNED = {
     JSON_ROUTE: (
-        "7685e4ba36b811fd7a6b6a8d446b064bbbe9da2f8994c54da564b0552f0c8eca",
-        "8be8cf06b60ed88318c50e272c7090151af17e07c8810806950bbfe2f1b6a3b5",
-        "6abfcea537c7eac7b8933ba5562888724a6b15b8842869c0e8f199943b596165",
+        "0833eaf6a1848ec2b528e3e25dd51c5e35d2f89c0f2bdf6a813829fcfdfd5978",
+        "74eec4f1304c4b7901a50ce2089640a3108b110d0ccbc90936ed0b9066a6e1f7",
+        "83ad6887068f7a094446fbb5a148e55e58bce695205f34d59a8b40ed9ed8852e",
     ),
     STREAM_ROUTE: (
-        "3bb238b152ca6139d0a88ce659d024d9116be9703b8c8dab1d702512edee2a07",
-        "e3de225584bb535dff30c57b1df24f2c44dbf5b2068825620bbf2543af331f27",
-        "372f7739fe32578facb5e684bd7022f9a3f986ec4493a35c74cca89f3d9f8119",
+        "acb33b81952cf2249f1b2b166a9d0730ff4c9a10863a8e08fa584f93c4816cc7",
+        "7ee2573f4af185f2ab4db4f5c3a09ea147703825272e79d8f207c4ff0a56619e",
+        "9bdfe0c3fee6316d5b842e787d1b84e9824d16468df3fcb8f6dda40d6c7fb700",
     ),
 }
 
@@ -266,12 +266,13 @@ def test_flag_off_keeps_rules_byte_identical(route: str) -> None:
         assert "version" not in conversation
 
 
-def test_the_rules_engine_is_what_ships() -> None:
-    """Asked of the class and of `.env.defaults`, not of an instance, so a developer who has
-    switched the engine on in their own `.env` does not fail a test about what the code ships."""
-    assert Settings.model_fields["conversation_engine"].default == "rules"
+def test_langgraph_is_what_ships() -> None:
+    """The production default is graph-backed; the suite chooses compatibility mode separately."""
+    assert Settings.model_fields["conversation_engine"].default == "model"
+    assert Settings.model_fields["conversation_graph"].default == "on"
     shipped = (Path(__file__).resolve().parents[1] / ".env.defaults").read_text(encoding="utf-8")
-    assert "\nORCHESTRATOR_CONVERSATION_ENGINE=rules\n" in shipped
+    assert "\nORCHESTRATOR_CONVERSATION_ENGINE=model\n" in shipped
+    assert "\nORCHESTRATOR_CONVERSATION_GRAPH=on\n" in shipped
 
 
 @pytest.mark.parametrize("chosen", ["rules", "model"])
@@ -433,14 +434,15 @@ def test_authoritative_graph_fails_closed_if_dispatch_returns_no_answer() -> Non
     assert "legacy fallback is disabled" in str(raised.value.detail)
 
 
-def test_graph_mode_fails_closed_if_the_handler_is_missing() -> None:
+@pytest.mark.parametrize("route", ROUTES)
+def test_graph_mode_fails_closed_if_the_handler_is_missing(route: str) -> None:
     stack = a_stack()
     previous_engine = app.state.engine
     previous_graph = app.state.conversation_graph_enabled
     app.state.engine = None
     app.state.conversation_graph_enabled = True
     try:
-        response = stack.client.post(JSON_ROUTE, json={"question": "¿cuánto gasté este mes?"})
+        response = stack.client.post(route, json={"question": "¿cuánto gasté este mes?"})
 
         assert response.status_code == 503
         assert "no graph handler is available" in response.json()["detail"]

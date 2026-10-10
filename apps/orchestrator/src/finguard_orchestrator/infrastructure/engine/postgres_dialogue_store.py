@@ -6,7 +6,11 @@ from uuid import UUID
 
 from finguard_orchestrator.application.graph import codec
 from finguard_orchestrator.domain.engine.state import DialogueState
-from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
+from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError, TurnCompletion
+
+# Persisted rows start at schema 4. The codec migrates every schema from there through the
+# current version, including 10–12; the store must not reject versions the decoder can resume.
+_SUPPORTED_CONVERSATION_SCHEMAS = frozenset(range(4, codec.STATE_SCHEMA_VERSION + 1))
 
 
 class PostgresDialogueStore:
@@ -36,7 +40,7 @@ class PostgresDialogueStore:
         if row is None:
             return None
         schema = int(row["schema_version"])
-        if schema not in {4, 5, 6, 7, 8, 9, 13, 14, 15, 16, codec.STATE_SCHEMA_VERSION}:
+        if schema not in _SUPPORTED_CONVERSATION_SCHEMAS:
             raise ValueError(f"unsupported conversation schema version: {schema}")
         state = codec.loads_state(row["payload"])
         if state.version != int(row["state_version"]):
@@ -44,7 +48,12 @@ class PostgresDialogueStore:
         return state
 
     async def save(
-        self, state: DialogueState, *, account_id: UUID, expected_version: int
+        self,
+        state: DialogueState,
+        *,
+        account_id: UUID,
+        expected_version: int,
+        completion: TurnCompletion | None = None,
     ) -> DialogueState:
         payload = codec.dumps_state(state)
         if len(payload.encode("utf-8")) > 131_072:
@@ -82,10 +91,18 @@ class PostgresDialogueStore:
                         codec.STATE_SCHEMA_VERSION,
                         codec.dumps_state(saved),
                     )
+                    if completion is not None:
+                        await _commit_turn_result(
+                            connection,
+                            saved,
+                            account_id=account_id,
+                            expected_version=expected_version,
+                            completion=completion,
+                        )
                     return saved
 
                 schema = int(row["schema_version"])
-                if schema not in {4, 5, 6, 7, 8, 9, 13, 14, 15, 16, codec.STATE_SCHEMA_VERSION}:
+                if schema not in _SUPPORTED_CONVERSATION_SCHEMAS:
                     raise ValueError(f"unsupported conversation schema version: {schema}")
                 held = codec.loads_state(row["payload"])
                 if held.version != int(row["state_version"]):
@@ -106,8 +123,59 @@ class PostgresDialogueStore:
                     codec.STATE_SCHEMA_VERSION,
                     codec.dumps_state(saved),
                 )
+                if completion is not None:
+                    await _commit_turn_result(
+                        connection,
+                        saved,
+                        account_id=account_id,
+                        expected_version=expected_version,
+                        completion=completion,
+                    )
                 return saved
 
 
 async def _scope(connection: Any, account_id: UUID) -> None:
     await connection.execute("SELECT set_config('app.account_id', $1, true)", str(account_id))
+
+
+async def _commit_turn_result(
+    connection: Any,
+    state: DialogueState,
+    *,
+    account_id: UUID,
+    expected_version: int,
+    completion: TurnCompletion,
+) -> None:
+    """Store a recoverable answer in the same transaction as the state compare-and-set."""
+    state_payload = codec.dumps_state(state)
+    if (
+        not completion.request_id
+        or len(completion.result_payload.encode("utf-8")) > 524_288
+        or len(state_payload.encode("utf-8")) > 131_072
+    ):
+        raise ValueError("invalid or oversized committed turn result")
+    if completion.model_calls < 0:
+        raise ValueError("committed turn model call count cannot be negative")
+    if completion.financial_reads < 0:
+        raise ValueError("committed financial read count cannot be negative")
+    updated = await connection.execute(
+        """
+        UPDATE assistant.conversation_turn
+        SET committed_result_payload = $6, committed_state_payload = $7,
+            committed_model_calls = $8, committed_financial_reads = $9, updated_at = now()
+        WHERE account_id = $1 AND conversation_id = $2 AND expected_version = $3
+          AND request_id = $4 AND status = 'NEW' AND lease_token = $5
+          AND committed_result_payload IS NULL
+        """,
+        account_id,
+        state.conversation_id,
+        expected_version,
+        completion.request_id,
+        completion.lease_token,
+        completion.result_payload,
+        state_payload,
+        completion.model_calls,
+        completion.financial_reads,
+    )
+    if updated != "UPDATE 1":
+        raise RuntimeError("turn reservation was not owned while committing canonical state")

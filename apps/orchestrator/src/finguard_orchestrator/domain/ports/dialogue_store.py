@@ -11,6 +11,7 @@ exist: `load` finds nothing, and a save is compared with nothing of the holder's
 reference the client echoes, never a credential.
 """
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
@@ -32,6 +33,22 @@ class StaleDialogueError(DomainError):
         self.current = current
 
 
+@dataclass(frozen=True)
+class TurnCompletion:
+    """Response payload to commit atomically with its canonical state version.
+
+    The payload is encoded by the graph's closed checkpoint codec and stored in the turn
+    reservation, never in canonical dialogue state. This keeps ledger rows out of conversation
+    checkpoints while making a post-CAS retry replayable.
+    """
+
+    request_id: str
+    lease_token: UUID
+    result_payload: str
+    model_calls: int
+    financial_reads: int
+
+
 @runtime_checkable
 class DialogueStorePort(Protocol):
     async def load(self, conversation_id: UUID, *, account_id: UUID) -> DialogueState | None:
@@ -39,10 +56,17 @@ class DialogueStorePort(Protocol):
         ...
 
     async def save(
-        self, state: DialogueState, *, account_id: UUID, expected_version: int
+        self,
+        state: DialogueState,
+        *,
+        account_id: UUID,
+        expected_version: int,
+        completion: TurnCompletion | None = None,
     ) -> DialogueState:
         """`state` saved under `account_id` as version `expected_version + 1`, and returned.
 
+        When `completion` is supplied, its replayable response and state snapshot must be committed
+        atomically with this compare-and-set; production graph turns rely on this for crash replay.
         Raises `StaleDialogueError` with the state held under `account_id` when that is not
         `expected_version`. A conversation never saved under it is held at version 0.
         """

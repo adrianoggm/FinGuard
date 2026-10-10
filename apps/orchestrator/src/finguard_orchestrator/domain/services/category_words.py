@@ -384,6 +384,29 @@ def precisely_named_in(sentence: str) -> tuple[str, ...]:
     return _matches(sentence, _PRECISE)
 
 
+def is_precise_alias(term: str, category: str) -> bool:
+    """Whether a whole merchant term is exactly a precise alias for ``category``.
+
+    This differs from `precisely_named_in`, which intentionally finds aliases anywhere in a
+    sentence. A specific merchant such as "Supermercado Alfa" contains a category word but is not
+    itself the generic category alias "supermercado".
+    """
+    normalized = spanish.folded(term).strip()
+    is_kind = category_of_kind(normalized) == category or any(
+        category_of_kind(kind) == category
+        and any(
+            normalized == spanish.folded(spelling) for spelling in _KIND_SPELLINGS.get(kind, ())
+        )
+        for kind in _KINDS.get(category, ())
+    )
+    if not normalized or is_kind:
+        # Some precise words name a kind within a category rather than the category itself (for
+        # example, "gimnasio" narrows SUBSCRIPTIONS to gym merchants). Those terms belong in
+        # merchant_terms and must not be treated as redundant category aliases.
+        return False
+    return any(normalized == spanish.folded(alias) for alias in _PRECISE.get(category, ()))
+
+
 def precisely_excluded_in(sentence: str) -> tuple[str, ...]:
     """Categories explicitly placed behind a negative filter, in sentence order.
 

@@ -14,7 +14,7 @@ from dataclasses import replace
 from uuid import UUID
 
 from finguard_orchestrator.domain.engine.state import DialogueState
-from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
+from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError, TurnCompletion
 
 type _Key = tuple[UUID, UUID]
 
@@ -30,8 +30,15 @@ class MemoryDialogueStore:
         return self._states.get((account_id, conversation_id))
 
     async def save(
-        self, state: DialogueState, *, account_id: UUID, expected_version: int
+        self,
+        state: DialogueState,
+        *,
+        account_id: UUID,
+        expected_version: int,
+        completion: TurnCompletion | None = None,
     ) -> DialogueState:
+        # This adapter is only for explicitly non-durable local/test runs. Production graph mode
+        # uses PostgresDialogueStore, which atomically commits `completion` with the state CAS.
         key = (account_id, state.conversation_id)
         # One lock per conversation, so the check and the write are one step. Nothing between them
         # awaits today, which already makes them atomic on one event loop; the lock is what keeps

@@ -9,6 +9,8 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 # variables reach every recipe on Windows and Unix alike.
 export FINGUARD_SHA := `git rev-parse --short HEAD`
 export FINGUARD_REF := `git rev-parse --abbrev-ref HEAD`
+export FINGUARD_ORCHESTRATOR_SOURCE_SHA256 := `python apps/orchestrator/scripts/source_identity.py orchestrator`
+export FINGUARD_BANKING_SOURCE_SHA256 := `python apps/orchestrator/scripts/source_identity.py banking`
 
 # List the available tasks
 default:
@@ -27,6 +29,9 @@ component name:
 # Skeleton: database + backend APIs. The skin (web, mobile) stays out
 back:
     docker compose --profile core up -d --wait --build --remove-orphans
+# Canonical backend startup name used by evaluation preflight and operator runbooks.
+# `back` remains an alias for people who already use it.
+up: back
 # Skeleton plus the real-time voice gateway on 8002. Fake speech providers by default: the
 # measured local ones run on the host, where the GPU and the models are.
 voice:

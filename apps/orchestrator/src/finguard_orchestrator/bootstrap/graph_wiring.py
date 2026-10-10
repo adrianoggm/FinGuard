@@ -18,7 +18,7 @@ from finguard_orchestrator.domain.ports.turn_operations import TurnOperationsPor
 from finguard_orchestrator.domain.ports.turn_reservations import TurnReservationsPort
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.infrastructure.graph.llm_assessor import LlmInvestigationAssessor
-from finguard_orchestrator.infrastructure.llm.counting_provider import calls_so_far
+from finguard_orchestrator.infrastructure.llm.counting_provider import budget_calls_so_far
 
 
 def graph_engine(
@@ -50,7 +50,9 @@ def graph_engine(
         contacts,
         frozenset(settings.categories),
         visual_policy=visual_policy,
-        count_calls=calls_so_far,
+        # Graph turn budgets count every hosted HTTP attempt (including 429 retry/failover), while
+        # local providers still consume one unit per logical generation call.
+        count_calls=budget_calls_so_far,
         commands=commands,
     )
     return GraphTurnHandler(ports, reservations, checkpointer)

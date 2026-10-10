@@ -1,11 +1,12 @@
-"""The suite runs on the shipped settings, whatever a developer's own `.env` says (ruling R30).
+"""The broad compatibility suite stays isolated from hosted providers and the graph runtime.
 
 A run once sent the suite's sentences to Groq, because the tree's `.env` switched the engine to
-`model` on the `groq` provider and the settings read it. `conftest.py` now pins every setting that
-chooses an engine, a model or a hosted provider to its `.env.defaults` value before anything is
-imported; this checks the pin took, on whatever tree it runs.
+`model` on the `groq` provider and the settings read it. `conftest.py` pins the broad compatibility
+suite to the explicit legacy routes and blanks hosted credentials; graph-specific tests select
+LangGraph separately. This checks those test-only overrides took effect.
 """
 
+import os
 from pathlib import Path
 
 from finguard_orchestrator.bootstrap.config import get_settings
@@ -21,10 +22,11 @@ def shipped(key: str) -> str:
     raise KeyError(key)
 
 
-def test_the_engine_and_its_model_are_the_shipped_ones() -> None:
+def test_the_broad_suite_explicitly_uses_compatibility_routes() -> None:
     settings = get_settings()
 
-    assert settings.conversation_engine == shipped("CONVERSATION_ENGINE") == "rules"
+    assert settings.conversation_engine == os.environ["ORCHESTRATOR_CONVERSATION_ENGINE"] == "rules"
+    assert settings.conversation_graph == os.environ["ORCHESTRATOR_CONVERSATION_GRAPH"] == "off"
     assert settings.engine_model is None
     assert settings.planner_provider == shipped("PLANNER_PROVIDER")
     assert settings.planner_model == shipped("PLANNER_MODEL")

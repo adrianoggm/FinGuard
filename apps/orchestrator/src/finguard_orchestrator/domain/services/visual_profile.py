@@ -77,6 +77,7 @@ def visual_profile_of(
     total_minor: int | None,
     group_by: str | None,
     plan_limited: bool = False,
+    data_complete: bool = True,
     plan_metric: str | None = None,
 ) -> VisualProfile:
     """Build the profile from the dataset -- plus `group_by`, which the dataset does not carry.
@@ -90,11 +91,12 @@ def visual_profile_of(
     `result.plan_context.group_by`) and passes it through, the same way it already passes
     `total_minor`.
 
-    `plan_limited` and `plan_metric` arrive the same way and for the same reason: they are
-    `group_limit is not None` and `metric` on the plan, and no row of the dataset can tell you
-    about either. `plan_metric` matters because `dataset.metric` is overloaded -- a comparison of
-    two counts says `COMPARISON`, and only the plan says the numbers are movements. The defaults
-    are the shape of a dataset nobody grouped, nobody cut, and whose plan is not to hand.
+    `plan_limited` says the incoming result is already cut and must not be cut a second time;
+    `data_complete` says its rows cover every group from the banking result. Neither fact can be
+    inferred from the rows themselves. `plan_metric` matters because `dataset.metric` is
+    overloaded -- a comparison of two counts says `COMPARISON`, and only the plan says the
+    numbers are movements. The defaults are the shape of a complete, uncut dataset whose plan is
+    not to hand.
     """
     rows = dataset.rows
     temporal = group_by in _TEMPORAL_GROUPS and dataset.metric not in _OWN_DIMENSION
@@ -145,8 +147,11 @@ def visual_profile_of(
         # whole, so they cannot be the parts a donut claims sum to the total.
         mutually_exclusive=not has_series,
         verified_total=(
-            dataset.metric == "RATIO_SHARE"
-            or (total_minor is not None and sum(row.value_minor for row in rows) == total_minor)
+            data_complete
+            and (
+                dataset.metric == "RATIO_SHARE"
+                or (total_minor is not None and sum(row.value_minor for row in rows) == total_minor)
+            )
         ),
         # The dataset's shape marker AND a series to group by -- not the presence of a series
         # alone: RECURRENCE carries a series for its cadence and is not a comparison. Not the

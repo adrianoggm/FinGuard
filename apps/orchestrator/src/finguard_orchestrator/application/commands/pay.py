@@ -280,6 +280,14 @@ async def _previewed(
             draft=_drafted(_as_draft(request)),
             reason=unreachable.code,
         )
+    except IntentGoneError as gone:
+        # An idempotent prepare can find an intent that was already closed. This is a known
+        # banking refusal, not a provider outage; keep the potentially completed outcome clear.
+        return PaymentAnswer(
+            outcome=PaymentOutcome.REFUSED.value,
+            text=payment_writer.no_longer_live(),
+            reason=gone.reason,
+        )
     except PaymentRefusedError as refused:
         return _refusal(refused.reason)
     except BankingUnavailableError as down:
@@ -669,6 +677,8 @@ def _refusal(reason: str) -> PaymentAnswer:
     text = (
         payment_writer.insufficient_funds()
         if reason == INSUFFICIENT_FUNDS
+        else payment_writer.recipient_snapshot_missing()
+        if reason == "recipient_snapshot_missing"
         else payment_writer.nothing_was_sent()
     )
     return PaymentAnswer(outcome=PaymentOutcome.REFUSED.value, text=text, reason=reason)

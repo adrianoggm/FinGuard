@@ -37,8 +37,16 @@ someone else's id, simply starts again under a new id (ruling R27).
 
 **Every answer says who gave it and what it cost**, on both routes and both engines:
 `X-FinGuard-Engine: rules|model` names the engine that answered the turn (a delegated turn is the
-rules route's), and `X-FinGuard-Model-Calls` the model calls the request made, counted by the
-provider wrapper (`counting_provider`). On the stream the headers leave before the first frame:
+rules route's), `X-FinGuard-Financial-Reads` the graph's query and balance calls when available,
+and
+`X-FinGuard-Model-Calls` the logical calls counted by the provider wrapper
+(`counting_provider`). `X-FinGuard-Provider-Requests` counts actual outbound generation HTTP
+attempts, including retries and model failover. `X-FinGuard-Models-Attempted` preserves their
+ordered model IDs and duplicates, while `X-FinGuard-Models-Used` records successful model outputs.
+When the provider returns usage metadata, `X-FinGuard-Prompt-Tokens` and
+`X-FinGuard-Completion-Tokens` report its numeric token counts, and `X-FinGuard-Token-Reports`
+states how many responses contributed usage. Missing usage is left absent, never reported as zero.
+On the stream the headers leave before the first frame:
 the engine has answered by then, so its count is exact; the rules route's planner runs inside the
 stream, so a rules answer there carries no count at all rather than a partial one. The measurement
 runner reads the JSON route, where both are exact.
@@ -47,7 +55,7 @@ runner reads the JSON route, where both are exact.
 import json
 import logging
 from collections.abc import AsyncIterator, Mapping
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import date
@@ -59,6 +67,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import MutableHeaders
 
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
+from finguard_orchestrator.application.graph.budgets import MAX_MODEL_CALLS
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
 from finguard_orchestrator.domain.enums import PlanningOutcome
@@ -73,7 +82,10 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     QuestionRequest,
     QuestionResponse,
 )
-from finguard_orchestrator.infrastructure.llm.counting_provider import counting_calls
+from finguard_orchestrator.infrastructure.llm.counting_provider import (
+    counting_calls,
+    provider_request_budget,
+)
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 
@@ -81,6 +93,15 @@ logger = logging.getLogger(__name__)
 
 ENGINE_HEADER: Final = "X-FinGuard-Engine"
 MODEL_CALLS_HEADER: Final = "X-FinGuard-Model-Calls"
+PROVIDER_REQUESTS_HEADER: Final = "X-FinGuard-Provider-Requests"
+MODELS_ATTEMPTED_HEADER: Final = "X-FinGuard-Models-Attempted"
+MODELS_USED_HEADER: Final = "X-FinGuard-Models-Used"
+PROMPT_TOKENS_HEADER: Final = "X-FinGuard-Prompt-Tokens"
+COMPLETION_TOKENS_HEADER: Final = "X-FinGuard-Completion-Tokens"
+TOKEN_REPORTS_HEADER: Final = "X-FinGuard-Token-Reports"
+FINANCIAL_READS_HEADER: Final = "X-FinGuard-Financial-Reads"
+PROVIDER_FAILURES_HEADER: Final = "X-FinGuard-Provider-Failures"
+PROVIDER_TERMINAL_FAILURE_HEADER: Final = "X-FinGuard-Provider-Terminal-Failure"
 _STREAM_ROUTE: Final = "/v1/questions/stream"
 _QUESTION_ROUTES: Final = frozenset({"/v1/questions", _STREAM_ROUTE})
 # A payment the rules route set aside to answer a question: the fields that hold it, echoed back
@@ -112,22 +133,41 @@ _UNREAD: Final = "No he podido leer tus cuentas y tus contactos: el banco ha rec
 
 def _the_engine(request: Request) -> ConversationTurnHandler | None:
     engine: ConversationTurnHandler | None = request.app.state.engine
-    if engine is None and getattr(request.app.state, "conversation_graph_enabled", False):
+    settings = request.app.state.settings
+    graph_enabled = settings.conversation_graph == "on" or getattr(
+        request.app.state, "conversation_graph_enabled", False
+    )
+    model_engine_enabled = settings.conversation_engine == "model"
+    if engine is None and (model_engine_enabled or graph_enabled):
         raise HTTPException(
             status_code=503,
-            detail="The conversation graph is enabled but no graph handler is available.",
+            detail=(
+                "The conversation graph is enabled but no graph handler is available."
+                if graph_enabled
+                else "The model conversation engine has no handler; legacy fallback is disabled."
+            ),
+        )
+    if graph_enabled and not getattr(engine, "authoritative", False):
+        # A non-authoritative handler in graph mode is a composition error, not permission to
+        # continue into the compatibility route. Fail before either HTTP endpoint reads language.
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The conversation graph is configured but the active handler is not authoritative."
+            ),
         )
     return engine
 
 
-# The route parameter. None, the default, is the engine switched off, which is also what a test
-# calling a route function directly gets.
+# The route parameter. None is allowed only when the explicit compatibility configuration selected
+# the legacy route; a missing configured model or graph handler is an availability error.
 Engine = Annotated[ConversationTurnHandler | None, Depends(_the_engine)]
 
 
 @dataclass
 class _Answered:
     by: Literal["rules", "model"] = "rules"
+    financial_reads: int | None = None
 
 
 _answered: ContextVar[_Answered | None] = ContextVar("finguard_answered_by", default=None)
@@ -215,10 +255,14 @@ async def try_engine(
             answer_kwargs["request_id"] = request_id
         if getattr(engine, "supports_caller_scopes", False):
             answer_kwargs["caller_scopes"] = who.scopes
-        turn = await engine.answer(
-            question.question,
-            **answer_kwargs,
-        )
+        budget = provider_request_budget(MAX_MODEL_CALLS) if engine is not None else nullcontext()
+        with budget:
+            turn = await engine.answer(
+                question.question,
+                **answer_kwargs,
+            )
+        if (answered := _answered.get()) is not None:
+            answered.financial_reads = turn.financial_reads
     except QueryRejectedError:
         # The handler catches a bank that is down, not one that refuses: answered here, and
         # nothing was saved, so the client keeps the id and version it sent.
@@ -404,6 +448,33 @@ class _Reported:
                         # no count there rather than a partial one (M-5).
                         if answered.by == "model" or scope["path"] != _STREAM_ROUTE:
                             headers.append(MODEL_CALLS_HEADER, str(calls.count))
+                            headers.append(PROVIDER_REQUESTS_HEADER, str(calls.provider_requests))
+                            headers.append(
+                                MODELS_ATTEMPTED_HEADER,
+                                ",".join(calls.attempted_models or []),
+                            )
+                            headers.append(
+                                MODELS_USED_HEADER,
+                                ",".join(calls.successful_models or []),
+                            )
+                            if calls.provider_failures:
+                                headers.append(
+                                    PROVIDER_FAILURES_HEADER,
+                                    ",".join(calls.provider_failures),
+                                )
+                            if calls.terminal_provider_failure:
+                                headers.append(
+                                    PROVIDER_TERMINAL_FAILURE_HEADER,
+                                    calls.terminal_provider_failure,
+                                )
+                            if calls.token_reports:
+                                headers.append(PROMPT_TOKENS_HEADER, str(calls.prompt_tokens))
+                                headers.append(
+                                    COMPLETION_TOKENS_HEADER, str(calls.completion_tokens)
+                                )
+                                headers.append(TOKEN_REPORTS_HEADER, str(calls.token_reports))
+                        if answered.financial_reads is not None:
+                            headers.append(FINANCIAL_READS_HEADER, str(answered.financial_reads))
                     await send(message)
 
                 await self.app(scope, receive, reported)

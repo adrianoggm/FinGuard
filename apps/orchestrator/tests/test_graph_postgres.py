@@ -74,11 +74,13 @@ async def test_postgres_state_cas_and_turn_resume_replay() -> None:
         assert current is not None and current.version == 2
         key = TurnKey(account, conversation_id, current.version)
 
-        assert (await reservations.reserve(key, "retry-1", "a" * 64)).outcome is Reservation.NEW
-        await reservations.failed(key, "retry-1")
-        assert (await reservations.reserve(key, "retry-1", "a" * 64)).outcome is Reservation.RESUME
+        reserved = await reservations.reserve(key, "retry-1", "a" * 64)
+        assert reserved.outcome is Reservation.NEW and reserved.lease_token is not None
+        await reservations.failed(key, "retry-1", reserved.lease_token)
+        resumed = await reservations.reserve(key, "retry-1", "a" * 64)
+        assert resumed.outcome is Reservation.RESUME and resumed.lease_token is not None
         answer = EngineAnswer(None, current, "UNSUPPORTED", 1, {"graph": 5})
-        await reservations.done(key, "retry-1", answer)
+        await reservations.done(key, "retry-1", resumed.lease_token, answer)
         replay = await reservations.reserve(key, "retry-1", "a" * 64)
         assert replay.outcome is Reservation.DONE and replay.answer == answer
         assert (await reservations.reserve(key, "retry-1", "b" * 64)).outcome is Reservation.REUSED

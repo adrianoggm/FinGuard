@@ -827,6 +827,20 @@ def question_to_dto(
                 result_kind=result.plan_context.result_kind,
                 group_limit=result.plan_context.group_limit,
                 rank=result.plan_context.rank,
+                account_scoped=bool(
+                    result.plan_context.only_account_id or result.plan_context.only_account_ids
+                ),
+                has_unrepresented_filters=bool(
+                    result.plan_context.excluded_categories
+                    or result.plan_context.excluded_merchants
+                    or result.plan_context.counterparties
+                    or result.plan_context.excluded_counterparties
+                    or result.plan_context.counterparty_types
+                    or result.plan_context.transaction_ids
+                    or result.plan_context.transaction_types
+                    or result.plan_context.include_internal
+                    or result.plan_context.internal_only
+                ),
                 query_id=result.plan_context.query_id,
                 artifact_id=result.plan_context.artifact_id,
                 view_id=result.plan_context.view_id,
@@ -862,6 +876,8 @@ def question_to_dto(
                 description=movement.description,
                 amount_minor=movement.amount_minor,
                 direction=movement.direction,
+                transaction_id=movement.transaction_id,
+                currency=movement.currency,
                 merchant_name=movement.merchant_name,
                 category=movement.category,
                 transaction_type=movement.transaction_type,

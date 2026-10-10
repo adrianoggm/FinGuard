@@ -21,6 +21,8 @@ from finguard_orchestrator.application.engine.executor import (
     BalanceRun,
     Executed,
     MixedCurrenciesError,
+    MovementListRun,
+    NoMoreMovementsRun,
     PairRun,
     QueryRun,
     RankingRun,
@@ -86,6 +88,15 @@ def answered(
             result = _query(run, reporting_timezone)
         case RankingRun():
             result = _ranking(run)
+        case MovementListRun():
+            result = _movement_list(run)
+        case NoMoreMovementsRun():
+            result = AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PLANNED.value,
+                text="No hay movimientos más antiguos en esta lista.",
+                plan="fin del listado de movimientos",
+                plan_in_words="fin del listado de movimientos",
+            )
         case PairRun():
             result = _pair(run)
         case RatioRun():
@@ -337,12 +348,46 @@ def _spoken(movement: Movement) -> SpokenMovement:
         description=movement.description,
         amount_minor=movement.amount_minor,
         direction=movement.direction,
+        transaction_id=movement.transaction_id,
+        currency=movement.currency,
         merchant_name=movement.merchant_name,
         category=movement.category,
         transaction_type=movement.transaction_type.value if movement.transaction_type else None,
         counterparty_name=movement.counterparty_name,
         counterparty_type=movement.counterparty_type.value,
         receipt_category=movement.receipt_category.value if movement.receipt_category else None,
+    )
+
+
+def _movement_list(run: MovementListRun) -> AskFinancialQuestionResult:
+    count = len(run.answer.movements)
+    text = answer_writer.recent_movements(count)
+    if run.answer.has_more:
+        text += f' Dime "dame otros {run.plan.page_size}" para ver los siguientes.'
+    direction = {
+        Direction.ALL: "movimientos recientes",
+        Direction.EXPENSE: "gastos recientes",
+        Direction.INCOME: "ingresos recientes",
+    }[run.plan.direction]
+    details = [direction]
+    if run.plan.period is not None:
+        described = FinancialPlan(direction=run.plan.direction, period=run.plan.period)
+        details.append(answer_writer.window_of(described))
+    elif run.plan.date_from is not None and run.plan.date_to is not None:
+        described = FinancialPlan(
+            direction=run.plan.direction,
+            date_range=AbsoluteRange(run.plan.date_from, run.plan.date_to),
+        )
+        details.append(answer_writer.compared_window(described))
+    details.extend(category_words.name_of(category) for category in run.plan.categories)
+    details.extend(f"comercios con {term}" for term in run.plan.merchant_terms)
+    plan_in_words = ", ".join(details)
+    return AskFinancialQuestionResult(
+        outcome=PlanningOutcome.PLANNED.value,
+        text=text,
+        plan=plan_in_words,
+        plan_in_words=plan_in_words,
+        movements=[_spoken(movement) for movement in run.answer.movements],
     )
 
 
@@ -372,6 +417,7 @@ def replied(
     account_names: Mapping[UUID, str],
     *,
     today: date,
+    payments_available: bool = False,
 ) -> AskFinancialQuestionResult:
     """A turn the bank was not asked about: a question back, a courtesy, or a fresh start (no
     reply at all, which only a reset leaves)."""
@@ -382,6 +428,11 @@ def replied(
         )
     if isinstance(reply, Smalltalk):
         outcome, text = _SMALLTALK[reply.kind]
+        if reply.kind == "HELP" and payments_available:
+            text += (
+                " También puedo preparar un Bizum para uno de tus contactos guardados y enseñarte "
+                "la vista previa. No se envía hasta que confirmes."
+            )
         return AskFinancialQuestionResult(outcome=outcome.value, text=text)
     return AskFinancialQuestionResult(outcome=Spoken.GUIDANCE.value, text=_RESET)
 
@@ -427,6 +478,11 @@ def _question(
             return "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo."
         case Missing.CORRECTION:
             return "¿Qué parte de la consulta anterior querías corregir?"
+        case Missing.TASK_LIMIT:
+            return (
+                "Tienes varias consultas pendientes. Retoma, completa o cancela una antes de "
+                "abrir otra."
+            )
 
 
 # Stands in for the window a period question asks for, only so the subject can be named in the

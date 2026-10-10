@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from finguard_orchestrator.application.graph import codec
-from finguard_orchestrator.domain.engine.operations import Ask, PrepareTransfer
+from finguard_orchestrator.domain.engine.operations import Ask, ListMovements, PrepareTransfer
 from finguard_orchestrator.domain.engine.state import (
     ArtifactSource,
     ArtifactStatus,
@@ -13,6 +13,7 @@ from finguard_orchestrator.domain.engine.state import (
     DialogueTurn,
     FinancialArtifact,
     FocusHistoryEntry,
+    MovementListFocus,
     OwnTransferDraftPending,
     PaymentConfirmationPending,
     PaymentDraftPending,
@@ -26,6 +27,10 @@ from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview
 from finguard_orchestrator.domain.models.query_answer import Group
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, FinancialPlan
+from finguard_orchestrator.domain.value_objects.movement_list_plan import (
+    MovementCursor,
+    MovementListPlan,
+)
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 
 
@@ -44,6 +49,20 @@ def test_dialogue_checkpoint_round_trips_typed_state_and_tuple_values() -> None:
 
     assert value == state
     assert isinstance(value.turns, tuple)
+
+
+def test_movement_list_plan_and_keyset_cursor_survive_canonical_checkpoint() -> None:
+    cursor = MovementCursor(datetime(2026, 10, 7, 9, tzinfo=UTC), uuid4())
+    state = DialogueState(
+        uuid4(),
+        focus=MovementListFocus(
+            MovementListPlan(page_size=10, cursor=cursor, categories=("GROCERIES",))
+        ),
+    )
+
+    assert codec.loads_state(codec.dumps_state(state)) == state
+    operation = (ListMovements(page_size=10, continue_current=True),)
+    assert codec.loads(codec.dumps(operation)) == operation
 
 
 def test_dialogue_checkpoint_round_trips_bounded_aggregate_artifact() -> None:
