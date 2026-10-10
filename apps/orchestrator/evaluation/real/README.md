@@ -24,6 +24,7 @@ sesion para no mezclar etiquetas repetidas.
 |---|---|
 | [`conversations.yaml`](conversations.yaml) | Las conversaciones de la persona (6 y 7 de octubre de 2026), tal como las escribió: erratas y botones incluidos, y la de suscripciones de la batería. `expect` dice lo que **debería** pasar, no lo que pasa hoy. |
 | [`../ux/conversations.yaml`](../ux/conversations.yaml) | Con `replay --ux`, las diez conversaciones de la batería se reproducen también contra la pila real (`ux-<nombre>`), con su `route` como expectativa. |
+| [`holdout-sessions.yaml`](holdout-sessions.yaml) | Seis sesiones bancarias reservadas (37 turnos, 2026-10-10) para medir generalización por sesión y por tarea. **No se usan para desarrollar**: ninguna frase suya entra en prompts, ejemplos, tests ni arreglos; la que se use pasa a `conversations.yaml` y se escribe otra nueva. |
 | `<fecha>-<sha>.json` | Una ejecución: el preflight, cada turno (lo dicho, la respuesta, el plan, la cifra, la cifra en SQL, el veredicto) y los hallazgos. Es el registro. |
 | `<fecha>-<sha>.md` | El informe que se lee, generado a partir del `.json` con `summarise`. No se edita a mano. |
 
@@ -73,6 +74,7 @@ Desde `apps/orchestrator`, con la pila levantada y los datos cargados hasta ayer
 uv run python scripts/real_conversation.py preflight
 uv run python scripts/real_conversation.py replay --ux evaluation/ux/conversations.yaml --out evaluation/real/<fecha>-<sha>
 uv run python scripts/real_conversation.py replay --file evaluation/real/conversations.yaml --only sesion-bancaria-completa-paginacion-comparacion-bizum --out evaluation/real/<fecha>-<sha>-sesion
+uv run python scripts/real_conversation.py replay --file evaluation/real/holdout-sessions.yaml --out evaluation/real/<fecha>-<sha>-holdout
 uv run python scripts/real_conversation.py say --state <tmp>/impro-<nombre>.json --goal "<objetivo>" "<frase>"
 uv run python scripts/real_conversation.py observe --state <tmp>/web-<nombre>.json --said "<frase>" --response <tmp>/captures/<respuesta>.json
 uv run python scripts/real_conversation.py summarise evaluation/real/<fecha>-<sha>.json <tmp>/*.json --previous evaluation/real/<anterior>.json

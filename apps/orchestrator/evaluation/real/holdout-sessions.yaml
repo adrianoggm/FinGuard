@@ -1,0 +1,294 @@
+# Held-out banking sessions for generalisation, written 2026-10-10 for the holder of the demo seed
+# (Laura: Cuenta corriente, Hucha, Fondo indexado; contacts Marta Ruiz Gomez and Marta Solis Vega).
+#
+# HELD OUT: never copy these sentences, or close paraphrases of them, into a prompt, a few-shot
+# example, a test fixture or a fix. Once one has been used to develop against, it is no longer
+# evidence of generalisation: move it to conversations.yaml and write a fresh session here.
+#
+# Each session is scored as a unit and by `task`: a broken turn that strands a later task fails the
+# session even when the other answers are right. `want` is for the judge; relative periods resolve
+# against the day of the run. No session executes a payment, so the ledger is the same afterwards.
+conversations:
+  - name: holdout-saldos-movimientos-nomina
+    goal: >-
+      Ver el dinero que tiene, repasar los últimos movimientos de la Hucha y luego comprobar la
+      nómina sin que se cuele el filtro de la Hucha.
+    turns:
+      - say: "hola, ¿cuánto dinero tengo en total?"
+        expect:
+          task: saldos
+          mechanism: intent
+          route: BALANCE
+          want: Saldo por cuenta y total, solo con cifras de la banca.
+      - say: "¿y solo en la hucha?"
+        expect:
+          task: saldos
+          mechanism: follow_up
+          route: BALANCE
+          want: El saldo de la Hucha; no vuelve a dar el resto de cuentas como respuesta principal.
+      - say: "a ver los 5 movimientos más nuevos de la hucha"
+        expect:
+          task: movimientos-hucha
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Una lista de hasta cinco movimientos de la Hucha, los más recientes primero, con fecha,
+            concepto e importe; no pide periodo.
+      - say: "¿cuál de esos fue el más grande?"
+        expect:
+          task: movimientos-hucha
+          mechanism: reference
+          route: QUERY
+          want: >-
+            Señala el movimiento de mayor importe entre los cinco listados; no amplía a otras
+            cuentas ni a otro periodo.
+      - say: "cambiando de tema, ¿cuándo me pagaron la nómina este mes?"
+        expect:
+          task: nomina
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Fecha e importe del ingreso de nómina de este mes; no se limita a la Hucha ni a cinco
+            filas.
+      - say: "¿y el mes anterior cuánto fue?"
+        expect:
+          task: nomina
+          mechanism: follow_up
+          route: QUERY
+          want: El importe de la nómina del mes anterior; conserva que se habla de la nómina.
+      - say: "gracias, eso es todo"
+        expect:
+          task: cierre
+          mechanism: intent
+          route: COURTESY
+          want: Una despedida breve; no repite cifras ni lanza consultas.
+
+  - name: holdout-gasolina-aclaracion-con-dato-repetido
+    goal: >-
+      Consultar la gasolina, responder la aclaración añadiendo un dato de más, comparar con el año
+      anterior, pedir un gráfico y cambiar a una pregunta nueva sobre un comercio.
+    turns:
+      - say: "quiero saber lo que me he gastado en gasolina"
+        expect:
+          task: gasolina
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Si pregunta algo, pregunta solo por el periodo; no pregunta por la categoría. Si asume un
+            periodo, lo dice.
+      - say: "el mes pasado, solo de la corriente"
+        expect:
+          task: gasolina
+          mechanism: pending_resolution
+          route: QUERY
+          want: >-
+            Gasto en gasolina del mes pasado en Cuenta corriente. Usa los dos datos sin volver a
+            preguntar nada.
+      - say: "¿en qué gasolinera gasté más?"
+        expect:
+          task: gasolina
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Ranking por comercio dentro de gasolina, mes pasado y Cuenta corriente, con la primera
+            gasolinera destacada.
+      - say: "¿y en ese mismo mes del año pasado?"
+        expect:
+          task: gasolina
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Mismo ranking de gasolina en Cuenta corriente para ese mes un año antes; no pierde
+            ninguno de los filtros.
+      - say: "¿me lo pintas con barras?"
+        expect:
+          task: gasolina
+          mechanism: reference
+          route: VISUAL
+          want: Gráfico de barras del último ranking con sus cifras verificadas; no consulta otro periodo.
+      - say: "olvida el gráfico, ¿cuántas veces he ido a Repsol este año?"
+        expect:
+          task: repsol
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Número de movimientos en Repsol en lo que va de año; no hereda el periodo del año
+            pasado y deja claro qué cuentas incluye.
+
+  - name: holdout-bizum-ambiguo-suspendido-y-cancelado
+    goal: >-
+      Empezar un Bizum a una Marta sin decir cuál, interrumpirlo con una consulta de saldo,
+      retomarlo, cambiar el importe y cancelarlo; después consultar lo enviado sin crear un pago.
+    turns:
+      - say: "mándale 30 euros a Marta por bizum"
+        expect:
+          task: bizum-marta
+          mechanism: intent
+          route: PAYMENT
+          want: >-
+            Pregunta a qué Marta (Ruiz Gomez o Solis Vega); no muestra todavía una previsualización
+            ni envía dinero.
+      - say: "espera, antes dime cuánto me queda en la corriente"
+        expect:
+          task: saldo-corriente
+          mechanism: interruption
+          route: BALANCE
+          want: >-
+            El saldo de Cuenta corriente. El Bizum queda en suspenso, no cancelado ni enviado.
+      - say: "vale, la de Solis"
+        expect:
+          task: bizum-marta
+          mechanism: pending_resolution
+          route: PAYMENT
+          want: >-
+            Retoma el Bizum con los 30 € y muestra la previsualización a Marta Solis Vega; no vuelve
+            a pedir el importe y no envía nada.
+      - say: "que sean 25 en vez de 30"
+        expect:
+          task: bizum-marta
+          mechanism: slot_carryover
+          route: PAYMENT
+          want: Nueva previsualización de 25 € a la misma Marta; no envía nada.
+      - say: "no, al final no lo mandes"
+        expect:
+          task: bizum-marta
+          mechanism: reset
+          want: Cancela el Bizum y lo dice; nunca llama a la confirmación bancaria.
+      - say: "¿cuánto le he enviado a Marta este año?"
+        expect:
+          task: enviado-marta
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Total enviado por Bizum a Marta en lo que va de año, a partir de los movimientos; no
+            abre un borrador de pago.
+
+  - name: holdout-compras-tarjeta-paginadas
+    goal: >-
+      Revisar las compras recientes con tarjeta, filtrarlas, pasar página, pasar a un total y
+      compararlo con el año anterior.
+    turns:
+      - say: "qué compras he hecho con la tarjeta últimamente"
+        expect:
+          task: compras-tarjeta
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Lista de las compras con tarjeta más recientes, ordenadas por fecha; no pide periodo ni
+            da solo un total.
+      - say: "solo las del super"
+        expect:
+          task: compras-tarjeta
+          mechanism: slot_carryover
+          route: QUERY
+          want: La misma lista limitada a supermercados; sigue siendo una lista, no un total.
+      - say: "más"
+        expect:
+          task: compras-tarjeta
+          mechanism: follow_up
+          route: QUERY
+          want: La página siguiente de compras de supermercado, sin repetir filas de la anterior.
+      - say: "¿cuánto suman las del super de este mes?"
+        expect:
+          task: total-super
+          mechanism: follow_up
+          route: QUERY
+          want: Total gastado en supermercados en el mes en curso; pasa de lista a total.
+      - say: "compáralo con el mismo mes del año pasado"
+        expect:
+          task: total-super
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Compara supermercados entre este mes y el mismo mes del año anterior, con los dos
+            periodos explícitos; avisa si el mes actual aún no ha terminado.
+      - say: "¿y sin contar Mercadona?"
+        expect:
+          task: total-super
+          mechanism: slot_carryover
+          route: QUERY
+          want: >-
+            Si puede excluir un comercio, repite la comparación sin Mercadona; si no puede, lo dice
+            y ofrece una alternativa. Nunca inventa una cifra.
+
+  - name: holdout-correcciones-e-interrupcion
+    goal: >-
+      Corregir dos veces una consulta, acotarla a un comercio, interrumpirla con otra gestión y
+      volver a ella.
+    turns:
+      - say: "cuanto me gaste en ocio en agosto"
+        expect:
+          task: consulta-corregida
+          mechanism: intent
+          route: QUERY
+          want: Gasto en ocio en agosto, con el periodo explícito.
+      - say: "no, en julio"
+        expect:
+          task: consulta-corregida
+          mechanism: slot_carryover
+          route: QUERY
+          want: Gasto en ocio en julio; conserva la categoría.
+      - say: "no me referia a eso, lo de restaurantes"
+        expect:
+          task: consulta-corregida
+          mechanism: slot_carryover
+          route: QUERY
+          want: Gasto en restaurantes en julio; cambia la categoría y conserva el mes.
+      - say: "¿y en el Goiko solo?"
+        expect:
+          task: consulta-corregida
+          mechanism: slot_carryover
+          route: QUERY
+          want: Gasto en Goiko en julio.
+      - say: "por cierto, ¿qué tarjetas tengo?"
+        expect:
+          task: tarjetas
+          mechanism: interruption
+          want: Las tarjetas del titular con su estado; no mezcla la consulta de Goiko.
+      - say: "volviendo a lo del Goiko, ¿y en todo el año?"
+        expect:
+          task: consulta-corregida
+          mechanism: follow_up
+          route: QUERY
+          want: Gasto en Goiko en lo que va de año; recupera el comercio tras la interrupción.
+
+  - name: holdout-capacidades-y-traspaso-desistido
+    goal: >-
+      Preguntar qué puede hacer el asistente, preparar un traspaso a la Hucha, cambiar el importe y
+      desistir, y acabar con una consulta normal.
+    turns:
+      - say: "¿qué cosas puedes hacer por mí?"
+        expect:
+          task: capacidades
+          mechanism: intent
+          want: Explica sus capacidades en pocas frases; no consulta ni prepara nada.
+      - say: "¿puedes hacer una transferencia a otro banco?"
+        expect:
+          task: capacidades
+          mechanism: follow_up
+          want: Dice con honestidad si puede o no y qué alternativa tiene; no crea un borrador.
+      - say: "pásame 100 euros de la corriente a la hucha"
+        expect:
+          task: traspaso
+          mechanism: intent
+          route: PAYMENT
+          want: Previsualización del traspaso de 100 € de Cuenta corriente a Hucha; no lo ejecuta.
+      - say: "mejor 50"
+        expect:
+          task: traspaso
+          mechanism: slot_carryover
+          route: PAYMENT
+          want: Nueva previsualización de 50 € entre las mismas cuentas; no lo ejecuta.
+      - say: "déjalo, no hagas nada"
+        expect:
+          task: traspaso
+          mechanism: reset
+          want: Cancela el traspaso y lo dice; nunca llama a la confirmación bancaria.
+      - say: "¿cuánto llevo gastado en suscripciones este año?"
+        expect:
+          task: suscripciones
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Total de suscripciones en lo que va de año; no arrastra cuentas ni importes del
+            traspaso cancelado.
