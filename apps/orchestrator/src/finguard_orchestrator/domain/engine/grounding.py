@@ -1,17 +1,8 @@
-"""Names as the model wrote them, matched against the holder's own catalogues.
+"""Ground fields backed by canonical catalogues; leave historical counterparties as free text.
 
-Pure lookups: a name is compared with a list of names, and the sentence never reaches this module.
-A name matches when, with case, accents and underscores folded away, it is an entry exactly, or
-its words are a run of whole words of exactly one entry («corriente» is «Cuenta corriente»,
-«Solis» is «Marta Solis Vega», but «Juan» is not «Juana Pérez»).
-
-A name that matches nothing, or more than one entry, comes back as `Unknown` rather than dropped
-or guessed. A filter silently lost answers a wider question than the one asked, with a real
-figure; a guessed one answers about somebody else. When it matches several, `Unknown` carries them,
-so the question back can offer the holder's own entries rather than claim there is none.
-
-Shops are not grounded: their names are ledger data with no catalogue here, so they travel as
-written and banking matches them.
+Categories and accounts are closed catalogues. People in a financial query are ledger
+counterparties, not saved payees, so banking matches them against movement data. Payment
+preparation resolves recipients against the holder's saved contacts separately.
 """
 
 from collections.abc import Collection
@@ -51,7 +42,6 @@ def ground(fields: PlanFields, grounds: Grounds) -> PlanFields | Unknown:
     """`fields` with every catalogue name replaced by the entry it names, or the first that names
     none. Fields with no catalogue are returned untouched."""
     accounts = [holding.display_name for holding in grounds.accounts]
-    people = [contact.display_name for contact in grounds.contacts]
     # Sorted, so the candidates of an ambiguous name come back in the same order on every run.
     categories = sorted(grounds.categories)
     try:
@@ -59,7 +49,9 @@ def ground(fields: PlanFields, grounds: Grounds) -> PlanFields | Unknown:
             fields,
             categories=_entries(fields.categories, categories, Missing.SUBJECT),
             excluded_categories=_entries(fields.excluded_categories, categories, Missing.SUBJECT),
-            people=_entries(fields.people, people, Missing.PERSON),
+            # People are ledger counterparties, not saved payees. The banking query matches their
+            # free-text names against movements; only payment preparation resolves contacts.
+            people=fields.people,
             accounts=_entries(fields.accounts, accounts, Missing.ACCOUNT),
         )
     except _UnknownNameError as not_found:

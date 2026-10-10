@@ -107,14 +107,14 @@ def state_with(focus: Focus, **rest: object) -> DialogueState:
 # --- Ask -------------------------------------------------------------------------------------
 
 
-def test_ask_builds_a_plan_from_grounded_fields_and_it_becomes_the_focus() -> None:
+def test_ask_keeps_the_counterparty_as_ledger_text_and_becomes_the_focus() -> None:
     said = PlanFields(
         direction=Direction.EXPENSE, window=JULY, categories=("restaurants",), people=("marta",)
     )
 
     t = apply(EMPTY, [Ask(said)], today=TODAY, grounds=G)
 
-    expected = plan(JULY, ["RESTAURANTS"], counterparties=("Marta Ruiz",))
+    expected = plan(JULY, ["RESTAURANTS"], counterparties=("marta",))
     assert t.work == Work("QUERY", expected)
     assert t.state.focus == QueryFocus(expected)
     assert t.reply is None
@@ -1290,29 +1290,30 @@ def test_a_question_from_the_model_keeps_only_what_it_asks_for() -> None:
     assert t == Transition(EMPTY, None, Clarify(Missing.SUBJECT))
 
 
-# --- Names that are not grounded (Review Focus 4) --------------------------------------------
+# --- Historical counterparties versus saved payment contacts -------------------------------
 
 
-def test_unknown_person_is_clarify_naming_it() -> None:
+def test_an_unknown_counterparty_is_queried_against_ledger_data_not_contacts() -> None:
     t = apply(
-        DialogueState(UUID(int=1)),
-        [Ask(PlanFields(people=("Pepe",), window=JULY))],
+        EMPTY,
+        [Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, people=("Pepe",)))],
         today=TODAY,
         grounds=G,
     )
-    assert isinstance(t.reply, Clarify) and t.reply.missing is Missing.PERSON
-    assert t.reply.about == "Pepe"
+
+    assert t.work == Work("QUERY", plan(JULY, [], counterparties=("Pepe",)))
+    assert t.state.pending is None
 
 
 @pytest.mark.parametrize(
     "op",
     [
-        Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, people=("marta",))),
-        Patch("focus", PlanFields(people=("marta",))),
+        Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, people=("Marta",))),
+        Patch("focus", PlanFields(people=("Marta",))),
     ],
     ids=["ask", "patch"],
 )
-def test_an_ambiguous_name_asks_which_of_its_candidates(op: Operation) -> None:
+def test_an_ambiguous_contact_name_is_still_a_counterparty_filter(op: Operation) -> None:
     two_martas = replace(
         G,
         contacts=(
@@ -1320,33 +1321,17 @@ def test_an_ambiguous_name_asks_which_of_its_candidates(op: Operation) -> None:
             Contact(UUID(int=8), "Marta Solis", "601"),
         ),
     )
-    s = state_with(QueryFocus(plan(JULY, ["RESTAURANTS"])))
+    state = state_with(QueryFocus(plan(JULY, ["RESTAURANTS"])))
 
-    t = apply(s, [op], today=TODAY, grounds=two_martas)
+    t = apply(state, [op], today=TODAY, grounds=two_martas)
 
-    assert t.work is None
-    assert t.reply == Clarify(Missing.PERSON, "marta", ("Marta Ruiz", "Marta Solis"))
-
-
-def test_an_unknown_name_in_a_patch_asks_and_never_drops_the_filter() -> None:
-    s = state_with(QueryFocus(plan(JULY, ["RESTAURANTS"])))
-
-    t = apply(s, [Patch("focus", PlanFields(people=("Pepe",)))], today=TODAY, grounds=G)
-
-    assert t == Transition(s, None, Clarify(Missing.PERSON, "Pepe"))
-
-
-def test_the_correction_of_an_unknown_person_completes_the_question() -> None:
-    said = PlanFields(direction=Direction.EXPENSE, window=JULY, people=("Pepe",))
-    first = apply(EMPTY, [Ask(said)], today=TODAY, grounds=G)
-
-    second = apply(
-        first.state, [Patch("pending", PlanFields(people=("marta",)))], today=TODAY, grounds=G
+    expected = (
+        plan(JULY, [], counterparties=("Marta",))
+        if isinstance(op, Ask)
+        else plan(JULY, ["RESTAURANTS"], counterparties=("Marta",))
     )
-
-    assert first.state.pending == Pending(Missing.PERSON, said)
-    assert second.work == Work("QUERY", plan(JULY, [], counterparties=("Marta Ruiz",)))
-    assert second.state.pending is None
+    assert t.work == Work("QUERY", expected)
+    assert t.state.pending is None
 
 
 # --- The state itself ------------------------------------------------------------------------

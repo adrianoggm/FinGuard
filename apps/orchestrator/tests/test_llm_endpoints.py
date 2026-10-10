@@ -159,6 +159,13 @@ def test_ready_reports_on_what_the_financial_endpoint_needs() -> None:
         "planner",
         "banking",
     }
+    settings = app.state.settings
+    assert body["financial_path"] == {
+        "engine": settings.conversation_engine,
+        "graph": settings.conversation_graph,
+        "provider": settings.planner_provider,
+        "model": settings.engine_model or settings.planner_model,
+    }
 
 
 def test_ready_is_false_while_financial_questions_are_disabled() -> None:

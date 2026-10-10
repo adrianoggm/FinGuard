@@ -534,14 +534,15 @@ async def test_a_clarification_keeps_the_typed_query_for_its_follow_up() -> None
     assert rig.ledger.plans[0].metric is Metric.COUNT
 
 
-async def test_an_unknown_person_is_asked_about_by_name() -> None:
+async def test_an_unknown_counterparty_is_queried_even_without_a_saved_contact() -> None:
     rig = a_rig((Ask(spending(window=JULY, people=("Pepe",))),))
 
-    turn = await rig.say("¿cuánto le pasé a Pepe en julio?")
+    turn = await rig.say("\u00bfcu\u00e1nto le pas\u00e9 a Pepe en julio?")
 
     assert turn.result is not None
-    assert turn.result.text == "No encuentro a Pepe entre tus contactos."
-    assert rig.ledger.plans == []
+    assert turn.result.outcome == PlanningOutcome.PLANNED.value
+    assert rig.ledger.plans == [ran(JULY, counterparties=("Pepe",))]
+    assert "contactos" not in turn.result.text
 
 
 async def test_a_question_from_the_model_never_quotes_its_own_words() -> None:
@@ -558,16 +559,15 @@ async def test_a_question_from_the_model_never_quotes_its_own_words() -> None:
     assert "999,99" not in turn.state.turns[-1].answered
 
 
-async def test_an_ambiguous_person_is_asked_about_by_the_candidates() -> None:
-    # The episodes' contacts hold two Martas: «No encuentro a Marta» would be false (M-1).
+async def test_an_ambiguous_saved_contact_name_is_still_a_ledger_filter() -> None:
     rig = a_rig((Ask(spending(window=JULY, people=("Marta",))),))
 
-    turn = await rig.say("¿cuánto le pasé a Marta en julio?")
+    turn = await rig.say("\u00bfcu\u00e1nto le pas\u00e9 a Marta en julio?")
 
     assert turn.result is not None
-    assert turn.result.text == "¿A cuál te refieres: Marta Solis Vega o Marta Ruiz Gomez?"
-    assert turn.state.pending is not None and turn.state.pending.missing is Missing.PERSON
-    assert rig.ledger.plans == []
+    assert turn.result.outcome == PlanningOutcome.PLANNED.value
+    assert rig.ledger.plans == [ran(JULY, counterparties=("Marta",))]
+    assert "\u00bfA cu\u00e1l te refieres" not in turn.result.text
 
 
 # --- turns that ask the ledger nothing ----------------------------------------------------------

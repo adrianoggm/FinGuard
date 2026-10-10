@@ -310,6 +310,74 @@ async def test_one_repair_then_success() -> None:
     assert "operations.0" in repair[len(first) :]
 
 
+async def test_a_past_payment_question_gets_one_consistency_repair_before_payment() -> None:
+    provider = Provider(
+        answer({"prepare_bizum": {"recipient": "mi hermana", "amount_minor": None}}),
+        answer(
+            {
+                "ask": items(
+                    direction="EXPENSE",
+                    window={"counted": {"period": "LAST_N_MONTHS", "n": 3}},
+                    people=["mi hermana"],
+                )
+            }
+        ),
+    )
+
+    operations = await interpreter(provider).interpret(
+        "Cuanto le envie a mi hermana en los ultimos 3 meses?", EMPTY, today=TODAY
+    )
+
+    assert operations == (
+        Ask(
+            PlanFields(
+                direction=Direction.EXPENSE,
+                window=RelativePeriod(Period.LAST_N_MONTHS, n=3),
+                people=("mi hermana",),
+            )
+        ),
+    )
+    assert len(provider.prompts) == 2
+    assert "asks about a past transaction" in provider.prompts[1]
+
+
+async def test_a_past_payment_question_is_clarified_if_the_model_repeats_the_misread() -> None:
+    payment = answer({"prepare_bizum": {"recipient": "mi hermana", "amount_minor": None}})
+    provider = Provider(payment, payment)
+
+    operations = await interpreter(provider).interpret(
+        "Cuanto le envie a mi hermana este mes?", EMPTY, today=TODAY
+    )
+
+    assert operations == (Clarify(Missing.SUBJECT),)
+    assert len(provider.prompts) == 2
+
+
+async def test_a_past_payment_question_cannot_delegate_into_the_payment_flow() -> None:
+    provider = Provider(
+        answer({"delegate": "PAYMENT"}),
+        answer({"ask": items(direction="EXPENSE", people=["mi hermana"])}),
+    )
+
+    operations = await interpreter(provider).interpret(
+        "Cuanto le envie a mi hermana este mes?", EMPTY, today=TODAY
+    )
+
+    assert operations == (Ask(PlanFields(direction=Direction.EXPENSE, people=("mi hermana",))),)
+    assert "asks about a past transaction" in provider.prompts[1]
+
+
+async def test_an_explicit_new_payment_in_a_mixed_past_and_future_sentence_is_not_retried() -> None:
+    provider = Provider(answer({"prepare_bizum": {"recipient": "Marta", "amount_minor": 1200}}))
+
+    operations = await interpreter(provider).interpret(
+        "Ya envié a Aitor; ahora quiero enviar 12 euros a Marta", EMPTY, today=TODAY
+    )
+
+    assert operations == (PrepareBizum("Marta", 1200),)
+    assert len(provider.prompts) == 1
+
+
 UNEXPRESSIBLE = [
     answer({"forecast": {"months": 3}}),
     answer({"ask": items(window={"named": "NEXT_MONTH"})}),
@@ -938,12 +1006,13 @@ def test_prompt_changes_an_active_average_to_a_total_without_losing_its_window()
     assert "never carry AVERAGE/COUNT into it" in prompt
 
 
-def test_prompt_teaches_bizum_by_counterparty_when_the_window_is_explicit() -> None:
+def test_prompt_treats_a_past_person_to_person_payment_as_a_query() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
 
-    assert '"categories":["TRANSFER_BIZUM"]' in prompt
-    assert '"group_by":"COUNTERPARTY"' in prompt
-    assert '"n":5' in prompt
+    assert "Cuanto le envie a mi hermana" in prompt
+    assert '"people":["mi hermana"]' in prompt
+    assert '"metric":"SUM"' in prompt
+    assert '"n":3' in prompt
 
 
 def test_prompt_treats_same_month_last_year_as_a_shift_not_a_comparison() -> None:
@@ -1132,9 +1201,25 @@ def test_pending_is_only_for_a_question_the_state_shows_open() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
     rules = prompt[prompt.index("## Rules") :]
 
-    assert "Use pending only for an open question; otherwise corrections patch focus." in " ".join(
-        rules.split()
+    normalized = " ".join(rules.split())
+    assert "Use pending only for an open question; otherwise patch focus." in normalized
+    assert "If a question is open, patch its missing field on pending" in normalized
+
+
+def test_pending_window_shows_a_period_only_patch_example() -> None:
+    state = DialogueState(
+        UUID(int=42),
+        pending=Pending(
+            Missing.WINDOW,
+            PlanFields(direction=Direction.EXPENSE, categories=("HOUSING_RENT",)),
+        ),
     )
+
+    prompt = build_prompt("el mes pasado", state, today=TODAY, categories=CATEGORIES)
+
+    assert "open question asks for WINDOW" in prompt
+    assert '"patch":{"target":"pending"' in prompt
+    assert '"named":"LAST_MONTH"' in prompt
 
 
 def test_a_window_not_begun_is_unsupported() -> None:

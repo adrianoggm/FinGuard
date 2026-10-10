@@ -123,12 +123,16 @@ for a period.
 investigate_comparison; it keeps the exact windows and filters. Do not ask which periods when state
 shows them.
 For a rolling N-month query and its prior N months, use compare_previous=N. Named comparisons keep
-filters/order. Follow-ups change the current focus; period-only turns change its window. Use
-pending only for an open question; otherwise corrections patch focus. "Return to the previous query"
+filters/order. Follow-ups change the current focus; period-only turns change its window. If a
+question is open, patch its missing field on pending; keep the draft, never restart it. Use pending
+only for an open question; otherwise patch focus. "Return to the previous query"
 restores history item 1. "All categories/movements" clears top-N. Explicit account names populate
 accounts; [] means all. Named-payee transfers use prepare_transfer, including missing amounts or a
 user-written IBAN; Bizum uses prepare_bizum. Never invent amounts. Delegate other transfers and
 bookings.
+Past activity is a query, never a payment: "envié", "hice", "mandé" and "pagué" use ask/patch;
+prepare_bizum/prepare_transfer require an explicit request to send money. Nómina/sueldo/salario
+filters mean SALARY and INCOME, including in a follow-up.
 Visuals: restyle a shown chart; else create one.
 Operations JSON only.
 """)
@@ -556,14 +560,14 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
     )
     bizum_by_person = (
         "no active query",
-        "A que personas les he hecho bizum en los ultimos 5 meses?",
+        "Cuanto le envie a mi hermana en los ultimos 3 meses?",
         _answer(
             {
                 "ask": _items(
                     direction="EXPENSE",
-                    window={"counted": {"period": "LAST_N_MONTHS", "n": 5}},
-                    categories=["TRANSFER_BIZUM"],
-                    group_by="COUNTERPARTY",
+                    window={"counted": {"period": "LAST_N_MONTHS", "n": 3}},
+                    people=["mi hermana"],
+                    metric="SUM",
                 )
             }
         ),
@@ -609,6 +613,22 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
         selected.append(average_to_total)
     else:
         selected.append(unsupported_salary_share)
+    pending_window_example = (
+        "open question asks for WINDOW; already understood subject and filters stay unchanged",
+        "El mes pasado",
+        _answer(
+            {
+                "patch": {
+                    "target": "pending",
+                    "changes": _items(window={"named": "LAST_MONTH"}),
+                }
+            }
+        ),
+    )
+    if state.pending is not None and state.pending.missing.value == "WINDOW":
+        # Show the exact operation for the common period clarification. Without this, the prompt
+        # shows pending state but gives the model only unrelated examples of pending patches.
+        selected.insert(0, pending_window_example)
     if state.focus is None and state.pending is None:
         selected.insert(
             0,
@@ -652,6 +672,30 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
     if state.focus is None and state.pending is None:
         selected.append(movement_count)
     elif not isinstance(state.focus, ComparisonFocus):
+        selected.append(movement_count)
+    if state.pending is not None and state.pending.missing.value == "WINDOW":
+        # Keep the pending example and the current focus's operation examples. A saved thread can
+        # contain both; examples for the visible focus still matter while the open question waits.
+        if isinstance(state.focus, ComparisonFocus):
+            selected = [
+                pending_window_example,
+                _why_comparison_example(),
+                all_examples[10],
+                all_examples[11],
+                all_examples[16],
+                all_examples[17],
+            ]
+        elif isinstance(state.focus, QueryFocus):
+            selected = [
+                all_examples[0],
+                pending_window_example,
+                category_breakdown,
+                category_month_follow_up,
+                all_examples[16],
+                all_examples[17],
+            ]
+        else:
+            selected = [all_examples[0], pending_window_example, all_examples[16], all_examples[17]]
         selected.append(movement_count)
     return tuple(selected)
 

@@ -36,12 +36,10 @@ GROUNDS = Grounds(
 )
 
 
-def test_exact_names_match_whatever_their_case_and_accents() -> None:
-    said = PlanFields(categories=("restaurants",), people=("javi núñez",), accounts=("HUCHA",))
+def test_exact_names_match_for_catalogue_backed_fields() -> None:
+    said = PlanFields(categories=("restaurants",), accounts=("HUCHA",))
 
-    assert ground(said, GROUNDS) == PlanFields(
-        categories=("RESTAURANTS",), people=("Javi Nuñez",), accounts=("Hucha",)
-    )
+    assert ground(said, GROUNDS) == PlanFields(categories=("RESTAURANTS",), accounts=("Hucha",))
 
 
 def test_a_category_key_matches_with_spaces_for_its_underscores() -> None:
@@ -60,8 +58,9 @@ def test_a_category_key_matches_with_spaces_for_its_underscores() -> None:
         ("solis vega", "Marta Solis Vega"),
     ],
 )
-def test_whole_words_of_exactly_one_contact_match_it(said: str, found: str) -> None:
-    assert ground(PlanFields(people=(said,)), GROUNDS) == PlanFields(people=(found,))
+def test_counterparty_names_are_not_normalized_to_saved_contacts(said: str, found: str) -> None:
+    # Counterparty matching belongs to the ledger, whose transaction names are not the payee book.
+    assert ground(PlanFields(people=(said,)), GROUNDS) == PlanFields(people=(said,))
 
 
 @pytest.mark.parametrize(
@@ -71,15 +70,12 @@ def test_a_whole_word_of_exactly_one_account_matches_it(said: str, found: str) -
     assert ground(PlanFields(accounts=(said,)), GROUNDS) == PlanFields(accounts=(found,))
 
 
-def test_an_exact_name_wins_over_the_longer_names_that_contain_it() -> None:
-    assert ground(PlanFields(people=("aitor",)), GROUNDS) == PlanFields(people=("Aitor",))
+def test_a_saved_contact_name_remains_a_ledger_filter() -> None:
+    assert ground(PlanFields(people=("aitor",)), GROUNDS) == PlanFields(people=("aitor",))
 
 
-def test_a_name_that_two_contacts_contain_is_unknown_never_a_guess() -> None:
-    # Unknown, with both it could be, so the question back can offer them (M-1).
-    assert ground(PlanFields(people=("Marta",)), GROUNDS) == Unknown(
-        Missing.PERSON, "Marta", ("Marta Ruiz", "Marta Solis Vega")
-    )
+def test_an_ambiguous_contact_name_remains_a_ledger_filter() -> None:
+    assert ground(PlanFields(people=("Marta",)), GROUNDS) == PlanFields(people=("Marta",))
 
 
 # A catalogue where the start of a word is somebody else's whole name: «Juan» is not Juana.
@@ -109,8 +105,9 @@ LOOKALIKES = Grounds(
     ],
     ids=["juan-juana", "luis-luisa", "ana-anabel", "mar-marta", "c-carmen", "c-cuenta", "sal"],
 )
-def test_the_start_of_a_word_is_not_the_word(said: PlanFields, unknown: Unknown) -> None:
-    assert ground(said, LOOKALIKES) == unknown
+def test_the_start_of_a_catalogue_word_is_not_the_word(said: PlanFields, unknown: Unknown) -> None:
+    result = ground(said, LOOKALIKES)
+    assert result == said if said.people is not None else result == unknown
 
 
 @pytest.mark.parametrize(
@@ -122,27 +119,27 @@ def test_the_start_of_a_word_is_not_the_word(said: PlanFields, unknown: Unknown)
         (PlanFields(excluded_categories=("TRAVEL",)), Unknown(Missing.SUBJECT, "TRAVEL")),
     ],
 )
-def test_a_name_that_matches_nothing_is_unknown_as_written(
-    said: PlanFields, unknown: Unknown
-) -> None:
-    assert ground(said, GROUNDS) == unknown
+def test_unknown_catalogue_fields_are_still_rejected(said: PlanFields, unknown: Unknown) -> None:
+    result = ground(said, GROUNDS)
+    assert result == said if said.people is not None else result == unknown
 
 
 @pytest.mark.parametrize(
     "said", [PlanFields(people=("rta",)), PlanFields(accounts=("ente",))], ids=["person", "account"]
 )
-def test_a_fragment_inside_a_word_matches_nothing(said: PlanFields) -> None:
-    assert isinstance(ground(said, GROUNDS), Unknown)
+def test_counterparty_fragments_are_passed_to_the_ledger(said: PlanFields) -> None:
+    result = ground(said, GROUNDS)
+    assert result == said if said.people is not None else isinstance(result, Unknown)
 
 
 def test_a_blank_name_is_unknown_rather_than_the_prefix_of_everything() -> None:
     assert ground(PlanFields(accounts=("  ",)), GROUNDS) == Unknown(Missing.ACCOUNT, "  ")
 
 
-def test_one_unknown_name_among_known_ones_is_still_unknown() -> None:
+def test_known_and_unknown_counterparties_are_passed_to_the_ledger() -> None:
     said = PlanFields(people=("Marta Ruiz", "Pepe"))
 
-    assert ground(said, GROUNDS) == Unknown(Missing.PERSON, "Pepe")
+    assert ground(said, GROUNDS) == said
 
 
 def test_the_same_name_twice_is_one_filter() -> None:

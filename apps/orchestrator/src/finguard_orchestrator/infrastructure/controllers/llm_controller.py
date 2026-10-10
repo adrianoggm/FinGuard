@@ -768,11 +768,9 @@ async def version(request: Request) -> dict[str, str]:
 async def ready(request: Request, queries: Queries) -> JSONResponse:
     """Ready to answer *financial questions*, which is what this service is for.
 
-    It used to check only that the catalogue's active provider was registered. The
-    catalogue chooses who answers /v1/messages; the planner is wired to Ollama and every
-    figure comes from banking. With Ollama pointed at a dead port the answer was
-    200 ok provider echo while every financial question would have failed — a readiness
-    check that reports on a dependency the important endpoint does not use.
+    The catalogue chooses who answers /v1/messages; financial questions use the configured
+    planner provider and, when enabled, the model conversation engine. Report both paths so a
+    healthy Echo catalogue cannot be mistaken for the provider answering graph turns.
     """
     catalogue = await queries.ask(GetLlmCatalogueQuery())
     provider = catalogue.active.model.provider
@@ -785,7 +783,16 @@ async def ready(request: Request, queries: Queries) -> JSONResponse:
     }
     body: dict[str, object] = {
         "status": "ok" if all(checks.values()) else "unavailable",
+        # `provider` is the /v1/messages catalogue provider. This describes the separate path
+        # used by /v1/questions, so graph traffic is not misdiagnosed from the catalogue.
         "provider": provider,
+        "financial_path": {
+            "engine": request.app.state.settings.conversation_engine,
+            "graph": request.app.state.settings.conversation_graph,
+            "provider": request.app.state.settings.planner_provider,
+            "model": request.app.state.settings.engine_model
+            or request.app.state.settings.planner_model,
+        },
         # Reported, deliberately not a check. Payments are off by default, so gating readiness on
         # this would report 503 on a deployment that only answers questions — and a probe that is
         # red on a correctly configured service is a probe somebody switches off. It appears at all
