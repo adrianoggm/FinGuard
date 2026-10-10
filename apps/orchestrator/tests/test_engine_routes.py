@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import ValidationError
 from support.episodes import (
@@ -417,6 +418,37 @@ def test_authoritative_graph_never_falls_back_for_legacy_payment_workflow(route:
     assert refused.conversation["intent_id"] == preview.conversation["intent_id"]
     assert stack.bank.confirmed == []
     assert refused.engine == ("model", "0")
+
+
+def test_authoritative_graph_fails_closed_if_dispatch_returns_no_answer() -> None:
+    """A future graph delegation regression must not enter the legacy language route."""
+
+    class Graph:
+        authoritative = True
+
+    with pytest.raises(HTTPException) as raised:
+        engine_dispatch.refuse_legacy_fallback(Graph(), None)
+
+    assert raised.value.status_code == 503
+    assert "legacy fallback is disabled" in str(raised.value.detail)
+
+
+def test_graph_mode_fails_closed_if_the_handler_is_missing() -> None:
+    stack = a_stack()
+    previous_engine = app.state.engine
+    previous_graph = app.state.conversation_graph_enabled
+    app.state.engine = None
+    app.state.conversation_graph_enabled = True
+    try:
+        response = stack.client.post(JSON_ROUTE, json={"question": "¿cuánto gasté este mes?"})
+
+        assert response.status_code == 503
+        assert "no graph handler is available" in response.json()["detail"]
+        assert stack.ledger.ran == []
+    finally:
+        app.state.engine = previous_engine
+        app.state.conversation_graph_enabled = previous_graph
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.parametrize("route", ROUTES)

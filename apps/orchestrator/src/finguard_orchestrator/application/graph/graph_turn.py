@@ -102,7 +102,7 @@ class _Turn:
 
 
 class GraphTurnHandler:
-    """Answers a turn as `AnswerTurnHandler.answer` does, through the investigation graph."""
+    """Answers a conversational turn through the unified LangGraph flow."""
 
     supports_idempotency = True
     supports_caller_scopes = True

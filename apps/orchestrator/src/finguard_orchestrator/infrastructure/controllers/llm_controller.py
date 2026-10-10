@@ -19,7 +19,7 @@ from datetime import date, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from finguard_orchestrator.application import (
@@ -168,7 +168,7 @@ from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
 Today = Annotated[date, Depends(reporting_today)]
-Asking = Annotated[AskFinancialQuestionHandler, Depends(get_ask_handler)]
+Asking = Annotated[AskFinancialQuestionHandler | None, Depends(get_ask_handler)]
 Who = Annotated[Caller, Depends(requires(Scope.QUESTIONS_READ))]
 PaymentsOn = Annotated[bool, Depends(payments_available)]
 # The caller's name for this attempt. The chat prepares payments too, so a resent question that
@@ -1925,6 +1925,7 @@ async def ask(
     )
     if answered is not None:
         return answered
+    engine_dispatch.refuse_legacy_fallback(engine, answered)
     key = attempt
     was = _conversation_of(request, who, metric_tokens)
     # Task 3: built once per request, unconditionally -- restyling a chart is not a metrics
@@ -2189,6 +2190,12 @@ async def ask_streaming(
     )
     if streamed is not None:
         return streamed
+    engine_dispatch.refuse_legacy_fallback(engine, streamed)
+    if asking is None:
+        raise HTTPException(
+            status_code=503,
+            detail="The legacy conversational handler is not available in graph mode.",
+        )
     key = attempt
     was = _conversation_of(request, who, metric_tokens)
     # Task 3: built once per request, unconditionally -- see the same line on the question route.

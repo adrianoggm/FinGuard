@@ -47,6 +47,7 @@ from finguard_orchestrator.application import (
 )
 from finguard_orchestrator.application.commands.book_activity import BookActivityHandler
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
+from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
 from finguard_orchestrator.application.queries.search_activities import SearchActivitiesHandler
 from finguard_orchestrator.bootstrap.config import get_settings
@@ -172,7 +173,7 @@ def create_app() -> FastAPI:
     # is a stream nothing can parse.
     logging_settings = get_settings()
     configure_logging(level=logging_settings.log_level, as_json=logging_settings.log_json)
-    graph_factory: Callable[[object, object, object], AnswerTurnHandler] | None = None
+    graph_factory: Callable[[object, object, object], ConversationTurnHandler] | None = None
 
     @asynccontextmanager
     async def lifespan(service: FastAPI) -> AsyncIterator[None]:
@@ -386,35 +387,38 @@ def create_app() -> FastAPI:
         mode=settings.visual_planner,
         budget_seconds=settings.visual_planner_budget_seconds,
     )
-    asking = AskFinancialQuestionHandler(
-        LlmQueryPlanner(
-            planner_provider,
-            model=settings.planner_model,
-            temperature=settings.planner_temperature,
-            max_output_tokens=settings.planner_max_output_tokens,
-            categories=settings.categories,
-        ),
-        banking,
-        # Validated here, so a rule name this build does not have stops the service
-        # rather than silently leaving the rule on.
-        settings.guard_policy(),
-        # "¿Cuánto dinero tengo?" and "¿a quién puedo hacer un bizum?" are answered from these,
-        # with no model in the path.
-        accounts=accounts,
-        account_directory=account_directory,
-        contacts=contacts,
-        cards=cards,
-        read_attempts=settings.banking_read_attempts,
-        # Only used when a caller did not classify the turn itself. Both HTTP routes do, so on the
-        # live path this is unreachable — it is here so the handler and the edge cannot end up
-        # reading a sentence two different ways when somebody adds a third caller.
-        interpreter=interpreter,
-        visual_policy=visual_policy,
-        # Every account, or the account question first, for a question that names none while the
-        # conversation has chosen none. A deployment's choice; see `Settings.account_scope_default`.
-        account_scope_default=settings.account_scope_default,
-    )
-    query_bus.register(AskFinancialQuestionQuery, asking)
+    asking: AskFinancialQuestionHandler | None = None
+    if settings.conversation_graph != "on":
+        asking = AskFinancialQuestionHandler(
+            LlmQueryPlanner(
+                planner_provider,
+                model=settings.planner_model,
+                temperature=settings.planner_temperature,
+                max_output_tokens=settings.planner_max_output_tokens,
+                categories=settings.categories,
+            ),
+            banking,
+            # Validated here, so a rule name this build does not have stops the service
+            # rather than silently leaving the rule on.
+            settings.guard_policy(),
+            # "¿Cuánto dinero tengo?" and "¿a quién puedo hacer un bizum?" are answered from these,
+            # with no model in the path.
+            accounts=accounts,
+            account_directory=account_directory,
+            contacts=contacts,
+            cards=cards,
+            read_attempts=settings.banking_read_attempts,
+            # Only used when a caller did not classify the turn itself. Both HTTP routes do, so
+            # this is unreachable on the live path. It prevents the handler and edge from
+            # reading a sentence two different ways when somebody adds a third caller.
+            interpreter=interpreter,
+            visual_policy=visual_policy,
+            # Every account, or the account question first, when no account is named or chosen.
+            # A deployment's choice; see `Settings.account_scope_default`.
+            account_scope_default=settings.account_scope_default,
+        )
+
+        query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.
     # Browsing the account: the movement list, the search field and the breakdown a finance
     # screen draws. All three build their plan in code — a screen has already said everything
@@ -641,11 +645,11 @@ def create_app() -> FastAPI:
     app.state.expert_searches = expert_searches
     app.state.expert_bookings = expert_bookings
 
-    # The model-led conversation engine, when switched on (`conversation_engine`). Its own reader
-    # on the planner's provider, its own store, and the same banking adapters as the rules route,
-    # so the two engines answer from one bank. None is the rules engine, and the routes ask
-    # nothing of it (`engine_dispatch`).
-    engine: AnswerTurnHandler | None = None
+    # Transitional engine selection. `rules` still builds the deprecated conversational
+    # coordinator. `model` builds the structured interpreter; with graph mode on, LangGraph owns
+    # sequencing, durable state and execution, and neither legacy conversational handler is built.
+    # Both paths reuse the same banking adapters.
+    engine: ConversationTurnHandler | None = None
     if settings.conversation_engine == "model":
         operations = LlmTurnOperations(
             planner_provider,
@@ -675,7 +679,7 @@ def create_app() -> FastAPI:
 
         def build_graph(
             store: object, reservations: object, checkpointer: object
-        ) -> AnswerTurnHandler:
+        ) -> ConversationTurnHandler:
             return graph_engine(
                 settings,
                 operations,
@@ -689,7 +693,7 @@ def create_app() -> FastAPI:
                 checkpointer,  # type: ignore[arg-type]
                 visual_policy,
                 command_bus,
-            )  # type: ignore[return-value]
+            )
 
         graph_factory = build_graph
     app.state.engine = engine

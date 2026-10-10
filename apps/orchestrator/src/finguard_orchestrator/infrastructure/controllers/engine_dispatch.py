@@ -54,11 +54,11 @@ from datetime import date
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import MutableHeaders
 
-from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler
+from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.engine.state import ComparisonFocus, DialogueState, QueryFocus
 from finguard_orchestrator.domain.enums import PlanningOutcome
@@ -110,14 +110,19 @@ _SET_ASIDE: Final = (
 _UNREAD: Final = "No he podido leer tus cuentas y tus contactos: el banco ha rechazado la consulta."
 
 
-def _the_engine(request: Request) -> AnswerTurnHandler | None:
-    engine: AnswerTurnHandler | None = request.app.state.engine
+def _the_engine(request: Request) -> ConversationTurnHandler | None:
+    engine: ConversationTurnHandler | None = request.app.state.engine
+    if engine is None and getattr(request.app.state, "conversation_graph_enabled", False):
+        raise HTTPException(
+            status_code=503,
+            detail="The conversation graph is enabled but no graph handler is available.",
+        )
     return engine
 
 
 # The route parameter. None, the default, is the engine switched off, which is also what a test
 # calling a route function directly gets.
-Engine = Annotated[AnswerTurnHandler | None, Depends(_the_engine)]
+Engine = Annotated[ConversationTurnHandler | None, Depends(_the_engine)]
 
 
 @dataclass
@@ -133,8 +138,21 @@ def _answered_by(engine: Literal["rules", "model"]) -> None:
         answered.by = engine
 
 
+def refuse_legacy_fallback(engine: ConversationTurnHandler | None, answer: object | None) -> None:
+    """Fail closed if authoritative graph routing ever declines to answer a question.
+
+    A graph delegation should already have become an explicit response in `try_engine`. If a
+    future regression returns `None`, the route must not continue into legacy interpretation.
+    """
+    if getattr(engine, "authoritative", False) and answer is None:
+        raise HTTPException(
+            status_code=503,
+            detail="The conversation graph did not answer this turn; legacy fallback is disabled.",
+        )
+
+
 async def try_engine(
-    engine: AnswerTurnHandler | None,
+    engine: ConversationTurnHandler | None,
     question: QuestionRequest,
     who: Caller,
     today: date,
@@ -307,7 +325,7 @@ def _owned_by_the_rules(echoed: ConversationPayload) -> bool:
 
 
 async def try_engine_streaming(
-    engine: AnswerTurnHandler | None,
+    engine: ConversationTurnHandler | None,
     question: QuestionRequest,
     who: Caller,
     today: date,

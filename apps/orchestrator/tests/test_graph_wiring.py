@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,7 +21,7 @@ def test_the_graph_is_off_by_default_and_as_shipped() -> None:
     assert get_settings().conversation_graph == "off"
 
 
-def built(monkeypatch: pytest.MonkeyPatch, engine: str, graph: str) -> object:
+def built(monkeypatch: pytest.MonkeyPatch, engine: str, graph: str) -> Any:
     monkeypatch.setenv("ORCHESTRATOR_CONVERSATION_ENGINE", engine)
     monkeypatch.setenv("ORCHESTRATOR_CONVERSATION_GRAPH", graph)
     monkeypatch.setenv("ORCHESTRATOR_DATABASE_URL", "postgresql://test:test@127.0.0.1/test")
@@ -31,7 +32,7 @@ def built(monkeypatch: pytest.MonkeyPatch, engine: str, graph: str) -> object:
     monkeypatch.setenv("ORCHESTRATOR_ENGINE_MODEL", "")
     get_settings.cache_clear()
     try:
-        return create_app().state.engine
+        return create_app()
     finally:
         get_settings.cache_clear()
 
@@ -39,9 +40,10 @@ def built(monkeypatch: pytest.MonkeyPatch, engine: str, graph: str) -> object:
 def test_with_the_graph_off_the_model_engine_is_the_measured_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    engine = built(monkeypatch, "model", "off")
+    app = built(monkeypatch, "model", "off")
 
-    assert type(engine) is AnswerTurnHandler
+    assert type(app.state.engine) is AnswerTurnHandler
+    assert app.state.ask_handler is not None
 
 
 def test_with_the_graph_on_the_model_engine_answers_through_it(
@@ -49,7 +51,9 @@ def test_with_the_graph_on_the_model_engine_answers_through_it(
 ) -> None:
     # Stores and the checkpointer are opened in lifespan and remain open for requests.
     # App construction must not silently fall back to an in-memory graph.
-    assert built(monkeypatch, "model", "on") is None
+    app = built(monkeypatch, "model", "on")
+    assert app.state.engine is None
+    assert app.state.ask_handler is None
 
 
 def test_the_graph_needs_the_model_engine(monkeypatch: pytest.MonkeyPatch) -> None:

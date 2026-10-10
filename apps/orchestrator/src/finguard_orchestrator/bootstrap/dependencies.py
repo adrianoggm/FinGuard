@@ -24,15 +24,14 @@ def get_command_bus(request: Request) -> CommandBus:
     return bus
 
 
-def get_ask_handler(request: Request) -> AskFinancialQuestionHandler:
-    """The one handler a controller reaches without the bus.
+def get_ask_handler(request: Request) -> AskFinancialQuestionHandler | None:
+    """The compatibility handler for the legacy streaming route, if that path is enabled.
 
     A bus is request and response: one message in, one answer out. A stream is a
-    different shape, and bending `ask` into returning an async iterator would make every
-    query pay for the one that streams. So this route takes the handler directly and
-    says so, rather than quietly widening the bus.
+    different shape. Graph mode does not construct the handler; the route must have already been
+    answered by the graph or fail closed before reaching its compatibility path.
     """
-    handler: AskFinancialQuestionHandler = request.app.state.ask_handler
+    handler: AskFinancialQuestionHandler | None = request.app.state.ask_handler
     return handler
 
 
