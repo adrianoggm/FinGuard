@@ -10,34 +10,21 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from finguard_orchestrator.application import (
-    AnswerMessageHandler,
-    AnswerMessageQuery,
+from finguard_orchestrator.application.bus.command_bus import CommandBus
+from finguard_orchestrator.application.bus.query_bus import QueryBus
+from finguard_orchestrator.application.commands.categorise import (
     CategoriseMovementCommand,
     CategoriseMovementHandler,
-    CommandBus,
+)
+from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,
-    GetAccountSummaryHandler,
-    GetAccountSummaryQuery,
-    GetBreakdownHandler,
-    GetBreakdownQuery,
-    GetCardChargesHandler,
-    GetCardChargesQuery,
-    GetLlmCatalogueHandler,
-    GetLlmCatalogueQuery,
-    GetMovementsHandler,
-    GetMovementsQuery,
-    ListCardsHandler,
-    ListCardsQuery,
-    ListContactsHandler,
-    ListContactsQuery,
-    PolicyStore,
     PrepareChosenPaymentCommand,
     PrepareChosenPaymentHandler,
     PrepareOwnTransferCommand,
     PrepareOwnTransferHandler,
-    QueryBus,
+)
+from finguard_orchestrator.application.commands.replace_llm_policy import (
     ReplaceLlmPolicyCommand,
     ReplaceLlmPolicyHandler,
     ResetLlmPolicyCommand,
@@ -45,6 +32,35 @@ from finguard_orchestrator.application import (
 )
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
+from finguard_orchestrator.application.policy_store import PolicyStore
+from finguard_orchestrator.application.queries.answer_message import (
+    AnswerMessageHandler,
+    AnswerMessageQuery,
+)
+from finguard_orchestrator.application.queries.browse_account import (
+    GetBreakdownHandler,
+    GetBreakdownQuery,
+    GetMovementsHandler,
+    GetMovementsQuery,
+)
+from finguard_orchestrator.application.queries.get_account_summary import (
+    GetAccountSummaryHandler,
+    GetAccountSummaryQuery,
+)
+from finguard_orchestrator.application.queries.get_llm_catalogue import (
+    GetLlmCatalogueHandler,
+    GetLlmCatalogueQuery,
+)
+from finguard_orchestrator.application.queries.list_cards import (
+    GetCardChargesHandler,
+    GetCardChargesQuery,
+    ListCardsHandler,
+    ListCardsQuery,
+)
+from finguard_orchestrator.application.queries.list_contacts import (
+    ListContactsHandler,
+    ListContactsQuery,
+)
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.bootstrap.graph_wiring import graph_engine
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
@@ -55,23 +71,29 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
-from finguard_orchestrator.infrastructure import (
-    HttpAccounts,
-    HttpAccountSummary,
-    HttpCards,
-    HttpContacts,
-    HttpFinancialQuery,
+from finguard_orchestrator.infrastructure.banking.http_account_summary import HttpAccountSummary
+from finguard_orchestrator.infrastructure.banking.http_accounts import HttpAccounts
+from finguard_orchestrator.infrastructure.banking.http_cards import HttpCards
+from finguard_orchestrator.infrastructure.banking.http_contacts import HttpContacts
+from finguard_orchestrator.infrastructure.banking.http_financial_query import HttpFinancialQuery
+from finguard_orchestrator.infrastructure.banking.http_movement_categories import (
     HttpMovementCategories,
-    HttpPayments,
-    ProviderRegistry,
+)
+from finguard_orchestrator.infrastructure.banking.http_payments import HttpPayments
+from finguard_orchestrator.infrastructure.controllers import engine_dispatch
+from finguard_orchestrator.infrastructure.controllers.account_controller import (
+    router as account_router,
+)
+from finguard_orchestrator.infrastructure.controllers.graph_question_controller import (
+    router as graph_question_router,
+)
+from finguard_orchestrator.infrastructure.controllers.payment_controller import payments_router
+from finguard_orchestrator.infrastructure.controllers.runtime_controller import (
     admin_router,
     assistant_router,
-    graph_question_router,
-    payments_router,
-    register_error_handlers,
 )
-from finguard_orchestrator.infrastructure.controllers import engine_dispatch
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
+from finguard_orchestrator.infrastructure.error_handlers import register as register_error_handlers
 from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import (
     CLOUDFLARE,
     cloudflare_workers_ai,
@@ -88,6 +110,7 @@ from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import 
 from finguard_orchestrator.infrastructure.llm.postgres_request_pacer import (
     PostgresRequestPacer,
 )
+from finguard_orchestrator.infrastructure.llm.provider_registry import ProviderRegistry
 from finguard_orchestrator.infrastructure.metrics.memory_repository import (
     MemorySavedMetricRepository,
 )
@@ -101,9 +124,12 @@ from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTo
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
     StaticTokenIdentity,
 )
+from finguard_orchestrator.infrastructure.telemetry.otel import (
+    configure_tracing,
+    register_turn_recording,
+)
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
-from finguard_orchestrator.observability import configure_logging
-from finguard_orchestrator.observability.otel import configure_tracing, register_turn_recording
+from finguard_orchestrator.observability.logging import configure_logging
 
 # The vendor behind the OpenAI-compatible adapter. A name and a base URL are the whole of
 # what distinguishes one from another, which is why the adapter is not named after this one.
@@ -561,6 +587,7 @@ def create_app() -> FastAPI:
     engine_dispatch.register(app)
 
     app.include_router(assistant_router)
+    app.include_router(account_router)
     app.include_router(graph_question_router)
     app.include_router(payments_router)
     app.include_router(admin_router)

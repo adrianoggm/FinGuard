@@ -20,17 +20,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from finguard_orchestrator.application import CommandBus
+from finguard_orchestrator.application.bus.command_bus import CommandBus
 from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     PrepareChosenPaymentCommand,
     PrepareOwnTransferCommand,
-)
-from finguard_orchestrator.bootstrap.dependencies import (
-    attempt_key,
-    get_command_bus,
-    payments_enabled,
-    requires,
 )
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -39,6 +33,12 @@ from finguard_orchestrator.infrastructure.dto.payment_dto import (
     ConfirmPaymentRequest,
     OwnTransferRequest,
     PaymentResponse,
+)
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    attempt_key,
+    get_command_bus,
+    payments_enabled,
+    requires,
 )
 from finguard_orchestrator.infrastructure.mappers import payment_mapper
 

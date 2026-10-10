@@ -24,11 +24,14 @@ from fastapi.testclient import TestClient
 
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
-from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, reporting_today
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    authenticated_caller,
+    reporting_today,
+)
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 # The peninsular date. In the Canaries between 00:00 and 01:00 it is still the day before, which is

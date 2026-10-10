@@ -7,7 +7,8 @@ from typing import Annotated
 
 from fastapi import Depends, Header, Request
 
-from finguard_orchestrator.application import CommandBus, QueryBus
+from finguard_orchestrator.application.bus.command_bus import CommandBus
+from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.domain.errors import FeatureDisabledError
 from finguard_orchestrator.domain.ports.caller_identity import CallerIdentityPort
 from finguard_orchestrator.domain.value_objects.caller import Caller

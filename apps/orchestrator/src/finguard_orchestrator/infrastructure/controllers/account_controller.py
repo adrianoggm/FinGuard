@@ -6,26 +6,18 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from finguard_orchestrator.application import (
-    CategoriseMovementCommand,
-    CommandBus,
-    GetAccountSummaryQuery,
+from finguard_orchestrator.application.bus.command_bus import CommandBus
+from finguard_orchestrator.application.bus.query_bus import QueryBus
+from finguard_orchestrator.application.commands.categorise import CategoriseMovementCommand
+from finguard_orchestrator.application.queries.browse_account import (
+    MAX_DAYS,
+    MAX_MOVEMENTS,
     GetBreakdownQuery,
-    GetCardChargesQuery,
     GetMovementsQuery,
-    ListCardsQuery,
-    ListContactsQuery,
-    QueryBus,
 )
-from finguard_orchestrator.application.queries.browse_account import MAX_DAYS, MAX_MOVEMENTS
-from finguard_orchestrator.bootstrap.dependencies import (
-    get_command_bus,
-    get_query_bus,
-    known_categories,
-    questions_enabled,
-    reporting_today,
-    requires,
-)
+from finguard_orchestrator.application.queries.get_account_summary import GetAccountSummaryQuery
+from finguard_orchestrator.application.queries.list_cards import GetCardChargesQuery, ListCardsQuery
+from finguard_orchestrator.application.queries.list_contacts import ListContactsQuery
 from finguard_orchestrator.domain.enums import GroupBy
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -39,6 +31,14 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     ContactsResponse,
     MovementsResponse,
     WalletResponse,
+)
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    get_command_bus,
+    get_query_bus,
+    known_categories,
+    questions_enabled,
+    reporting_today,
+    requires,
 )
 from finguard_orchestrator.infrastructure.mappers import llm_mapper
 

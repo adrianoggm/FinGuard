@@ -18,17 +18,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
-from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, reporting_today
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
-from finguard_orchestrator.infrastructure.request_log import HEADER
-from finguard_orchestrator.observability import (
-    JsonLines,
-    configure_logging,
-    request_id,
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    authenticated_caller,
+    reporting_today,
 )
+from finguard_orchestrator.infrastructure.request_log import HEADER
+from finguard_orchestrator.observability.logging import JsonLines, configure_logging, request_id
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)

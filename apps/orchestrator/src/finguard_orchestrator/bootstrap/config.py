@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from finguard_orchestrator.domain.models.visual_plan import VisualMode
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
-from finguard_orchestrator.infrastructure import TomlModelCatalogue
+from finguard_orchestrator.infrastructure.config.toml_model_catalogue import TomlModelCatalogue
 
 # The values live in .env.defaults, versioned and free of secrets, beside the reason each
 # one is what it is. `.env` is loaded after it and wins, which is where a token table or a
@@ -292,7 +292,7 @@ class Settings(BaseSettings):
     #
     # What this does *not* switch off is the recording. The decisions of a turn are recorded
     # whether or not anybody is listening, and only the export asks this question; see the module
-    # docstrings of `observability/decisions.py` and `observability/otel.py`, which both argue it
+    # docstrings of `observability/decisions.py` and `telemetry/otel.py`, which both argue it
     # at length because it is the property six green-but-dead instruments in the last week were
     # missing. If a flag here ever starts deciding whether a call site executes, that is the
     # seventh.
@@ -302,7 +302,7 @@ class Settings(BaseSettings):
     # Off is a complete configuration.
     otel_enabled: bool = False
 
-    # The collector's OTLP/HTTP root, without a signal path — `observability/otel.py` appends
+    # The collector's OTLP/HTTP root, without a signal path — `telemetry/otel.py` appends
     # `/v1/traces` and `/v1/metrics`, because the HTTP exporter posts to an explicit endpoint
     # verbatim and a base URL handed straight to it is a 404 on every export that nothing outside
     # the SDK's own logs would show.

@@ -34,12 +34,6 @@ from finguard_orchestrator.application.queries.list_contacts import (
     ListContactsQuery,
     ListContactsResult,
 )
-from finguard_orchestrator.bootstrap.dependencies import (
-    authenticated_caller,
-    get_command_bus,
-    get_query_bus,
-    reporting_today,
-)
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import (
     Direction,
@@ -65,6 +59,12 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    authenticated_caller,
+    get_command_bus,
+    get_query_bus,
+    reporting_today,
+)
 
 
 class NoCards:

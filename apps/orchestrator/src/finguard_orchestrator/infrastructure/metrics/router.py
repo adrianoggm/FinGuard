@@ -14,7 +14,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from finguard_orchestrator.bootstrap.dependencies import metrics_enabled, requires
 from finguard_orchestrator.domain.models.saved_metric import SavedMetric
 from finguard_orchestrator.domain.ports.saved_metric_repository import (
     IdempotencyConflictError,
@@ -23,6 +22,7 @@ from finguard_orchestrator.domain.ports.saved_metric_repository import (
 )
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.http.dependencies import metrics_enabled, requires
 from finguard_orchestrator.infrastructure.metrics.codec import CodecError
 from finguard_orchestrator.infrastructure.security.metric_tokens import (
     MetricTokenCodec,

@@ -1,7 +1,11 @@
 # LangGraph and legacy conversation runtime audit
 
-**Status:** static source audit, 10 October 2026. This is not runtime evidence and does not authorize
-removing the compatibility path.
+**Status:** retired on 11 October 2026 (branch `task/legacy-removal`). The audit below is the
+10 October static reading that justified it; the removal section at the end records what went.
+
+The removal was decided by the product owner before the graph had passed the full-session gates this
+audit asked for. Those gates are still open, now as acceptance criteria for the only runtime rather
+than as conditions for deleting a second one.
 
 ## Current construction modes
 
@@ -226,3 +230,34 @@ visual invariant; it is not itself proof that a deployed visualization honored t
    modules proven to have no remaining conventional query or shared-service consumers.
 5. Remove rollout settings only after graph-only startup and route behavior are established, then
    measure production orchestration code removed versus graph-specific code added.
+
+## Removal, 11 October 2026
+
+LangGraph is the only conversational runtime. `create_app()` always builds the graph factory and
+requires `DATABASE_URL`; the settings `conversation_engine`, `conversation_graph`,
+`turn_interpreter`, `account_scope_default`, `banking_read_attempts` and `disabled_guards` are gone.
+
+| Removed | Notes |
+|---|---|
+| `AskFinancialQuestionHandler`, `application/queries/readers`, `reader_registry` | The rules coordinator and its lexical readers |
+| `llm_controller.py`, `expert_agent_turns.py` | The legacy question/stream routes and their A2A glue |
+| `AnswerTurnHandler` | The model engine without the graph; `MemoryDialogueStore` and `MemoryTurnReservations` moved to `tests/support` as doubles |
+| `LlmQueryPlanner`, `infrastructure/payments`, `infrastructure/interpreting`, `turn_interpreters` | Sentence planners and readers; `STRUCTURE_REPAIR` moved to `infrastructure/llm/structure_repair.py` |
+| `PreparePaymentCommand`/`Handler`, `POST /v1/payments` | Payment from a sentence; the graph prepares payments through the chosen/own-transfer commands |
+| `planning_result`, `payment_reading`, `turn_analyzer`, `query_recovery`, `plan_digest`, `entity_alias_words`, `financial_relationships`, `incoming_payment_words`, `contextual_query_planner`, `turn_interpreter`/`payment_reader` ports | Reachable only from the above |
+| `evaluate_planning`, `evaluate_e2e`, `evaluate_conversation_ux`, `evaluate_interpreting`, `handover_cases`, `plan_handover`, `judge_plans`, `interpretation_footprint`, `generate_paraphrases`, `paraphrase_rules`, `calibrate_robustness_gate` | Benchmarks of the deleted planner; `real_conversation.py` measures the graph |
+
+Kept on purpose:
+
+- **Shared lexicon and domain services** (`explicit_facts`, `explicit_lexicon`, `intent_lexicon`,
+  `intent_router`, `turn_arbiter`, `window_words`...): the graph path still reaches them through
+  `FinancialPlan`, `Conversation`, `financial_turn` and `llm_turn_operations`. Shrinking them is a
+  separate change.
+- **A2A expert agents**: domain, handlers, HTTP adapter and tests stay, but nothing wires them into
+  the app; the only consumer was the legacy controller. Porting them to a graph node is open work.
+- **Direct payment routes** (`/v1/payments/chosen`, `/between-accounts`, `/{id}/confirm`): still
+  closed with 503, as graph mode left them, although the web client calls them. Reopening or
+  deleting them is a product decision.
+- **Refusal of retired workflows**: an older client echoing a workflow the graph does not own gets an
+  explicit answer and nothing executes.
+- **`/ready`** keeps its JSON shape for the evaluation runner and the browser checks.

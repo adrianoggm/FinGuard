@@ -33,7 +33,7 @@ fails, which is the outbound call worth seeing most; a span opened in one hook a
 another has to be smuggled between them on the request object; and only a transport can hold the
 span *current* while the request is in flight, which is what lets a `traceparent` be injected onto
 it. As promised, neither reaches a call site — `_transport` below is None until
-`observability/otel.py` installs one, and `banking_client`'s signature is unchanged.
+`telemetry/otel.py` installs one, and `banking_client`'s signature is unchanged.
 `opentelemetry-instrumentation-httpx` is not an option and will not become one — it patches
 `httpx`, and this service has `httpx2`. `tests/test_dependency_provenance.py` holds the three facts
 behind that, and `import httpx` raises `ModuleNotFoundError` here.
@@ -46,7 +46,7 @@ import httpx2 as httpx
 # Imported rather than restated. The property this whole seam exists for is that a value arriving
 # under a name leaves under the same one, and two string literals cannot promise that.
 from finguard_orchestrator.infrastructure.request_log import HEADER
-from finguard_orchestrator.observability import request_id
+from finguard_orchestrator.observability.logging import request_id
 
 # What `request_id` reads as when no request set it. Restated here because a `ContextVar` does not
 # expose its default, and pinned by a test, so changing it there fails here rather than silently
@@ -66,7 +66,7 @@ LIMIT = 64
 #
 # **A slot rather than an import**, for the same reason `observability/logging.py` has one: this
 # module must not import OpenTelemetry, and the design says exactly one module may.
-# `observability/otel.py` installs a tracing transport during set-up if a deployment turned tracing
+# `telemetry/otel.py` installs a tracing transport during set-up if a deployment turned tracing
 # on, and nothing else ever calls this. A callable rather than a stored instance because a
 # transport owns a connection pool and this factory builds one client per call — a single shared
 # instance would quietly become the pool the module docstring above says nothing holds.
@@ -81,7 +81,7 @@ _transport: Transports = _untraced
 
 
 def use_transport(source: Transports) -> None:
-    """Called by `observability.otel` when tracing is configured. Never by anything else."""
+    """Called by `telemetry.otel` when tracing is configured. Never by anything else."""
     global _transport
     _transport = source
 

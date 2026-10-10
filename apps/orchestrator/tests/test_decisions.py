@@ -31,13 +31,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
-from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, reporting_today
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
-from finguard_orchestrator.observability import (
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    authenticated_caller,
+    reporting_today,
+)
+from finguard_orchestrator.observability.decisions import (
     REDACTED,
     Consultation,
     Decision,
@@ -45,13 +48,13 @@ from finguard_orchestrator.observability import (
     TurnRecord,
     TurnRecorder,
     Verdict,
-    account_ref,
     consulting,
     current_turn,
     name_the_conversation,
     record,
     recording_turn,
 )
+from finguard_orchestrator.observability.logging import account_ref
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
@@ -602,10 +605,9 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
 def test_every_existing_import_still_works() -> None:
     """`observability.py` became `observability/`. The four call sites outside this package import
     `account_ref`, `configure_logging`, `request_id` and `JsonLines`, and none of them moved."""
-    from finguard_orchestrator.observability import (  # noqa: F401
+    from finguard_orchestrator.observability.logging import (
         JsonLines,
         account_ref,
-        configure_logging,
         request_id,
     )
 

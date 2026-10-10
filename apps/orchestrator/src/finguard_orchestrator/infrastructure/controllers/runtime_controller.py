@@ -9,25 +9,25 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from finguard_orchestrator.application import (
-    AnswerMessageQuery,
-    CommandBus,
-    GetLlmCatalogueQuery,
-    QueryBus,
+from finguard_orchestrator.application.bus.command_bus import CommandBus
+from finguard_orchestrator.application.bus.query_bus import QueryBus
+from finguard_orchestrator.application.commands.replace_llm_policy import (
     ReplaceLlmPolicyCommand,
     ResetLlmPolicyCommand,
 )
-from finguard_orchestrator.bootstrap.dependencies import (
-    get_command_bus,
-    get_query_bus,
-    requires,
-)
+from finguard_orchestrator.application.queries.answer_message import AnswerMessageQuery
+from finguard_orchestrator.application.queries.get_llm_catalogue import GetLlmCatalogueQuery
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     MessageRequest,
     MessageResponse,
     PolicyRequest,
+)
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    get_command_bus,
+    get_query_bus,
+    requires,
 )
 from finguard_orchestrator.infrastructure.mappers import llm_mapper
 

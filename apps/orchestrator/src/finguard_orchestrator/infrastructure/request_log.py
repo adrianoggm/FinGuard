@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request, Response
 
-from finguard_orchestrator.observability import request_id
+from finguard_orchestrator.observability.logging import request_id
 
 logger = logging.getLogger(__name__)
 

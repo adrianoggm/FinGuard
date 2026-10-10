@@ -58,7 +58,7 @@ import logging
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID
 
 import httpx2 as httpx
@@ -95,10 +95,20 @@ from finguard_orchestrator.observability.decisions import (
     recording_turn,
 )
 
-if TYPE_CHECKING:  # pragma: no cover - imported for types only, and it imports this package back
+if TYPE_CHECKING:  # pragma: no cover - imported for types only
     from fastapi import FastAPI
 
-    from finguard_orchestrator.bootstrap.config import Settings
+
+class TracingSettings(Protocol):
+    """The five settings this adapter reads, so it depends on their shape and not on the
+    composition root that owns `Settings`."""
+
+    otel_enabled: bool
+    otel_endpoint: str
+    otel_recogniser_spans: bool
+    build_sha: str
+    build_ref: str
+
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +173,7 @@ _TRACES: Final = "/v1/traces"
 _METRICS: Final = "/v1/metrics"
 
 
-def _resource(settings: "Settings") -> Resource:
+def _resource(settings: TracingSettings) -> Resource:
     """Who emitted this, in the three attributes `/version` already proves are stamped in.
 
     `service.version` is the build SHA and `deployment.ref` the branch or tag it came from, both
@@ -591,7 +601,7 @@ def _transports(tracer: Tracer) -> "banking_client.Transports":
     return build
 
 
-def configure_tracing(app: "FastAPI", *, settings: "Settings") -> bool:
+def configure_tracing(app: "FastAPI", *, settings: TracingSettings) -> bool:
     """Set up the SDK, or do nothing at all. Returns whether it did anything.
 
     Called from `create_app` beside `configure_logging`, and off unless a deployment turns it on:

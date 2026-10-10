@@ -10,16 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
-from finguard_orchestrator.bootstrap.dependencies import (
+from finguard_orchestrator.domain.value_objects.caller import Caller
+from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.controllers import engine_dispatch
+from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest, QuestionResponse
+from finguard_orchestrator.infrastructure.http.dependencies import (
     questions_enabled,
     reporting_today,
     required_attempt_key,
     requires,
 )
-from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.scope import Scope
-from finguard_orchestrator.infrastructure.controllers import engine_dispatch
-from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest, QuestionResponse
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 
 router = APIRouter(tags=["assistant"])

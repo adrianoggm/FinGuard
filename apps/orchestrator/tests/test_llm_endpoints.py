@@ -21,15 +21,15 @@ from finguard_orchestrator.application.queries.get_llm_catalogue import (
     GetLlmCatalogueHandler,
     GetLlmCatalogueQuery,
 )
-from finguard_orchestrator.bootstrap.dependencies import (
-    authenticated_caller,
-    get_command_bus,
-    get_query_bus,
-)
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    authenticated_caller,
+    get_command_bus,
+    get_query_bus,
+)
 
 
 @pytest.fixture(autouse=True)

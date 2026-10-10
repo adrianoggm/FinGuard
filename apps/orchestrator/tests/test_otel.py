@@ -35,15 +35,26 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.bootstrap.config import Settings
-from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, reporting_today
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.banking import client as banking_client
-from finguard_orchestrator.observability import JsonLines, Step, TurnRecord, Verdict, otel, record
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    authenticated_caller,
+    reporting_today,
+)
+from finguard_orchestrator.infrastructure.telemetry import otel
 from finguard_orchestrator.observability import logging as service_logging
-from finguard_orchestrator.observability.decisions import Consultation, Decision
+from finguard_orchestrator.observability.decisions import (
+    Consultation,
+    Decision,
+    Step,
+    TurnRecord,
+    Verdict,
+    record,
+)
+from finguard_orchestrator.observability.logging import JsonLines
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
@@ -671,7 +682,7 @@ def test_the_turn_span_says_which_conversation_it_belongs_to(exported: Exported)
 
 
 def test_only_one_module_imports_opentelemetry() -> None:
-    """No OpenTelemetry import outside `observability/otel.py` is the first thing this design
+    """No OpenTelemetry import outside `telemetry/otel.py` is the first thing this design
     refuses, and the one that stops being true quietly: the domain and the application record
     decisions, one adapter exports them. A grep is the only control that scales to the next person
     who wants a span in a handler.
@@ -691,4 +702,4 @@ def test_only_one_module_imports_opentelemetry() -> None:
         if statement.search(path.read_text(encoding="utf-8"))
     )
 
-    assert importing == ["observability/otel.py"]
+    assert importing == ["infrastructure/telemetry/otel.py"]

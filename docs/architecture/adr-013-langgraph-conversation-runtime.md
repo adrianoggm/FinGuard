@@ -1,6 +1,6 @@
 # ADR-013: LangGraph as FinGuard's conversation runtime
 
-**Status:** accepted, migration in progress
+**Status:** accepted; legacy runtime removed on 2026-10-11 (see langgraph-legacy-runtime-audit.md)
 **Date:** 2026-10-09
 
 ## Decision

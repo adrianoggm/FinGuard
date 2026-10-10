@@ -80,7 +80,7 @@ from finguard_orchestrator.infrastructure.mappers.plan_mapper import (
     plan_to_domain,
 )
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
-from finguard_orchestrator.observability import name_the_conversation
+from finguard_orchestrator.observability.decisions import name_the_conversation
 
 # D-3b-4 (fix wave): named once, used by both `_visual_contexts` and `to_domain` below -- the two
 # signatures have to move together by definition (one is the closure the other threads through to

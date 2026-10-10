@@ -59,7 +59,7 @@ _ALWAYS: Final = ("levelname", "name", "message")
 # Where the trace and span a record was emitted inside come from, when anything is tracing.
 #
 # **A slot rather than an import.** The design has exactly one module that may import
-# OpenTelemetry, and it is not this one — so `observability/otel.py` installs the real source
+# OpenTelemetry, and it is not this one — so `telemetry/otel.py` installs the real source
 # during set-up and this file keeps working, and keeps being testable, with no SDK anywhere near
 # it. It is a plain module-level callable and not a `ContextVar` because it is a property of the
 # process, decided once at the composition root; the per-request part is inside whatever it calls.
@@ -75,7 +75,7 @@ _trace_context: TraceSource = _untraced
 
 
 def use_trace_context(source: TraceSource) -> None:
-    """Called by `observability.otel` once the SDK exists. Never by anything else."""
+    """Called by `telemetry.otel` once the SDK exists. Never by anything else."""
     global _trace_context
     _trace_context = source
 
@@ -180,7 +180,7 @@ def configure_logging(*, level: str = "INFO", as_json: bool = True) -> None:
             # point: two formats interleaved in one stream is a stream nothing can parse.
             "disable_existing_loggers": False,
             # Both always, whether or not anything is tracing. The trace filter reads a slot that
-            # returns None until `observability.otel` fills it, so an untraced process pays one
+            # returns None until `telemetry.otel` fills it, so an untraced process pays one
             # function call per record and every line comes out exactly as it did before.
             "filters": {
                 "request_id": {"()": RequestId},

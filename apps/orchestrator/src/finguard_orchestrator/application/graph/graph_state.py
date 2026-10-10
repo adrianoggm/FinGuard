@@ -12,7 +12,7 @@ from uuid import UUID
 
 from langgraph.runtime import Runtime
 
-from finguard_orchestrator.application import CommandBus
+from finguard_orchestrator.application.bus.command_bus import CommandBus
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort

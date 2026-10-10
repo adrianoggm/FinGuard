@@ -21,7 +21,7 @@ from support.episodes import ACCOUNT, INTENT, PIGGY, Accounts, Bank, Contacts, D
 from support.memory_dialogue_store import MemoryDialogueStore
 from support.memory_turn_reservations import MemoryTurnReservations
 
-from finguard_orchestrator.application import CommandBus
+from finguard_orchestrator.application.bus.command_bus import CommandBus
 from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,

@@ -35,12 +35,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from finguard_orchestrator.application import QueryBus
+from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.application.queries.list_contacts import (
     ListContactsHandler,
     ListContactsQuery,
 )
-from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, get_query_bus
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, Rail
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
@@ -60,8 +59,12 @@ from finguard_orchestrator.infrastructure.banking.http_movement_categories impor
     HttpMovementCategories,
 )
 from finguard_orchestrator.infrastructure.banking.http_payments import HttpPayments
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    authenticated_caller,
+    get_query_bus,
+)
 from finguard_orchestrator.infrastructure.request_log import HEADER
-from finguard_orchestrator.observability import request_id
+from finguard_orchestrator.observability.logging import request_id
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 CARD = uuid.UUID("33333333-3333-3333-3333-333333333333")

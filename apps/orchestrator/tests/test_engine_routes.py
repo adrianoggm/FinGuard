@@ -36,7 +36,6 @@ from finguard_orchestrator.application.graph.graph_state import GraphPorts
 from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.bootstrap.config import Settings, get_settings
-from finguard_orchestrator.bootstrap.dependencies import authenticated_caller
 from finguard_orchestrator.bootstrap.main import app, create_app
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
@@ -71,6 +70,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.controllers import engine_dispatch
 from finguard_orchestrator.infrastructure.engine.llm_turn_operations import LlmTurnOperations
+from finguard_orchestrator.infrastructure.http.dependencies import authenticated_caller
 from finguard_orchestrator.infrastructure.llm.counting_provider import (
     CountingProvider,
     calls_so_far,

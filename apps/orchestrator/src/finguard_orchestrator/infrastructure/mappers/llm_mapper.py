@@ -11,20 +11,23 @@ from dataclasses import replace
 from typing import Literal, cast
 from uuid import UUID, uuid4
 
-from finguard_orchestrator.application import (
-    AccountSummaryResult,
-    AnswerMessageResult,
-    AskFinancialQuestionResult,
+from finguard_orchestrator.application.queries.answer_message import AnswerMessageResult
+from finguard_orchestrator.application.queries.browse_account import (
     BreakdownResult,
-    CatalogueResult,
-    ChargesResult,
-    ListContactsResult,
-    ModelRow,
     MovementsResult,
-    PolicyRow,
-    SpokenPlan,
-    WalletResult,
 )
+from finguard_orchestrator.application.queries.financial_turn import (
+    AskFinancialQuestionResult,
+    SpokenPlan,
+)
+from finguard_orchestrator.application.queries.get_account_summary import AccountSummaryResult
+from finguard_orchestrator.application.queries.get_llm_catalogue import (
+    CatalogueResult,
+    ModelRow,
+    PolicyRow,
+)
+from finguard_orchestrator.application.queries.list_cards import ChargesResult, WalletResult
+from finguard_orchestrator.application.queries.list_contacts import ListContactsResult
 from finguard_orchestrator.domain.models.chart import (
     ChartSpec,
     VisualContext,

@@ -10,7 +10,7 @@ from datetime import date
 
 import pytest
 
-from finguard_orchestrator.application import AskFinancialQuestionQuery
+from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionQuery
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.turn_analysis import (
     TurnAnalysis,

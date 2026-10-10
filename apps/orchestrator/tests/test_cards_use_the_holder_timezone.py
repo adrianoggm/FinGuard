@@ -21,23 +21,23 @@ import httpx2 as httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from finguard_orchestrator.application import QueryBus
+from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.application.queries.list_cards import (
     GetCardChargesHandler,
     GetCardChargesQuery,
     ListCardsHandler,
     ListCardsQuery,
 )
-from finguard_orchestrator.bootstrap.dependencies import (
-    authenticated_caller,
-    get_query_bus,
-    reporting_today,
-)
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.banking.http_cards import HttpCards
+from finguard_orchestrator.infrastructure.http.dependencies import (
+    authenticated_caller,
+    get_query_bus,
+    reporting_today,
+)
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 CARD = uuid.UUID("33333333-3333-3333-3333-333333333333")

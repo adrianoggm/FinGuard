@@ -4,14 +4,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from finguard_orchestrator.application import (
-    Command,
-    CommandBus,
+from finguard_orchestrator.application.bus.command_bus import Command, CommandBus
+from finguard_orchestrator.application.bus.errors import (
     HandlerAlreadyRegisteredError,
     HandlerNotRegisteredError,
-    Query,
-    QueryBus,
 )
+from finguard_orchestrator.application.bus.query_bus import Query, QueryBus
 
 
 @dataclass(frozen=True)

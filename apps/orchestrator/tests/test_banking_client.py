@@ -461,7 +461,7 @@ def test_a_recurrence_query_crosses_the_wire_without_becoming_a_sum() -> None:
 def test_the_factory_builds_httpxs_own_transport_when_nothing_installed_one() -> None:
     """The promise the factory's docstring makes about where an outbound span goes: a wrapping
     transport, and "neither reaches a call site". `_transport` is a slot returning None until
-    `observability/otel.py` fills it, and None is what httpx2 means by "use your default" — so with
+    `telemetry/otel.py` fills it, and None is what httpx2 means by "use your default" — so with
     tracing off this builds exactly the client it built before the seam existed."""
     import httpx2 as httpx
 
