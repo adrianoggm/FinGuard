@@ -62,7 +62,6 @@ from finguard_orchestrator.domain.engine.operations import (
     Ask,
     Balance,
     ChangeMeasure,
-    Clarify,
     Compare,
     ComparePrevious,
     Delegate,
@@ -80,7 +79,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Smalltalk,
     Visualize,
 )
-from finguard_orchestrator.domain.engine.state import DialogueState, Measure, Missing
+from finguard_orchestrator.domain.engine.state import DialogueState, Measure
 from finguard_orchestrator.domain.enums import (
     PERIODS_NEEDING_COUNT,
     Direction,
@@ -410,23 +409,6 @@ class ListContactsOp(_Closed):
         return ListContacts()
 
 
-class ClarifyBody(_Closed):
-    # The draft is what the model has already understood. The missing slot is separately named,
-    # so resuming this question never requires reconstructing the original request.
-    missing: Missing
-    draft: Fields
-
-
-class ClarifyOp(_Closed):
-    clarify: ClarifyBody
-
-    def as_operation(self) -> Clarify:
-        draft = _plan_fields(self.clarify.draft)
-        if draft.direction is Direction.ALL and draft.metric is None:
-            raise InvalidValueError("direction ALL requires an explicit metric (SUM or COUNT)")
-        return Clarify(self.clarify.missing, draft=draft)
-
-
 class SmalltalkOp(_Closed):
     smalltalk: Courtesy
 
@@ -505,7 +487,6 @@ AnyOp = Annotated[
     | Annotated[RestorePreviousOp, Tag("restore_previous")]
     | Annotated[BalanceOp, Tag("balance")]
     | Annotated[ListContactsOp, Tag("list_contacts")]
-    | Annotated[ClarifyOp, Tag("clarify")]
     | Annotated[SmalltalkOp, Tag("smalltalk")]
     | Annotated[DelegateOp, Tag("delegate")]
     | Annotated[CreateVisualizationOp, Tag("create_visualization")]

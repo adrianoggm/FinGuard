@@ -248,17 +248,6 @@ PARSED: list[tuple[dict[str, Any], Operation]] = [
     ({"restore_previous": 2}, RestorePrevious(2)),
     ({"balance": ["Cuenta corriente"]}, Balance(("Cuenta corriente",))),
     ({"balance": []}, Balance(())),
-    # Clarifications preserve typed fields understood before asking for the missing slot.
-    ({"clarify": {"missing": "PERSON", "draft": []}}, Clarify(Missing.PERSON)),
-    (
-        {
-            "clarify": {
-                "missing": "WINDOW",
-                "draft": items(direction="ALL", metric="COUNT"),
-            }
-        },
-        Clarify(Missing.WINDOW, draft=PlanFields(direction=Direction.ALL, metric=Metric.COUNT)),
-    ),
     ({"smalltalk": "THANKS"}, Smalltalk("THANKS")),
     ({"delegate": "TRANSFER"}, Delegate("TRANSFER")),
 ]
@@ -558,7 +547,6 @@ def literal(cls: type, field: str) -> list[str]:
         [member.value for member in Metric],
         [member.value for member in GroupBy],
         [member.value for member in Measure],
-        [member.value for member in Missing],
         literal(Patch, "target"),
         literal(SelectOperand, "which"),
         literal(Smalltalk, "kind"),
@@ -626,7 +614,6 @@ def test_operations_are_keyed_by_their_name() -> None:
         "restore_previous",
         "balance",
         "list_contacts",
-        "clarify",
         "smalltalk",
         "delegate",
         "create_visualization",

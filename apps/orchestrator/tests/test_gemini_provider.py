@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.infrastructure.engine.operations_schema import (
     UnreadableError,
     read,
@@ -21,18 +22,31 @@ ANSWER = '{"operations":[{"smalltalk":"GREETING"}]}'
 
 
 class _Response:
-    status_code = 200
-    headers: dict[str, str] = {}
+    def __init__(
+        self,
+        status_code: int = 200,
+        *,
+        body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.body = body
+        self.headers = headers or {}
 
     def raise_for_status(self) -> None:
-        return None
+        if self.status_code >= 400:
+            raise openai_compatible_provider.httpx.HTTPStatusError(  # type: ignore[call-arg]
+                "upstream failure", request=None, response=self
+            )
 
     def json(self) -> Any:
-        return {"choices": [{"message": {"content": ANSWER}}]}
+        return self.body or {"choices": [{"message": {"content": ANSWER}}]}
 
 
 class _Endpoint:
     request: dict[str, Any] | None = None
+    responses: list[_Response] | None = None
+    calls: int = 0
 
 
 @pytest.fixture
@@ -51,7 +65,8 @@ def endpoint(monkeypatch: pytest.MonkeyPatch) -> _Endpoint:
 
         async def post(self, url: str, *, json: Any, headers: Any) -> _Response:
             seen.request = {"url": url, "json": json, "headers": headers}
-            return _Response()
+            seen.calls += 1
+            return (seen.responses or [_Response()]).pop(0)
 
     monkeypatch.setattr(openai_compatible_provider.httpx, "AsyncClient", FakeClient)
     return seen
@@ -83,12 +98,14 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
         "ask",
         "patch",
         "compare",
+        "compare_previous",
+        "investigate_comparison",
         "measure",
         "select_operand",
         "reset",
         "restore_previous",
         "balance",
-        "clarify",
+        "list_contacts",
         "smalltalk",
         "delegate",
         "create_visualization",
@@ -166,9 +183,98 @@ async def test_complete_sends_gemini_schema_and_bearer_key(
     sent_schema = endpoint.request["json"]["response_format"]["json_schema"]["schema"]
     assert "$defs" not in sent_schema
     operations = sent_schema["properties"]["operations"]["items"]["anyOf"]
-    assert len(operations) == 16
+    assert len(operations) == 18
     patch = next(v["properties"]["patch"] for v in operations if "patch" in v["properties"])
     assert "changes" in patch["properties"]
+
+
+async def test_complete_retries_once_on_provider_503(endpoint: _Endpoint) -> None:
+    endpoint.responses = [_Response(status_code=503), _Response()]
+    provider = GeminiProvider(api_key=KEY)
+
+    answer = await provider.complete(
+        "Buenas tardes",
+        model="gemini-3.5-flash-lite",
+        temperature=0,
+        max_output_tokens=128,
+        schema=schema_for(["FOOD"]),
+    )
+
+    assert answer == ANSWER
+    assert endpoint.calls == 2
+
+
+async def test_complete_uses_google_retry_info_for_a_short_429(
+    endpoint: _Endpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    waited: list[float] = []
+
+    async def no_sleep(seconds: float) -> None:
+        waited.append(seconds)
+
+    endpoint.responses = [
+        _Response(
+            429,
+            body={
+                "error": {
+                    "status": "RESOURCE_EXHAUSTED",
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                            "retryDelay": "3.5s",
+                        }
+                    ],
+                }
+            },
+        ),
+        _Response(),
+    ]
+    monkeypatch.setattr(openai_compatible_provider.asyncio, "sleep", no_sleep)
+    answer = await GeminiProvider(api_key=KEY).complete(
+        "Buenas tardes",
+        model="gemini-3.5-flash-lite",
+        temperature=0,
+        max_output_tokens=128,
+        schema=schema_for(["FOOD"]),
+    )
+
+    assert answer == ANSWER
+    assert endpoint.calls == 2
+    assert waited == [3.5]
+
+
+async def test_complete_does_not_retry_daily_quota_without_short_retry_info(
+    endpoint: _Endpoint,
+) -> None:
+    endpoint.responses = [
+        _Response(
+            429,
+            body={
+                "error": {
+                    "code": "quota_exceeded",
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                            "violations": [
+                                {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}
+                            ],
+                        }
+                    ],
+                }
+            },
+        )
+    ]
+
+    with pytest.raises(ProviderFailedError):
+        await GeminiProvider(api_key=KEY).complete(
+            "Buenas tardes",
+            model="gemini-3.5-flash-lite",
+            temperature=0,
+            max_output_tokens=128,
+            schema=schema_for(["FOOD"]),
+        )
+
+    assert endpoint.calls == 1
 
 
 def test_full_operation_reader_still_rejects_invalid_nested_values() -> None:

@@ -297,6 +297,36 @@ async def test_a_short_rate_limit_is_waited_out_once(
     assert waited == [7.0]
 
 
+async def test_google_retry_info_in_the_error_body_is_waited_out_once(
+    sent: Endpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    waited: list[float] = []
+
+    async def no_sleep(seconds: float) -> None:
+        waited.append(seconds)
+
+    monkeypatch.setattr(openai_compatible_provider.asyncio, "sleep", no_sleep)
+    sent.first = _Response(
+        {
+            "error": {
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "4.25s",
+                    }
+                ],
+            }
+        },
+        429,
+    )
+
+    answer = await a_provider().complete("x", model="m", temperature=0.0, max_output_tokens=8)
+
+    assert answer == '{"intent":"COURTESY"}'
+    assert waited == [4.25]
+
+
 @pytest.mark.parametrize("retry_after", [None, "600", "soon"])
 async def test_a_long_or_unstated_rate_limit_fails_at_once(
     sent: Endpoint, monkeypatch: pytest.MonkeyPatch, retry_after: str | None
@@ -310,10 +340,31 @@ async def test_a_long_or_unstated_rate_limit_fails_at_once(
     monkeypatch.setattr(openai_compatible_provider.asyncio, "sleep", no_sleep)
     sent.body, sent.status = {"error": {}}, 429
     headers = {} if retry_after is None else {"retry-after": retry_after}
-    sent.first = _Response({"error": {}}, 429, headers)
+    sent.first = _Response(
+        {
+            "error": {
+                "code": "quota_exceeded",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [
+                            {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}
+                        ],
+                    }
+                ],
+            }
+        },
+        429,
+        headers,
+    )
 
-    with pytest.raises(ProviderFailedError, match="429"):
+    with pytest.raises(ProviderFailedError, match="429") as raised:
         await a_provider().complete("x", model="m", temperature=0.0, max_output_tokens=8)
+
+    assert "provider_code=quota_exceeded" in str(raised.value)
+    assert "GenerateRequestsPerDayPerProjectPerModel-FreeTier" in str(raised.value)
+    if retry_after in (None, "600", "soon"):
+        assert len(sent.requests) == 1
 
 
 # --- when it exists at all -----------------------------------------------------------------

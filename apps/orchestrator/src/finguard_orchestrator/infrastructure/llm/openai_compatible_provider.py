@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
 # turns typed at a normal pace meet a 429 that asks for a few seconds. Waited out once; a longer
 # wait (the daily budget says minutes) fails the turn at once rather than hold the request open.
 _LONGEST_RATE_WAIT_SECONDS: Final = 20.0
+_TRANSIENT_RETRY_DELAY_SECONDS: Final = 0.5
 
 
 class OpenAiCompatibleProvider:
@@ -149,6 +150,18 @@ class OpenAiCompatibleProvider:
                     response = await client.post(
                         f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
                     )
+                elif 500 <= response.status_code < 600:
+                    # Provider capacity and gateway errors are often transient. Retry this
+                    # read-only model request once; never retry arbitrary 4xx or financial tools.
+                    logger.warning(
+                        "llm.provider_transient_failure provider=%s status=%s retrying=true",
+                        self.name,
+                        response.status_code,
+                    )
+                    await asyncio.sleep(_TRANSIENT_RETRY_DELAY_SECONDS)
+                    response = await client.post(
+                        f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
+                    )
                 response.raise_for_status()
                 body = response.json()
         except httpx.HTTPStatusError as exc:
@@ -158,17 +171,25 @@ class OpenAiCompatibleProvider:
             status = exc.response.status_code
             if status == 429:
                 limits = _rate_limit_headers(exc.response)
+                provider_code, quota_ids = _rate_limit_details(exc.response)
                 logger.warning(
                     "llm.provider_rate_limited provider=%s retry_after=%s "
-                    "remaining_requests=%s reset_requests=%s remaining_tokens=%s reset_tokens=%s",
+                    "remaining_requests=%s reset_requests=%s remaining_tokens=%s reset_tokens=%s "
+                    "provider_code=%s quota_ids=%s",
                     self.name,
                     limits.get("retry-after", "unknown"),
                     limits.get("x-ratelimit-remaining-requests", "unknown"),
                     limits.get("x-ratelimit-reset-requests", "unknown"),
                     limits.get("x-ratelimit-remaining-tokens", "unknown"),
                     limits.get("x-ratelimit-reset-tokens", "unknown"),
+                    provider_code or "unknown",
+                    ",".join(quota_ids) or "unknown",
                 )
                 details = "; ".join(f"{name}={value}" for name, value in limits.items() if value)
+                if provider_code:
+                    details = "; ".join(filter(None, (details, f"provider_code={provider_code}")))
+                if quota_ids:
+                    details = "; ".join(filter(None, (details, f"quota_ids={','.join(quota_ids)}")))
                 reason = f"HTTP {status}" + (f" ({details})" if details else "")
                 raise ProviderFailedError(self.name, reason) from None
             if (refused := _refused_generation(exc.response)) is not None:
@@ -219,14 +240,46 @@ class OpenAiCompatibleProvider:
 
 
 def _short_rate_wait(response: Any) -> float | None:
-    """The seconds a 429 asks for, when they are few enough to wait; None otherwise."""
+    """The seconds a 429 asks for, from the header or a Google RetryInfo detail.
+
+    Daily quota failures usually have no short retry delay and must fail fast. A per-minute
+    RESOURCE_EXHAUSTED response may carry its delay in the JSON body instead of Retry-After.
+    """
     if response.status_code != 429:
         return None
+    seconds: float | None
     try:
         seconds = float(response.headers.get("retry-after", ""))
-    except ValueError:
+    except (TypeError, ValueError):
+        seconds = None
+    if seconds is None:
+        seconds = _retry_info_delay(response)
+    return seconds if seconds is not None and 0 <= seconds <= _LONGEST_RATE_WAIT_SECONDS else None
+
+
+def _retry_info_delay(response: Any) -> float | None:
+    """Read only the structured retry duration; never inspect/log a provider's error message."""
+    try:
+        body = response.json()
+    except (AttributeError, ValueError):
         return None
-    return seconds if 0 <= seconds <= _LONGEST_RATE_WAIT_SECONDS else None
+    error = body.get("error") if isinstance(body, dict) else None
+    details = error.get("details") if isinstance(error, dict) else None
+    if not isinstance(details, list):
+        return None
+    for detail in details:
+        if not isinstance(detail, dict) or not str(detail.get("@type", "")).endswith(
+            "google.rpc.RetryInfo"
+        ):
+            continue
+        value = detail.get("retryDelay")
+        if not isinstance(value, str) or not value.endswith("s"):
+            continue
+        try:
+            return float(value[:-1])
+        except ValueError:
+            return None
+    return None
 
 
 def _rate_limit_headers(response: Any) -> dict[str, str]:
@@ -244,6 +297,43 @@ def _rate_limit_headers(response: Any) -> dict[str, str]:
         if value and len(value) <= 32 and all(char.isalnum() or char in ".:+- " for char in value):
             found[name] = value
     return found
+
+
+def _rate_limit_details(response: Any) -> tuple[str | None, tuple[str, ...]]:
+    """Machine-readable quota identifiers only; never log an upstream error message."""
+    try:
+        body = response.json()
+    except (AttributeError, ValueError):
+        return None, ()
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return None, ()
+    code = error.get("code") or error.get("status")
+    if not isinstance(code, str) or not code or len(code) > 64:
+        code = None
+    else:
+        code = code if all(char.isalnum() or char in "_.-" for char in code) else None
+    details = error.get("details")
+    quota_ids: set[str] = set()
+    if isinstance(details, list):
+        for detail in details:
+            if not isinstance(detail, dict) or not str(detail.get("@type", "")).endswith(
+                "google.rpc.QuotaFailure"
+            ):
+                continue
+            violations = detail.get("violations")
+            if not isinstance(violations, list):
+                continue
+            for violation in violations:
+                quota_id = violation.get("quotaId") if isinstance(violation, dict) else None
+                if (
+                    isinstance(quota_id, str)
+                    and quota_id
+                    and len(quota_id) <= 100
+                    and all(char.isalnum() or char in "_.-" for char in quota_id)
+                ):
+                    quota_ids.add(quota_id)
+    return code, tuple(sorted(quota_ids))
 
 
 def _refused_generation(response: Any) -> str | None:

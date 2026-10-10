@@ -79,8 +79,7 @@ Return 1-4 one-key operations in order: ask starts a query; patch changes named 
 side or pending; compare uses explicit windows; compare_previous=N compares the active rolling N
 months with the prior N; investigate_comparison explains a shown pair by merchant, keeping its
 windows and filters. measure selects a metric; select_operand chooses a side; reset clears;
-restore_previous=N; balance; list_contacts (keeps payment draft); clarify (missing WINDOW/SUBJECT/
-ACCOUNT/PERSON/OPERAND and typed draft of understood query fields); smalltalk (GREETING/THANKS/
+restore_previous=N; balance; list_contacts (keeps payment draft); smalltalk (GREETING/THANKS/
 IDENTITY/HELP);
 create_visualization/update_visualization choose AUTO/BAR/LINE (no bank call).
 prepare_bizum(recipient, amount_minor); prepare_transfer
@@ -113,8 +112,8 @@ Highest individual expense: `limit=1`, no `group_by`; highest merchant total:
 `group_by=MERCHANT, limit=1`.
 Counts and movement lists use COUNT; lists include matching rows.
 Missing query window: never assume THIS_MONTH; ask for it. Incomplete financial queries use `ask`
-with known fields and missing values null. If using `clarify`, include all understood fields in its
-typed draft.
+with every understood field and omit only what is missing. With no understood subject, return an
+empty `ask` so the transition can request one.
 Patch only fields a follow-up names; otherwise keep the active query's scope and window. A plain
 "how much" or total request means SUM; never carry AVERAGE/COUNT into it. Shift an
 explicit window back a year for "previous year"; compare only when requested. SHARE is part / same-
@@ -337,7 +336,7 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
         (
             "nothing",
             "¿Y lo otro?",
-            _answer({"clarify": {"missing": "SUBJECT", "draft": []}}),
+            _answer({"ask": []}),
         ),
         ("", "Buenas tardes", _answer({"smalltalk": "GREETING"})),
         (
