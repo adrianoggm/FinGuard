@@ -27,6 +27,7 @@ Desde `apps/orchestrator`, con la pila levantada y los datos cargados hasta ayer
 ```bash
 uv run python scripts/real_conversation.py preflight
 uv run python scripts/real_conversation.py replay --ux evaluation/ux/conversations.yaml --out evaluation/real/<fecha>-<sha>
+uv run python scripts/real_conversation.py replay --file evaluation/real/conversations.yaml --only sesion-bancaria-completa-paginacion-comparacion-bizum --out evaluation/real/<fecha>-<sha>-sesion
 uv run python scripts/real_conversation.py say --state <tmp>/impro-<nombre>.json --goal "<objetivo>" "<frase>"
 uv run python scripts/real_conversation.py observe --state <tmp>/web-<nombre>.json --said "<frase>" --response <tmp>/captures/<respuesta>.json
 uv run python scripts/real_conversation.py summarise evaluation/real/<fecha>-<sha>.json <tmp>/*.json --previous evaluation/real/<anterior>.json
@@ -38,7 +39,8 @@ pone el prefijo), y `summarise` se niega a juntar una que se llame como una repr
 archivo que no es una conversación (una respuesta capturada en la web, por ejemplo) se salta y lo
 dice.
 
-`preflight` termina con 1 si un servicio o el libro no responden y con 2 si el último movimiento es
+`preflight` registra `/ready` y `/version` para identificar motor, grafo, proveedor, modelo y build.
+Termina con 1 si un servicio no está listo o el libro no responde y con 2 si el último movimiento es
 anterior a ayer: entonces hay que cargar los datos con `just seed`, que **vacía el libro** y es un
 paso de la persona, nunca del script ni de la skill. `--max-age-days N` acepta datos más antiguos a
 propósito, y el informe lo dice.
@@ -90,6 +92,12 @@ mecanismo prueba el turno (`intent`, `slot_carryover`, `pending_resolution`, `in
 que un fallo nombre lo que se rompió. `summarise` cuenta los fallos por mecanismo, la tasa de
 recuperación (tras un turno fallido, ¿el siguiente va bien?), las cifras y la latencia, y lo compara
 con la ejecución anterior.
+
+Las expectativas pueden incluir `task`. El informe calcula también el éxito de cada gestión como
+unidad, además del éxito de la conversación completa. `sesion-bancaria-completa-paginacion-comparacion-bizum`
+es el acceptance test de diez turnos para saldos, listado y paginación, comparación y gráfico, y
+preparación y cancelación segura de Bizum. Sus turnos siguen pendientes hasta que se juzgan; añadir
+el caso al corpus no cuenta como evidencia de que el producto ya lo resuelve.
 
 ## Reglas
 

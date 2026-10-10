@@ -62,6 +62,8 @@ test("category breakdown renders with a chart and restyles without losing its qu
 
   const firstBubble = page.locator(".bubble.theirs").last();
   await expect(firstBubble.getByRole("img", { name: /Gastos por categor/i })).toBeVisible();
+  await expect(firstBubble.getByRole("group", { name: "Resumen financiero" })).toBeVisible();
+  await expect(firstBubble.locator(".financial-metric")).toHaveCount(1);
   await firstBubble.getByText("Ver los datos").click();
   await expect(firstBubble.locator(".groups li")).toHaveCount(9);
 

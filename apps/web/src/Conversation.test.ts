@@ -561,6 +561,27 @@ describe("¿Por qué este gráfico?", () => {
     );
   }
 
+  it("renders metric blocks from the verified answer fields", () => {
+    const markup = markupFor({
+      text: "650,00 € en total.",
+      currency: "EUR",
+      total_minor: 65_000,
+      visual_response: {
+        response_id: "response-1",
+        layout: "financial_analysis",
+        blocks: [{
+          type: "metric",
+          block_id: "artifact-1:metric:total",
+          artifact_id: "artifact-1",
+          field: "total",
+        }],
+      },
+    });
+    expect(markup).toContain("Resumen financiero");
+    expect(markup).toContain("aria-label=\"Total\"");
+    expect(markup).toContain("650,00 €");
+  });
+
   it("renders the four lines before «Ver la consulta» when the answer explains its chart", () => {
     const markup = markupFor({ explanation, visualization: chart });
     expect(markup).toContain("¿Por qué este gráfico?");

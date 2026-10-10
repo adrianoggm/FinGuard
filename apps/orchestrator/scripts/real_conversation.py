@@ -595,7 +595,13 @@ def _command(*arguments: str) -> subprocess.CompletedProcess[str] | None:
 
 
 async def _services(options: Options) -> dict[str, Any]:
-    found: dict[str, Any] = {"services": {}, "version": None, "ollama": None, "newest": None}
+    found: dict[str, Any] = {
+        "services": {},
+        "ready": None,
+        "version": None,
+        "ollama": None,
+        "newest": None,
+    }
     async with httpx.AsyncClient(timeout=10.0) as client:
         for name, base in (
             ("orchestrator", options.base_url),
@@ -612,6 +618,14 @@ async def _services(options: Options) -> dict[str, Any]:
             found["version"] = (await client.get(f"{options.base_url}/version")).json()
         except (httpx.HTTPError, ValueError) as error:
             found["version"] = {"error": type(error).__name__}
+        try:
+            response = await client.get(f"{options.base_url}/ready")
+            found["ready"] = {
+                "http_status": response.status_code,
+                **response.json(),
+            }
+        except (httpx.HTTPError, ValueError) as error:
+            found["ready"] = {"error": type(error).__name__}
         try:
             models = (await client.get(f"{options.ollama_url}/api/ps")).json().get("models", [])
             found["ollama"] = [
@@ -673,6 +687,12 @@ def preflight(options: Options) -> tuple[dict[str, Any], int]:
     )
 
     problems = [f"{name}: {state}" for name, state in found["services"].items() if state != "ok"]
+    ready = found.get("ready") or {}
+    if ready.get("status") != "ok":
+        problems.append(
+            f"orchestrator readiness: HTTP {ready.get('http_status', 'unknown')} "
+            f"({ready.get('status', ready.get('error', 'unknown'))})"
+        )
     if isinstance(found["newest"], dict):
         problems.append(f"ledger: {found['newest']['error']}")
     found["problems"] = problems
@@ -699,6 +719,13 @@ def _print_preflight(found: dict[str, Any]) -> None:
     print(
         f"orchestrator: {version.get('sha')} ({version.get('ref')}); HEAD {found.get('head')}; "
         f"product code {found.get('code_under_test')}"
+    )
+    ready = found.get("ready") or {}
+    path = ready.get("financial_path") or {}
+    print(
+        f"financial path: readiness {ready.get('status', ready.get('http_status', 'unknown'))}; "
+        f"engine {path.get('engine')}; graph {path.get('graph')}; "
+        f"provider {path.get('provider')}; model {path.get('model')}"
     )
     print(
         f"ledger: newest movement {found.get('newest')}, today {found.get('today')}, "
@@ -831,6 +858,25 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
         "unjudged": unjudged,
         "rate": succeeded / judged if judged else None,
     }
+    # A banking session contains several distinct tasks. Keep their labels in the expectation
+    # data, then score a task as a unit so a successful turn cannot hide a broken continuation.
+    by_task: dict[str, list[dict[str, Any]]] = {}
+    for record in turns:
+        task = (record.get("expect") or {}).get("task")
+        if isinstance(task, str) and task.strip():
+            by_task.setdefault(task, []).append(record)
+    tasks: dict[str, dict[str, Any]] = {}
+    for task, mine in sorted(by_task.items()):
+        statuses = [_status(record) for record in mine]
+        goal_unmet = any(
+            (record.get("judgement") or {}).get("goal_met") is False for record in mine
+        )
+        tasks[task] = {
+            "turns": len(mine),
+            "succeeded": all(status == "passed" for status in statuses) and not goal_unmet,
+            "failed": statuses.count("failed") + int(goal_unmet),
+            "unjudged": statuses.count("unjudged"),
+        }
     return {
         "by_mechanism": dict(sorted(by_mechanism.items())),
         "recovery_rate": recovered / opportunities if opportunities else None,
@@ -841,6 +887,7 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
         "model_calls": model_calls,
         "model_calls_malformed": malformed,
         "conversations": conversations,
+        "tasks": tasks,
     }
 
 
@@ -916,6 +963,22 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
             f"| {tag} | {counts['turns']} | {counts['failed']} | {counts['unjudged']} "
             f"| {_percent(_rate(counts))} | {_percent(_rate(before)) if before else '—'} |"
         )
+    if summary["tasks"]:
+        lines += [
+            "",
+            "### Gestiones de las sesiones",
+            "",
+            "| Gestión | Turnos | Estado | Fallidos | Sin juzgar |",
+            "|---|---:|---|---:|---:|",
+        ]
+        for task, counts in summary["tasks"].items():
+            status = (
+                "fallida" if counts["failed"] else "pendiente" if counts["unjudged"] else "completa"
+            )
+            lines.append(
+                f"| {task} | {counts['turns']} | {status} | {counts['failed']} "
+                f"| {counts['unjudged']} |"
+            )
     recovery = summary["recovery"]
     figures = summary["figures"]
     latency = summary["latency"] or {}

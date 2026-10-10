@@ -665,6 +665,7 @@ function Bubble({ turn }: { turn: Turn }) {
           {parts.map((part, index) => (
             <section className="compound-part" key={index}>
               <p>{part.text}</p>
+              <FinancialMetricBlocks answer={part} />
               <Chart visualization={chartForResponse(part)} currency={part.currency} />
               {/* Each part carries its own save authority and always did; this end was dropping it,
                   so a chart asked for in a compound question was the one chart nobody could keep. */}
@@ -681,6 +682,7 @@ function Bubble({ turn }: { turn: Turn }) {
       ) : (
         <>
           <p>{answer.text}</p>
+          <FinancialMetricBlocks answer={answer} />
           <Chart visualization={chart} currency={answer.currency} />
           {answer.save_candidate && (
             <SaveMetricControl
@@ -710,6 +712,37 @@ function chartForResponse(answer: Answer): NonNullable<Answer["visualization"]> 
   return block && visualization?.kind === "chart" && block.chart_id === visualization.chart_id
     ? visualization
     : null;
+}
+
+function FinancialMetricBlocks({ answer }: { answer: Answer }) {
+  const blocks = answer.visual_response?.blocks.filter((block) => block.type === "metric") ?? [];
+  if (blocks.length === 0) return null;
+  return (
+    <div className="financial-metrics" role="group" aria-label="Resumen financiero">
+      {blocks.map((block) => {
+        const value = block.field === "difference"
+          ? answer.difference_minor
+          : block.field === "total"
+            ? answer.total_minor
+            : answer.movement_count;
+        if (value === null || value === undefined) return null;
+        const label = block.field === "difference"
+          ? "Variación"
+          : block.field === "total"
+            ? "Total"
+            : "Movimientos";
+        const display = block.field === "movement_count"
+          ? `${value} ${value === 1 ? "movimiento" : "movimientos"}`
+          : money(value, answer.currency ?? "EUR");
+        return (
+          <section className="financial-metric" key={block.block_id} aria-label={label}>
+            <span>{label}</span>
+            <strong>{display}</strong>
+          </section>
+        );
+      })}
+    </div>
+  );
 }
 
 /**

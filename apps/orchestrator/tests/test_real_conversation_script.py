@@ -497,6 +497,49 @@ def test_a_conversation_succeeds_only_when_every_turn_passes() -> None:
     }
 
 
+def test_a_session_task_succeeds_only_when_every_turn_in_that_task_passes() -> None:
+    records = [
+        _record("session", 1, expect={"task": "movements"}),
+        _record("session", 2, "fail", expect={"task": "movements"}),
+        _record("session", 3, expect={"task": "payment"}),
+    ]
+    assert real.summarise(records)["tasks"] == {
+        "movements": {"turns": 2, "succeeded": False, "failed": 1, "unjudged": 0},
+        "payment": {"turns": 1, "succeeded": True, "failed": 0, "unjudged": 0},
+    }
+
+
+def test_a_task_fails_when_the_judge_says_its_goal_was_not_met() -> None:
+    record = _record(
+        "session",
+        1,
+        expect={"task": "visualization"},
+        judgement={"verdict": "pass", "goal_met": False},
+    )
+    assert real.summarise([record])["tasks"]["visualization"]["succeeded"] is False
+
+
+def test_the_full_banking_acceptance_session_is_ten_turns_and_groups_tasks() -> None:
+    corpus = yaml.safe_load(
+        (ROOT / "evaluation" / "real" / "conversations.yaml").read_text(encoding="utf-8")
+    )
+    session = next(
+        item
+        for item in corpus["conversations"]
+        if item["name"] == "sesion-bancaria-completa-paginacion-comparacion-bizum"
+    )
+    assert len(session["turns"]) == 10
+    assert {turn["expect"]["task"] for turn in session["turns"]} == {
+        "saldos",
+        "movimientos-paginacion",
+        "restaurantes-comparacion-visualizacion",
+        "capacidad-bizum",
+        "bizum-cancelacion",
+    }
+    assert len({turn["expect"]["task"] for turn in session["turns"]}) == 5
+    assert session["turns"][-1]["say"] == "No, mejor déjalo."
+
+
 def test_a_goal_judged_unmet_fails_a_conversation_whose_turns_all_passed() -> None:
     records = [_record("a", 1), _record("a", 2, judgement={"verdict": "pass", "goal_met": False})]
     records += [_record("b", 1, judgement={"verdict": "pass", "goal_met": True})]

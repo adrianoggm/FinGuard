@@ -1305,6 +1305,41 @@ body {
   max-width: 100%;
 }
 
+.financial-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.financial-metric {
+  min-width: 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--card);
+  font-variant-numeric: tabular-nums;
+}
+
+.financial-metric span,
+.financial-metric strong {
+  display: block;
+}
+
+.financial-metric span {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.financial-metric strong {
+  margin-top: 0.2rem;
+  color: var(--brand);
+  font-size: 1.05rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
 .bubble.theirs p {
   margin: 0;
 }

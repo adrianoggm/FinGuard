@@ -394,6 +394,7 @@ export type Answer = {
   conversation: ConversationState | null;
   currency: string | null;
   total_minor: number | null;
+  difference_minor?: number | null;
   movement_count: number | null;
   groups: {
     key: string;

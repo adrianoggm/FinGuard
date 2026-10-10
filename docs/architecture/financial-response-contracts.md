@@ -166,9 +166,10 @@ IDs, advances the view ID, and makes no bank call.
 The API now emits a value-free `VisualResponseSpec` for graph answers with artifact identities. A
 category breakdown with a total composes a metric block and breakdown block; a chart adds a block
 that references the stable artifact and view. The DTO is closed and its block fields cannot carry
-amounts or renderer code. React now uses the composition to decide whether the chart and breakdown
-belong in the response, while reading all figures from the verified response fields. It is the first
-step toward the component registry, not yet a general visual renderer. Category-to-drill-down is
+amounts or renderer code. React renders metric blocks from the verified response fields and uses
+the composition to decide whether the chart and breakdown belong in the response. The browser
+contract checks all three blocks over one artifact. This is the first step toward the component
+registry, not yet a general visual renderer. Category-to-drill-down is
 also pending: a click is not yet a typed operation naming the source artifact. Next slices should
 cover `RECORDS` versus `COUNT`, time series, comparisons/investigation, historical views, and
 payment confirmation rendering. Dialogue codec schema 17 migrates the previous `active_result` payload

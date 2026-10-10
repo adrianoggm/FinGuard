@@ -977,3 +977,84 @@ conversations:
         expect:
           mechanism: reset
           want: Deja lo pendiente y lo dice en una frase; ni repite la consulta ni da una cifra.
+
+  - name: sesion-bancaria-completa-paginacion-comparacion-bizum
+    goal: >-
+      Completar varias gestiones en una conversación: consultar saldos, listar movimientos y
+      paginar sin duplicados, comparar restaurantes, visualizar el resultado y cancelar un Bizum
+      antes de ejecutarlo.
+    turns:
+      - say: "¿Me dices cómo están mis cuentas?"
+        expect:
+          task: saldos
+          mechanism: intent
+          route: BALANCE
+          want: >-
+            Saldo actual por cuenta y total basado únicamente en la banca; no confunde saldo de
+            inversión con valoración actual.
+      - say: "Enséñame los últimos 20 gastos de la corriente."
+        expect:
+          task: movimientos-paginacion
+          mechanism: intent
+          route: QUERY
+          want: >-
+            Una lista ordenada de hasta 20 movimientos de gasto de Cuenta corriente, con fechas,
+            comercios e importes; no solicita periodo.
+      - say: "¿Y los de la Hucha?"
+        expect:
+          task: movimientos-paginacion
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Conserva la lista de gastos y su ventana implícita, cambia solo la cuenta a Hucha y
+            presenta los movimientos reales de esa cuenta.
+      - say: "Dame otros 10."
+        expect:
+          task: movimientos-paginacion
+          mechanism: follow_up
+          route: QUERY
+          want: >-
+            Devuelve la página siguiente de hasta 10 movimientos de Hucha, ordenada igual y sin
+            repetir ninguna fila de la página anterior.
+      - say: "¿Cuánto gasté en restaurantes el mes pasado?"
+        expect:
+          task: restaurantes-comparacion-visualizacion
+          mechanism: interruption
+          route: QUERY
+          want: >-
+            Inicia una consulta independiente de restaurantes para el mes pasado en todas las
+            cuentas; no hereda Hucha ni el límite de movimientos.
+      - say: "Compáralo con agosto."
+        expect:
+          task: restaurantes-comparacion-visualizacion
+          mechanism: comparison
+          route: QUERY
+          want: >-
+            Compara el mismo gasto en restaurantes entre el mes pasado y agosto, con ambos periodos
+            explícitos y resultados bancarios.
+      - say: "Ponme una gráfica."
+        expect:
+          task: restaurantes-comparacion-visualizacion
+          mechanism: reference
+          route: VISUAL
+          want: >-
+            Dibuja la comparación anterior usando sus resultados verificados, sin una nueva lectura
+            bancaria ni un desglose distinto.
+      - say: "¿Puedes hacer Bizums?"
+        expect:
+          task: capacidad-bizum
+          mechanism: interruption
+          want: Explica la capacidad sin crear un borrador de pago ni iniciar una confirmación.
+      - say: "Vale, quiero enviar 15 euros a Marta."
+        expect:
+          task: bizum-cancelacion
+          mechanism: intent
+          route: PAYMENT
+          want: >-
+            Resuelve Marta contra los contactos y muestra la previsualización bancaria exacta;
+            todavía no envía dinero.
+      - say: "No, mejor déjalo."
+        expect:
+          task: bizum-cancelacion
+          mechanism: reset
+          want: Cancela el borrador o la previsualización y no ejecuta el pago.
