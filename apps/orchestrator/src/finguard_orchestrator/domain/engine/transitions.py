@@ -151,7 +151,7 @@ def apply(
             # it would show the person the model's words, a figure among them. Persist the open
             # question even when the model itself chose to ask it, so a later restore can dismiss
             # it and a later planner sees that the reply belongs to this question.
-            open_question = Pending(op.missing, PlanFields())
+            open_question = Pending(op.missing, op.draft)
             return Transition(replace(resting, pending=open_question), None, Clarify(op.missing))
         if isinstance(op, RestorePrevious):
             try:

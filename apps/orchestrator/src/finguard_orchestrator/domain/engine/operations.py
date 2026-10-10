@@ -128,6 +128,7 @@ class Clarify:
     missing: Missing
     about: str | None = None
     candidates: tuple[str, ...] = ()
+    draft: PlanFields = PlanFields()
 
 
 @dataclass(frozen=True)

@@ -63,6 +63,7 @@ from finguard_orchestrator.domain.engine.transitions import apply
 from finguard_orchestrator.domain.enums import (
     Direction,
     GroupBy,
+    Metric,
     PaymentOutcome,
     Period,
     PlanningOutcome,
@@ -299,6 +300,41 @@ async def test_the_current_engine_refuses_a_comparison_by_merchant() -> None:
     moved = apply(DialogueState(UUID(int=1)), BY_MERCHANT, today=TODAY, grounds=grounds)
 
     assert moved.work is None and moved.reply is not None
+
+
+async def test_a_period_clarification_resumes_the_typed_movement_list() -> None:
+    world = World(
+        (
+            Clarify(
+                Missing.WINDOW,
+                draft=PlanFields(direction=Direction.ALL, metric=Metric.COUNT),
+            ),
+        ),
+        (Patch("pending", PlanFields(window=JULY)),),
+    )
+
+    first = await world.ask(
+        request_id="list-1",
+        sentence="Perdona, ¿qué movimientos he tenido?",
+    )
+
+    assert first.result is not None
+    assert first.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION
+    assert first.state.pending is not None
+    assert first.state.pending.draft.metric is Metric.COUNT
+
+    second = await world.ask(
+        conversation_id=first.state.conversation_id,
+        version=first.state.version,
+        request_id="list-2",
+        sentence="julio",
+    )
+
+    assert second.result is not None
+    assert second.state.pending is None
+    assert world.ledger.ran[-1].direction is Direction.ALL
+    assert world.ledger.ran[-1].metric is Metric.COUNT
+    assert "movimientos" in second.result.text
 
 
 async def test_scalar_comparison_checkpoints_both_reads_without_merchant_relabeling() -> None:

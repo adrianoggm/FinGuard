@@ -331,7 +331,10 @@ class AskOp(_Closed):
     ask: Fields
 
     def as_operation(self) -> Ask:
-        return Ask(_plan_fields(self.ask))
+        fields = _plan_fields(self.ask)
+        if fields.direction is Direction.ALL and fields.metric is None:
+            raise InvalidValueError("direction ALL requires an explicit metric (SUM or COUNT)")
+        return Ask(fields)
 
 
 class PatchOp(_Closed):
@@ -407,13 +410,21 @@ class ListContactsOp(_Closed):
         return ListContacts()
 
 
+class ClarifyBody(_Closed):
+    # The draft is what the model has already understood. The missing slot is separately named,
+    # so resuming this question never requires reconstructing the original request.
+    missing: Missing
+    draft: Fields
+
+
 class ClarifyOp(_Closed):
-    # What is missing and nothing else: a name to quote comes from grounding (ruling R21), so
-    # there is no field for the model to write one in.
-    clarify: Missing
+    clarify: ClarifyBody
 
     def as_operation(self) -> Clarify:
-        return Clarify(self.clarify)
+        draft = _plan_fields(self.clarify.draft)
+        if draft.direction is Direction.ALL and draft.metric is None:
+            raise InvalidValueError("direction ALL requires an explicit metric (SUM or COUNT)")
+        return Clarify(self.clarify.missing, draft=draft)
 
 
 class SmalltalkOp(_Closed):

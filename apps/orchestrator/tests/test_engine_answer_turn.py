@@ -509,6 +509,31 @@ async def test_a_past_window_is_never_said_not_to_have_begun() -> None:
     assert turn.result.text == "¿De qué periodo quieres ver lo que le mandaste a Pepe?"
 
 
+async def test_a_clarification_keeps_the_typed_query_for_its_follow_up() -> None:
+    rig = a_rig(
+        (
+            Clarify(
+                Missing.WINDOW,
+                draft=PlanFields(direction=Direction.ALL, metric=Metric.COUNT),
+            ),
+        ),
+        (Patch("pending", PlanFields(window=JULY)),),
+    )
+
+    first = await rig.say("Perdona, ¿qué movimientos he tenido?")
+    assert first.result is not None
+    assert first.result.text == "¿De qué periodo quieres ver tus movimientos?"
+    assert first.state.pending is not None
+    assert first.state.pending.draft == PlanFields(direction=Direction.ALL, metric=Metric.COUNT)
+
+    second = await rig.say("este mes", first)
+
+    assert second.result is not None
+    assert len(rig.ledger.plans) == 1
+    assert rig.ledger.plans[0].direction is Direction.ALL
+    assert rig.ledger.plans[0].metric is Metric.COUNT
+
+
 async def test_an_unknown_person_is_asked_about_by_name() -> None:
     rig = a_rig((Ask(spending(window=JULY, people=("Pepe",))),))
 

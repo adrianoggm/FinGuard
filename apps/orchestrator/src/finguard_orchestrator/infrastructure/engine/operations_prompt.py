@@ -53,8 +53,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 _TEMPLATE: Final = Template("""\
-Read this Spanish turn. Return typed operations; \
-code applies them and banking supplies figures. \
+Interpret Spanish turn; banking provides figures. \
 Today: $today ($weekday).
 
 ## Categories
@@ -66,7 +65,7 @@ $months
 Groupings: $group_by. Measures: $measures.
 
 ## Plan fields
-A plan is one-key fields. In a patch, omitted fields stay; in a new ask, they are unspecified.
+A plan is one-key fields. Patches keep omitted fields; asks start fresh.
 Fields: direction EXPENSE/INCOME/ALL; window named, counted LAST_N_DAYS/LAST_N_MONTHS with n, or
 inclusive ISO range; categories/excluded_categories use listed keys; merchants/excluded_merchants
 are exact shop names; merchant_terms are shop fragments ("en el gimnasio" -> ["gimnasio"]);
@@ -80,12 +79,13 @@ Return 1-4 one-key operations in order: ask starts a query; patch changes named 
 side or pending; compare uses explicit windows; compare_previous=N compares the active rolling N
 months with the prior N; investigate_comparison explains a shown pair by merchant, keeping its
 windows and filters. measure selects a metric; select_operand chooses a side; reset clears;
-restore_previous=N; balance; list_contacts (keeps payment draft); clarify (WINDOW/SUBJECT/ACCOUNT/
-PERSON/OPERAND); smalltalk (GREETING/THANKS/IDENTITY/HELP);
+restore_previous=N; balance; list_contacts (keeps payment draft); clarify (missing WINDOW/SUBJECT/
+ACCOUNT/PERSON/OPERAND and typed draft of understood query fields); smalltalk (GREETING/THANKS/
+IDENTITY/HELP);
 create_visualization/update_visualization choose AUTO/BAR/LINE (no bank call).
 prepare_bizum(recipient, amount_minor); prepare_transfer
-(recipient, amount_minor) for a named payee when "transferencia" is said. A new payee needs a
-user-written IBAN beside the name; code extracts it; never output an IBAN. Null means missing;
+(recipient, amount_minor) for a named payee when "transferencia" is said. New payees require a
+user-written IBAN; code extracts it; never output an IBAN. Null means missing;
 never invent amounts. Recipient must be specifically named, never generic ("someone"). For payments,
 put missing slots as null; do not add clarify or another payment operation. The concept is extracted
 from the user's words. Even with no amount, use prepare_transfer. prepare_own_transfer moves money
@@ -110,7 +110,11 @@ Rules: "el último año" means counted LAST_N_MONTHS n=12, not a date range.
 the last two complete months and equal named durations. A named month is its latest begun window
 from the list. Never ask for a future window; delegate UNSUPPORTED.
 Highest individual expense: `limit=1`, no `group_by`; highest merchant total:
-`group_by=MERCHANT, limit=1`. Counts use COUNT. Unqualified movement lists use ALL.
+`group_by=MERCHANT, limit=1`.
+Counts and movement lists use COUNT; lists include matching rows.
+Missing query window: never assume THIS_MONTH; ask for it. Incomplete financial queries use `ask`
+with known fields and missing values null. If using `clarify`, include all understood fields in its
+typed draft.
 Patch only fields a follow-up names; otherwise keep the active query's scope and window. A plain
 "how much" or total request means SUM; never carry AVERAGE/COUNT into it. Shift an
 explicit window back a year for "previous year"; compare only when requested. SHARE is part / same-
@@ -330,7 +334,11 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             "¿Qué saldo tengo en la cuenta de ahorro?",
             _answer({"balance": ["cuenta de ahorro"]}),
         ),
-        ("nothing", "¿Y lo otro?", _answer({"clarify": "SUBJECT"})),
+        (
+            "nothing",
+            "¿Y lo otro?",
+            _answer({"clarify": {"missing": "SUBJECT", "draft": []}}),
+        ),
         ("", "Buenas tardes", _answer({"smalltalk": "GREETING"})),
         (
             "a category breakdown with an active financial result",
@@ -576,8 +584,8 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
     )
     movement_count = (
         "no current query",
-        "¿Cuántos movimientos he tenido este mes?",
-        _answer({"ask": _items(direction="ALL", window={"named": "THIS_MONTH"}, metric="COUNT")}),
+        "Enséñame los movimientos",
+        _answer({"ask": _items(direction="ALL", metric="COUNT")}),
     )
     average_to_total = (
         f"On screen: {_focus(state.focus, today)}",
@@ -642,7 +650,9 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
     if state.focus is not None and state.payment is None:
         selected = [example for example in selected if example is not all_examples[19]]
     selected.append(single_largest_movement)
-    if not isinstance(state.focus, ComparisonFocus):
+    if state.focus is None and state.pending is None:
+        selected.append(movement_count)
+    elif not isinstance(state.focus, ComparisonFocus):
         selected.append(movement_count)
     return tuple(selected)
 

@@ -248,10 +248,17 @@ PARSED: list[tuple[dict[str, Any], Operation]] = [
     ({"restore_previous": 2}, RestorePrevious(2)),
     ({"balance": ["Cuenta corriente"]}, Balance(("Cuenta corriente",))),
     ({"balance": []}, Balance(())),
-    # What a clarification asks for and nothing else: a name to quote comes from grounding
-    # (ruling R21), so there is no field for the model to write one in.
-    ({"clarify": "PERSON"}, Clarify(Missing.PERSON)),
-    ({"clarify": "WINDOW"}, Clarify(Missing.WINDOW)),
+    # Clarifications preserve typed fields understood before asking for the missing slot.
+    ({"clarify": {"missing": "PERSON", "draft": []}}, Clarify(Missing.PERSON)),
+    (
+        {
+            "clarify": {
+                "missing": "WINDOW",
+                "draft": items(direction="ALL", metric="COUNT"),
+            }
+        },
+        Clarify(Missing.WINDOW, draft=PlanFields(direction=Direction.ALL, metric=Metric.COUNT)),
+    ),
     ({"smalltalk": "THANKS"}, Smalltalk("THANKS")),
     ({"delegate": "TRANSFER"}, Delegate("TRANSFER")),
 ]
@@ -263,6 +270,17 @@ async def test_each_op_parses_to_its_dataclass(said: dict[str, Any], expected: O
 
     assert ops == (expected,)
     assert len(provider.prompts) == 1
+
+
+async def test_all_direction_requires_the_model_to_choose_a_metric() -> None:
+    ops, provider = await interpreted(
+        answer({"ask": items(direction="ALL")}),
+        answer({"ask": items(direction="ALL", metric="COUNT")}),
+    )
+
+    assert ops == (Ask(PlanFields(direction=Direction.ALL, metric=Metric.COUNT)),)
+    assert len(provider.prompts) == 2
+    assert "explicit metric" in provider.prompts[1]
 
 
 async def test_several_operations_keep_their_order() -> None:
@@ -382,7 +400,7 @@ MARKER = "SENTENCIASECRETA"
         answer({"ask": [{MARKER: 1}]}),
         answer({"ask": items(window={MARKER: "LAST_MONTH"})}),
         answer({"ask": items(categories=[MARKER])}),
-        answer({"clarify": MARKER}),
+        answer({"clarify": {"missing": MARKER, "draft": []}}),
         MARKER,
     ],
     ids=["op", "extra key", "second key", "field", "window", "category", "enum", "not json"],
@@ -999,6 +1017,7 @@ def test_prompt_distinguishes_largest_movement_from_group_total_and_counts() -> 
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
 
     assert "Highest individual expense" in prompt
+    assert "never assume THIS_MONTH" in prompt
     assert "no `group_by`" in prompt
     assert "`group_by=MERCHANT, limit=1`" in prompt
     assert '"metric":"COUNT"' in prompt
