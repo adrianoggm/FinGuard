@@ -16,7 +16,9 @@ from pydantic.alias_generators import to_camel
 
 from finguard_banking.domain.constants import (
     DEFAULT_SUPPORTING_MOVEMENTS,
+    MAX_CATEGORIES,
     MAX_CATEGORY_LENGTH,
+    MAX_MERCHANTS,
     MAX_PAYMENT_MINOR,
     MAX_PERIOD_DAYS,
     MAX_RANK,
@@ -233,6 +235,53 @@ class RankedMovementResponse(_Payload):
     # the account, not about the row. Absent when no movement matched, because there is then no
     # amount to denominate.
     currency: str | None = None
+
+
+class MovementCursorPayload(_Payload):
+    occurred_at: datetime
+    transaction_id: UUID
+
+
+class MovementListRequest(_Body):
+    """A ledger list does not require a reporting period or an aggregate metric."""
+
+    direction: Direction = Direction.ALL
+    account_ids: tuple[UUID, ...] = Field(default=(), max_length=MAX_SELECTED_ACCOUNTS)
+    across_accounts: bool = False
+    categories: tuple[str, ...] = Field(default=(), max_length=MAX_CATEGORIES)
+    merchant_terms: tuple[str, ...] = Field(default=(), max_length=MAX_MERCHANTS)
+    date_range: DateRangeRequest | None = None
+    period: RelativePeriodRequest | None = None
+    include_internal: bool = False
+    page_size: int = Field(default=20, ge=1, le=MAX_SUPPORTING_MOVEMENTS)
+    cursor: MovementCursorPayload | None = None
+    reporting_timezone: str = "Europe/Madrid"
+
+    @model_validator(mode="after")
+    def _validate_list_filters(self) -> Self:
+        if self.date_range is not None and self.period is not None:
+            raise ValueError("provide dateRange or period, not both")
+        if len(set(self.account_ids)) != len(self.account_ids):
+            raise ValueError("account ids cannot contain duplicates")
+        if self.across_accounts and self.account_ids:
+            raise ValueError("acrossAccounts cannot be combined with accountIds")
+        if len(set(self.categories)) != len(self.categories):
+            raise ValueError("categories cannot contain duplicates")
+        if any(not term.strip() or len(term) > 140 for term in self.merchant_terms):
+            raise ValueError("merchant terms must be 1 to 140 characters")
+        known_zone(self.reporting_timezone)
+        return self
+
+
+class MovementListItemResponse(MovementResponse):
+    currency: str
+
+
+class MovementListResponse(_Payload):
+    account_id: UUID
+    movements: list[MovementListItemResponse]
+    has_more: bool
+    next_cursor: MovementCursorPayload | None = None
 
 
 class TraceResponse(_Payload):

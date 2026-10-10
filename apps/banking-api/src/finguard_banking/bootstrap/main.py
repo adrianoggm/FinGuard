@@ -23,6 +23,8 @@ from finguard_banking.application import (
     ListCardsQuery,
     ListContactsHandler,
     ListContactsQuery,
+    ListMovementsHandler,
+    ListMovementsQuery,
     MovementSummaryHandler,
     MovementSummaryQuery,
     PreparePaymentCommand,
@@ -87,6 +89,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.query_bus.register(GetBalanceQuery, GetBalanceHandler(ledger))
     app.state.query_bus.register(MovementSummaryQuery, MovementSummaryHandler(financial_queries))
+    app.state.query_bus.register(ListMovementsQuery, ListMovementsHandler(financial_queries))
     # The ranking shares the repository with the aggregate: same filters, same containment, one
     # place where the account is declared.
     app.state.query_bus.register(RankedMovementQuery, RankedMovementHandler(financial_queries))
@@ -142,6 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     """Composition root: the only place that wires concrete implementations."""
+    settings = get_settings()
     app = FastAPI(
         title="FinGuard Banking API",
         version="0.1.0",
@@ -162,6 +166,7 @@ def create_app() -> FastAPI:
     # bringing a database up.
     app.state.query_bus = QueryBus()
     app.state.command_bus = CommandBus()
+    app.state.settings = settings
 
     app.include_router(health_router)
     app.include_router(accounts_router)

@@ -1,9 +1,9 @@
 """Preparing and confirming a payment, and the ways it could pay twice.
 
 §4.1 puts human confirmation between an intent and its execution. These test the gap: that
-preparing moves nothing, that confirming moves it exactly once, and that the three ways of paying
-twice all fail — a resent prepare, a repeated confirm, and two confirmations racing for a balance
-that covers only one.
+preparing moves nothing, that confirming books exactly once, and that retries replay the same
+receipt — a resent prepare, a repeated confirm, and two confirmations racing for a balance that
+covers only one.
 
 The last needs a real database and two connections. It cannot be tested with a double, because
 what is under test *is* the database's locking.
@@ -206,11 +206,10 @@ async def test_confirming_twice_pays_once(connection: asyncpg.Connection) -> Non
     intent = await payments(connection).prepare(
         account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
-    await payments(connection).confirm(account_id=account, intent_id=intent.intent_id)
+    first = await payments(connection).confirm(account_id=account, intent_id=intent.intent_id)
+    replay = await payments(connection).confirm(account_id=account, intent_id=intent.intent_id)
 
-    with pytest.raises(IntentNotConfirmableError):
-        await payments(connection).confirm(account_id=account, intent_id=intent.intent_id)
-
+    assert replay == first
     assert await balance_of(connection, account) == Money(70_00, EUR)
 
 

@@ -23,6 +23,11 @@ from finguard_banking.application import (
 from finguard_banking.application.queries.ranked_movement import RankedMovementResult
 from finguard_banking.domain.enums import AccountKind
 from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.models.movement_list import (
+    MovementCursor,
+    MovementListPage,
+    MovementListPlan,
+)
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
 from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
@@ -48,6 +53,10 @@ from finguard_banking.infrastructure.dto.banking_dto import (
     GroupResponse,
     HoldingResponse,
     HoldingsResponse,
+    MovementCursorPayload,
+    MovementListItemResponse,
+    MovementListRequest,
+    MovementListResponse,
     MovementResponse,
     PaymentPreviewResponse,
     PaymentReceiptResponse,
@@ -56,6 +65,75 @@ from finguard_banking.infrastructure.dto.banking_dto import (
     RankedMovementResponse,
     TraceResponse,
 )
+
+
+def movement_list_plan_from_dto(
+    request: MovementListRequest, account_id: UUID, today: date
+) -> MovementListPlan:
+    if request.date_range is not None:
+        date_range = DateRange(request.date_range.start, request.date_range.end)
+    elif request.period is not None:
+        relative = RelativePeriod(
+            period=request.period.period,
+            n=request.period.n,
+            reference=request.period.reference,
+        )
+        date_range = resolve(relative, today)
+    else:
+        date_range = None
+    return MovementListPlan(
+        account_id=account_id,
+        direction=request.direction,
+        page_size=request.page_size,
+        cursor=(
+            MovementCursor(request.cursor.occurred_at, request.cursor.transaction_id)
+            if request.cursor is not None
+            else None
+        ),
+        date_from=date_range.start if date_range is not None else None,
+        date_to=date_range.end if date_range is not None else None,
+        account_ids=request.account_ids,
+        across_accounts=request.across_accounts,
+        categories=tuple(Category(value) for value in request.categories),
+        merchant_terms=request.merchant_terms,
+        include_internal=request.include_internal,
+        reporting_timezone=request.reporting_timezone,
+    )
+
+
+def movement_list_to_dto(page: MovementListPage) -> MovementListResponse:
+    return MovementListResponse(
+        account_id=page.account_id,
+        movements=[
+            MovementListItemResponse(
+                transaction_id=movement.transaction_id,
+                occurred_at=movement.occurred_at,
+                description=movement.description,
+                merchant_name=movement.merchant_name,
+                category=movement.category,
+                category_is_custom=movement.category_is_custom,
+                category_source=movement.category_source,
+                is_internal=movement.is_internal,
+                transaction_type=movement.transaction_type,
+                counterparty_name=movement.counterparty_name,
+                counterparty_type=movement.counterparty_type,
+                receipt_category=movement.receipt_category,
+                amount_minor=movement.amount.amount_minor,
+                direction=movement.direction,
+                currency=movement.amount.currency,
+            )
+            for movement in page.movements
+        ],
+        has_more=page.has_more,
+        next_cursor=(
+            MovementCursorPayload(
+                occurred_at=page.next_cursor.occurred_at,
+                transaction_id=page.next_cursor.transaction_id,
+            )
+            if page.next_cursor is not None
+            else None
+        ),
+    )
 
 
 def plan_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery:

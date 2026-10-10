@@ -56,6 +56,10 @@ from finguard_banking.application.queries.list_contacts import (
     ListContactsQuery,
     ListContactsResult,
 )
+from finguard_banking.application.queries.list_movements import (
+    ListMovementsHandler,
+    ListMovementsQuery,
+)
 from finguard_banking.application.queries.movement_summary import (
     MovementSummaryHandler,
     MovementSummaryQuery,
@@ -92,6 +96,8 @@ __all__ = [
     "ListContactsHandler",
     "ListContactsQuery",
     "ListContactsResult",
+    "ListMovementsHandler",
+    "ListMovementsQuery",
     "CancelPaymentCommand",
     "CancelPaymentHandler",
     "Command",

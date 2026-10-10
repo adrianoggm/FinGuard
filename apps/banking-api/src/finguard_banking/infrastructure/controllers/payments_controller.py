@@ -59,7 +59,8 @@ async def confirm_payment(
     account_id: UUID, intent_id: UUID, commands: Commands
 ) -> PaymentReceiptResponse:
     """The receipt points at the ledger movement, so the figure on it can be checked rather than
-    believed. Confirming an intent that is already terminal is refused, not repeated."""
+    believed. Repeating a confirmed intent returns its original receipt without booking again;
+    cancelled or expired intents remain terminal refusals."""
     command = ConfirmPaymentCommand(account_id=account_id, intent_id=intent_id)
     return http_mapper.receipt_to_dto(await commands.dispatch(command))
 

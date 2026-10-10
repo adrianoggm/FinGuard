@@ -11,6 +11,10 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="BANKING_", env_file=".env", extra="ignore")
 
+    build_sha: str = "unknown"
+    build_ref: str = "unknown"
+    build_source_sha256: str = "unknown"
+
     database_url: str = (
         "postgresql://finguard_banking:finguard_banking@127.0.0.1:5442/finguard_banking"
     )

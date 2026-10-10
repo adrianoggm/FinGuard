@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import AfterValidator
 
@@ -20,6 +20,7 @@ from finguard_banking.application import (
     ListCardChargesQuery,
     ListCardsQuery,
     ListContactsQuery,
+    ListMovementsQuery,
     MovementSummaryQuery,
     QueryBus,
     RankedMovementQuery,
@@ -43,6 +44,8 @@ from finguard_banking.infrastructure.dto.banking_dto import (
     FinancialQueryRequest,
     FinancialQueryResponse,
     HoldingsResponse,
+    MovementListRequest,
+    MovementListResponse,
     RankedMovementRequest,
     RankedMovementResponse,
     known_zone,
@@ -70,6 +73,17 @@ queries_router = APIRouter(prefix="/v1/financial-queries", tags=["queries"])
 async def health() -> dict[str, str]:
     """The process answers. It deliberately does not check dependencies."""
     return {"status": "ok"}
+
+
+@health_router.get("/version", summary="Which build is answering")
+async def version(request: Request) -> dict[str, str]:
+    settings = request.app.state.settings
+    return {
+        "service": "banking-api",
+        "sha": str(settings.build_sha),
+        "ref": str(settings.build_ref),
+        "source_sha256": str(settings.build_source_sha256),
+    }
 
 
 @health_router.get("/ready", summary="Readiness")
@@ -183,6 +197,15 @@ async def read_contacts(account_id: UUID, queries: Queries) -> ContactsResponse:
     from a list they have not seen is how money reaches the wrong Marta.
     """
     return http_mapper.contacts_to_dto(await queries.ask(ListContactsQuery(account_id)))
+
+
+@accounts_router.post("/{account_id}/movements/list", summary="List ledger movements")
+async def list_account_movements(
+    account_id: UUID, body: MovementListRequest, queries: Queries, today: Today
+) -> MovementListResponse:
+    """Newest-first paginated ledger rows; no reporting period is required."""
+    plan = http_mapper.movement_list_plan_from_dto(body, account_id, today)
+    return http_mapper.movement_list_to_dto(await queries.ask(ListMovementsQuery(plan)))
 
 
 @accounts_router.put(

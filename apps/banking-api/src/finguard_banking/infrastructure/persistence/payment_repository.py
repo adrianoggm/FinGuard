@@ -7,9 +7,14 @@ migration 0006, and each piece answers a specific way of paying twice:
 **A resent prepare** finds the intent it already made, through `UNIQUE (account_id,
 idempotency_key)`. A client whose request timed out and resends is the normal case.
 
-**A repeated confirm** finds a terminal status. The intent row is taken with `FOR UPDATE` before
-anything is decided, so of two concurrent confirmations one updates the row and the other reads
-the result rather than the stale value.
+**A repeated confirm** for an already confirmed intent replays its saved receipt. The intent row is
+taken with `FOR UPDATE` before anything is decided, so concurrent confirmations serialize: one
+books the ledger and stores the receipt; the other returns that same receipt without booking again.
+Cancelled and expired intents remain terminal refusals.
+
+**A repeated cancel** for an already cancelled intent is a no-op. A conversation worker may have
+closed the bank intent and crashed before committing its canonical state; replaying the same cancel
+must let that turn continue. Confirmed and expired intents are still refused.
 
 **Two payments racing for one balance** are serialised on the account row, also with `FOR UPDATE`.
 Without it both read the same balance, both find it sufficient, and the account goes overdrawn
@@ -38,6 +43,7 @@ from finguard_banking.domain.errors import (
     IntentExpiredError,
     IntentNotConfirmableError,
     IntentNotFoundError,
+    IntentRecipientSnapshotMissingError,
     KeyReusedForAnotherPaymentError,
 )
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
@@ -55,6 +61,7 @@ from finguard_banking.infrastructure.persistence.financial_query_repository impo
 )
 
 _AWAITING = "AWAITING_CONFIRMATION"
+_CANCELLED = "CANCELLED"
 
 
 def _must_be_the_same_payment(
@@ -122,9 +129,9 @@ class PostgresPaymentRepository:
     ) -> PaymentPreview:
         """Writes the intent and returns what the user is asked to confirm. Moves nothing.
 
-        The destination arrives resolved. A contact is still re-read for a Bizum, so a caller
-        cannot name somebody else's; a typed account has nothing to re-read against, which is
-        the whole difference between the two rails at this layer.
+        The destination arrives resolved. A Bizum contact is re-read through the caller-scoped
+        view and its name and phone are snapshotted onto the intent, so confirmation pays exactly
+        the destination shown in the preview even if the contact is edited later.
         """
         rail = rail_of(to)
         async with self._pool.acquire() as connection, connection.transaction():
@@ -132,18 +139,25 @@ class PostgresPaymentRepository:
 
             if isinstance(to, ToPhone):
                 known = await connection.fetchrow(
-                    "SELECT contact_id FROM assistant_read.contacts_v1 WHERE contact_id = $1",
+                    "SELECT contact_id, display_name, phone "
+                    "FROM assistant_read.contacts_v1 WHERE contact_id = $1",
                     to.contact_id,
                 )
                 if known is None:
                     # Not "not authorised": a contact of another account does not exist here,
                     # and a caller who could tell those apart could enumerate other people's.
                     raise ContactNotFoundError(str(to.contact_id))
+                to = ToPhone(
+                    contact_id=known["contact_id"],
+                    name=known["display_name"],
+                    phone=known["phone"],
+                )
 
             balance = await self._balance(connection, account_id)
 
             existing = await connection.fetchrow(
-                "SELECT id, expires_at, rail, contact_id, recipient_iban, to_account_id, "
+                "SELECT id, expires_at, status, rail, contact_id, recipient_name, recipient_phone, "
+                "       recipient_iban, to_account_id, "
                 "       amount_minor, currency "
                 "FROM payment_intents WHERE account_id = $1 AND idempotency_key = $2",
                 account_id,
@@ -151,17 +165,25 @@ class PostgresPaymentRepository:
             )
             if existing is not None:
                 _must_be_the_same_payment(existing, to=to, amount=amount, rail=rail, key=key)
+                if existing["rail"] == Rail.BIZUM.value and (
+                    not existing["recipient_name"] or not existing["recipient_phone"]
+                ):
+                    if existing["status"] == _AWAITING:
+                        raise IntentRecipientSnapshotMissingError(existing["id"])
+                    raise IntentNotConfirmableError(existing["id"], existing["status"])
                 # The same intention, not a second one. Returned as it stands rather than
                 # refreshed: the user is being shown the thing they already have.
                 intent_id, expires_at = existing["id"], existing["expires_at"]
+                to = _destination_of(existing)
             else:
                 intent_id = uuid.uuid4()
                 expires_at = datetime.now(UTC) + timedelta(seconds=self.validity_seconds)
                 await connection.execute(
                     "INSERT INTO payment_intents "
-                    "(id, account_id, contact_id, rail, recipient_name, recipient_iban, "
-                    " to_account_id, amount_minor, currency, status, idempotency_key, expires_at) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                    "(id, account_id, contact_id, rail, recipient_name, recipient_phone, "
+                    " recipient_iban, to_account_id, amount_minor, currency, status, "
+                    " idempotency_key, expires_at) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
                     intent_id,
                     account_id,
                     to.contact_id if isinstance(to, ToPhone | ToAccount) else None,
@@ -170,10 +192,9 @@ class PostgresPaymentRepository:
                     # somebody forgets to send, and this is the one statement that decides where
                     # money goes.
                     rail.value,
-                    # The destination as the preview will show it. A transfer to a favourite
-                    # could read the contact's account back at confirmation; snapshotting is
-                    # what makes the approval binding on the account the user actually saw.
-                    to.name if isinstance(to, ToAccount | ToOwnAccount) else None,
+                    # Snapshot contact destinations so later edits cannot redirect approval.
+                    to.name if isinstance(to, ToPhone | ToAccount | ToOwnAccount) else None,
+                    to.phone if isinstance(to, ToPhone) else None,
                     str(to.iban) if isinstance(to, ToAccount) else None,
                     to.account_id if isinstance(to, ToOwnAccount) else None,
                     amount.amount_minor,
@@ -207,23 +228,46 @@ class PostgresPaymentRepository:
 
             intent = await connection.fetchrow(
                 "SELECT i.id, i.amount_minor, i.currency, i.status, i.expires_at, i.rail, "
-                "       i.contact_id, i.recipient_name, i.recipient_iban, i.to_account_id, "
-                "       c.display_name, c.phone "
-                # LEFT, because a transfer to a typed account has no contact and an inner
-                # join would leave its intent unconfirmable: money approved, row invisible.
-                "FROM payment_intents i LEFT JOIN contacts c ON c.id = i.contact_id "
+                "       i.transaction_id, i.confirmed_at, "
+                "       i.contact_id, i.recipient_name, i.recipient_phone, i.recipient_iban, "
+                "       i.to_account_id, i.receipt_payload "
+                "FROM payment_intents i "
                 "WHERE i.id = $1 AND i.account_id = $2 FOR UPDATE OF i",
                 intent_id,
                 account_id,
             )
             if intent is None:
                 raise IntentNotFoundError(intent_id)
+            if intent["status"] == "CONFIRMED":
+                # A graph worker may have received the bank's success and crashed before its
+                # canonical conversation CAS. Replaying the same intent must recover the exact
+                # receipt, not turn a successful payment into an ambiguous terminal refusal.
+                if intent["receipt_payload"] is not None:
+                    receipt = _receipt_from_payload(intent["receipt_payload"])
+                    if (
+                        receipt.intent_id != intent_id
+                        or receipt.transaction_id != intent["transaction_id"]
+                        or receipt.amount.amount_minor != intent["amount_minor"]
+                        or receipt.amount.currency != intent["currency"].strip()
+                        or receipt.confirmed_at != intent["confirmed_at"]
+                        or not _receipt_matches_intent(receipt, intent)
+                    ):
+                        raise ValueError(
+                            "stored payment receipt does not match its confirmed intent"
+                        )
+                    return receipt
+                # Intents confirmed before receipt snapshots were introduced have no replay data.
+                raise IntentNotConfirmableError(intent_id, intent["status"])
             if intent["status"] != _AWAITING:
-                # The idempotent path. A client retrying a request whose response it never saw
-                # lands here, and lands here having paid once.
                 raise IntentNotConfirmableError(intent_id, intent["status"])
             if intent["expires_at"] <= datetime.now(UTC):
                 raise IntentExpiredError(intent_id)
+            if intent["rail"] == Rail.BIZUM.value and (
+                not intent["recipient_name"] or not intent["recipient_phone"]
+            ):
+                # Older pending intents cannot prove which phone number the user saw. Require a
+                # fresh preview instead of resolving the mutable contact at confirmation time.
+                raise IntentRecipientSnapshotMissingError(intent_id)
 
             # Off the intent, never off the contact. A favourite edited between preparing and
             # confirming must not move money approved against the old account, and the inner
@@ -257,28 +301,35 @@ class PostgresPaymentRepository:
             )
 
             confirmed_at = datetime.now(UTC)
+            after = Money(balance.amount_minor - amount.amount_minor, balance.currency)
+            receipt = PaymentReceipt(
+                intent_id=intent_id,
+                transaction_id=transaction_id,
+                to=destination,
+                amount=amount,
+                balance_after=after,
+                confirmed_at=confirmed_at,
+            )
             await connection.execute(
                 "UPDATE payment_intents SET status = 'CONFIRMED', transaction_id = $2, "
-                "confirmed_at = $3 WHERE id = $1",
+                "confirmed_at = $3, receipt_payload = $4::jsonb WHERE id = $1",
                 intent_id,
                 transaction_id,
                 confirmed_at,
+                json.dumps(_receipt_payload(receipt), ensure_ascii=False, sort_keys=True),
             )
-            after = Money(balance.amount_minor - amount.amount_minor, balance.currency)
-
-        return PaymentReceipt(
-            intent_id=intent_id,
-            transaction_id=transaction_id,
-            to=destination,
-            amount=amount,
-            balance_after=after,
-            confirmed_at=confirmed_at,
-        )
+            return receipt
 
     async def cancel(self, *, account_id: UUID, intent_id: UUID) -> None:
-        """Terminal, like confirming. A cancelled intent cannot come back: preparing again is
-        cheap, and an intent that can be revived is an agreement with no expiry."""
+        """Close a pending intent; replay an already completed cancellation as a no-op.
+
+        A cancelled intent cannot come back: preparing again is cheap, and an intent that can be
+        revived is an agreement with no expiry. Other terminal states remain refusals.
+        """
         async with self._pool.acquire() as connection, connection.transaction():
+            # The SELECT is protected by payment_intents_own_account RLS, just like confirm's
+            # intent lookup. Declare the caller's account inside this transaction before reading.
+            await declare(connection, str(account_id))
             status = await connection.fetchval(
                 "SELECT status FROM payment_intents WHERE id = $1 AND account_id = $2 FOR UPDATE",
                 intent_id,
@@ -286,10 +337,18 @@ class PostgresPaymentRepository:
             )
             if status is None:
                 raise IntentNotFoundError(intent_id)
+            # A graph turn can cancel the bank intent and crash before committing its new
+            # canonical dialogue state. Replaying that same cancellation must be harmless so the
+            # turn can continue with its idempotent replacement prepare. Confirmed and expired
+            # intents remain refusals; only the already-cancelled terminal state is replay-safe.
+            if status == _CANCELLED:
+                return
             if status != _AWAITING:
                 raise IntentNotConfirmableError(intent_id, status)
             await connection.execute(
-                "UPDATE payment_intents SET status = 'CANCELLED' WHERE id = $1", intent_id
+                "UPDATE payment_intents SET status = $2 WHERE id = $1",
+                intent_id,
+                _CANCELLED,
             )
 
     async def expire_stale(self) -> int:
@@ -402,11 +461,116 @@ def _destination_of(intent: Any) -> Destination:
     if intent["rail"] == Rail.BIZUM.value:
         return ToPhone(
             contact_id=intent["contact_id"],
-            name=intent["display_name"],
-            phone=intent["phone"],
+            name=intent["recipient_name"],
+            phone=intent["recipient_phone"],
         )
     return ToAccount(
         name=intent["recipient_name"],
         iban=Iban(intent["recipient_iban"]),
         contact_id=intent["contact_id"],
     )
+
+
+def _receipt_payload(receipt: PaymentReceipt) -> dict[str, Any]:
+    """JSON snapshot written atomically with the ledger booking and intent transition."""
+    match receipt.to:
+        case ToPhone(contact_id=contact_id, name=name, phone=phone):
+            destination = {
+                "kind": "phone",
+                "contact_id": str(contact_id),
+                "name": name,
+                "phone": phone,
+            }
+        case ToAccount(name=name, iban=iban, contact_id=contact_id):
+            destination = {
+                "kind": "account",
+                "name": name,
+                "iban": str(iban),
+                "contact_id": str(contact_id) if contact_id is not None else None,
+            }
+        case ToOwnAccount(account_id=account_id, name=name):
+            destination = {
+                "kind": "own_account",
+                "account_id": str(account_id),
+                "name": name,
+            }
+    return {
+        "intent_id": str(receipt.intent_id),
+        "transaction_id": str(receipt.transaction_id),
+        "destination": destination,
+        "amount_minor": receipt.amount.amount_minor,
+        "currency": receipt.amount.currency,
+        "balance_after_minor": receipt.balance_after.amount_minor,
+        "confirmed_at": receipt.confirmed_at.isoformat(),
+    }
+
+
+def _receipt_from_payload(payload: Any) -> PaymentReceipt:
+    """Decode a stored receipt without consulting mutable contacts or current balances."""
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if not isinstance(payload, dict):
+        raise ValueError("stored payment receipt is not an object")
+    destination = payload["destination"]
+    match destination.get("kind"):
+        case "phone":
+            to: Destination = ToPhone(
+                contact_id=UUID(destination["contact_id"]),
+                name=destination["name"],
+                phone=destination["phone"],
+            )
+        case "account":
+            to = ToAccount(
+                name=destination["name"],
+                iban=Iban(destination["iban"]),
+                contact_id=(
+                    UUID(destination["contact_id"]) if destination.get("contact_id") else None
+                ),
+            )
+        case "own_account":
+            to = ToOwnAccount(
+                account_id=UUID(destination["account_id"]),
+                name=destination["name"],
+            )
+        case kind:
+            raise ValueError(f"unknown stored payment destination: {kind}")
+    return PaymentReceipt(
+        intent_id=UUID(payload["intent_id"]),
+        transaction_id=UUID(payload["transaction_id"]),
+        to=to,
+        amount=Money(int(payload["amount_minor"]), payload["currency"]),
+        balance_after=Money(int(payload["balance_after_minor"]), payload["currency"]),
+        confirmed_at=datetime.fromisoformat(payload["confirmed_at"]),
+    )
+
+
+def _receipt_matches_intent(receipt: PaymentReceipt, intent: Any) -> bool:
+    """Check the replayed receipt's destination against the immutable approved intent fields."""
+    match intent["rail"]:
+        case "BIZUM":
+            return (
+                isinstance(receipt.to, ToPhone)
+                and receipt.to.contact_id == intent["contact_id"]
+                and (
+                    intent["recipient_name"] is None or receipt.to.name == intent["recipient_name"]
+                )
+                and (
+                    intent["recipient_phone"] is None
+                    or receipt.to.phone == intent["recipient_phone"]
+                )
+            )
+        case "TRANSFER":
+            return (
+                isinstance(receipt.to, ToAccount)
+                and str(receipt.to.iban) == intent["recipient_iban"]
+                and receipt.to.name == intent["recipient_name"]
+                and receipt.to.contact_id == intent["contact_id"]
+            )
+        case "INTERNAL":
+            return (
+                isinstance(receipt.to, ToOwnAccount)
+                and receipt.to.account_id == intent["to_account_id"]
+                and receipt.to.name == intent["recipient_name"]
+            )
+        case _:
+            return False

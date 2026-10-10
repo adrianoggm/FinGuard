@@ -131,12 +131,24 @@ class IntentExpiredError(DomainError):
         super().__init__(f"payment intent {intent_id} has expired; prepare it again")
 
 
-class IntentNotConfirmableError(DomainError):
-    """It was already confirmed, or cancelled.
+class IntentRecipientSnapshotMissingError(DomainError):
+    """A pending legacy Bizum has no immutable record of the recipient shown for approval.
 
-    This is what makes confirming idempotent rather than dangerous: the second attempt finds a
-    terminal status and stops, so a client that retries a request whose response it never saw
-    does not pay twice.
+    Nothing was confirmed. Reusing it would resolve a mutable contact and could pay a different
+    phone number, so the caller must prepare a fresh intent and review its preview.
+    """
+
+    code = "intent_recipient_snapshot_missing"
+
+    def __init__(self, intent_id: object) -> None:
+        super().__init__(f"payment intent {intent_id} has no recipient snapshot; prepare it again")
+
+
+class IntentNotConfirmableError(DomainError):
+    """It was cancelled, expired or confirmed without a replayable receipt.
+
+    Newly confirmed intents replay their original receipt. This error is reserved for terminal
+    intents that cannot be confirmed and do not have a stored receipt to replay.
     """
 
     code = "intent_not_confirmable"

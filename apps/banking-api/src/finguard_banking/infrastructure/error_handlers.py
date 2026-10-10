@@ -29,6 +29,7 @@ from finguard_banking.domain.errors import (
     IntentExpiredError,
     IntentNotConfirmableError,
     IntentNotFoundError,
+    IntentRecipientSnapshotMissingError,
     KeyReusedForAnotherPaymentError,
     MovementNotFoundError,
     UnknownCategoryError,
@@ -55,6 +56,9 @@ _STATUS_BY_CODE = {
     # 409, and this is the status a retried confirmation lands on: the money moved and the second
     # attempt found a terminal state. It is the idempotent outcome, not a failure to fix.
     IntentNotConfirmableError.code: 409,
+    # The bank knows this old pending intent was never confirmed, but cannot prove the exact
+    # recipient shown in its preview. Requiring a fresh preview is a safe, actionable conflict.
+    IntentRecipientSnapshotMissingError.code: 409,
     # 409 rather than 422: the request was well formed and the balance is what refused it.
     InsufficientFundsError.code: 409,
     # 409, and the canonical one: two requests claim the same key and only one can own it. Not 422,

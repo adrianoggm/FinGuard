@@ -17,6 +17,7 @@ from typing import Any
 from finguard_banking.domain.constants import MAX_GROUPS, UNCATEGORISED, UNKNOWN_MERCHANT
 from finguard_banking.domain.enums import Direction, GroupBy, Metric
 from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.models.movement_list import MovementListPlan
 
 VIEW = "assistant_read.transactions_v1"
 
@@ -271,6 +272,60 @@ def compile_movements(query: FinancialQuery, reporting_timezone: str) -> Compile
         FROM {VIEW} t
         WHERE {" AND ".join(conditions)}
         ORDER BY t.occurred_at DESC, t.transaction_id
+        LIMIT {limit}
+    """
+    return CompiledQuery(sql=sql, parameters=parameters.values)
+
+
+def compile_movement_list(plan: MovementListPlan) -> CompiledQuery:
+    """Compile a bounded newest-first ledger page with a stable keyset cursor."""
+    parameters = _Parameters()
+    conditions: list[str] = []
+    if plan.date_from is not None and plan.date_to is not None:
+        tz = parameters.bind(plan.reporting_timezone)
+        start = parameters.bind(plan.date_from)
+        end = parameters.bind(plan.date_to)
+        conditions.extend(
+            [
+                f"t.occurred_at >= (({start}::date)::timestamp AT TIME ZONE {tz})",
+                f"t.occurred_at < (({end}::date + 1)::timestamp AT TIME ZONE {tz})",
+            ]
+        )
+    if plan.account_ids:
+        conditions.append(f"t.account_id = ANY({parameters.bind(list(plan.account_ids))})")
+    elif not plan.across_accounts:
+        conditions.append(f"t.account_id = {parameters.bind(plan.account_id)}")
+    if plan.direction is not Direction.ALL:
+        conditions.append(f"t.direction = {parameters.bind(plan.direction.value)}")
+    if plan.categories:
+        conditions.append(
+            f"t.category = ANY({parameters.bind([item.value for item in plan.categories])})"
+        )
+    if plan.merchant_terms:
+        terms = [
+            "strpos(lower(COALESCE(t.merchant_name, '')), "
+            f"{parameters.bind(term.strip().lower())}) > 0"
+            for term in plan.merchant_terms
+        ]
+        conditions.append(f"({' OR '.join(terms)})")
+    if not plan.include_internal:
+        conditions.append("NOT t.is_internal")
+    if plan.cursor is not None:
+        timestamp = parameters.bind(plan.cursor.occurred_at)
+        transaction_id = parameters.bind(plan.cursor.transaction_id)
+        conditions.append(
+            f"(t.occurred_at < {timestamp} OR (t.occurred_at = {timestamp} "
+            f"AND t.transaction_id > {transaction_id}))"
+        )
+    limit = parameters.bind(plan.page_size + 1)
+    sql = f"""
+        SELECT t.transaction_id, t.occurred_at, t.description, t.merchant_name,
+               t.category, t.category_is_custom, t.category_source, t.is_internal,
+               t.transaction_type, t.direction, t.amount_minor, b.currency
+        FROM {VIEW} t
+        JOIN assistant_read.account_balances_v1 b ON b.account_id = t.account_id
+        WHERE {" AND ".join(conditions)}
+        ORDER BY t.occurred_at DESC, t.transaction_id ASC
         LIMIT {limit}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)

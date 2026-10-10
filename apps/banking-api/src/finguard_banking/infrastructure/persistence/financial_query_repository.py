@@ -12,10 +12,16 @@ from finguard_banking.domain.models.financial_query_result import (
     Movement,
     QueryTrace,
 )
+from finguard_banking.domain.models.movement_list import (
+    MovementCursor,
+    MovementListPage,
+    MovementListPlan,
+)
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.mappers import row_mapper
 from finguard_banking.infrastructure.persistence.query_compiler import (
     compile_aggregate,
+    compile_movement_list,
     compile_movements,
     compile_ranked,
 )
@@ -74,6 +80,28 @@ class PostgresFinancialQueryRepository:
         self._pool = pool
         self._timezone = reporting_timezone
         self._group_limit = group_limit
+
+    async def list(self, plan: MovementListPlan) -> MovementListPage:
+        compiled = compile_movement_list(plan)
+        async with self._pool.acquire() as connection, connection.transaction():
+            # Always declare the credential account, never an account selected in a filter.
+            await declare(connection, str(plan.account_id))
+            if await connection.fetchval(_ACCOUNT_SQL, plan.account_id) is None:
+                raise AccountNotFoundError(plan.account_id)
+            rows = await connection.fetch(compiled.sql, *compiled.parameters)
+        has_more = len(rows) > plan.page_size
+        returned = rows[: plan.page_size]
+        movements = tuple(row_mapper.to_movement(row, row["currency"]) for row in returned)
+        next_cursor = None
+        if has_more and returned:
+            last = returned[-1]
+            next_cursor = MovementCursor(last["occurred_at"], last["transaction_id"])
+        return MovementListPage(
+            account_id=plan.account_id,
+            movements=movements,
+            has_more=has_more,
+            next_cursor=next_cursor,
+        )
 
     async def ranked(self, query: FinancialQuery, *, rank: int) -> Movement | None:
         """The nth largest movement of the period, or None when there are fewer than n.
