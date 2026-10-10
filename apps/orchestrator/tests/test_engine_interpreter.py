@@ -995,6 +995,16 @@ def test_prompt_includes_the_month_named_comparison_follow_up_example() -> None:
     assert '"compare"' in prompt
 
 
+def test_prompt_distinguishes_largest_movement_from_group_total_and_counts() -> None:
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    assert "Highest individual expense" in prompt
+    assert "no `group_by`" in prompt
+    assert "`group_by=MERCHANT, limit=1`" in prompt
+    assert '"metric":"COUNT"' in prompt
+    assert '"direction":"ALL"' in prompt
+
+
 def test_prompt_includes_the_answer_to_a_pending_two_period_comparison() -> None:
     prompt = build_prompt(
         "Octubre y septiembre",

@@ -109,6 +109,8 @@ Rules: "el último año" means counted LAST_N_MONTHS n=12, not a date range.
 "Which months had most expenses?" means EXPENSE by MONTH, top 3. Compare only when asked; default to
 the last two complete months and equal named durations. A named month is its latest begun window
 from the list. Never ask for a future window; delegate UNSUPPORTED.
+Highest individual expense: `limit=1`, no `group_by`; highest merchant total:
+`group_by=MERCHANT, limit=1`. Counts use COUNT. Unqualified movement lists use ALL.
 Patch only fields a follow-up names; otherwise keep the active query's scope and window. A plain
 "how much" or total request means SUM; never carry AVERAGE/COUNT into it. Shift an
 explicit window back a year for "previous year"; compare only when requested. SHARE is part / same-
@@ -559,14 +561,31 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
             }
         ),
     )
+    single_largest_movement = (
+        "no current query",
+        "Mayor gasto en los últimos 3 meses",
+        _answer(
+            {
+                "ask": _items(
+                    direction="EXPENSE",
+                    window={"counted": {"period": "LAST_N_MONTHS", "n": 3}},
+                    limit=1,
+                )
+            }
+        ),
+    )
+    movement_count = (
+        "no current query",
+        "¿Cuántos movimientos he tenido este mes?",
+        _answer({"ask": _items(direction="ALL", window={"named": "THIS_MONTH"}, metric="COUNT")}),
+    )
     average_to_total = (
         f"On screen: {_focus(state.focus, today)}",
         "Cuanto gaste en el supermercado?",
         _answer({"patch": {"target": "focus", "changes": _items(metric="SUM")}}),
     )
-    # Keep the month-reference comparison example. It is the bridge from a prior query to a
-    # comparison; without it a small model may ask for both windows even when one is on screen and
-    # the other is in history. Keep the month ranking, comparison, visual and payment examples too.
+    # Start with compact examples for the core operations. Context-specific examples are added
+    # below, then irrelevant ones are removed to keep the largest prompt inside the decoder budget.
     selected = [all_examples[index] for index in (2, 3, 7, 8, 9, 16, 19)]
     if state.focus is None and state.pending is None:
         selected[2] = bizum_by_person
@@ -614,6 +633,17 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
         selected[3] = category_follow_up
     if state.active_visual is not None:
         selected[7] = all_examples[17]
+    # Keep the month-reference example with an active analytical query. A comparison already on
+    # screen has its own change-measure and investigation examples, so this is redundant there.
+    if state.focus is not None and not isinstance(state.focus, QueryFocus):
+        selected = [example for example in selected if example is not all_examples[8]]
+    # Payment syntax matters on a new payment or a pending draft, not while an unrelated query is
+    # active; freeing that space keeps the largest comparison prompt within the model's context.
+    if state.focus is not None and state.payment is None:
+        selected = [example for example in selected if example is not all_examples[19]]
+    selected.append(single_largest_movement)
+    if not isinstance(state.focus, ComparisonFocus):
+        selected.append(movement_count)
     return tuple(selected)
 
 
