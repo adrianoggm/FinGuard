@@ -88,3 +88,114 @@ question failures. There were no provider rate-limit events. This is enough to r
 immediate fix for these cases, but not enough to compare overall quality or promote/demote the
 model. The report is local at `%TEMP%/finguard-gemini-35-targeted-20261010.json`; the temporary
 instance was removed afterward.
+
+## Gemini 3.5 movement-list schema repair
+
+The isolated Gemini 3.5 Flash Lite smoke exposed a provider-adapter defect: `_shallow_operations_schema`
+represented the `list_movements` payload as an empty object. The typed reader then filled its defaults,
+so a request for five expenses from Cuenta corriente could become an unfiltered page of 20. The adapter
+now sends the nested direction, account/category/merchant filters, page size, and continuation flag to
+Gemini while the existing typed reader remains the acceptance boundary. The provider contract test
+asserts those fields are present.
+
+The focused orchestrator suites passed (**271 tests**) and Ruff passed. After rebuilding only the isolated
+orchestrator, a real Gemini 3.5 Flash Lite conversation returned exactly five expenses from Cuenta
+corriente. The follow-up “dame otros 5” returned five further movements with no duplicate transaction
+IDs and conversation version 2. This verifies the requested page size, account scope, and continuation
+for this smoke case; it is not a full corpus evaluation or promotion result. The shared stack was not
+restarted.
+
+## Active-chart analytical regrouping
+
+A real Gemini 3.5 Flash Lite graph session reproduced the user-facing failure: after a category
+breakdown and a bar chart, “Agrúpalo por mes” returned a generic clarification and discarded the
+chart. The interpreter prompt now distinguishes a presentation-only edit from a changed analytical
+dimension. For the latter it emits a typed focus patch plus `update_visualization`; the graph validates
+that an active chart exists, executes the changed query through banking, and redraws the result in the
+same conversation commit. A chart style edit still uses the stored result without a banking query.
+
+The graph generation is now `conversation/24`, invalidating checkpoints created under the previous
+routing semantics. The focused interpreter, Gemini adapter and graph-turn suites passed (**273 tests**);
+Ruff and `git diff --check` passed. Their graph tests verify both the extra banking read and artifact /
+chart lineage on regroup, and reject a combined query/chart update when no chart is active without a
+bank read.
+
+The rebuilt isolated stack completed a real three-turn Gemini session: all nine expense categories
+were shown for the requested period, the second turn rendered them as bars, and “Agrúpalo por mes”
+returned four monthly groups with a line chart at conversation version 3. This is a focused semantic
+and API-render-payload smoke; browser rendering, full-corpus quality and promotion gates remain open.
+
+The same three-turn regrouping smoke was repeated with an orchestrator restart between chart creation and
+“agrúpalo por mes.” PostgreSQL was left running. The resumed turn returned the monthly query and a
+line chart at conversation version 3, confirming that the persisted query/chart state was sufficient
+for this real-provider continuation after process restart. It remains a single synthetic account
+conversation, not broad recovery or concurrency coverage.
+
+## Browser verification for analytical regrouping
+
+The existing category-breakdown browser flow now continues past chart creation and presentation-only
+restyling to “Agrúpalo por mes.” With the isolated Gemini graph stack and Chrome, Playwright passed:
+the chat retained its conversation id and version sequence, the regrouped plan was `MONTH` /
+`TIME_SERIES`, it received new query and artifact ids, and the monthly chart figure was visible in the
+conversation. The run used an explicit web port and the isolated stack's temporary CORS allow-list;
+the pre-existing Vite on port 3000 was left running and untouched.
+
+## Ten-turn browser banking session
+
+The attached acceptance critique called for evaluating a whole banking session, including task
+changes, implicit references, a chart, payment capability and safe cancellation. I added an opt-in
+Playwright flow and ran it in Chrome on the isolated graph stack with Gemini 3.5 Flash Lite. The build
+reported by `/version` was `48f18b4c-dirty-session-acceptance-v2`; the stack reported graph mode on.
+The browser run passed all ten turns at conversation versions 1 through 10:
+
+1. Balance question -> `BALANCE`.
+2. Latest 20 expenses from Cuenta corriente -> 20 bank rows, all rendered in the chat.
+3. "Y los de la Hucha?" -> list task and account switch retained; the synthetic ledger has no rows
+   for Hucha, so the assistant said so instead of asking for a period.
+4. "Dame otros 10" -> recognized the exhausted list and answered that there were no more rows.
+5. Restaurant expenses last month -> bank-backed total and six movements.
+6. "Comparalo con agosto" -> retained restaurant scope and compared August with September.
+7. "Ponme una grafica" -> chart figure rendered in the conversation.
+8. "Puedes hacer Bizums?" -> described saved-contact preview and explicit confirmation.
+9. Restaurant spending in July plus a 15 EUR Bizum to a saved contact in one message -> the answer
+   kept the bank-backed restaurant result and appended the bank-authored preview; the same turn
+   committed as conversation version 9 and both confirmation controls rendered.
+10. Clicking "No" -> `CANCELLED`, confirmation workflow cleared, version 10.
+
+The synthetic payment intents created by the corrected API and browser runs are `CANCELLED`; none was
+confirmed. The graph unit test also verifies that answering the capability question does not call a
+payment command. The mixed-turn browser session took 16.5 seconds. Request logs show ten model HTTP
+calls for nine planned turns (one turn used a second call) and ten endpoint latencies: median 1.40 s,
+maximum 2.52 s; cancellation took 51 ms and used no model call. Token usage is not exposed by the
+response or request logs, so this run cannot report tokens. The synthetic dataset has no Hucha
+movements, making that branch a truthful empty-list check rather than a populated-account comparison.
+
+A separate payment-recovery smoke prepared a Bizum preview, restarted only the isolated orchestrator,
+and cancelled with the same versioned conversation payload. The graph resumed the pending workflow
+from PostgreSQL and returned `CANCELLED` at version 2 with the workflow cleared. The bank records
+show the created intents as `CANCELLED`; none was confirmed. PostgreSQL and the banking API were not
+restarted during this check.
+
+This is one authored acceptance session, not the blind human evaluation or unseen session set
+requested in the critique. It does not show broad generalization or recovery after provider/bank
+failure, or compare quality against the current engine. The full corpus, UX set, human evaluation,
+token instrumentation, and migration/removal of legacy coordination remain promotion gates.
+
+## Corpus replay attempt after the session changes
+
+I started the frozen 67-thread / 142-turn HTTP corpus against the isolated graph stack after the
+movement-list and conversation-session changes. `/ready` reported `graph=on`, Gemini 3.5 Flash Lite,
+and `/version` reported `48f18b4c-dirty-session-acceptance-v2`. The provider returned repeated HTTP
+429 responses with no retry delay or quota metadata. The replay was stopped after the consecutive
+failures; it did not complete, and the evaluator produced no report artifact. This is a provider
+availability failure, not a quality result. It does not replace the last completed full-corpus
+measurement (16 property violations on Gemini 3.1 Flash Lite), and promotion remains blocked until a
+complete replay can run against this code state.
+
+The focused local regression suites then found that the legacy route's byte-pinned test failed in
+both JSON and streaming mode. I reproduced the same six response hashes in a detached, clean
+`48f18b4c` worktree and in this working tree; the checked-in pins predated that clean-tree output.
+The pins now describe the clean-tree baseline, and the same route suites pass with the graph changes
+present. The selected route, graph-turn, codec, and movement-list suites passed **166 tests**. The
+graph-enabled routes also return 503 when their handler is missing, for both JSON and streaming, so
+the graph path does not fall through to legacy coordination.

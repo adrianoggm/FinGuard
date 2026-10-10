@@ -32,6 +32,7 @@ the ledger is the demo's, and an improvised «sí» would move money in it.
 
 import argparse
 import asyncio
+import hashlib
 import json
 import re
 import statistics
@@ -42,6 +43,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import asyncpg
@@ -367,8 +369,59 @@ def figure_plan(body: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     if text.startswith("Por ejemplo") or "mostrarte como ejemplo" in text:
         return None, "un ejemplo de la respuesta anterior, no su cifra"
     plan = (body.get("conversation") or {}).get("last_plan")
+    if not plan and isinstance(body.get("plan_context"), dict):
+        # The graph keeps its canonical state in Postgres and its wire conversation does not
+        # necessarily echo `last_plan`. The response carries a typed trace of the plan that
+        # produced this bank-backed result; use that for read-only figure verification. The trace
+        # exposes flags for private fields omitted from the wire. If scope or filters are missing,
+        # leave the figure unchecked instead of silently comparing a wider ledger query.
+        trace = body["plan_context"]
+        required = {
+            "direction",
+            "period",
+            "n",
+            "start",
+            "end",
+            "categories",
+            "merchants",
+            "merchant_terms",
+            "group_by",
+            "metric",
+            "group_limit",
+            "rank",
+            "result_kind",
+            "account_scoped",
+            "has_unrepresented_filters",
+        }
+        missing = required - trace.keys()
+        if missing:
+            return None, "plan_context incompleto: faltan filtros o alcance"
+        if trace["account_scoped"]:
+            return None, "consulta de cuenta específica: el informe no conserva ids de cuenta"
+        if trace["has_unrepresented_filters"]:
+            return None, "consulta con filtros privados omitidos del plan verificable"
+        plan = {
+            key: trace[key]
+            for key in (
+                "direction",
+                "period",
+                "n",
+                "start",
+                "end",
+                "categories",
+                "merchants",
+                "merchant_terms",
+                "group_by",
+                "metric",
+                "group_limit",
+                "rank",
+            )
+            if key in trace
+        }
+        if trace.get("result_kind") not in (None, "SCALAR"):
+            plan = None
     if not plan:
-        return None, "no queda ninguna consulta recordada"
+        return None, "no queda un plan verificable en la respuesta"
     kind = (
         plan.get("action", "AGGREGATE"),
         plan.get("metric", "SUM"),
@@ -420,6 +473,8 @@ class Options(argparse.Namespace):
     max_age_days: int
     provider_retries: int
     provider_wait: float
+    min_request_interval: float
+    skip_gateway_check: bool
 
 
 async def _ask(
@@ -427,29 +482,68 @@ async def _ask(
     options: Options,
     sentence: str,
     conversation: dict[str, Any] | None,
+    request_id: str,
 ) -> tuple[dict[str, Any] | None, float, str | None, dict[str, Any]]:
     """One turn, as `evaluate_e2e._ask` sends it: the sentence and the conversation echoed back.
 
-    The last element is what the engine says about itself: `engine` (`X-FinGuard-Engine`) and
-    `model_calls` (`X-FinGuard-Model-Calls`). An absent header is None, never 0: a stream answer
-    on the rules route carries no call count, and 0 would read as a measurement.
+    The last element includes logical `model_calls`, actual outbound `provider_requests`, and the
+    ordered attempted/successful models. An absent count is None, never 0: a stream answer on the
+    rules route carries no complete call count, and 0 would read as a measurement.
     """
     started = time.perf_counter()
     try:
         response = await client.post(
             f"{options.base_url}/v1/questions",
             json={"question": sentence, "conversation": conversation},
-            headers={"Authorization": f"Bearer {options.token}"},
+            headers={
+                "Authorization": f"Bearer {options.token}",
+                "Idempotency-Key": request_id,
+            },
         )
     except httpx.HTTPError as error:
         seconds = round(time.perf_counter() - started, 2)
         return None, seconds, f"{type(error).__name__}: {error}", {}
     seconds = round(time.perf_counter() - started, 2)
     calls = response.headers.get("X-FinGuard-Model-Calls")
+    provider_requests = response.headers.get("X-FinGuard-Provider-Requests")
+    attempted = response.headers.get("X-FinGuard-Models-Attempted")
+    used = response.headers.get("X-FinGuard-Models-Used")
+    provider_failures = response.headers.get("X-FinGuard-Provider-Failures")
+    terminal_provider_failure = response.headers.get("X-FinGuard-Provider-Terminal-Failure")
+    prompt_tokens = response.headers.get("X-FinGuard-Prompt-Tokens")
+    completion_tokens = response.headers.get("X-FinGuard-Completion-Tokens")
+    token_reports = response.headers.get("X-FinGuard-Token-Reports")
+    financial_reads = response.headers.get("X-FinGuard-Financial-Reads")
     engine = {
         "engine": response.headers.get("X-FinGuard-Engine"),
         "model_calls": int(calls) if calls is not None and calls.isdigit() else None,
         "model_calls_malformed": calls is not None and not calls.isdigit(),
+        "provider_requests": (
+            int(provider_requests)
+            if provider_requests is not None and provider_requests.isdigit()
+            else None
+        ),
+        "provider_requests_malformed": (
+            provider_requests is not None and not provider_requests.isdigit()
+        ),
+        "models_attempted": attempted.split(",") if attempted else [],
+        "models_used": used.split(",") if used else [],
+        # Safe category labels only; never persist provider bodies or prompts.
+        "provider_failures": provider_failures.split(",") if provider_failures else [],
+        "provider_terminal_failure": terminal_provider_failure,
+        "prompt_tokens": int(prompt_tokens) if prompt_tokens and prompt_tokens.isdigit() else None,
+        "completion_tokens": (
+            int(completion_tokens) if completion_tokens and completion_tokens.isdigit() else None
+        ),
+        "token_reports": int(token_reports) if token_reports and token_reports.isdigit() else 0,
+        "financial_reads": (
+            int(financial_reads)
+            if financial_reads is not None and financial_reads.isdigit()
+            else None
+        ),
+        "financial_reads_malformed": (
+            financial_reads is not None and not financial_reads.isdigit()
+        ),
     }
     if response.status_code != 200:
         # A 409 is `{"code": "STALE_CONVERSATION", ...}`: the text carries the code.
@@ -500,12 +594,68 @@ async def record_of(
         "movement_count": body.get("movement_count"),
         "difference_minor": body.get("difference_minor"),
         "groups": body.get("groups") or [],
+        # Hashed identities let session invariants detect repeated ledger rows across pages without
+        # writing bank transaction ids into the evaluation artifact.
+        "movement_keys": sorted(
+            {
+                hashlib.sha256(str(row["transaction_id"]).encode("utf-8")).hexdigest()[:20]
+                for row in (body.get("movements") or [])
+                if isinstance(row, dict) and row.get("transaction_id")
+            }
+        ),
         "suggestions": body.get("suggestions") or [],
         "state": {key: state.get(key) for key in ("workflow", "awaiting", "last_asked")},
         "seconds": seconds,
         "engine": (engine or {}).get("engine"),
         "model_calls": (engine or {}).get("model_calls"),
         "model_calls_malformed": bool((engine or {}).get("model_calls_malformed")),
+        "provider_requests": (engine or {}).get("provider_requests"),
+        "provider_requests_malformed": bool((engine or {}).get("provider_requests_malformed")),
+        "models_attempted": (engine or {}).get("models_attempted", []),
+        "models_used": (engine or {}).get("models_used", []),
+        "provider_failures": (engine or {}).get("provider_failures", []),
+        "provider_terminal_failure": (engine or {}).get("provider_terminal_failure"),
+        "prompt_tokens": (engine or {}).get("prompt_tokens"),
+        "completion_tokens": (engine or {}).get("completion_tokens"),
+        "token_reports": (engine or {}).get("token_reports", 0),
+        "financial_reads": (engine or {}).get("financial_reads"),
+        "financial_reads_malformed": bool((engine or {}).get("financial_reads_malformed")),
+        # Keep the exact normalized query used for the independent ledger check. In graph mode,
+        # the wire state may omit last_plan and the verifier derives this from plan_context.
+        # Persist the read-only query, not the full conversation or account identifiers.
+        "figure_query": (
+            {
+                key: plan[key]
+                for key in (
+                    "action",
+                    "direction",
+                    "period",
+                    "n",
+                    "start",
+                    "end",
+                    "categories",
+                    "excluded_categories",
+                    "merchants",
+                    "merchant_terms",
+                    "excluded_merchants",
+                    "counterparties",
+                    "excluded_counterparties",
+                    "counterparty_types",
+                    "across_accounts",
+                    "transaction_ids",
+                    "transaction_types",
+                    "include_internal",
+                    "internal_only",
+                    "group_by",
+                    "metric",
+                    "group_limit",
+                    "rank",
+                )
+                if key in plan
+            }
+            if plan is not None
+            else None
+        ),
         "sql": sql,
         "figure_check": "error" if failed else figure_check(answer, sql),
         "figure_note": note,
@@ -533,19 +683,19 @@ async def _turn(
             "skipped": "un «sí» a una operación pendiente no se envía: movería dinero en la demo",
             "expect": expect,
         }, conversation
-    body, seconds, error, engine = await _ask(client, options, said, conversation)
-    # A hosted planner on a free tier answers 429 in bursts, and the service reports it as
-    # PROVIDER_ERROR. The turn is sent again with the conversation from before it, so a retry is
-    # the same turn, not a new one; the record says how many it took.
+    # A provider retry is the same graph turn: preserve its reservation/checkpoint identity so a
+    # retry resumes work already checkpointed instead of creating a second logical request.
+    request_id = uuid4().hex
+    body, seconds, error, engine = await _ask(client, options, said, conversation, request_id)
+    # Transient provider outages can be retried as the same idempotent turn. Schema and
+    # configuration failures are recorded but not repeated after the runtime classifies them.
     retried = 0
-    while (
-        retried < getattr(options, "provider_retries", 0)
-        and body is not None
-        and body.get("outcome") == "PROVIDER_ERROR"
+    while retried < getattr(options, "provider_retries", 0) and _retryable_provider_error(
+        body, engine
     ):
         await asyncio.sleep(getattr(options, "provider_wait", 60.0))
         retried += 1
-        body, seconds, error, engine = await _ask(client, options, said, conversation)
+        body, seconds, error, engine = await _ask(client, options, said, conversation, request_id)
     record = await record_of(
         options,
         name=name,
@@ -599,25 +749,31 @@ async def _services(options: Options) -> dict[str, Any]:
         "services": {},
         "ready": None,
         "version": None,
+        "banking_version": None,
         "ollama": None,
         "newest": None,
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
-        for name, base in (
-            ("orchestrator", options.base_url),
-            ("banking", options.banking_url),
-            ("gateway", options.gateway_url),
-        ):
+        required = [("orchestrator", options.base_url), ("banking", options.banking_url)]
+        if not getattr(options, "skip_gateway_check", False):
+            required.append(("gateway", options.gateway_url))
+        for name, base in required:
             try:
                 response = await client.get(f"{base}/health")
                 healthy = response.status_code == 200 and response.json().get("status") == "ok"
                 found["services"][name] = "ok" if healthy else f"HTTP {response.status_code}"
             except (httpx.HTTPError, ValueError) as error:
                 found["services"][name] = f"unreachable: {type(error).__name__}"
+        if getattr(options, "skip_gateway_check", False):
+            found["services"]["gateway"] = "skipped (not used by this evaluation)"
         try:
             found["version"] = (await client.get(f"{options.base_url}/version")).json()
         except (httpx.HTTPError, ValueError) as error:
             found["version"] = {"error": type(error).__name__}
+        try:
+            found["banking_version"] = (await client.get(f"{options.banking_url}/version")).json()
+        except (httpx.HTTPError, ValueError) as error:
+            found["banking_version"] = {"error": type(error).__name__}
         try:
             response = await client.get(f"{options.base_url}/ready")
             found["ready"] = {
@@ -649,8 +805,8 @@ async def _services(options: Options) -> dict[str, Any]:
 
 
 def preflight(options: Options) -> tuple[dict[str, Any], int]:
-    """Whether the stack is the demo's, and what it is running on. 0 to go on, 1 if a service or
-    the ledger cannot be reached, 2 if the data is not loaded up to yesterday.
+    """Whether the stack is the demo's and the source identity matches. Returns 1 if a service,
+    ledger, or source identity is invalid, and 2 if the data is not loaded up to yesterday.
 
     It never loads data: loading truncates the demo's bank, and that is the person's step.
     """
@@ -663,38 +819,72 @@ def preflight(options: Options) -> tuple[dict[str, Any], int]:
     found["gpu"] = gpu.stdout.strip() if gpu and gpu.returncode == 0 else "unavailable"
     head = _command("git", "rev-parse", "--short=8", "HEAD")
     found["head"] = head.stdout.strip() if head and head.returncode == 0 else None
-    # Whether the running service is the code under test: the same product code as HEAD, even if
-    # the commits differ by documents and scripts.
-    sha = (found.get("version") or {}).get("sha")
-    same = (
-        _command(
-            "git",
-            "diff",
-            "--quiet",
-            sha,
-            "HEAD",
-            "--",
-            "apps/orchestrator/src",
-            "apps/banking-api/src",
-        )
-        if sha
-        else None
-    )
-    found["code_under_test"] = (
-        {0: "same as HEAD", 1: "differs from HEAD"}.get(same.returncode, "unknown")
-        if same
-        else "unknown"
-    )
+    source_identity = str(ROOT / "scripts" / "source_identity.py")
+    local_sources: dict[str, str | None] = {}
+    for service in ("orchestrator", "banking"):
+        local = _command(sys.executable, source_identity, service)
+        local_sources[service] = local.stdout.strip() if local and local.returncode == 0 else None
+    found["source_sha256_local"] = local_sources
+    versions = {
+        "orchestrator": found.get("version") or {},
+        "banking": found.get("banking_version") or {},
+    }
+    found["source_sha256"] = {
+        service: version.get("source_sha256") for service, version in versions.items()
+    }
+    component_status = {}
+    for service, version in versions.items():
+        served = version.get("source_sha256")
+        local = local_sources[service]
+        if not local or not served or served == "unknown":
+            component_status[service] = "unknown"
+        elif served == local:
+            component_status[service] = "same as current source"
+        else:
+            component_status[service] = "differs from current source"
+    found["component_code_under_test"] = component_status
+    if "unknown" in component_status.values():
+        found["code_under_test"] = "unknown"
+    elif "differs from current source" in component_status.values():
+        found["code_under_test"] = "differs from current source"
+    else:
+        found["code_under_test"] = "same as current source"
 
-    problems = [f"{name}: {state}" for name, state in found["services"].items() if state != "ok"]
+    problems = [
+        f"{name}: {state}"
+        for name, state in found["services"].items()
+        if state != "ok" and not state.startswith("skipped (")
+    ]
     ready = found.get("ready") or {}
     if ready.get("status") != "ok":
         problems.append(
             f"orchestrator readiness: HTTP {ready.get('http_status', 'unknown')} "
             f"({ready.get('status', ready.get('error', 'unknown'))})"
         )
+    financial_path = ready.get("financial_path") or {}
+    if not (
+        financial_path.get("active_runtime") == "langgraph"
+        and financial_path.get("engine") == "model"
+        and financial_path.get("graph") == "on"
+        and financial_path.get("authoritative") is True
+    ):
+        problems.append(
+            "financial runtime is not the authoritative LangGraph path; refusing to score "
+            f"this session run (reported: {financial_path or 'missing'})"
+        )
     if isinstance(found["newest"], dict):
         problems.append(f"ledger: {found['newest']['error']}")
+    for service, status in component_status.items():
+        if status == "unknown":
+            problems.append(
+                f"{service} source identity is unknown; rebuild with `just up` so its /version "
+                "reports the source fingerprint"
+            )
+        elif status != "same as current source":
+            problems.append(
+                f"running {service} source differs from this working tree; "
+                "rebuild before evaluating"
+            )
     found["problems"] = problems
     if problems:
         return found, 1
@@ -718,12 +908,21 @@ def _print_preflight(found: dict[str, Any]) -> None:
     print(f"services: {found['services']}")
     print(
         f"orchestrator: {version.get('sha')} ({version.get('ref')}); HEAD {found.get('head')}; "
+        f"source {found.get('source_sha256', {}).get('orchestrator')} vs local "
+        f"{found.get('source_sha256_local', {}).get('orchestrator')}; "
         f"product code {found.get('code_under_test')}"
+    )
+    banking_version = found.get("banking_version") or {}
+    print(
+        f"banking: {banking_version.get('sha')} ({banking_version.get('ref')}); "
+        f"source {found.get('source_sha256', {}).get('banking')} vs local "
+        f"{found.get('source_sha256_local', {}).get('banking')}"
     )
     ready = found.get("ready") or {}
     path = ready.get("financial_path") or {}
     print(
         f"financial path: readiness {ready.get('status', ready.get('http_status', 'unknown'))}; "
+        f"runtime {path.get('active_runtime')}; authoritative {path.get('authoritative')}; "
         f"engine {path.get('engine')}; graph {path.get('graph')}; "
         f"provider {path.get('provider')}; model {path.get('model')}"
     )
@@ -741,11 +940,82 @@ def _print_preflight(found: dict[str, Any]) -> None:
 
 def _status(record: dict[str, Any]) -> str:
     """failed, passed or unjudged. A mismatch, a figure that could not be checked, or a turn that
-    got no answer fails whatever the judge said."""
-    if record.get("figure_check") in ("mismatch", "error") or record.get("error"):
+    got no answer fails whatever the judge said. Availability failures are never credited as
+    conversational successes, even when their fallback wording sounds reasonable."""
+    if (
+        record.get("figure_check") in ("mismatch", "error")
+        or record.get("error")
+        or record.get("outcome") == "PROVIDER_ERROR"
+        or _availability_failure(record) is not None
+        or record.get("session_invariant") == "failed"
+        or record.get("financial_read_invariant") == "failed"
+    ):
         return "failed"
+    if (
+        record.get("session_invariant") == "unverified"
+        or record.get("financial_read_invariant") == "unverified"
+    ):
+        return "unjudged"
     verdict = (record.get("judgement") or {}).get("verdict")
     return {"fail": "failed", "pass": "passed"}.get(verdict, "unjudged")
+
+
+def _availability_failure(record: dict[str, Any]) -> str | None:
+    """Classify outages separately from semantic mistakes in a turn or session."""
+    outcome = record.get("outcome")
+    if outcome == "PROVIDER_ERROR":
+        terminal = record.get("provider_terminal_failure")
+        if not isinstance(terminal, str) or ":" not in terminal:
+            # Older runtimes do not send the terminal diagnostic header.
+            return "provider"
+        return (
+            "provider"
+            if terminal.rsplit(":", 1)[1]
+            in {"rate_limited", "timeout", "transport", "upstream_5xx"}
+            else None
+        )
+    if outcome == "BANKING_UNAVAILABLE":
+        return "banking"
+    error = record.get("error")
+    if not isinstance(error, str):
+        return None
+    http = re.match(r"HTTP (\d{3})\b", error)
+    if http:
+        status = int(http.group(1))
+        if status == 429:
+            return "provider"
+        if status >= 500:
+            return "upstream_http"
+        return None
+    transport = error.split(":", 1)[0]
+    if transport in {
+        "ConnectError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+        "RemoteProtocolError",
+        "NetworkError",
+        "TimeoutException",
+    }:
+        return "transport"
+    return None
+
+
+def _retryable_provider_error(body: dict[str, Any] | None, engine: dict[str, Any]) -> bool:
+    """Only repeat transient outages; schema and configuration errors are not quota waits."""
+    if body is None or body.get("outcome") != "PROVIDER_ERROR":
+        return False
+    terminal = engine.get("provider_terminal_failure")
+    if not isinstance(terminal, str) or ":" not in terminal:
+        # Older deployments do not send a terminal category; retain historical retry behavior.
+        return True
+    return terminal.rsplit(":", 1)[1] in {
+        "rate_limited",
+        "timeout",
+        "transport",
+        "upstream_5xx",
+    }
 
 
 def _mechanism(record: dict[str, Any]) -> str:
@@ -772,13 +1042,76 @@ def _latency(seconds: list[float]) -> dict[str, Any] | None:
     }
 
 
-def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
+def summarise(
+    records: list[dict[str, Any]],
+    *,
+    expected_turns: dict[str, int] | None = None,
+    expected_tasks: dict[str, dict[str, int]] | None = None,
+) -> dict[str, Any]:
     """Per-mechanism counts, the recovery rate, the figure checks and the latency of a run.
 
     Recovery is the next turn of the same conversation after a failed one: did it come back? Only
     decided turns count on either side; a skipped turn is not a turn of the product.
     """
     turns = [record for record in records if not record.get("skipped")]
+    skipped_turns = sum(1 for record in records if record.get("skipped"))
+    # Cross-turn invariants are attached to the task step that requires them. Missing movement
+    # rows or bank-call accounting is unverified, never silently counted as a successful check.
+    ordered_turns = sorted(turns, key=lambda record: (record["conversation"], record["turn"]))
+    for index, record in enumerate(ordered_turns):
+        invariants = (record.get("expect") or {}).get("invariants", [])
+        if "no_duplicate_movement_ids_across_task_pages" not in invariants:
+            if "no_financial_read_for_reused_visualization" not in invariants:
+                continue
+            task = (record.get("expect") or {}).get("task")
+            prior_pages = [
+                prior
+                for prior in ordered_turns[:index]
+                if prior["conversation"] == record["conversation"]
+                and (prior.get("expect") or {}).get("task") == task
+                and (prior.get("expect") or {}).get("route") == "QUERY"
+                and prior.get("movement_keys")
+            ]
+            calls = record.get("financial_reads")
+            if not prior_pages or calls is None or record.get("financial_reads_malformed"):
+                record["financial_read_invariant"] = "unverified"
+                record["financial_read_invariant_note"] = (
+                    "falta una pagina previa identificable o el contador exacto "
+                    "de lecturas financieras"
+                )
+            elif calls != 0:
+                record["financial_read_invariant"] = "failed"
+                record["financial_read_invariant_note"] = (
+                    f"la visualizacion hizo {calls} lectura(s) financiera(s)"
+                )
+            else:
+                record["financial_read_invariant"] = "passed"
+                record["financial_read_invariant_note"] = (
+                    "reutilizo la pagina anterior sin repetir lecturas financieras"
+                )
+            continue
+        task = (record.get("expect") or {}).get("task")
+        prior_keys = {
+            key
+            for prior in ordered_turns[:index]
+            if prior["conversation"] == record["conversation"]
+            and (prior.get("expect") or {}).get("task") == task
+            for key in prior.get("movement_keys", [])
+        }
+        current_keys = set(record.get("movement_keys", []))
+        if not prior_keys or not current_keys:
+            record["session_invariant"] = "unverified"
+            record["session_invariant_note"] = (
+                "no hay filas identificables en ambas páginas para comprobar duplicados"
+            )
+        elif prior_keys & current_keys:
+            record["session_invariant"] = "failed"
+            record["session_invariant_note"] = (
+                f"{len(prior_keys & current_keys)} movimiento(s) repetido(s) entre páginas"
+            )
+        else:
+            record["session_invariant"] = "passed"
+            record["session_invariant_note"] = "sin ids repetidos entre páginas"
     by_mechanism: dict[str, dict[str, int]] = {}
     for record in turns:
         counts = by_mechanism.setdefault(
@@ -788,6 +1121,21 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
         status = _status(record)
         if status != "passed":
             counts["failed" if status == "failed" else "unjudged"] += 1
+
+    availability = {"provider": 0, "banking": 0, "upstream_http": 0, "transport": 0}
+    provider_failure_counts: dict[str, int] = {}
+    terminal_provider_failure_counts: dict[str, int] = {}
+    for record in turns:
+        cause = _availability_failure(record)
+        if cause is not None:
+            availability[cause] += 1
+        for failure in record.get("provider_failures", []):
+            provider_failure_counts[failure] = provider_failure_counts.get(failure, 0) + 1
+        terminal_failure = record.get("provider_terminal_failure")
+        if isinstance(terminal_failure, str) and terminal_failure:
+            terminal_provider_failure_counts[terminal_failure] = (
+                terminal_provider_failure_counts.get(terminal_failure, 0) + 1
+            )
 
     ordered = sorted(turns, key=lambda record: (record["conversation"], record["turn"]))
     opportunities = recovered = 0
@@ -832,22 +1180,67 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
         if calls
         else None
     )
+    provider_requests = sorted(
+        record["provider_requests"]
+        for record in turns
+        if record.get("provider_requests") is not None and not record.get("error")
+    )
+    provider_request_summary = (
+        {
+            "turns": len(provider_requests),
+            "total": sum(provider_requests),
+            "mean": round(statistics.mean(provider_requests), 2),
+            "p95": provider_requests[_p95_index(len(provider_requests))],
+        }
+        if provider_requests
+        else None
+    )
+    model_usage: dict[str, dict[str, int]] = {}
+    prompt_tokens = completion_tokens = token_reports = 0
+    for record in turns:
+        if record.get("prompt_tokens") is not None:
+            prompt_tokens += record["prompt_tokens"]
+            completion_tokens += record.get("completion_tokens") or 0
+            token_reports += record.get("token_reports") or 0
+    for record in turns:
+        for model in record.get("models_attempted", []):
+            usage = model_usage.setdefault(model, {"attempts": 0, "successful_calls": 0})
+            usage["attempts"] += 1
+        for model in record.get("models_used", []):
+            usage = model_usage.setdefault(model, {"attempts": 0, "successful_calls": 0})
+            usage["successful_calls"] += 1
 
     # A conversation succeeds when every one of its turns passed and, where the judge ruled on the
     # goal, the goal was met. Any failed turn or an unmet goal fails it. One with no failure but a
     # turn the judge has not ruled on is `unjudged`: it is left out of the rate, so a run nobody
     # judged does not read as 100 %.
-    names = list(dict.fromkeys(record["conversation"] for record in turns))
+    # Include sessions that were never reached because a provider outage stopped the replay.
+    # They remain in the denominator as unjudged instead of disappearing from the report.
+    expected_turns = expected_turns or {}
+    expected_tasks = expected_tasks or {}
+    names = list(dict.fromkeys((*expected_turns, *(record["conversation"] for record in records))))
     succeeded = unjudged = 0
     for name in names:
         mine = [record for record in turns if record["conversation"] == name]
+        session_records = [record for record in records if record["conversation"] == name]
+        if not mine:
+            unjudged += 1
+            continue
         statuses = [_status(record) for record in mine]
+        has_skipped_turn = any(record.get("skipped") for record in session_records)
+        complete_session = (
+            len(session_records) == expected_turns[name] if name in expected_turns else True
+        )
         goal_unmet = any(
             (record.get("judgement") or {}).get("goal_met") is False for record in mine
         )
         if goal_unmet or "failed" in statuses:
             continue
-        if all(status == "passed" for status in statuses):
+        if (
+            complete_session
+            and not has_skipped_turn
+            and all(status == "passed" for status in statuses)
+        ):
             succeeded += 1
         else:
             unjudged += 1
@@ -861,24 +1254,62 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
     # A banking session contains several distinct tasks. Keep their labels in the expectation
     # data, then score a task as a unit so a successful turn cannot hide a broken continuation.
     by_task: dict[str, list[dict[str, Any]]] = {}
-    for record in turns:
+    for record in records:
         task = (record.get("expect") or {}).get("task")
         if isinstance(task, str) and task.strip():
-            by_task.setdefault(task, []).append(record)
+            # Task labels are local to one session; don't merge like-named work across sessions.
+            task_key = f"{record['conversation']}::{task}"
+            by_task.setdefault(task_key, []).append(record)
+    for conversation, tasks in expected_tasks.items():
+        for task in tasks:
+            by_task.setdefault(f"{conversation}::{task}", [])
     tasks: dict[str, dict[str, Any]] = {}
-    for task, mine in sorted(by_task.items()):
+    for task_key, task_records in sorted(by_task.items()):
+        mine = [record for record in task_records if not record.get("skipped")]
         statuses = [_status(record) for record in mine]
+        conversation, task_name = task_key.split("::", 1)
+        expected_count = expected_tasks.get(conversation, {}).get(task_name)
+        missing_turns = max(0, expected_count - len(task_records)) if expected_count else 0
+        skipped_count = sum(1 for record in task_records if record.get("skipped"))
         goal_unmet = any(
             (record.get("judgement") or {}).get("goal_met") is False for record in mine
         )
-        tasks[task] = {
+        tasks[task_key] = {
+            "conversation": conversation,
+            "name": task_name,
             "turns": len(mine),
-            "succeeded": all(status == "passed" for status in statuses) and not goal_unmet,
+            "succeeded": (
+                (expected_count is None or len(task_records) == expected_count)
+                and skipped_count == 0
+                and all(status == "passed" for status in statuses)
+                and not goal_unmet
+            ),
             "failed": statuses.count("failed") + int(goal_unmet),
-            "unjudged": statuses.count("unjudged"),
+            "unjudged": statuses.count("unjudged") + skipped_count + missing_turns,
+            "invariants": [
+                {
+                    "turn": record["turn"],
+                    "status": record["session_invariant"],
+                    "note": record.get("session_invariant_note"),
+                }
+                for record in mine
+                if record.get("session_invariant")
+            ]
+            + [
+                {
+                    "turn": record["turn"],
+                    "status": record["financial_read_invariant"],
+                    "note": record.get("financial_read_invariant_note"),
+                }
+                for record in mine
+                if record.get("financial_read_invariant")
+            ],
         }
     return {
         "by_mechanism": dict(sorted(by_mechanism.items())),
+        "availability_failures": availability,
+        "provider_failure_counts": dict(sorted(provider_failure_counts.items())),
+        "terminal_provider_failure_counts": dict(sorted(terminal_provider_failure_counts.items())),
         "recovery_rate": recovered / opportunities if opportunities else None,
         "recovery": {"recovered": recovered, "after_a_failure": opportunities},
         "figures": figures,
@@ -886,7 +1317,25 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
         "latency_by_engine": latency_by_engine,
         "model_calls": model_calls,
         "model_calls_malformed": malformed,
+        "provider_requests": provider_request_summary,
+        "models": dict(sorted(model_usage.items())),
+        "tokens": (
+            {
+                "turns": sum(1 for record in turns if record.get("prompt_tokens") is not None),
+                "reports": token_reports,
+                "prompt": prompt_tokens,
+                "completion": completion_tokens,
+                "total": prompt_tokens + completion_tokens,
+            }
+            if token_reports
+            else None
+        ),
         "conversations": conversations,
+        "turns": {
+            "planned": sum(expected_turns.values()) if expected_turns else len(records),
+            "attempted": len(turns),
+            "skipped": skipped_turns,
+        },
         "tasks": tasks,
     }
 
@@ -920,8 +1369,20 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
     found = run.get("preflight") or {}
     version = found.get("version") or {}
     records = run.get("records", [])
-    summary = summarise(records)
-    earlier = summarise(previous.get("records", [])) if previous else None
+    summary = summarise(
+        records,
+        expected_turns=run.get("expected_turns"),
+        expected_tasks=run.get("expected_tasks"),
+    )
+    earlier = (
+        summarise(
+            previous.get("records", []),
+            expected_turns=previous.get("expected_turns"),
+            expected_tasks=previous.get("expected_tasks"),
+        )
+        if previous
+        else None
+    )
 
     lines = [
         f"# Conversaciones reales — {found.get('today', '?')}, `{version.get('sha', '?')}`",
@@ -931,7 +1392,12 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
         "- Servicios: "
         + " · ".join(f"{name} {state}" for name, state in (found.get("services") or {}).items()),
         f"- Orquestador: `{version.get('sha')}` ({version.get('ref')}) · HEAD `{found.get('head')}`"
-        f" · código del producto: {_SAME.get(found.get('code_under_test'), 'desconocido')}",
+        f" · source `{(found.get('source_sha256') or {}).get('orchestrator')}`"
+        " · código del producto: "
+        f"{_SAME.get(found.get('code_under_test'), 'desconocido')}",
+        f"- Banking API: `{(found.get('banking_version') or {}).get('sha')}` "
+        f"({(found.get('banking_version') or {}).get('ref')}) · source "
+        f"`{(found.get('source_sha256') or {}).get('banking')}`",
         f"- Libro: último movimiento {found.get('newest')} (hoy {found.get('today')})"
         + (
             f" · antigüedad aceptada a mano: {found['max_age_days']} días"
@@ -968,16 +1434,18 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
             "",
             "### Gestiones de las sesiones",
             "",
-            "| Gestión | Turnos | Estado | Fallidos | Sin juzgar |",
-            "|---|---:|---|---:|---:|",
+            "| Gestión | Turnos | Estado | Fallidos | Sin juzgar | Invariantes |",
+            "|---|---:|---|---:|---:|---|",
         ]
-        for task, counts in summary["tasks"].items():
+        for counts in summary["tasks"].values():
             status = (
                 "fallida" if counts["failed"] else "pendiente" if counts["unjudged"] else "completa"
             )
             lines.append(
-                f"| {task} | {counts['turns']} | {status} | {counts['failed']} "
-                f"| {counts['unjudged']} |"
+                f"| {counts['conversation']} / {counts['name']} | {counts['turns']} "
+                f"| {status} | {counts['failed']} "
+                f"| {counts['unjudged']} | "
+                f"{'; '.join(item['status'] for item in counts['invariants']) or '—'} |"
             )
     recovery = summary["recovery"]
     figures = summary["figures"]
@@ -988,6 +1456,27 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
         f"{recovery['recovered']} de {recovery['after_a_failure']} "
         f"({_percent(summary['recovery_rate'])})"
         + (f" · antes {_percent(earlier['recovery_rate'])}" if earlier else ""),
+        "- Fallos de disponibilidad (también fallan la sesión): "
+        + " · ".join(f"{kind} {count}" for kind, count in summary["availability_failures"].items()),
+        "- Provider failure attempts (safe category): "
+        + (
+            " | ".join(
+                f"{kind} {count}" for kind, count in summary["provider_failure_counts"].items()
+            )
+            if summary["provider_failure_counts"]
+            else "ninguno registrado"
+        ),
+        "- Terminal provider-call failures: "
+        + (
+            " | ".join(
+                f"{kind} {count}"
+                for kind, count in summary["terminal_provider_failure_counts"].items()
+            )
+            if summary["terminal_provider_failure_counts"]
+            else "none recorded"
+        ),
+        f"- Turnos intentados / omitidos / previstos: {summary['turns']['attempted']} / "
+        f"{summary['turns']['skipped']} / {summary['turns']['planned']}",
         f"- Cifras contra el libro: {figures['match']} match · {figures['mismatch']} mismatch · "
         f"{figures['error']} sin poder comprobar (error) · {figures['n/a']} n/a"
         + (
@@ -1010,6 +1499,8 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
             f"({measured['turns']} turnos)"
         )
     calls = summary["model_calls"]
+    requests = summary.get("provider_requests")
+    tokens = summary.get("tokens")
     won = summary["conversations"]
     lines += [
         f"- Conversaciones logradas (todos los turnos bien y objetivo cumplido): "
@@ -1027,6 +1518,30 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
             f" · {summary['model_calls_malformed']} cabeceras mal formadas"
             if summary["model_calls_malformed"]
             else ""
+        ),
+        "- Peticiones HTTP reales al proveedor (incluye reintentos/fallback): "
+        + (
+            f"{requests['total']} en {requests['turns']} turnos · "
+            f"media {str(requests['mean']).replace('.', ',')} · p95 {requests['p95']}"
+            if requests
+            else "sin dato"
+        ),
+        "- Modelos intentados/usados: "
+        + (
+            "; ".join(
+                f"`{model}`: {usage['attempts']} intentos, {usage['successful_calls']} respuestas"
+                for model, usage in summary.get("models", {}).items()
+            )
+            if summary.get("models")
+            else "sin dato"
+        ),
+        "- Tokens informados por proveedor: "
+        + (
+            f"{tokens['total']} total en {tokens['turns']} turnos "
+            f"({tokens['prompt']} entrada, {tokens['completion']} salida; "
+            f"{tokens['reports']} respuestas con usage)"
+            if tokens
+            else "sin dato"
         ),
         "",
     ]
@@ -1063,7 +1578,10 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
     return "\n".join(lines)
 
 
-_SAME = {"same as HEAD": "igual que HEAD", "differs from HEAD": "distinto de HEAD"}
+_SAME = {
+    "same as current source": "igual que el código local",
+    "differs from current source": "distinto del código local",
+}
 
 
 def _transcript(record: dict[str, Any]) -> list[str]:
@@ -1084,7 +1602,25 @@ def _transcript(record: dict[str, Any]) -> list[str]:
         facts.append(
             f"SQL: {_figure(record['sql']['total_minor'], record['sql']['movement_count'])}"
         )
+        if record.get("figure_query"):
+            facts.append(
+                "Consulta comprobada: `"
+                + json.dumps(record["figure_query"], ensure_ascii=False, sort_keys=True)
+                + "`"
+            )
     facts.append(f"**{record.get('figure_check')}** ({record.get('figure_note')})")
+    if record.get("session_invariant"):
+        facts.append(
+            "Invariante de sesión: "
+            f"**{record['session_invariant']}** ({record.get('session_invariant_note')})"
+        )
+    if record.get("financial_read_invariant"):
+        facts.append(
+            "Reutilizacion del resultado: "
+            f"**{record['financial_read_invariant']}** "
+            f"({record.get('financial_read_invariant_note')}; lecturas financieras: "
+            f"{record.get('financial_reads')})"
+        )
     # One fact per bullet: consecutive plain lines are one paragraph in Markdown.
     lines.append("- " + " · ".join(facts))
     if record.get("groups"):
@@ -1146,9 +1682,39 @@ async def _replay(
     keep: Callable[[dict[str, Any]], None],
 ) -> None:
     async with httpx.AsyncClient(timeout=300.0) as client:
+        provider_outage: str | None = None
         for conversation in conversations:
             state: dict[str, Any] | None = None
+            last_turn_started: float | None = None
+            task_by_turn = _task_map(conversation)
             for number, turn in enumerate(conversation["turns"], start=1):
+                expect = dict(turn.get("expect") or {})
+                if number in task_by_turn:
+                    if expect.get("task") not in (None, task_by_turn[number]):
+                        raise ValueError(
+                            f"{conversation['name']}: turn {number} has conflicting task labels"
+                        )
+                    expect["task"] = task_by_turn[number]
+                if provider_outage is not None:
+                    record = {
+                        "conversation": conversation["name"],
+                        "turn": number,
+                        "said": turn["say"],
+                        "skipped": (
+                            "replay detenido tras indisponibilidad del proveedor en "
+                            f"{provider_outage}; no es un fallo semántico evaluado"
+                        ),
+                        "expect": expect,
+                    }
+                    keep(record)
+                    print(_line(record), flush=True)
+                    continue
+                interval = max(0.0, float(getattr(options, "min_request_interval", 0.0)))
+                if last_turn_started is not None and interval:
+                    remaining = interval - (time.monotonic() - last_turn_started)
+                    if remaining > 0:
+                        await asyncio.sleep(remaining)
+                last_turn_started = time.monotonic()
                 record, state = await _turn(
                     client,
                     options,
@@ -1156,10 +1722,47 @@ async def _replay(
                     turn=number,
                     said=turn["say"],
                     conversation=state,
-                    expect=turn.get("expect"),
+                    expect=expect,
                 )
                 keep(record)
                 print(_line(record), flush=True)
+                if _availability_failure(record) == "provider":
+                    provider_outage = f"{conversation['name']} turno {number}"
+
+
+def _task_map(conversation: dict[str, Any]) -> dict[int, str]:
+    """Validate inclusive task ranges declared in a conversation fixture."""
+    turns = conversation.get("turns")
+    tasks = conversation.get("tasks", [])
+    if not isinstance(turns, list) or not isinstance(tasks, list):
+        raise ValueError(f"{conversation.get('name', '?')}: turns/tasks must be lists")
+    assigned: dict[int, str] = {}
+    names: set[str] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            raise ValueError(f"{conversation.get('name', '?')}: task must be a mapping")
+        name = task.get("name")
+        interval = task.get("turns")
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or name in names
+            or not isinstance(interval, list)
+            or len(interval) != 2
+            or any(not isinstance(value, int) or isinstance(value, bool) for value in interval)
+        ):
+            raise ValueError(f"{conversation.get('name', '?')}: invalid task definition")
+        first, last = interval
+        if first < 1 or last < first or last > len(turns):
+            raise ValueError(f"{conversation.get('name', '?')}: task turn range is out of bounds")
+        names.add(name)
+        for number in range(first, last + 1):
+            if number in assigned:
+                raise ValueError(
+                    f"{conversation['name']}: overlapping task ranges at turn {number}"
+                )
+            assigned[number] = name
+    return assigned
 
 
 def ux_conversations(battery: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1209,12 +1812,30 @@ def replay_command(options: Options) -> int:
         return 1
     if options.only:
         conversations = [item for item in conversations if item["name"] in options.only]
+    expected_turns = {item["name"]: len(item["turns"]) for item in conversations}
+    expected_tasks: dict[str, dict[str, int]] = {}
+    for item in conversations:
+        assignments = _task_map(item)
+        counts: dict[str, int] = {}
+        for task in assignments.values():
+            counts[task] = counts.get(task, 0) + 1
+        if counts:
+            expected_tasks[item["name"]] = counts
     sha = (found.get("version") or {}).get("sha") or "unknown"
-    out = Path(options.out) if options.out else path.parent / f"{found['today']}-{sha}"
+    source = found.get("source_sha256") or {}
+    source_stamp = (
+        f"{str(source.get('orchestrator') or 'unknown')[:8]}-"
+        f"{str(source.get('banking') or 'unknown')[:8]}"
+    )
+    out = (
+        Path(options.out) if options.out else path.parent / f"{found['today']}-{sha}-{source_stamp}"
+    )
     run: dict[str, Any] = {
         "name": out.name,
         "preflight": found,
         "goals": {item["name"]: item.get("goal") for item in conversations},
+        "expected_turns": expected_turns,
+        "expected_tasks": expected_tasks,
         "records": [],
         "findings": [],
     }
@@ -1380,7 +2001,11 @@ def summarise_command(options: Options) -> int:
         json.loads(Path(options.previous).read_text(encoding="utf-8")) if options.previous else None
     )
     _write_run(run_path.with_suffix(""), run, previous)
-    summary = summarise(run["records"])
+    summary = summarise(
+        run["records"],
+        expected_turns=run.get("expected_turns"),
+        expected_tasks=run.get("expected_tasks"),
+    )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"wrote {run_path} and {run_path.with_suffix('.md')}")
     return 0
@@ -1416,13 +2041,24 @@ def main() -> int:
         "--provider-retries",
         type=int,
         default=0,
-        help="send a turn again this many times when it comes back PROVIDER_ERROR (a rate limit)",
+        help="retry transient provider failures this many times using the same turn id",
     )
     common.add_argument(
         "--provider-wait",
         type=float,
         default=60.0,
         help="seconds to wait before each retry; a per-minute token limit refills in a minute",
+    )
+    common.add_argument(
+        "--min-request-interval",
+        type=float,
+        default=5.0,
+        help="minimum seconds between turns in a replay (default: 5, or 12 turns/minute)",
+    )
+    common.add_argument(
+        "--skip-gateway-check",
+        action="store_true",
+        help="skip A2A gateway health when the replay only exercises banking conversations",
     )
 
     parser = argparse.ArgumentParser(

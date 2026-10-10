@@ -821,7 +821,7 @@ export function AnswerEvidence({ answer }: { answer: Answer }) {
           </summary>
           <ul className="evidence">
             {answer.movements.map((movement, index) => (
-              <li key={index}>
+              <li key={movement.transaction_id ?? `${movement.occurred_at}-${index}`}>
                 <span>{day(movement.occurred_at)}</span>
                 <span>{displayText(movement.merchant_name ?? movement.description)}</span>
                 <span className={outgoing(movement) ? "out" : "in"}>
@@ -829,7 +829,7 @@ export function AnswerEvidence({ answer }: { answer: Answer }) {
                     outgoing(movement)
                       ? -Math.abs(movement.amount_minor)
                       : Math.abs(movement.amount_minor),
-                    answer.currency ?? "EUR",
+                    movement.currency ?? answer.currency ?? "EUR",
                   )}
                 </span>
               </li>

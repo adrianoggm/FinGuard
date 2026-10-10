@@ -1,0 +1,2795 @@
+{
+  "name": "2026-10-10-48f18b4c-dirty-20261010-1505-long-sessions-4x15",
+  "preflight": {
+    "services": {
+      "orchestrator": "ok",
+      "banking": "ok",
+      "gateway": "skipped (not used by this evaluation)"
+    },
+    "ready": {
+      "http_status": 200,
+      "status": "ok",
+      "provider": "echo",
+      "financial_path": {
+        "engine": "model",
+        "graph": "on",
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite"
+      },
+      "payments": true,
+      "checks": {
+        "questions_enabled": true,
+        "catalogue_provider": true,
+        "planner": true,
+        "banking": true
+      }
+    },
+    "version": {
+      "service": "orchestrator",
+      "sha": "48f18b4c-dirty-20261010-1505",
+      "ref": "main-working-tree"
+    },
+    "ollama": [],
+    "newest": "2026-10-07",
+    "at": "2026-10-10T17:11:24+02:00",
+    "today": "2026-10-10",
+    "gpu": "P8, 22 MHz",
+    "head": "48f18b4c",
+    "code_under_test": "unknown",
+    "problems": [],
+    "max_age_days": 3
+  },
+  "goals": {
+    "sesion-1-consultas-y-correcciones": "Mantener consultas y filtros a trav?s de cambios de tema y correcciones.",
+    "sesion-2-aclaraciones-y-erratas": "Completar consultas, corregirlas y probar una nueva consulta dentro de la misma conversaci?n.",
+    "sesion-3-pagos-y-comparaciones": "Distinguir consultas de pagos, cancelar con seguridad y mantener una comparaci?n.",
+    "sesion-4-graficos-y-recuperacion": "Reutilizar resultados en gr?ficos, recuperarse y seguir consultando sin filtros heredados."
+  },
+  "records": [
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 1,
+      "said": "q llevo gastado en suscripciones estos ultimos 9 meses",
+      "outcome": "PLANNED",
+      "text": "610,64 € en suscripciones en los últimos 9 meses, en 31 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 9 meses, gastos, suscripciones",
+      "last_plan": null,
+      "total_minor": 61064,
+      "movement_count": 31,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 61064,
+          "movement_count": 31,
+          "value_minor": 61064
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.59,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 61064,
+        "movement_count": 31
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [SUBSCRIPTIONS], window: 'LAST_N_MONTHS:9'}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 2,
+      "said": "solo Netflix",
+      "outcome": "PLANNED",
+      "text": "125,91 € en Netflix en los últimos 9 meses, en 9 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 9 meses, gastos, suscripciones, Netflix",
+      "last_plan": null,
+      "total_minor": 12591,
+      "movement_count": 9,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 12591,
+          "movement_count": 9,
+          "value_minor": 12591
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.7,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 12591,
+        "movement_count": 9
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Netflix], window: 'LAST_N_MONTHS:9'}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 3,
+      "said": "y este mes?",
+      "outcome": "PLANNED",
+      "text": "13,99 € en Netflix en lo que va de mes, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, gastos, suscripciones, Netflix",
+      "last_plan": null,
+      "total_minor": 1399,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 1399,
+          "movement_count": 1,
+          "value_minor": 1399
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.19,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 1399,
+        "movement_count": 1
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Netflix], window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "follow_up",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 4,
+      "said": "no, Spotify",
+      "outcome": "PLANNED",
+      "text": "10,99 € en Spotify en lo que va de mes, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, gastos, suscripciones, Spotify",
+      "last_plan": null,
+      "total_minor": 1099,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 1099,
+          "movement_count": 1,
+          "value_minor": 1099
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.38,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 1099,
+        "movement_count": 1
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Spotify], window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 5,
+      "said": "y el mes pasado?",
+      "outcome": "PLANNED",
+      "text": "10,99 € en Spotify el mes pasado, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, suscripciones, Spotify",
+      "last_plan": null,
+      "total_minor": 1099,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 1099,
+          "movement_count": 1,
+          "value_minor": 1099
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.3,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 1099,
+        "movement_count": 1
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Spotify], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "follow_up",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 6,
+      "said": "gracias",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.44,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 7,
+      "said": "cuanto gaste en el super en julio de 2026",
+      "outcome": "PLANNED",
+      "text": "449,62 € en supermercado del 2026-07-01 al 2026-07-31, en 8 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-07-01 al 2026-07-31, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 44962,
+      "movement_count": 8,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 44962,
+          "movement_count": 8,
+          "value_minor": 44962
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.5,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 44962,
+        "movement_count": 8
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 8,
+      "said": "cuanto tengo en la hucha",
+      "outcome": "BALANCE",
+      "text": "Tienes 6.405,00 € en Hucha.",
+      "plan_in_words": "saldo de Hucha",
+      "last_plan": null,
+      "total_minor": 640500,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.5,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 9,
+      "said": "quienes son mis contactos",
+      "outcome": "CONTACTS",
+      "text": "Tienes estos contactos para enviar dinero: Aitor Beltran Diaz, Carmen Nieto Lara, Marta Ruiz Gomez, Marta Solis Vega.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.6,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "CONTACTS: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "CONTACTS"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 10,
+      "said": "volviendo al super, y en junio de 2026?",
+      "outcome": "PLANNED",
+      "text": "506,93 € en supermercado del 2026-06-01 al 2026-06-30, en 8 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 50693,
+      "movement_count": 8,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 50693,
+          "movement_count": 8,
+          "value_minor": 50693
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.14,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 50693,
+        "movement_count": 8
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "interruption",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: 2026-06-01..2026-06-30}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "interruption",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 11,
+      "said": "solo Mercadona",
+      "outcome": "PLANNED",
+      "text": "86,57 € en Mercadona del 2026-06-01 al 2026-06-30, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, supermercado, Mercadona",
+      "last_plan": null,
+      "total_minor": 8657,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 8657,
+          "movement_count": 1,
+          "value_minor": 8657
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 8657,
+        "movement_count": 1
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Mercadona], window: 2026-06-01..2026-06-30}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 12,
+      "said": "y en julio de 2026?",
+      "outcome": "PLANNED",
+      "text": "131,21 € en Mercadona del 2026-07-01 al 2026-07-31, en 2 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-07-01 al 2026-07-31, gastos, supermercado, Mercadona",
+      "last_plan": null,
+      "total_minor": 13121,
+      "movement_count": 2,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 13121,
+          "movement_count": 2,
+          "value_minor": 13121
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.02,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 13121,
+        "movement_count": 2
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Mercadona], window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "follow_up",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 13,
+      "said": "gastos de julio de 2026",
+      "outcome": "PLANNED",
+      "text": "131,21 € en Mercadona del 2026-07-01 al 2026-07-31, en 2 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-07-01 al 2026-07-31, gastos, supermercado, Mercadona",
+      "last_plan": null,
+      "total_minor": 13121,
+      "movement_count": 2,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 13121,
+          "movement_count": 2,
+          "value_minor": 13121
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.38,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 13121,
+        "movement_count": 2
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 3,
+        "mechanism": "intent",
+        "notes": "La petici?n completa ?gastos de julio? hered? supermercado y Mercadona de tareas anteriores."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 14,
+      "said": "perdon junio de 2026",
+      "outcome": "PLANNED",
+      "text": "86,57 € en Mercadona del 2026-06-01 al 2026-06-30, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, supermercado, Mercadona",
+      "last_plan": null,
+      "total_minor": 8657,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 8657,
+          "movement_count": 1,
+          "value_minor": 8657
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.69,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 8657,
+        "movement_count": 1
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {window: 2026-06-01..2026-06-30}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "ok",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 3,
+        "mechanism": "slot_carryover",
+        "notes": "La correcci?n de periodo mantuvo los filtros heredados de la consulta previa."
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 15,
+      "said": "solo gasolina",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en Mercadona del 2026-06-01 al 2026-06-30. Puedes buscar sin categoría, buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, gasolina, Mercadona",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.37,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 0,
+        "movement_count": 0
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: 2026-06-01..2026-06-30}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "ok",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 3,
+        "mechanism": "slot_carryover",
+        "notes": "?Solo gasolina? a?adi? la categor?a pero conserv? Mercadona; la consulta resultante era cero."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 1,
+      "said": "cuanto gaste en supermercados el mes pasado",
+      "outcome": "PLANNED",
+      "text": "358,71 € en supermercado el mes pasado, en 6 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 35871,
+      "movement_count": 6,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 35871,
+          "movement_count": 6,
+          "value_minor": 35871
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.3,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 35871,
+        "movement_count": 6
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 2,
+      "said": "en todas",
+      "outcome": "PLANNED",
+      "text": "358,71 € en supermercado el mes pasado, en 6 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 35871,
+      "movement_count": 6,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 35871,
+          "movement_count": 6,
+          "value_minor": 35871
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.38,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": {
+        "total_minor": 35871,
+        "movement_count": 6
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "pending_resolution",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 3,
+      "said": "por comercio",
+      "outcome": "PLANNED",
+      "text": "358,71 € en supermercado el mes pasado, en 6 movimientos.\n  · Dia: 166,23 € (3)\n  · Mercadona: 90,48 € (1)\n  · Carrefour: 64,47 € (1)\n  · Alcampo: 37,53 € (1)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, supermercado, por comercio",
+      "last_plan": null,
+      "total_minor": 35871,
+      "movement_count": 6,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "Dia",
+          "total_minor": 16623,
+          "movement_count": 3,
+          "value_minor": 16623
+        },
+        {
+          "key": "Mercadona",
+          "total_minor": 9048,
+          "movement_count": 1,
+          "value_minor": 9048
+        },
+        {
+          "key": "Carrefour",
+          "total_minor": 6447,
+          "movement_count": 1,
+          "value_minor": 6447
+        },
+        {
+          "key": "Alcampo",
+          "total_minor": 3753,
+          "movement_count": 1,
+          "value_minor": 3753
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.33,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], group_by: COUNTERPARTY, window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "follow_up",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 4,
+      "said": "y este mes",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.68,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], group_by: COUNTERPARTY, window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 2,
+        "mechanism": "follow_up",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 5,
+      "said": "mejor por categoria",
+      "outcome": "PLANNED",
+      "text": "358,71 € en supermercado el mes pasado, en 6 movimientos.\n  · supermercado: 358,71 € (6)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, supermercado, por categoría",
+      "last_plan": null,
+      "total_minor": 35871,
+      "movement_count": 6,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "GROCERIES",
+          "total_minor": 35871,
+          "movement_count": 6,
+          "value_minor": 35871
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.56,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {group_by: CATEGORY, window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "ok",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 6,
+      "said": "cuanto tengo?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.71,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 7,
+      "said": "cuanto gaste en el super el mes pasao",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.63,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 8,
+      "said": "y restauantes?",
+      "outcome": "PLANNED",
+      "text": "187,94 € en restaurantes el mes pasado, en 6 movimientos.\n  · restaurantes: 187,94 € (6)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, restaurantes, por categoría",
+      "last_plan": null,
+      "total_minor": 18794,
+      "movement_count": 6,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 18794,
+          "movement_count": 6,
+          "value_minor": 18794
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.4,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [RESTAURANTS], merchants: [], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "ok",
+        "naturalness": 4,
+        "mechanism": "follow_up",
+        "notes": "La respuesta satisface el turno y conserva el contexto aplicable; las sumas simples se cotejaron con SQL."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 9,
+      "said": "solo esta semna",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.41,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [RESTAURANTS], merchants: [], window: THIS_WEEK}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 2,
+        "mechanism": "slot_carryover",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 10,
+      "said": "y gasolina?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.42,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], merchants: [], window: THIS_WEEK}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "follow_up",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 11,
+      "said": "cunato tengo",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 12,
+      "said": "gracias",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.56,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 13,
+      "said": "Compara mis gastos de restaurantes entre junio y julio de 2026",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "intent",
+        "want": "Comparaci?n de restaurantes en junio y julio, con los dos resultados."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 14,
+      "said": "Y en gasolina?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.69,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "comparison",
+        "want": "Conserva ambos meses y cambia ?nicamente la categor?a a gasolina."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "comparison",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 15,
+      "said": "Gracias",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.69,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "route": "COURTESY",
+        "mechanism": "intent",
+        "want": "Cierra brevemente sin iniciar otra consulta."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 1,
+      "said": "haz un bixum a Marta Solis Vega",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.51,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "PAYMENT"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 2,
+      "said": "20 euros",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.45,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "pending_resolution",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 3,
+      "said": "mejor 25",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.44,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "pending_resolution",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 4,
+      "said": "no",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.56,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "want": "En el corpus UX: {ends: true}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "pending_resolution",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 5,
+      "said": "cuanto tengo",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.49,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 6,
+      "said": "gracias",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.03,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 7,
+      "said": "cuanto le mande a Marta este mes",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.68,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {direction: EXPENSE, window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 8,
+      "said": "y lo que me mando ella?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.95,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {direction: INCOME, window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "reference",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 9,
+      "said": "ahora quiero mandarle 20 euros a Marta",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.01,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "interruption",
+        "route": "PAYMENT"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "interruption",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 10,
+      "said": "no",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.67,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "want": "En el corpus UX: {ends: true}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "pending_resolution",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 11,
+      "said": "mis contactos",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.42,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "CONTACTS"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 12,
+      "said": "cuanto tengo",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.47,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 13,
+      "said": "compara mis gastos en restaurantes de junio y julio de 2026",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.7,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: [{categories: [RESTAURANTS], window: 2026-06-01..2026-06-30}, {categories: [\n        RESTAURANTS], window: 2026-07-01..2026-07-31}]}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 14,
+      "said": "y en gasolina?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.94,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: [{categories: [TRANSPORT_FUEL], window: 2026-06-01..2026-06-30}, {categories: [\n        TRANSPORT_FUEL], window: 2026-07-01..2026-07-31}]}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "comparison",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 15,
+      "said": "ahora solo julio de 2026",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.42,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "comparison",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 1,
+      "said": "gastos de los ultimos 3 meses por categoria",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.44,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {groups: [[GROCERIES, 20000, 5], [RESTAURANTS, 10000, 3]], ran: {group_by: CATEGORY,\n    window: 'LAST_N_MONTHS:3'}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 2,
+      "said": "por meses mejor",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.67,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {groups: [[2026-06, 10000, 2], [2026-07, 30000, 6], [2026-08, 5000, 1]], ran: {group_by: MONTH,\n    window: 'LAST_N_MONTHS:3'}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "follow_up",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 3,
+      "said": "ponlo en lineas",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "En el corpus UX: {banking_calls: 0}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "follow_up",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 4,
+      "said": "por que julio es tan alto?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.46,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "reference",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 5,
+      "said": "y solo restaurantes en julio de 2026?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.47,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [RESTAURANTS], window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "slot_carryover",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 6,
+      "said": "gracias",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 7,
+      "said": "cuanto gaste en supermercado el mes pasado",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.45,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 8,
+      "said": "no era eso",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.53,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "reset",
+        "route": "GUIDANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "reset",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 9,
+      "said": "me referia a gasolina este mes",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.49,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "pending_resolution",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 10,
+      "said": "olvidalo",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.46,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "reset",
+        "route": "GUIDANCE",
+        "want": "En el corpus UX: {banking_calls: 0}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "reset",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 11,
+      "said": "cuanto he ingresado este ano",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.43,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [], direction: INCOME, merchants: [], window: THIS_YEAR}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 12,
+      "said": "y el mes pasado?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.72,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [], direction: INCOME, merchants: [], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "follow_up",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 13,
+      "said": "Cu?nto he gastado en restaurantes este a?o?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "intent",
+        "want": "Consulta gastos de restaurantes en el a?o actual."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 14,
+      "said": "Y solo en octubre?",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.77,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "slot_carryover",
+        "want": "Mantiene restaurantes y cambia el periodo a octubre."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "slot_carryover",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 15,
+      "said": "Gracias",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.44,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "route": "COURTESY",
+        "mechanism": "intent",
+        "want": "Cierra brevemente sin iniciar otra consulta."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "?",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "fail",
+        "naturalness": 2,
+        "mechanism": "intent",
+        "notes": "Gemini respondi? HTTP 429 confirmado en los logs; FinGuard mostr? un mensaje gen?rico y no resolvi? el turno."
+      }
+    }
+  ],
+  "findings": [
+    "La unidad evaluada fue cuatro conversaciones continuas de 15 turnos (60); se aceptaron expl?citamente datos del libro con tres d?as de antig?edad.",
+    "14 consultas escalares se cotejaron contra SQL: todas coincidieron con el plan ejecutado; esto no detecta que el plan arrastrase filtros sem?nticamente incorrectos.",
+    "La sesi?n 1 falla en los turnos 13?15: una consulta nueva y dos cambios de tema heredaron filtros de supermercado/Mercadona; el turno 15 devolvi? cero aunque pidi? gasolina.",
+    "La sesi?n 2 tuvo diez turnos HTTP 429; los dos siguientes que s? obtuvieron respuesta retomaron el contexto previo. Las sesiones 3 y 4 fallaron en sus 30 turnos por el mismo l?mite del proveedor.",
+    "Los logs del orquestador confirman 40 respuestas HTTP 429 de Gemini, pero no aportan Retry-After ni identificador de cuota. Esos turnos no miden razonamiento ni continuidad del modelo.",
+    "La pasada us? el grafo y Gemini 3.5 Flash Lite en una imagen del ?rbol de trabajo, identificada como 48f18b4c-dirty-20261010-1505; el comparador autom?tico dej? code_under_test como unknown. Despu?s se ajust? el prompt, se subi? GRAPH_VERSION a conversation/26 y la imagen 48f18b4c-dirty-20261010-172513 pas? preflight; no se repiti? el replay porque Gemini segu?a en HTTP 429."
+  ],
+  "folded": []
+}

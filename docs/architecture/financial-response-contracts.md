@@ -170,14 +170,25 @@ amounts or renderer code. React renders metric blocks from the verified response
 the composition to decide whether the chart and breakdown belong in the response. The browser
 contract checks all three blocks over one artifact. This is the first step toward the component
 registry, not yet a general visual renderer. Category-to-drill-down is
-also pending: a click is not yet a typed operation naming the source artifact. Next slices should
-cover `RECORDS` versus `COUNT`, time series, comparisons/investigation, historical views, and
-payment confirmation rendering. Dialogue codec schema 17 migrates the previous `active_result` payload
-to `active_artifact` in memory, inferring its result kind from the typed plan or comparison. New
+also pending: a click is not yet a typed operation naming the source artifact. Recent ledger rows
+now use a separate `list_movements` contract with optional reporting windows and stable keyset
+pagination; a window is never required just to list recent rows. Rows are not encoded as an
+aggregate `RECORDS` result or copied into analytics artifacts. Broader component
+registry support, typed chart drill-down, historical views, and payment confirmation rendering
+remain open. Dialogue codec schema 23 persists scalar comparison values in verified artifacts.
+Older `active_result` payloads still migrate to `active_artifact` in memory, inferring their result
+kind from the typed plan or comparison. New
 checkpoints store the artifact discriminant, verified status, trusted source, and stable query
-provenance; the current banking contract does not expose a separate bank result ID. Graph execution
-checkpoints are versioned as `conversation/22` with state schema 20. The existing compare-and-set
-version remains authoritative.
+provenance; the current banking contract does not expose a separate bank result ID. The canonical
+dialogue codec is schema 23; the internal LangGraph turn checkpoint is schema 22 under graph
+`conversation/32`. The existing compare-and-set version remains authoritative.
+
+Movement-list operations now distinguish a new list, a `patch_movement_list` update, and
+`continue_current` pagination. An omitted field in a patch preserves the active list's direction,
+account scope, filters, and page size; an explicit empty filter clears it. Every patch resets the
+cursor so the revised query starts at its newest row. Pagination keeps the exact query and advances
+only its bank-authored cursor. This keeps “change account” separate from both a fresh list and “show
+the next page.”
 
 ## Verification and migration
 

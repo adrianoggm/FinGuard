@@ -1,0 +1,2958 @@
+{
+  "name": "2026-10-10-48f18b4c-long-sessions-4x15",
+  "preflight": {
+    "services": {
+      "orchestrator": "ok",
+      "banking": "ok",
+      "gateway": "skipped (not used by this evaluation)"
+    },
+    "ready": {
+      "http_status": 200,
+      "status": "ok",
+      "provider": "echo",
+      "financial_path": {
+        "engine": "model",
+        "graph": "on",
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite"
+      },
+      "payments": true,
+      "checks": {
+        "questions_enabled": true,
+        "catalogue_provider": true,
+        "planner": true,
+        "banking": true
+      }
+    },
+    "version": {
+      "service": "orchestrator",
+      "sha": "48f18b4c-dirty-session-acceptance-v2",
+      "ref": "main-working-tree"
+    },
+    "ollama": [],
+    "newest": "2026-10-07",
+    "at": "2026-10-10T16:49:40+02:00",
+    "today": "2026-10-10",
+    "gpu": "P8, 22 MHz",
+    "head": "48f18b4c",
+    "code_under_test": "unknown",
+    "problems": [],
+    "max_age_days": 3
+  },
+  "goals": {
+    "sesion-1-consultas-y-correcciones": "Mantener consultas y filtros a trav?s de cambios de tema y correcciones.",
+    "sesion-2-aclaraciones-y-erratas": "Completar consultas, corregirlas y probar una nueva consulta dentro de la misma conversaci?n.",
+    "sesion-3-pagos-y-comparaciones": "Distinguir consultas de pagos, cancelar con seguridad y mantener una comparaci?n.",
+    "sesion-4-graficos-y-recuperacion": "Reutilizar resultados en gr?ficos, recuperarse y seguir consultando sin filtros heredados."
+  },
+  "records": [
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 1,
+      "said": "q llevo gastado en suscripciones estos ultimos 9 meses",
+      "outcome": "PLANNED",
+      "text": "610,64 € en suscripciones en los últimos 9 meses, en 31 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 9 meses, gastos, suscripciones",
+      "last_plan": null,
+      "total_minor": 61064,
+      "movement_count": 31,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 61064,
+          "movement_count": 31,
+          "value_minor": 61064
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.76,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [SUBSCRIPTIONS], window: 'LAST_N_MONTHS:9'}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 2,
+      "said": "solo Netflix",
+      "outcome": "PLANNED",
+      "text": "125,91 € en Netflix en los últimos 9 meses, en 9 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 9 meses, gastos, suscripciones, comercios con «Netflix» en el nombre",
+      "last_plan": null,
+      "total_minor": 12591,
+      "movement_count": 9,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 12591,
+          "movement_count": 9,
+          "value_minor": 12591
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.59,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Netflix], window: 'LAST_N_MONTHS:9'}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 3,
+      "said": "y este mes?",
+      "outcome": "PLANNED",
+      "text": "13,99 € en Netflix en lo que va de mes, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, gastos, suscripciones, comercios con «Netflix» en el nombre",
+      "last_plan": null,
+      "total_minor": 1399,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 1399,
+          "movement_count": 1,
+          "value_minor": 1399
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.72,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Netflix], window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "follow_up",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 4,
+      "said": "no, Spotify",
+      "outcome": "PLANNED",
+      "text": "10,99 € en Spotify en lo que va de mes, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, gastos, suscripciones, comercios con «Spotify» en el nombre",
+      "last_plan": null,
+      "total_minor": 1099,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 1099,
+          "movement_count": 1,
+          "value_minor": 1099
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.11,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Spotify], window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 5,
+      "said": "y el mes pasado?",
+      "outcome": "PLANNED",
+      "text": "10,99 € en Spotify el mes pasado, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, suscripciones, comercios con «Spotify» en el nombre",
+      "last_plan": null,
+      "total_minor": 1099,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 1099,
+          "movement_count": 1,
+          "value_minor": 1099
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.41,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Spotify], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "follow_up",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 6,
+      "said": "gracias",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.1,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 7,
+      "said": "cuanto gaste en el super en julio de 2026",
+      "outcome": "PLANNED",
+      "text": "449,62 € en supermercado del 2026-07-01 al 2026-07-31, en 8 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-07-01 al 2026-07-31, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 44962,
+      "movement_count": 8,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 44962,
+          "movement_count": 8,
+          "value_minor": 44962
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.09,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 8,
+      "said": "cuanto tengo en la hucha",
+      "outcome": "BALANCE",
+      "text": "Tienes 6.405,00 € en Hucha.",
+      "plan_in_words": "saldo de Hucha",
+      "last_plan": null,
+      "total_minor": 640500,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.34,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 9,
+      "said": "quienes son mis contactos",
+      "outcome": "CONTACTS",
+      "text": "Tienes estos contactos para enviar dinero: Aitor Beltran Diaz, Carmen Nieto Lara, Marta Ruiz Gomez, Marta Solis Vega.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.77,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "CONTACTS: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "CONTACTS"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 10,
+      "said": "volviendo al super, y en junio de 2026?",
+      "outcome": "PLANNED",
+      "text": "506,93 € en supermercado del 2026-06-01 al 2026-06-30, en 8 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 50693,
+      "movement_count": 8,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 50693,
+          "movement_count": 8,
+          "value_minor": 50693
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.43,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "interruption",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: 2026-06-01..2026-06-30}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "interruption",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 11,
+      "said": "solo Mercadona",
+      "outcome": "PLANNED",
+      "text": "86,57 € en Mercadona del 2026-06-01 al 2026-06-30, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, supermercado, Mercadona",
+      "last_plan": null,
+      "total_minor": 8657,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 8657,
+          "movement_count": 1,
+          "value_minor": 8657
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.14,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Mercadona], window: 2026-06-01..2026-06-30}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 12,
+      "said": "y en julio de 2026?",
+      "outcome": "PLANNED",
+      "text": "131,21 € en Mercadona del 2026-07-01 al 2026-07-31, en 2 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-07-01 al 2026-07-31, gastos, supermercado, Mercadona",
+      "last_plan": null,
+      "total_minor": 13121,
+      "movement_count": 2,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 13121,
+          "movement_count": 2,
+          "value_minor": 13121
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.53,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Mercadona], window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "follow_up",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 13,
+      "said": "gastos de julio de 2026",
+      "outcome": "PLANNED",
+      "text": "131,21 € en Mercadona del 2026-07-01 al 2026-07-31, en 2 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-07-01 al 2026-07-31, gastos, supermercado, Mercadona",
+      "last_plan": null,
+      "total_minor": 13121,
+      "movement_count": 2,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 13121,
+          "movement_count": 2,
+          "value_minor": 13121
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 14,
+      "said": "perdon junio de 2026",
+      "outcome": "PLANNED",
+      "text": "86,57 € en Mercadona del 2026-06-01 al 2026-06-30, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, supermercado, Mercadona",
+      "last_plan": null,
+      "total_minor": 8657,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 8657,
+          "movement_count": 1,
+          "value_minor": 8657
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.3,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {window: 2026-06-01..2026-06-30}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 15,
+      "said": "solo gasolina",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en Mercadona del 2026-06-01 al 2026-06-30. Puedes buscar sin categoría, buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, gasolina, Mercadona",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.92,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: 2026-06-01..2026-06-30}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": true
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 1,
+      "said": "cuanto gaste en supermercados el mes pasado",
+      "outcome": "PLANNED",
+      "text": "358,71 € en supermercado el mes pasado, en 6 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 35871,
+      "movement_count": 6,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 35871,
+          "movement_count": 6,
+          "value_minor": 35871
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.42,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 2,
+      "said": "en todas",
+      "outcome": "PLANNED",
+      "text": "2.097,36 € en supermercado, gasolina, restaurantes, transporte público, salud, ocio, suscripciones, alquiler, nómina, bizum y intereses el mes pasado, en 32 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, supermercado/gasolina/restaurantes/transporte público/salud/ocio/suscripciones/alquiler/nómina/bizum/intereses",
+      "last_plan": null,
+      "total_minor": 209736,
+      "movement_count": 32,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 209736,
+          "movement_count": 32,
+          "value_minor": 209736
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.61,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "pending_resolution",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 3,
+      "said": "por comercio",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.24,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], group_by: COUNTERPARTY, window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "not useful",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "follow_up",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 4,
+      "said": "y este mes",
+      "outcome": "PLANNED",
+      "text": "1.030,42 € en supermercado, gasolina, restaurantes, transporte público, salud, ocio, suscripciones, alquiler, nómina, bizum y intereses en lo que va de mes, en 7 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, gastos, supermercado/gasolina/restaurantes/transporte público/salud/ocio/suscripciones/alquiler/nómina/bizum/intereses",
+      "last_plan": null,
+      "total_minor": 103042,
+      "movement_count": 7,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 103042,
+          "movement_count": 7,
+          "value_minor": 103042
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.41,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], group_by: COUNTERPARTY, window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "follow_up",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 5,
+      "said": "mejor por categoria",
+      "outcome": "PLANNED",
+      "text": "1.030,42 € en supermercado, gasolina, restaurantes, transporte público, salud, ocio, suscripciones, alquiler, nómina, bizum y intereses en lo que va de mes, en 7 movimientos.\n  · alquiler: 920,00 € (1)\n  · restaurantes: 55,54 € (3)\n  · suscripciones: 54,88 € (3)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, gastos, supermercado/gasolina/restaurantes/transporte público/salud/ocio/suscripciones/alquiler/nómina/bizum/intereses, por categoría",
+      "last_plan": null,
+      "total_minor": 103042,
+      "movement_count": 7,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 92000,
+          "movement_count": 1,
+          "value_minor": 92000
+        },
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 5554,
+          "movement_count": 3,
+          "value_minor": 5554
+        },
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 5488,
+          "movement_count": 3,
+          "value_minor": 5488
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.51,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {group_by: CATEGORY, window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "slot_carryover",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 6,
+      "said": "cuanto tengo?",
+      "outcome": "BALANCE",
+      "text": "Tienes 7.019,56 € entre tus cuentas: 614,56 € en Cuenta corriente y 6.405,00 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "plan_in_words": "saldo de tus cuentas",
+      "last_plan": null,
+      "total_minor": 701956,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.24,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 7,
+      "said": "cuanto gaste en el super el mes pasao",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «super» en el nombre el mes pasado. Puedes buscar sin categoría, buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, supermercado, comercios con «super» en el nombre",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.41,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "intent",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 8,
+      "said": "y restauantes?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «super» en el nombre el mes pasado. Puedes buscar sin categoría, buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, restaurantes, comercios con «super» en el nombre",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.59,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [RESTAURANTS], merchants: [], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "follow_up",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 9,
+      "said": "solo esta semna",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «super» en el nombre esta semana. Puedes buscar sin categoría, buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "esta semana, gastos, restaurantes, comercios con «super» en el nombre",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.82,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [RESTAURANTS], merchants: [], window: THIS_WEEK}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "slot_carryover",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 10,
+      "said": "y gasolina?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «super» en el nombre esta semana. Puedes buscar sin categoría, buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "esta semana, gastos, gasolina, comercios con «super» en el nombre",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.02,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], merchants: [], window: THIS_WEEK}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "follow_up",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 11,
+      "said": "cunato tengo",
+      "outcome": "BALANCE",
+      "text": "Tienes 7.019,56 € entre tus cuentas: 614,56 € en Cuenta corriente y 6.405,00 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "plan_in_words": "saldo de tus cuentas",
+      "last_plan": null,
+      "total_minor": 701956,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.38,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 12,
+      "said": "gracias",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.56,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 13,
+      "said": "Compara mis gastos de restaurantes entre junio y julio de 2026",
+      "outcome": "PLANNED",
+      "text": "En junio de 2026: 0,00 €; en julio de 2026: 0,00 €. El gasto en comercios con «super» en el nombre fue el mismo en ambos periodos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, restaurantes, comercios con «super» en el nombre frente a del 2026-07-01 al 2026-07-31, gastos, restaurantes, comercios con «super» en el nombre",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": 0,
+      "difference_minor": 0,
+      "groups": [
+        {
+          "key": "en junio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        },
+        {
+          "key": "en julio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.52,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "una comparación: la juzga la rúbrica",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "intent",
+        "want": "Comparaci?n de restaurantes en junio y julio, con los dos resultados."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "intent",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 14,
+      "said": "Y en gasolina?",
+      "outcome": "PLANNED",
+      "text": "En junio de 2026: 0,00 €; en julio de 2026: 0,00 €. El gasto en comercios con «super» en el nombre fue el mismo en ambos periodos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, gasolina, comercios con «super» en el nombre frente a del 2026-07-01 al 2026-07-31, gastos, gasolina, comercios con «super» en el nombre",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": 0,
+      "difference_minor": 0,
+      "groups": [
+        {
+          "key": "en junio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        },
+        {
+          "key": "en julio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.53,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "una comparación: la juzga la rúbrica",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "comparison",
+        "want": "Conserva ambos meses y cambia ?nicamente la categor?a a gasolina."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "comparison",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 15,
+      "said": "Gracias",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.03,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "route": "COURTESY",
+        "mechanism": "intent",
+        "want": "Cierra brevemente sin iniciar otra consulta."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 1,
+      "said": "haz un bixum a Marta Solis Vega",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De cuánto quieres hacerle el bizum a Marta Solis Vega?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.17,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "PAYMENT"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "needed",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Pago de prueba preparado y corregido; se cancela sin ejecutar.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 2,
+      "said": "20 euros",
+      "outcome": "AWAITING_CONFIRMATION",
+      "text": "Vas a enviar 20,00 € a Marta Solis Vega (+34600333444). Te quedarían 594,56 €. ¿Confirmas? Responde sí o no.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": "PAYMENT_CONFIRMATION",
+        "awaiting": "CONFIRMATION",
+        "last_asked": null
+      },
+      "seconds": 4.22,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "AWAITING_CONFIRMATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "pending_resolution",
+        "notes": "Pago de prueba preparado y corregido; se cancela sin ejecutar.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 3,
+      "said": "mejor 25",
+      "outcome": "AWAITING_CONFIRMATION",
+      "text": "Vas a enviar 25,00 € a Marta Solis Vega (+34600333444). Te quedarían 589,56 €. ¿Confirmas? Responde sí o no.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": "PAYMENT_CONFIRMATION",
+        "awaiting": "CONFIRMATION",
+        "last_asked": null
+      },
+      "seconds": 1.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "AWAITING_CONFIRMATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "pending_resolution",
+        "notes": "Pago de prueba preparado y corregido; se cancela sin ejecutar.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 4,
+      "said": "no",
+      "outcome": "CANCELLED",
+      "text": "Vale, no he enviado nada.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.05,
+      "engine": "model",
+      "model_calls": 0,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "CANCELLED: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "want": "En el corpus UX: {ends: true}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "pending_resolution",
+        "notes": "Pago de prueba preparado y corregido; se cancela sin ejecutar.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 5,
+      "said": "cuanto tengo",
+      "outcome": "BALANCE",
+      "text": "Tienes 7.019,56 € entre tus cuentas: 614,56 € en Cuenta corriente y 6.405,00 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "plan_in_words": "saldo de tus cuentas",
+      "last_plan": null,
+      "total_minor": 701956,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.36,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 6,
+      "said": "gracias",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 7,
+      "said": "cuanto le mande a Marta este mes",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos a Marta en lo que va de mes. Puedes buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, gastos, Marta",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.25,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {direction: EXPENSE, window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 8,
+      "said": "y lo que me mando ella?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos de Marta en lo que va de mes. Puedes buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, ingresos, Marta",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.44,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {direction: INCOME, window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "reference",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 9,
+      "said": "ahora quiero mandarle 20 euros a Marta",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "Tienes varios contactos con ese nombre: Marta Ruiz Gomez, Marta Solis Vega. ¿A quién se lo envío?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.39,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "interruption",
+        "route": "PAYMENT"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "needed",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "interruption",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 10,
+      "said": "no",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿A quién le quieres enviar 20,00 €?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.58,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "want": "En el corpus UX: {ends: true}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "not useful",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "pending_resolution",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 11,
+      "said": "mis contactos",
+      "outcome": "CONTACTS",
+      "text": "Tienes estos contactos para enviar dinero: Aitor Beltran Diaz, Carmen Nieto Lara, Marta Ruiz Gomez, Marta Solis Vega.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.19,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "CONTACTS: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "CONTACTS"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 12,
+      "said": "cuanto tengo",
+      "outcome": "BALANCE",
+      "text": "Tienes 7.019,56 € entre tus cuentas: 614,56 € en Cuenta corriente y 6.405,00 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "plan_in_words": "saldo de tus cuentas",
+      "last_plan": null,
+      "total_minor": 701956,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 3.27,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 13,
+      "said": "compara mis gastos en restaurantes de junio y julio de 2026",
+      "outcome": "PLANNED",
+      "text": "En junio de 2026: 0,00 €; en julio de 2026: 0,00 €. El gasto a Marta fue el mismo en ambos periodos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, restaurantes, Marta frente a del 2026-07-01 al 2026-07-31, gastos, restaurantes, Marta",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": 0,
+      "difference_minor": 0,
+      "groups": [
+        {
+          "key": "en junio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        },
+        {
+          "key": "en julio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.42,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "una comparación: la juzga la rúbrica",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: [{categories: [RESTAURANTS], window: 2026-06-01..2026-06-30}, {categories: [\n        RESTAURANTS], window: 2026-07-01..2026-07-31}]}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "intent",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 14,
+      "said": "y en gasolina?",
+      "outcome": "PLANNED",
+      "text": "En junio de 2026: 0,00 €; en julio de 2026: 0,00 €. El gasto a Marta fue el mismo en ambos periodos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, gasolina, Marta frente a del 2026-07-01 al 2026-07-31, gastos, gasolina, Marta",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": 0,
+      "difference_minor": 0,
+      "groups": [
+        {
+          "key": "en junio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        },
+        {
+          "key": "en julio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.24,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "una comparación: la juzga la rúbrica",
+      "expect": {
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: [{categories: [TRANSPORT_FUEL], window: 2026-06-01..2026-06-30}, {categories: [\n        TRANSPORT_FUEL], window: 2026-07-01..2026-07-31}]}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "comparison",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 15,
+      "said": "ahora solo julio de 2026",
+      "outcome": "PLANNED",
+      "text": "En junio de 2026: 0,00 €; en julio de 2026: 0,00 €. El gasto a Marta fue el mismo en ambos periodos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-06-01 al 2026-06-30, gastos, gasolina, Marta frente a del 2026-07-01 al 2026-07-31, gastos, gasolina, Marta",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": 0,
+      "difference_minor": 0,
+      "groups": [
+        {
+          "key": "en junio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        },
+        {
+          "key": "en julio de 2026",
+          "total_minor": 0,
+          "movement_count": 0,
+          "value_minor": 0
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.69,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "una comparación: la juzga la rúbrica",
+      "expect": {
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "comparison",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 1,
+      "said": "gastos de los ultimos 3 meses por categoria",
+      "outcome": "PLANNED",
+      "text": "5.867,59 € en los últimos 3 meses, en 87 movimientos.\n  · alquiler: 2.760,00 € (3)\n  · supermercado: 1.004,42 € (18)\n  · restaurantes: 668,70 € (21)\n  · gasolina: 422,82 € (9)\n  · bizum: 302,29 € (7)\n  · suscripciones: 243,73 € (11)\n  · salud: 236,79 € (6)\n  · transporte público: 194,60 € (11)\n  · ocio: 34,24 € (1)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 3 meses, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 586759,
+      "movement_count": 87,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 276000,
+          "movement_count": 3,
+          "value_minor": 276000
+        },
+        {
+          "key": "GROCERIES",
+          "total_minor": 100442,
+          "movement_count": 18,
+          "value_minor": 100442
+        },
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 66870,
+          "movement_count": 21,
+          "value_minor": 66870
+        },
+        {
+          "key": "TRANSPORT_FUEL",
+          "total_minor": 42282,
+          "movement_count": 9,
+          "value_minor": 42282
+        },
+        {
+          "key": "TRANSFER_BIZUM",
+          "total_minor": 30229,
+          "movement_count": 7,
+          "value_minor": 30229
+        },
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 24373,
+          "movement_count": 11,
+          "value_minor": 24373
+        },
+        {
+          "key": "HEALTH",
+          "total_minor": 23679,
+          "movement_count": 6,
+          "value_minor": 23679
+        },
+        {
+          "key": "TRANSPORT_PUBLIC",
+          "total_minor": 19460,
+          "movement_count": 11,
+          "value_minor": 19460
+        },
+        {
+          "key": "LEISURE",
+          "total_minor": 3424,
+          "movement_count": 1,
+          "value_minor": 3424
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.59,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {groups: [[GROCERIES, 20000, 5], [RESTAURANTS, 10000, 3]], ran: {group_by: CATEGORY,\n    window: 'LAST_N_MONTHS:3'}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 2,
+      "said": "por meses mejor",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.22,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {groups: [[2026-06, 10000, 2], [2026-07, 30000, 6], [2026-08, 5000, 1]], ran: {group_by: MONTH,\n    window: 'LAST_N_MONTHS:3'}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "not useful",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "follow_up",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 3,
+      "said": "ponlo en lineas",
+      "outcome": "PLANNED",
+      "text": "Aquí tienes el gráfico de los resultados de la consulta.",
+      "plan_in_words": "en los últimos 3 meses, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 586759,
+      "movement_count": 87,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [
+        "Ponlo en barras"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.28,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "En el corpus UX: {banking_calls: 0}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "follow_up",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 4,
+      "said": "por que julio es tan alto?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué dos periodos quieres comparar?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.16,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "not useful",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "reference",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 5,
+      "said": "y solo restaurantes en julio de 2026?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.49,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [RESTAURANTS], window: 2026-07-01..2026-07-31}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "fail",
+        "intent": "fail",
+        "context": "fail",
+        "pending": "?",
+        "clarification": "not useful",
+        "recovery": "?",
+        "naturalness": 3,
+        "mechanism": "slot_carryover",
+        "notes": "Fallo de continuidad: filtro incorrecto, aclaracion improductiva o agrupacion/periodo no aplicado.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 6,
+      "said": "gracias",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.42,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 7,
+      "said": "cuanto gaste en supermercado el mes pasado",
+      "outcome": "PLANNED",
+      "text": "358,71 € en supermercado el mes pasado, en 6 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 35871,
+      "movement_count": 6,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 35871,
+          "movement_count": 6,
+          "value_minor": 35871
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.0,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 8,
+      "said": "no era eso",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué parte de la consulta anterior querías corregir?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.07,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "reset",
+        "route": "GUIDANCE"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "useful",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "reset",
+        "notes": "Aclara que quiere corregir; el siguiente turno retoma gasolina.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 9,
+      "said": "me referia a gasolina este mes",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en gasolina en lo que va de mes. Puedes buscar sin categoría o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, gastos, gasolina",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.99,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: THIS_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "pending_resolution",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 10,
+      "said": "olvidalo",
+      "outcome": "GUIDANCE",
+      "text": "De acuerdo, empezamos de nuevo. ¿Qué quieres consultar?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.3,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "GUIDANCE: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "reset",
+        "route": "GUIDANCE",
+        "want": "En el corpus UX: {banking_calls: 0}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "reset",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 11,
+      "said": "cuanto he ingresado este ano",
+      "outcome": "PLANNED",
+      "text": "22.690,71 € en lo que va de año, en 24 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de año, ingresos",
+      "last_plan": null,
+      "total_minor": 2269071,
+      "movement_count": 24,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 2269071,
+          "movement_count": 24,
+          "value_minor": 2269071
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.34,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [], direction: INCOME, merchants: [], window: THIS_YEAR}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 12,
+      "said": "y el mes pasado?",
+      "outcome": "PLANNED",
+      "text": "2.483,13 € el mes pasado, en 2 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, ingresos",
+      "last_plan": null,
+      "total_minor": 248313,
+      "movement_count": 2,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 248313,
+          "movement_count": 2,
+          "value_minor": 248313
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.55,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [], direction: INCOME, merchants: [], window: LAST_MONTH}}"
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "follow_up",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 13,
+      "said": "Cu?nto he gastado en restaurantes este a?o?",
+      "outcome": "PLANNED",
+      "text": "2.086,68 € en restaurantes en lo que va de año, en 61 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de año, gastos, restaurantes",
+      "last_plan": null,
+      "total_minor": 208668,
+      "movement_count": 61,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 208668,
+          "movement_count": 61,
+          "value_minor": 208668
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.44,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "intent",
+        "want": "Consulta gastos de restaurantes en el a?o actual."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 14,
+      "said": "Y solo en octubre?",
+      "outcome": "PLANNED",
+      "text": "55,54 € en restaurantes en lo que va de mes, en 3 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de mes, gastos, restaurantes",
+      "last_plan": null,
+      "total_minor": 5554,
+      "movement_count": 3,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 5554,
+          "movement_count": 3,
+          "value_minor": 5554
+        }
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.22,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda ninguna consulta recordada",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "slot_carryover",
+        "want": "Mantiene restaurantes y cambia el periodo a octubre."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "slot_carryover",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 15,
+      "said": "Gracias",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 1.21,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "route": "COURTESY",
+        "mechanism": "intent",
+        "want": "Cierra brevemente sin iniciar otra consulta."
+      },
+      "error": null,
+      "judgement": {
+        "verdict": "pass",
+        "intent": "ok",
+        "context": "ok",
+        "pending": "?",
+        "clarification": "?",
+        "recovery": "?",
+        "naturalness": 4,
+        "mechanism": "intent",
+        "notes": "Resuelve el turno; continuidad revisada. Cifra sin verificacion SQL.",
+        "goal_met": false
+      }
+    }
+  ],
+  "findings": [
+    "Unidad principal: cuatro sesiones continuas de 15 turnos (60), no turnos aislados.",
+    "Revision por conversacion completa: 1/4 objetivos logrados; sesiones 2-4 fallan por perdida o contaminacion de filtros y continuidad.",
+    "Sesion 1 conserva filtros y contexto al alternar gasto, saldo, contactos y correcciones.",
+    "Sesion 2 amplia las categorias con \"en todas\" y el filtro literal \"super\" contamina consultas y comparacion.",
+    "Sesion 3 prepara y cancela un Bizum sin ejecutarlo; despues \"no\" no cancela una seleccion ambigua y el filtro Marta contamina comparaciones.",
+    "Sesion 4 no cambia el desglose a meses ni resuelve las preguntas sobre julio; recuperacion e ingresos posteriores funcionan.",
+    "Las 60 cifras son n/a: el runner no encontro last_plan en el estado del grafo, asi que no se afirma exactitud financiera. Latencia mediana 1.42 s, p95 2.44 s; 1 llamada por turno; ningun PROVIDER_ERROR."
+  ],
+  "folded": []
+}

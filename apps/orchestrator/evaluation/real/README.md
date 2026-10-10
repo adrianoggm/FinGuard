@@ -10,8 +10,15 @@ La conduce la skill del repositorio
 [`finguard-real-conversation`](../../../../.claude/skills/finguard-real-conversation/SKILL.md):
 reproduce estas conversaciones, improvisa otras con un objetivo, lleva dos por la web real y juzga
 cada turno. El instrumento es [`scripts/real_conversation.py`](../../scripts/real_conversation.py).
+El preflight exige que `/ready` identifique `active_runtime=langgraph`, `engine=model`, `graph=on`
+y `authoritative=true`; una ejecucion servida por legacy o un runtime inesperado se rechaza antes
+de puntuar conversaciones.
 
 ## Archivos
+
+Las sesiones largas declaran sus gestiones en `tasks` con rangos inclusivos de turnos. El runner
+valida que esos rangos no se solapen y puntua cada gestion por separado, identificada junto a su
+sesion para no mezclar etiquetas repetidas.
 
 | Archivo | Qué es |
 |---|---|
@@ -19,6 +26,44 @@ cada turno. El instrumento es [`scripts/real_conversation.py`](../../scripts/rea
 | [`../ux/conversations.yaml`](../ux/conversations.yaml) | Con `replay --ux`, las diez conversaciones de la batería se reproducen también contra la pila real (`ux-<nombre>`), con su `route` como expectativa. |
 | `<fecha>-<sha>.json` | Una ejecución: el preflight, cada turno (lo dicho, la respuesta, el plan, la cifra, la cifra en SQL, el veredicto) y los hallazgos. Es el registro. |
 | `<fecha>-<sha>.md` | El informe que se lee, generado a partir del `.json` con `summarise`. No se edita a mano. |
+
+## Continuidad en sesiones largas
+
+`conversations.yaml` also contains an eleven-turn integrated banking acceptance session. It now
+charts the displayed movement page between pagination and the account switch, so the run can check
+that a visual request reuses the retained page summary and does not present it as the full ledger
+query. Its expectation is a product target, not a claim that the current build has passed it.
+
+[`long-sessions-4x15.yaml`](long-sessions-4x15.yaml) contiene cuatro conversaciones completas de quince turnos cada una (60 turnos). Agrupa cambios de tema, correcciones, aclaraciones, comparaciones, el paso de un top-N a todas las categorias, graficos y cancelacion de un Bizum. Cada sesi??n conserva el estado devuelto entre turnos. El informe cuenta una sesi??n como correcta solo si pasan sus quince turnos y se alcanza el objetivo; la tasa de turnos aislados es secundaria.
+
+El informe persiste el numero esperado de turnos y gestiones por sesion. Si el replay se interrumpe, una sesion incompleta queda sin juzgar aunque todos los turnos ejecutados hayan pasado; no se presenta como una conversacion completa.
+
+```bash
+uv run python scripts/real_conversation.py replay \
+  --file evaluation/real/long-sessions-4x15.yaml \
+  --skip-gateway-check \
+  --min-request-interval 12 \
+  --out evaluation/real/<fecha>-<sha>-long-sessions-4x15
+```
+
+El gateway A2A se omite porque estas sesiones bancarias no lo usan. El corpus congelado sigue como regresion complementaria, pero no sustituye estas sesiones para juzgar continuidad. `--min-request-interval` solo espacia los turnos HTTP del runner; no limita por sí mismo las peticiones que un turno puede hacer al modelo. El Bizum de prueba se cancela: el runner nunca confirma operaciones pendientes. Para verificar sumas y recuentos, el runner usa el plan estructurado de la respuesta (`plan_context`) si el grafo no devuelve `last_plan`; solo comprueba consultas escalares si la línea coincide y el alcance/filtros están completos. Las consultas de cuenta específica o con filtros privados omitidos se dejan como `n/a`, nunca se amplían a todas las cuentas. Las expectativas pueden declarar invariantes entre turnos; la sesión de paginación compara ids de movimientos con hashes (sin escribir ids bancarios en el informe) y deja como `unverified` una página sin filas suficientes para comprobar el cruce. La sesión integrada también comprueba que una gráfica de movimientos tenga una página anterior identificable y que `X-FinGuard-Financial-Reads` informe cero; si falta el contador se marca `unverified`. El contador incluye consultas financieras y saldos, no las lecturas de cuentas o contactos usadas para preparar el turno.
+
+El adaptador Gemini espacia **cada petición HTTP al modelo** al menos doce segundos. Con
+`DATABASE_URL`, todas las réplicas comparten el programador de PostgreSQL; sin él, el ritmo es por
+proceso. La configuración de runtime no permite reducir ese mínimo. El ritmo incluye reintentos y
+cambios de modelo, y pone temporalmente en cooldown un modelo tras un 429. Esta protección limita
+ráfagas de este orquestador, pero no garantiza evitar límites diarios, de tokens ni consumo de otros
+clientes que compartan el proyecto. Las respuestas
+incluyen contadores separados para llamadas lógicas y peticiones reales, además de los modelos
+intentados y usados; así se puede detectar si el fallback amplió el consumo de cuota. Si el endpoint
+devuelve `usage`, el runner suma tokens de entrada/salida; si no, el informe dice «sin dato» y no
+los sustituye por cero. El orquestador también devuelve y el informe agrupa etiquetas seguras de
+eventos fallidos por intento HTTP (`gemini:rate_limited`, `provider:timeout`, etc.) y la causa
+terminal de llamadas fallidas, en campos separados. Solo 429, timeout, transporte y 5xx se
+reintentan automáticamente; rechazos de esquema y errores de configuración permanecen como fallos
+sin repetición. No incluye cuerpos HTTP, prompts, claves ni respuestas del proveedor.
+
+Si un turno termina con indisponibilidad del proveedor, el runner guarda ese fallo y marca el resto de turnos del replay como omitidos; no los envía repetidamente ni los cuenta como errores semánticos. Las conversaciones no alcanzadas permanecen en el informe como sesiones sin juzgar. El intervalo recomendado de 12 segundos coincide con el ritmo conservador del adaptador Gemini; cada reintento o failover dentro de un turno también consume una petición y tiene su propio pacing.
 
 ## Cómo se ejecuta
 
@@ -39,11 +84,14 @@ pone el prefijo), y `summarise` se niega a juntar una que se llame como una repr
 archivo que no es una conversación (una respuesta capturada en la web, por ejemplo) se salta y lo
 dice.
 
-`preflight` registra `/ready` y `/version` para identificar motor, grafo, proveedor, modelo y build.
-Termina con 1 si un servicio no está listo o el libro no responde y con 2 si el último movimiento es
-anterior a ayer: entonces hay que cargar los datos con `just seed`, que **vacía el libro** y es un
-paso de la persona, nunca del script ni de la skill. `--max-age-days N` acepta datos más antiguos a
-propósito, y el informe lo dice.
+`preflight` registra `/ready` y `/version` para identificar motor, grafo, proveedor, modelo, commit y
+huella SHA-256 del código de orquestador y banca. También calcula esa huella desde el árbol local y
+se niega a ejecutar si falta o difiere; `just up` la estampa en la imagen incluso con cambios sin
+commit. Ejecutar Compose directamente deja la huella como `unknown`, por lo que el preflight no
+permite atribuir esa sesión. Termina con 1 si un servicio, la identidad del código o el libro no
+están listos y con 2 si el último movimiento es anterior a ayer: entonces hay que cargar los datos
+con `just seed`, que **vacía el libro** y es un paso de la persona, nunca del script ni de la skill.
+`--max-age-days N` acepta datos más antiguos a propósito, y el informe lo dice.
 
 ## Qué se comprueba solo
 

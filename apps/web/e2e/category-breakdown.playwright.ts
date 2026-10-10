@@ -16,7 +16,7 @@ function streamedAnswer(body: string): Record<string, any> {
   return answer;
 }
 
-test("category breakdown renders with a chart and restyles without losing its query", async ({
+test("category breakdown renders, restyles, and regroups its chart", async ({
   page,
 }) => {
   test.skip(!configured, "Set FINGUARD_E2E_ORCHESTRATOR_URL and FINGUARD_E2E_TOKEN");
@@ -84,4 +84,31 @@ test("category breakdown renders with a chart and restyles without losing its qu
   expect(second.visualization.chart_id).toBe(second.plan_context.view_id);
   expect(second.visual_response.blocks.map((block: { type: string }) => block.type)).toContain("chart");
   await expect(page.locator(".bubble.theirs").last()).toContainText("He actualizado el gráfico");
+  await input.fill("Agrúpalo por mes");
+  const thirdResponse = page.waitForResponse(
+    (response) => response.url().endsWith("/v1/questions/stream") && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Enviar" }).click();
+  const third = streamedAnswer(await (await thirdResponse).text());
+
+  expect(requests).toHaveLength(3);
+  expect(requests[2]?.conversation?.conversation_id).toBe(first.conversation.conversation_id);
+  expect(requests[2]?.conversation?.version).toBe(2);
+  expect(third.outcome).toBe("PLANNED");
+  expect(third.conversation.version).toBe(3);
+  expect(third.plan_context.group_by).toBe("MONTH");
+  expect(third.plan_context.result_kind).toBe("TIME_SERIES");
+  expect(third.plan_context.query_id).not.toBe(second.plan_context.query_id);
+  expect(third.plan_context.artifact_id).not.toBe(second.plan_context.artifact_id);
+  expect(third.visualization.kind).toBe("chart");
+  expect(third.visualization.data.map((row: { dimension: string }) => row.dimension)).toEqual([
+    "2026-07",
+    "2026-08",
+    "2026-09",
+    "2026-10",
+  ]);
+  expect(third.visual_response.blocks.map((block: { type: string }) => block.type)).toContain("chart");
+  const thirdBubble = page.locator(".bubble.theirs").last();
+  await expect(thirdBubble).toContainText("por mes");
+  await expect(thirdBubble.getByRole("figure", { name: /Gastos por mes/i })).toBeVisible();
 });

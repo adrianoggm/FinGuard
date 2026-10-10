@@ -703,6 +703,37 @@ describe("¿Por qué este gráfico?", () => {
 });
 
 describe("financial breakdowns", () => {
+  it("renders each listed movement in its own currency", () => {
+    const listed = answer({
+      text: "Estos son tus últimos 1 movimientos.",
+      currency: null,
+      movement_count: null,
+      movements: [
+        {
+          transaction_id: "tx-1",
+          occurred_at: "2026-10-07T09:00:00+00:00",
+          description: "Compra internacional",
+          merchant_name: "Tienda",
+          amount_minor: 12345,
+          direction: "EXPENSE",
+          currency: "USD",
+          category: null,
+        },
+      ],
+    });
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: thread({ turns: [{ who: "assistant", answer: listed }] }),
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+
+    expect(markup).toContain("Tienda");
+    expect(markup).toContain("USD");
+  });
+
   it("presents minor-unit money, count and ratio semantics without mutating API rows", () => {
     const moneyChart = visualPresentation({
       kind: "chart", chart_id: "money", unit: "money",

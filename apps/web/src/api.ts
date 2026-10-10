@@ -73,6 +73,8 @@ export type Movement = {
   receipt_category?: string | null;
   /** Present on the movement list, which is the only screen that can refile one. */
   transaction_id?: string | null;
+  /** Present when a row list can contain movements from differently denominated accounts. */
+  currency?: string | null;
   /** Whether the category is the holder's own rather than the bank's guess. */
   category_is_custom?: boolean;
   /**

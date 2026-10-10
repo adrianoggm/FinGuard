@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
-const baseURL = "http://127.0.0.1:3000";
+const webPort = process.env.FINGUARD_E2E_WEB_PORT ?? "3000";
+const baseURL = `http://127.0.0.1:${webPort}`;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -8,7 +9,10 @@ export default defineConfig({
   timeout: 120_000,
   expect: { timeout: 30_000 },
   fullyParallel: false,
-  reporter: "list",
+  reporter: [
+    ["list"],
+    ["json", { outputFile: process.env.FINGUARD_E2E_REPORT ?? "test-results/report.json" }],
+  ],
   use: {
     baseURL,
     browserName: "chromium",
@@ -18,7 +22,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 3000",
+    command: `npm run dev -- --host 127.0.0.1 --port ${webPort}`,
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,

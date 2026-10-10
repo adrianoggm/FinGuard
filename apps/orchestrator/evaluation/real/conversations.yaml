@@ -981,8 +981,8 @@ conversations:
   - name: sesion-bancaria-completa-paginacion-comparacion-bizum
     goal: >-
       Completar varias gestiones en una conversación: consultar saldos, listar movimientos y
-      paginar sin duplicados, comparar restaurantes, visualizar el resultado y cancelar un Bizum
-      antes de ejecutarlo.
+      paginar sin duplicados, graficar la página de movimientos ya mostrada, cambiar de tema,
+      comparar restaurantes, visualizar el resultado y cancelar un Bizum antes de ejecutarlo.
     turns:
       - say: "¿Me dices cómo están mis cuentas?"
         expect:
@@ -1000,22 +1000,35 @@ conversations:
           want: >-
             Una lista ordenada de hasta 20 movimientos de gasto de Cuenta corriente, con fechas,
             comercios e importes; no solicita periodo.
+      - say: "Dame otros 10."
+        expect:
+          task: movimientos-paginacion
+          mechanism: follow_up
+          route: QUERY
+          invariants:
+            - no_duplicate_movement_ids_across_task_pages
+          want: >-
+            Devuelve la página siguiente de hasta 10 gastos de Cuenta corriente, ordenada igual y
+            sin repetir ninguna fila de la página anterior.
+      - say: "¿Me los enseñas en una gráfica?"
+        expect:
+          task: movimientos-paginacion
+          mechanism: reference
+          route: VISUAL
+          invariants:
+            - no_financial_read_for_reused_visualization
+          want: >-
+            Dibuja los movimientos de la página que acaba de mostrar, dejando claro que no
+            representa el total de una consulta mayor y reutilizando el resultado ya obtenido.
       - say: "¿Y los de la Hucha?"
         expect:
           task: movimientos-paginacion
           mechanism: follow_up
           route: QUERY
           want: >-
-            Conserva la lista de gastos y su ventana implícita, cambia solo la cuenta a Hucha y
-            presenta los movimientos reales de esa cuenta.
-      - say: "Dame otros 10."
-        expect:
-          task: movimientos-paginacion
-          mechanism: follow_up
-          route: QUERY
-          want: >-
-            Devuelve la página siguiente de hasta 10 movimientos de Hucha, ordenada igual y sin
-            repetir ninguna fila de la página anterior.
+            Conserva el tipo de lista y la dirección de gastos, cambia solo la cuenta a Hucha y
+            muestra que no hay gastos en esa cuenta; no convierte traspasos internos ni intereses
+            en gastos.
       - say: "¿Cuánto gasté en restaurantes el mes pasado?"
         expect:
           task: restaurantes-comparacion-visualizacion
@@ -1045,7 +1058,7 @@ conversations:
           task: capacidad-bizum
           mechanism: interruption
           want: Explica la capacidad sin crear un borrador de pago ni iniciar una confirmación.
-      - say: "Vale, quiero enviar 15 euros a Marta."
+      - say: "Vale, quiero enviar 15 euros a Marta Ruiz Gomez."
         expect:
           task: bizum-cancelacion
           mechanism: intent

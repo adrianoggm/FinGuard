@@ -1,0 +1,349 @@
+conversations:
+- name: sesion-1-consultas-y-correcciones
+  goal: Mantener consultas y filtros a trav?s de cambios de tema y correcciones.
+  tasks:
+  - name: suscripciones-y-cambios-de-comercio
+    turns: [1, 5]
+  - name: consulta-de-supermercado
+    turns: [7, 7]
+  - name: saldo-de-hucha
+    turns: [8, 8]
+  - name: consulta-de-contactos
+    turns: [9, 9]
+  - name: retomar-supermercado-y-cambiar-filtros
+    turns: [10, 15]
+  turns:
+  - say: q llevo gastado en suscripciones estos ultimos 9 meses
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [SUBSCRIPTIONS], window: ''LAST_N_MONTHS:9''}}'
+  - say: solo Netflix
+    expect:
+      mechanism: slot_carryover
+      route: QUERY
+      want: 'En el corpus UX: {ran: {merchants: [Netflix], window: ''LAST_N_MONTHS:9''}}'
+  - say: y este mes?
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: 'En el corpus UX: {ran: {merchants: [Netflix], window: THIS_MONTH}}'
+  - say: no, Spotify
+    expect:
+      mechanism: slot_carryover
+      route: QUERY
+      want: 'En el corpus UX: {ran: {merchants: [Spotify], window: THIS_MONTH}}'
+  - say: y el mes pasado?
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: 'En el corpus UX: {ran: {merchants: [Spotify], window: LAST_MONTH}}'
+  - say: gracias
+    expect:
+      mechanism: intent
+      route: COURTESY
+  - say: cuanto gaste en el super en julio de 2026
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [GROCERIES], window: 2026-07-01..2026-07-31}}'
+  - say: cuanto tengo en la hucha
+    expect:
+      mechanism: intent
+      route: BALANCE
+  - say: quienes son mis contactos
+    expect:
+      mechanism: intent
+      route: CONTACTS
+  - say: volviendo al super, y en junio de 2026?
+    expect:
+      mechanism: interruption
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [GROCERIES], window: 2026-06-01..2026-06-30}}'
+  - say: solo Mercadona
+    expect:
+      mechanism: slot_carryover
+      route: QUERY
+      want: 'En el corpus UX: {ran: {merchants: [Mercadona], window: 2026-06-01..2026-06-30}}'
+  - say: y en julio de 2026?
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: 'En el corpus UX: {ran: {merchants: [Mercadona], window: 2026-07-01..2026-07-31}}'
+  - say: gastos de julio de 2026
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: 'En el corpus UX: {ran: {window: 2026-07-01..2026-07-31}}'
+  - say: perdon junio de 2026
+    expect:
+      mechanism: slot_carryover
+      route: QUERY
+      want: 'En el corpus UX: {ran: {window: 2026-06-01..2026-06-30}}'
+  - say: solo gasolina
+    expect:
+      mechanism: slot_carryover
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: 2026-06-01..2026-06-30}}'
+- name: sesion-2-aclaraciones-y-erratas
+  goal: Completar consultas, corregirlas y probar una nueva consulta dentro de la misma conversaci?n.
+  tasks:
+  - name: desglose-de-supermercado-y-reagrupacion
+    turns: [1, 5]
+  - name: primer-saldo
+    turns: [6, 6]
+  - name: cambio-entre-categorias
+    turns: [7, 10]
+  - name: segundo-saldo
+    turns: [11, 11]
+  - name: comparacion-de-restaurantes-y-gasolina
+    turns: [13, 14]
+  turns:
+  - say: cuanto gaste en supermercados el mes pasado
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}'
+  - say: en todas
+    expect:
+      mechanism: pending_resolution
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}'
+  - say: por comercio
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [GROCERIES], group_by: COUNTERPARTY, window: LAST_MONTH}}'
+  - say: y este mes
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [GROCERIES], group_by: COUNTERPARTY, window: THIS_MONTH}}'
+  - say: mejor por categoria
+    expect:
+      mechanism: slot_carryover
+      route: QUERY
+      want: 'En el corpus UX: {ran: {group_by: CATEGORY, window: THIS_MONTH}}'
+  - say: cuanto tengo?
+    expect:
+      mechanism: intent
+      route: BALANCE
+  - say: cuanto gaste en el super el mes pasao
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}'
+  - say: y restauantes?
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [RESTAURANTS], merchants: [], window: LAST_MONTH}}'
+  - say: solo esta semna
+    expect:
+      mechanism: slot_carryover
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [RESTAURANTS], merchants: [], window: THIS_WEEK}}'
+  - say: y gasolina?
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], merchants: [], window: THIS_WEEK}}'
+  - say: cunato tengo
+    expect:
+      mechanism: intent
+      route: BALANCE
+  - say: gracias
+    expect:
+      mechanism: intent
+      route: COURTESY
+  - say: Compara mis gastos de restaurantes entre junio y julio de 2026
+    expect:
+      route: QUERY
+      mechanism: intent
+      want: Comparaci?n de restaurantes en junio y julio, con los dos resultados.
+  - say: Y en gasolina?
+    expect:
+      route: QUERY
+      mechanism: comparison
+      want: Conserva ambos meses y cambia ?nicamente la categor?a a gasolina.
+  - say: Gracias
+    expect:
+      route: COURTESY
+      mechanism: intent
+      want: Cierra brevemente sin iniciar otra consulta.
+- name: sesion-3-pagos-y-comparaciones
+  goal: Distinguir consultas de pagos, cancelar con seguridad y mantener una comparaci?n.
+  tasks:
+  - name: preparar-y-cancelar-primer-bizum
+    turns: [1, 4]
+  - name: primer-saldo
+    turns: [5, 5]
+  - name: consultar-bizums-por-direccion
+    turns: [7, 8]
+  - name: preparar-y-cancelar-segundo-bizum
+    turns: [9, 10]
+  - name: consultar-contactos
+    turns: [11, 11]
+  - name: segundo-saldo
+    turns: [12, 12]
+  - name: comparar-categorias-y-seleccionar-periodo
+    turns: [13, 15]
+  turns:
+  - say: haz un bixum a Marta Solis Vega
+    expect:
+      mechanism: intent
+      route: PAYMENT
+  - say: 20 euros
+    expect:
+      mechanism: pending_resolution
+      route: PAYMENT
+  - say: mejor 25
+    expect:
+      mechanism: pending_resolution
+      route: PAYMENT
+  - say: 'no'
+    expect:
+      mechanism: pending_resolution
+      route: PAYMENT
+      want: 'En el corpus UX: {ends: true}'
+  - say: cuanto tengo
+    expect:
+      mechanism: intent
+      route: BALANCE
+  - say: gracias
+    expect:
+      mechanism: intent
+      route: COURTESY
+  - say: cuanto le mande a Marta este mes
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: 'En el corpus UX: {ran: {direction: EXPENSE, window: THIS_MONTH}}'
+  - say: y lo que me mando ella?
+    expect:
+      mechanism: reference
+      route: QUERY
+      want: 'En el corpus UX: {ran: {direction: INCOME, window: THIS_MONTH}}'
+  - say: ahora quiero mandarle 20 euros a Marta
+    expect:
+      mechanism: interruption
+      route: PAYMENT
+  - say: 'no'
+    expect:
+      mechanism: pending_resolution
+      route: PAYMENT
+      want: 'En el corpus UX: {ends: true}'
+  - say: mis contactos
+    expect:
+      mechanism: intent
+      route: CONTACTS
+  - say: cuanto tengo
+    expect:
+      mechanism: intent
+      route: BALANCE
+  - say: compara mis gastos en restaurantes de junio y julio de 2026
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: "En el corpus UX: {ran: [{categories: [RESTAURANTS], window: 2026-06-01..2026-06-30}, {categories: [\n\
+        \        RESTAURANTS], window: 2026-07-01..2026-07-31}]}"
+  - say: y en gasolina?
+    expect:
+      mechanism: comparison
+      route: QUERY
+      want: "En el corpus UX: {ran: [{categories: [TRANSPORT_FUEL], window: 2026-06-01..2026-06-30}, {categories:\
+        \ [\n        TRANSPORT_FUEL], window: 2026-07-01..2026-07-31}]}"
+  - say: ahora solo julio de 2026
+    expect:
+      mechanism: comparison
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: 2026-07-01..2026-07-31}}'
+- name: sesion-4-graficos-y-recuperacion
+  goal: Reutilizar resultados en gr?ficos, recuperarse y seguir consultando sin filtros heredados.
+  tasks:
+  - name: quitar-top-n-y-visualizar-datos
+    turns: [1, 6]
+  - name: corregir-consulta-y-cancelar-borrador
+    turns: [7, 10]
+  - name: ingresos-y-seguimiento-de-periodo
+    turns: [11, 12]
+  - name: gastos-de-restaurantes-y-seguimiento
+    turns: [13, 14]
+  turns:
+  - say: gastos de los ultimos 3 meses por categoria, top 1
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: "En el corpus UX: {groups: [[GROCERIES, 20000, 5]], ran: {group_by: CATEGORY, group_limit: 1,\n\
+        \    window: 'LAST_N_MONTHS:3'}}"
+  - say: pero no el top 1, muestrame todas las categorias
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: "En el corpus UX: {groups: [[GROCERIES, 20000, 5], [RESTAURANTS, 10000, 3]], ran: {group_by:\n\
+        \    CATEGORY, window: 'LAST_N_MONTHS:3'}}"
+  - say: por meses mejor
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: "En el corpus UX: {groups: [[2026-06, 10000, 2], [2026-07, 30000, 6], [2026-08, 5000, 1]], ran: {group_by:\
+        \ MONTH,\n    window: 'LAST_N_MONTHS:3'}}"
+  - say: ponlo en lineas
+    expect:
+      mechanism: follow_up
+      route: VISUAL
+      want: 'En el corpus UX: {banking_calls: 0}'
+  - say: por que julio es tan alto?
+    expect:
+      mechanism: reference
+      route: QUERY
+      want: 'En el corpus UX: {ran: {window: 2026-07-01..2026-07-31}}'
+  - say: y solo restaurantes en julio de 2026?
+    expect:
+      mechanism: slot_carryover
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [RESTAURANTS], window: 2026-07-01..2026-07-31}}'
+  - say: cuanto gaste en supermercado el mes pasado
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}'
+  - say: no era eso
+    expect:
+      mechanism: reset
+      route: GUIDANCE
+  - say: me referia a gasolina este mes
+    expect:
+      mechanism: pending_resolution
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: THIS_MONTH}}'
+  - say: olvidalo
+    expect:
+      mechanism: reset
+      route: GUIDANCE
+      want: 'En el corpus UX: {banking_calls: 0}'
+  - say: cuanto he ingresado este ano
+    expect:
+      mechanism: intent
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [], direction: INCOME, merchants: [], window: THIS_YEAR}}'
+  - say: y el mes pasado?
+    expect:
+      mechanism: follow_up
+      route: QUERY
+      want: 'En el corpus UX: {ran: {categories: [], direction: INCOME, merchants: [], window: LAST_MONTH}}'
+  - say: Cu?nto he gastado en restaurantes este a?o?
+    expect:
+      route: QUERY
+      mechanism: intent
+      want: Consulta gastos de restaurantes en el a?o actual.
+  - say: Y solo en octubre?
+    expect:
+      route: QUERY
+      mechanism: slot_carryover
+      want: Mantiene restaurantes y cambia el periodo a octubre.
+  - say: Gracias
+    expect:
+      route: COURTESY
+      mechanism: intent
+      want: Cierra brevemente sin iniciar otra consulta.
