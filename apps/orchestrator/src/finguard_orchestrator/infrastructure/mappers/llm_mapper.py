@@ -68,6 +68,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     MessageResponse,
     ModelResponse,
     MovementsResponse,
+    PlanContextTraceResponse,
     PlanPayload,
     PolicyResponse,
     QuestionResponse,
@@ -736,6 +737,24 @@ def question_to_dto(
         # «Ver la consulta» is the person's line. `result.plan` is the identifier line the turn log
         # keeps for the turn interpreter; a result with no Spanish line wrote `plan` in Spanish.
         plan=result.plan_in_words if result.plan_in_words is not None else result.plan,
+        plan_context=(
+            PlanContextTraceResponse(
+                direction=result.plan_context.direction,
+                period=result.plan_context.period,
+                n=result.plan_context.n,
+                start=result.plan_context.start,
+                end=result.plan_context.end,
+                categories=result.plan_context.categories,
+                merchants=result.plan_context.merchants,
+                merchant_terms=result.plan_context.merchant_terms,
+                group_by=result.plan_context.group_by,
+                metric=result.plan_context.metric,
+                group_limit=result.plan_context.group_limit,
+                rank=result.plan_context.rank,
+            )
+            if result.plan_context is not None
+            else None
+        ),
         conversation=conversation_mapper.to_payload(result.conversation),
         contacts=[
             SpokenContactResponse(

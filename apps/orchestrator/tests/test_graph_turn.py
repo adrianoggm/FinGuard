@@ -36,9 +36,11 @@ from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.domain.engine.grounding import Grounds
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
+    Clarify,
     Compare,
     Delegate,
     InvestigateComparison,
+    ListContacts,
     Operation,
     Patch,
     PlanFields,
@@ -52,6 +54,7 @@ from finguard_orchestrator.domain.engine.state import (
     ComparisonFocus,
     DialogueState,
     DialogueTurn,
+    Missing,
     PaymentConfirmationPending,
     PaymentDraftPending,
     QueryFocus,
@@ -967,6 +970,25 @@ async def test_a_money_flow_is_refused_without_bank_reads_or_execution(to: Any) 
     assert world.assessor.seen == []
 
 
+async def test_an_unsupported_operation_keeps_its_distinct_outcome_and_context() -> None:
+    world = World(GROCERIES_IN_JULY, (Delegate("UNSUPPORTED"),))
+    initial = await world.ask(request_id="query", sentence="gastos de supermercado en julio")
+
+    answer = await world.ask(
+        conversation_id=initial.state.conversation_id,
+        version=initial.state.version,
+        request_id="unsupported",
+        sentence="¿Qué porcentaje de mi sueldo se va en ocio?",
+    )
+
+    assert answer.result is not None
+    assert answer.result.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert answer.state.version == 2
+    assert answer.state.focus == initial.state.focus
+    assert len(world.ledger.ran) == 1
+    assert world.assessor.seen == []
+
+
 async def test_chart_operation_reuses_the_prior_banking_result_and_keeps_continuity() -> None:
     world = World(
         MERCHANT_BREAKDOWN_IN_JULY,
@@ -1113,7 +1135,11 @@ async def test_an_ordinary_question_is_answered_as_the_engine_answers_it() -> No
         reporting_timezone="Europe/Madrid",
     )
 
-    assert answer.result == control.result
+    assert replace(answer.result, plan_context=None) == control.result
+    trace = question_to_dto(answer.result).plan_context
+    assert trace is not None
+    assert trace.start == "2026-07-01" and trace.end == "2026-07-31"
+    assert trace.direction == "EXPENSE"
     # The graph keeps a bounded bank aggregate in its canonical state for native chart operations;
     # the legacy adapter remains frozen and has no such reusable artifact yet.
     assert (
@@ -1333,6 +1359,154 @@ async def test_conversation_graph_prepares_and_resumes_bizum_on_one_checkpoint()
         account_id=ACCOUNT,
         workflow=Workflow.PAYMENT_CONFIRMATION,
     )
+
+
+@pytest.mark.asyncio
+async def test_listing_contacts_keeps_a_pending_bizum_draft_in_graph_state() -> None:
+    world = World(
+        (PrepareBizum("alguien", None),),
+        (ListContacts(),),
+        (PrepareBizum("Marta", None),),
+        (PrepareBizum("Marta Solis Vega", 1_500),),
+        (PrepareBizum("Marta Solis Vega", None),),
+    )
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+
+    draft = await world.ask(
+        sentence="Quiero hacer un bizum a alguien",
+        request_id="draft-before-contacts",
+        caller_scopes=scopes,
+    )
+    assert isinstance(draft.state.payment, PaymentDraftPending)
+    assert draft.state.payment.draft.recipient_contact_id is None
+
+    listed = await world.ask(
+        conversation_id=draft.state.conversation_id,
+        version=draft.state.version,
+        sentence="Que contactos tengo?",
+        request_id="list-contacts-during-payment",
+    )
+
+    assert listed.result is not None and listed.result.outcome == "CONTACTS"
+    assert listed.result.contacts
+    assert isinstance(listed.state.payment, PaymentDraftPending)
+
+    selected = await world.ask(
+        conversation_id=listed.state.conversation_id,
+        version=listed.state.version,
+        sentence="Vale que te parece si le hacemos un bizum a Marta con concepto tapas",
+        request_id="select-contact-for-payment",
+        caller_scopes=scopes,
+    )
+
+    assert isinstance(selected.state.payment, PaymentDraftPending)
+    assert selected.state.payment.candidate_contact_ids == (
+        UUID("55555555-5555-5555-5555-555555555555"),
+        UUID("66666666-6666-6666-6666-666666666666"),
+    )
+    assert selected.state.payment.draft.concept == "tapas"
+    assert selected.result is not None
+    assert selected.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+
+    amount = await world.ask(
+        conversation_id=selected.state.conversation_id,
+        version=selected.state.version,
+        sentence="15 euros",
+        request_id="amount-with-ambiguous-contact",
+        caller_scopes=scopes,
+    )
+
+    assert isinstance(amount.state.payment, PaymentDraftPending)
+    assert (
+        amount.state.payment.candidate_contact_ids == selected.state.payment.candidate_contact_ids
+    )
+    assert amount.state.payment.draft.amount_minor == 1_500
+    assert amount.result is not None
+    assert amount.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+
+    resolved = await world.ask(
+        conversation_id=amount.state.conversation_id,
+        version=amount.state.version,
+        sentence="Marta Solis Vega",
+        request_id="select-marta-and-preview",
+        caller_scopes=scopes,
+    )
+
+    assert resolved.result is not None
+    assert resolved.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert isinstance(resolved.state.payment, PaymentConfirmationPending)
+    assert 'con el concepto "tapas"' in resolved.result.text
+    assert bank.prepared[0].amount_minor == 1_500
+    assert bank.prepared[0].recipient_contact_id == UUID("55555555-5555-5555-5555-555555555555")
+    assert bank.confirmed == []
+
+
+async def test_payment_with_redundant_clarify_uses_the_safe_payment_question() -> None:
+    world = World((PrepareBizum("alguien", None), Clarify(Missing.SUBJECT)))
+    with_payment_commands(world)
+
+    answer = await world.ask(
+        sentence="Quiero hacer un bizum a alguien",
+        caller_scopes=frozenset({"payments:prepare", "payments:confirm"}),
+    )
+
+    assert answer.result is not None
+    assert answer.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "quieres enviar el dinero" in answer.result.text
+    assert answer.result.conversation is not None
+
+
+@pytest.mark.asyncio
+async def test_payment_draft_stays_paused_after_subject_change_until_explicit_resume() -> None:
+    world = World(
+        (PrepareBizum("Marta Solis Vega", None),),
+        (Ask(PlanFields(direction=Direction.EXPENSE, window=JULY)),),
+        (PrepareBizum("Marta Solis Vega", 1_500),),
+    )
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+
+    draft = await world.ask(
+        sentence="Hazle un bizum a Marta Solis Vega",
+        caller_scopes=scopes,
+    )
+    assert isinstance(draft.state.payment, PaymentDraftPending)
+    assert not draft.state.payment.suspended
+
+    query = await world.ask(
+        conversation_id=draft.state.conversation_id,
+        version=draft.state.version,
+        sentence="Cuánto gasté en gasolina en julio?",
+    )
+    assert query.result is not None
+    assert isinstance(query.state.payment, PaymentDraftPending)
+    assert query.state.payment.suspended
+
+    paused = await world.ask(
+        conversation_id=query.state.conversation_id,
+        version=query.state.version,
+        sentence="15 euros",
+        caller_scopes=scopes,
+    )
+    assert paused.result is not None
+    assert paused.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "está pausado" in paused.result.text
+    assert isinstance(paused.state.payment, PaymentDraftPending)
+    assert paused.state.payment.suspended
+    assert bank.prepared == []
+
+    resumed = await world.ask(
+        conversation_id=paused.state.conversation_id,
+        version=paused.state.version,
+        sentence="Continuar con el bizum, 15 euros",
+        caller_scopes=scopes,
+    )
+    assert resumed.result is not None
+    assert resumed.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert isinstance(resumed.state.payment, PaymentConfirmationPending)
+    assert len(bank.prepared) == 1
+    assert bank.confirmed == []
 
 
 @pytest.mark.asyncio
@@ -1661,13 +1835,27 @@ async def test_bizum_draft_survives_an_unrelated_query_and_then_resumes() -> Non
     assert query.result is not None and "410,00" in query.result.text
     assert isinstance(query.state.payment, PaymentDraftPending)
     assert query.state.payment.draft.recipient_name == "Aitor Beltran Diaz"
+    assert query.state.payment.suspended
+    assert bank.prepared == []
+
+    paused = await world.ask(
+        conversation_id=query.state.conversation_id,
+        version=query.state.version,
+        sentence="20 euros",
+        request_id="bizum-interrupt-paused-amount",
+        caller_scopes=scopes,
+    )
+    assert paused.result is not None
+    assert paused.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "está pausado" in paused.result.text
+    assert isinstance(paused.state.payment, PaymentDraftPending)
     assert bank.prepared == []
 
     world.interpreter._turns.append((PrepareBizum(None, 2_000),))  # noqa: SLF001
     preview = await world.ask(
-        conversation_id=query.state.conversation_id,
-        version=query.state.version,
-        sentence="20 euros",
+        conversation_id=paused.state.conversation_id,
+        version=paused.state.version,
+        sentence="Continuar con el bizum, 20 euros",
         request_id="bizum-interrupt-resume",
         caller_scopes=scopes,
     )

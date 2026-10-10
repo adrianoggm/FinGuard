@@ -1,8 +1,8 @@
 # Task 8 report: LangGraph capability-addition experiment (read-only)
 
-**Status: PARTIAL (after fix round 2; live comparison incomplete).** The graph is built, tested with fake providers and committed.
+**Status of the original Task 8 comparison: PARTIAL (after fix round 2; live comparison incomplete).** The graph is built, tested with fake providers and committed.
 - The current-engine live run started, then Groq returned repeated `PROVIDER_ERROR`s. The graph run and blind judging remain pending; the partial run is recorded below.
-- **Durability is UNPROVEN.**
+- **At that original run, durability was unproven.** A later test against the current unified LangGraph stack is recorded below.
 
 Where it lives:
 - Worktree: `C:/Users/adriano.garcia/Desktop/Developer/FinGuard-wt-langgraph`
@@ -366,3 +366,98 @@ The re-review confirmed R42, R44 and R45, and found two R43 residuals in `graph_
 **Verification.** `test_graph_turn.py`, `test_graph_investigation.py` and `test_engine_boundary.py`: 79 passed. ruff check and format are clean on `graph_turn.py` and `test_graph_turn.py`. mypy reports no new errors; the remaining 16 are in `tests/support/episodes.py` and predate this work. The full suite was not rerun in this round, as instructed.
 
 **Limitation that remains.** A saved turn whose `done()` fails twice stays in flight in the reservations until the process restarts. The memory adapter has no expiry for that case. Its duplicates are answered stale, never run again.
+
+## Targeted Qwen rerun after account-scope grounding
+
+On 2026-10-10, the isolated local Qwen 3.5 9B graph stack was rebuilt with an account-catalogue
+hint in the planner prompt. The hint includes only bank account names whose meaningful words
+overlap the current utterance; it does not map aliases or choose an account. This addresses a
+concrete grounding gap: the planner previously saw only `Accounts: every account`, even when the
+bank had supplied account names.
+
+- The two-turn case `an_account_and_a_month_both_stated_outright` now replays with 0 property
+  violations. “in the hucha last month” is rendered as consulted in Hucha, and the follow-up for
+  gasoline retains both Hucha and last month.
+- The broader targeted subset replayed 11 conversations / 23 turns with 12 property violations
+  (down from 14 in the pre-change run). This is a useful diagnostic subset, not the full frozen
+  corpus and not evidence of passing the phase-1 acceptance criteria.
+- Remaining failures include year-to-date vs. rolling-year interpretation, unsupported salary
+  percentages, category negation, ranking a single largest movement vs. ranking groups, ordinal
+  continuation, explicit three-month windows, previous-year continuity, Bizum superlatives, and
+  preserving a window when the follow-up changes the category. These failures show the current
+  small model is still unreliable on semantic composition; they should not be papered over with
+  more phrase-specific deterministic routing.
+- Evaluation now supports repeatable `--case` selection and an optional privacy-bounded
+  `--report-file` for inspecting turn-level evidence. It deliberately omits bank identifiers,
+  payment contact data and raw conversation state.
+
+Verification for this change: 225 focused tests passed, Ruff check/format passed, and mypy passed
+for all 245 orchestrator source files. The local service was rebuilt; the Gemini stack and shared
+services were left running and untouched.
+
+## Gemini 3.1 Flash Lite continuity and visualization smoke (2026-10-10)
+
+The isolated `finguard-graph-test` stack ran the current `ORCHESTRATOR_CONVERSATION_ENGINE=model`,
+`ORCHESTRATOR_CONVERSATION_GRAPH=on` build against its seeded banking API. These are live-provider
+checks, separate from the frozen comparison corpus and not a production-readiness claim.
+
+- “Desglósame mis gastos por categorías en los últimos 3 meses” returned all 9 bank groups with
+  `group_by=CATEGORY` and no `group_limit`. “No quiero el top 1; muéstrame todas las categorías”
+  returned all 9 again and advanced the conversation version.
+- “¿Cuáles han sido mis gastos totales por mes durante el último año?” returned the bank total and
+  month groups (`group_by=MONTH`, rolling `LAST_N_MONTHS:12`). “¿Y en octubre?” narrowed the
+  displayed window to October while retaining expense direction and month grouping.
+- Asking for the graph of the category result returned a validated bar chart with all 9 categories.
+  “Cámbialo a líneas” returned a line-chart derivation from the saved chart context and advanced
+  the conversation version. The orchestrator tests also assert that visualization restyling reuses
+  the banking result without another query.
+- Prompt changes taught a follow-up to patch only the category and keep the active period. Gemini
+  then passed the exact two-turn frozen case `a_new_category_over_a_period_that_stays`: gasoline
+  followed by restaurants both returned `LAST_MONTH`, with 0 violations in the isolated rerun.
+- The focused 7-turn Gemini run also exposed an outcome mapping defect: the model emitted
+  `Delegate(UNSUPPORTED)` for a salary-denominator ratio, but the graph labelled it
+  `INVALID_DOMAIN`. The graph now returns `UNSUPPORTED`, preserves the previous focus, and performs
+  no banking read; a graph-turn test covers that terminal path. The post-fix live subset had one
+  transient provider error in the category case, so that run was not scored; rerunning that case
+  alone completed both turns with 0 violations.
+
+Verification after these changes: 309 focused tests passed, Ruff passed, and mypy passed for all
+245 orchestrator source files. Remaining work includes rerunning a larger Gemini corpus cleanly,
+closing its other semantic failures, and the full legacy-coordinator deprecation audit.
+
+## PostgreSQL restart, replay and stale-turn smoke (2026-10-10)
+
+Against the isolated Gemini graph stack, I exercised the HTTP contract with PostgreSQL-backed
+checkpoints, canonical dialogue storage and turn reservations:
+
+1. A new gasoline query returned version 1.
+2. After restarting only the orchestrator container, the same conversation asked for restaurants.
+   It returned version 2, kept the same conversation id and retained `LAST_MONTH`.
+3. I repeated that second request after another orchestrator restart with the same
+   `Idempotency-Key` and original version-1 conversation payload. It replayed the exact same answer,
+   returned version 2 and reported `X-FinGuard-Model-Calls: 0`.
+4. A different request sent with the old version-1 payload returned HTTP 409 (`STALE_CONVERSATION`).
+
+This is direct evidence for restart continuity, durable idempotent replay and stale-version
+rejection in the tested single-instance stack. It does not prove multi-instance deployment behavior,
+checkpoint/reservation retention policy, schema migration across releases, or a complete provider A/B
+comparison. The shared development stack was not restarted.
+
+## Metric and counterparty follow-up repair (2026-10-10)
+
+The live Gemini subset identified two additional regression failures, so the prompt now states that
+an unqualified “how much” means `SUM` and cannot inherit `AVERAGE` or `COUNT`. With an average query
+active, the planner gets a context-matched example that changes only the metric. When no query is
+active, a representative Bizum example shows the bank-backed `COUNTERPARTY` grouping for a stated
+five-month window.
+
+- `an_average_may_not_answer_a_total`: 2 turns, 0 violations. The follow-up changed `AVERAGE` to
+  `SUM`, kept `GROCERIES` and `LAST_N_MONTHS:12`, and returned €5,798.07 from 105 bank movements.
+- `a_question_about_people_is_answered_with_people`: 1 turn, 0 violations. The plan used
+  `TRANSFER_BIZUM`, `COUNTERPARTY`, and `LAST_N_MONTHS:5`, returning the bank's named groups.
+- A live query “Which months had the highest expenses in the last year?” returned the top three
+  month groups with `MONTH`, `SUM`, `LAST_N_MONTHS:12`, and `group_limit=3`.
+
+These prompts were adjusted from regression failures. Their reruns are regression checks, not an
+unbiased generalization score. The generalization set remains unopened. The broader Gemini subset
+still needs a clean rerun after all current changes.

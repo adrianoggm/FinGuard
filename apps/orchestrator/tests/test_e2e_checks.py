@@ -11,6 +11,7 @@ the thing that was actually broken.
 """
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -591,6 +592,45 @@ def test_a_demanded_shape_is_not_satisfied_by_a_clarification() -> None:
     assert "NOT_PLANNED_SO_NO_SHAPE" in broken
 
 
+def test_a_server_managed_clarification_needs_a_versioned_thread_not_a_client_draft() -> None:
+    body = asking("WINDOW") | {"conversation": {"conversation_id": "conversation-1", "version": 3}}
+
+    assert "QUESTION_WITHOUT_A_DRAFT" not in e2e.turn_violations(
+        {"say": "next month"}, body, True, {}
+    )
+
+
+def test_a_clarification_without_a_draft_or_server_thread_is_still_a_violation() -> None:
+    assert "QUESTION_WITHOUT_A_DRAFT" in e2e.turn_violations(
+        {"say": "next month"}, asking("WINDOW"), True, {}
+    )
+
+
+def test_graph_payment_continuity_can_be_server_managed() -> None:
+    assert e2e.has_server_managed_state({"conversation_id": "conversation-1", "version": 3})
+    assert not e2e.has_server_managed_state({"version": 3})
+
+
+def test_graph_plan_context_keeps_window_assertions_measurable_without_client_state() -> None:
+    body = answered(
+        conversation={"conversation_id": "server-thread", "version": 2},
+        plan_context={
+            "direction": "EXPENSE",
+            "period": "THIS_YEAR",
+            "metric": "SUM",
+            "group_by": "NONE",
+        },
+    )
+    turn = {"say": "este año", "expect_plan": {"window": "THIS_YEAR"}}
+
+    assert e2e.turn_violations(turn, body, False, {}) == []
+
+    body["plan_context"]["period"] = "LAST_N_MONTHS"
+    body["plan_context"]["n"] = 12
+
+    assert "WRONG_WINDOW" in e2e.turn_violations(turn, body, False, {})
+
+
 def test_the_three_plan_rules_agree_about_an_answer_that_never_came() -> None:
     """The point of the fix is the symmetry, so it is the symmetry that is asserted."""
     declined = asking("WINDOW")
@@ -867,3 +907,52 @@ def test_the_dataset_spells_a_window_the_way_the_wire_produces_one() -> None:
     assert e2e._window_of(on_the_wire(counted)) == "LAST_N_MONTHS:3"
     assert e2e._window_of(on_the_wire(named)) == "THIS_MONTH"
     assert e2e._window_of(on_the_wire(ranged)) == "2025-07-01..2025-07-31"
+
+
+def test_conversation_selection_is_stable_and_rejects_unknown_ids() -> None:
+    cases = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+
+    assert e2e.select_conversations(cases, ["c", "a"]) == [cases[0], cases[2]]
+    assert e2e.select_conversations(cases, None) == cases
+    try:
+        e2e.select_conversations(cases, ["missing"])
+    except ValueError as exc:
+        assert "missing" in str(exc)
+    else:
+        raise AssertionError("unknown conversation ids must fail explicitly")
+
+
+def test_conversation_evidence_keeps_plan_and_figures_but_not_raw_workflow_state() -> None:
+    body = answered(
+        text="El segundo fue de 72,50 EUR: Mercadona.",
+        plan_context={"rank": 2, "period": "LAST_MONTH"},
+        movements=[
+            {
+                "description": "Mercadona",
+                "merchant_name": "Mercadona",
+                "amount_minor": 7250,
+                "direction": "EXPENSE",
+                "occurred_at": "2026-09-12T10:00:00+02:00",
+                "id": "movement-private-id",
+            }
+        ],
+        conversation={
+            "version": 4,
+            "workflow": "PAYMENT_IN_PROGRESS",
+            "payment": {"phone": "+34611111111", "candidate_ids": ["private-id"]},
+        },
+    )
+
+    record = e2e.conversation_evidence("ranked_movement", 2, {"say": "¿Y el segundo?"}, body, [])
+    serialized = json.dumps(record, ensure_ascii=False)
+
+    assert record["plan_context"] == {"rank": 2, "period": "LAST_MONTH"}
+    assert record["movements"][0]["merchant_name"] == "Mercadona"
+    assert record["conversation"] == {
+        "version": 4,
+        "workflow": "PAYMENT_IN_PROGRESS",
+        "has_draft": True,
+        "has_pending_plan": False,
+    }
+    assert "movement-private-id" not in serialized
+    assert "+34611111111" not in serialized

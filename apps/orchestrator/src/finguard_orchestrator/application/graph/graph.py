@@ -60,6 +60,7 @@ from finguard_orchestrator.application.graph import codec, investigation
 from finguard_orchestrator.application.graph.investigation import Explanation, MerchantChange
 from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionResult,
+    SpokenContact,
     SpokenPlan,
 )
 from finguard_orchestrator.domain.engine.grounding import Grounds, ground
@@ -67,9 +68,11 @@ from finguard_orchestrator.domain.engine.operations import (
     Ask,
     Balance,
     ChangeMeasure,
+    Clarify,
     Compare,
     Delegate,
     InvestigateComparison,
+    ListContacts,
     Operation,
     Patch,
     PlanFields,
@@ -96,6 +99,7 @@ from finguard_orchestrator.domain.enums import (
     PaymentOutcome,
     PlanningOutcome,
     Rail,
+    Spoken,
 )
 from finguard_orchestrator.domain.errors import DomainError, NotAuthorisedError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
@@ -126,6 +130,7 @@ from finguard_orchestrator.domain.ports.turn_operations import TurnOperationsPor
 from finguard_orchestrator.domain.services import (
     answer_writer,
     category_words,
+    payment_router,
     payment_writer,
 )
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
@@ -139,9 +144,9 @@ logger = logging.getLogger(__name__)
 
 # Bumped whenever the nodes or their order change: a checkpoint written by another graph is not
 # resumed (`graph_turn`), because the node it would resume at may mean something else now.
-GRAPH_VERSION: Final = "conversation/15"
+GRAPH_VERSION: Final = "conversation/17"
 # Bumped whenever a key of `TurnGraphState` changes meaning or shape.
-STATE_SCHEMA_VERSION: Final = 14
+STATE_SCHEMA_VERSION: Final = 15
 MAX_BANK_EXECUTIONS: Final = 3
 MAX_MODEL_CALLS: Final = 3
 # A backstop under the budgets: one step per read, and plan, validate and assess per loop.
@@ -170,6 +175,7 @@ Status = Literal[
     "executed",
     "committed",
     "payment",
+    "paused_payment",
     "payment_waiting",
     "payment_complete",
 ]
@@ -267,6 +273,21 @@ async def plan(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     ctx = runtime.context
     current = await _canonical(state, ctx)
     grounds = await _grounds(state, ctx)
+    payment = current.payment
+    if (
+        isinstance(payment, PaymentDraftPending)
+        and payment.suspended
+        and not payment_router.resumes(ctx.sentence)
+        and not payment_router.is_payment(ctx.sentence)
+        and payment_router.continues(ctx.sentence, payment.draft, grounds.contacts)
+    ):
+        # The user's bare slot value is ambiguous after another subject took the floor. Resolve
+        # this deterministic guard before asking the model, so a planner cannot revive the payment.
+        logger.info("graph.payment.paused_reply")
+        return {
+            "ops": codec.dumps(()),
+            "status": "paused_payment",
+        }
     names = {holding.account_id: holding.display_name for holding in grounds.accounts}
     before = ctx.ports.count_calls()
     ops = await ctx.ports.interpreter.interpret(
@@ -292,6 +313,8 @@ async def plan(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
 async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     """The canonical transition for the interpreter's operations; the allow-list and the budget for
     the assessment's. Nothing here is decided by a model."""
+    if state.get("status") == "paused_payment":
+        return {"status": "paused_payment"}
     asked = state.get("next_inspect")
     if asked is not None:
         allowed = 0 <= asked < len(_may_inspect(state))
@@ -307,9 +330,34 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
             }
         return {"status": "inspect"}
     ops = codec.loads(state["ops"])
+    if any(isinstance(op, ListContacts) for op in ops):
+        if len(ops) != 1:
+            return {"status": "refused", "refused": [*state.get("refused", []), "composition"]}
+        if state.get("bank_calls", 0) >= MAX_BANK_EXECUTIONS:
+            return {"status": "refused", "refused": [*state.get("refused", []), "bank_budget"]}
+        return {"status": "replied"}
     contact_payments = (PrepareBizum, PrepareTransfer)
     payments = tuple(op for op in ops if isinstance(op, (*contact_payments, PrepareOwnTransfer)))
     if payments:
+        if Scope.PAYMENTS_PREPARE.value not in runtime.context.caller_scopes:
+            raise NotAuthorisedError(
+                f"this credential is not allowed {Scope.PAYMENTS_PREPARE.value}"
+            )
+        # The interpreter can redundantly emit Clarify beside a payment when a slot is missing.
+        # The payment command already owns the safe, canonical slot question; retain that typed
+        # operation and let it ask for the recipient or amount. Never let this turn execute a
+        # second unrelated financial operation alongside a payment.
+        if len(payments) == 1 and all(
+            isinstance(op, (*contact_payments, PrepareOwnTransfer, Clarify)) for op in ops
+        ):
+            payment_ops = tuple(
+                op for op in ops if isinstance(op, (*contact_payments, PrepareOwnTransfer))
+            )
+            if len(payment_ops) == 1:
+                return {
+                    "status": "payment",
+                    "ops": codec.dumps(payment_ops),
+                }
         analytics_ops = (
             Ask,
             Patch,
@@ -325,10 +373,6 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
             for op in ops
         ):
             return {"status": "payment", "refused": [*state.get("refused", []), "composition"]}
-        if Scope.PAYMENTS_PREPARE.value not in runtime.context.caller_scopes:
-            raise NotAuthorisedError(
-                f"this credential is not allowed {Scope.PAYMENTS_PREPARE.value}"
-            )
         if all(isinstance(op, (*contact_payments, PrepareOwnTransfer)) for op in ops):
             return {"status": "payment"}
     visual = next((op for op in ops if isinstance(op, Visualize)), None)
@@ -476,6 +520,52 @@ def _pair_run_from_state(state: TurnGraphState, pair: ComparisonPlan) -> PairRun
     return PairRun(pair, earlier, latest, difference)
 
 
+def _context_plan(run: Executed | None) -> FinancialPlan | TopMovements | None:
+    """The query actually executed, reduced to the safe fields sent with its answer."""
+    if isinstance(run, QueryRun):
+        return run.plan
+    if isinstance(run, RankingRun):
+        return run.ranking
+    if isinstance(run, PairRun):
+        return run.pair.latest
+    return None
+
+
+def _spoken_plan(plan: FinancialPlan | TopMovements) -> SpokenPlan:
+    period = plan.period
+    date_range = plan.date_range
+    common: dict[str, Any] = {
+        "direction": plan.direction.value,
+        "period": period.period.value if period is not None else None,
+        "n": period.n if period is not None else None,
+        "start": date_range.start.isoformat() if date_range is not None else None,
+        "end": date_range.end.isoformat() if date_range is not None else None,
+        "categories": list(plan.categories),
+        "merchants": list(plan.merchants),
+        "merchant_terms": list(plan.merchant_terms),
+        "excluded_merchants": list(plan.excluded_merchants),
+        "across_accounts": plan.across_accounts,
+        "only_account_id": str(plan.only_account_id) if plan.only_account_id is not None else None,
+        "only_account_ids": [str(item) for item in plan.only_account_ids],
+    }
+    if isinstance(plan, TopMovements):
+        return SpokenPlan(**common, rank=plan.rank)
+    return SpokenPlan(
+        **common,
+        excluded_categories=list(plan.excluded_categories),
+        counterparties=list(plan.counterparties),
+        excluded_counterparties=list(plan.excluded_counterparties),
+        counterparty_types=[item.value for item in plan.counterparty_types],
+        group_by=plan.group_by.value,
+        metric=plan.metric.value,
+        group_limit=plan.group_limit,
+        include_internal=plan.include_internal,
+        internal_only=plan.internal_only,
+        transaction_ids=[str(item) for item in plan.transaction_ids],
+        transaction_types=[item.value for item in plan.transaction_types],
+    )
+
+
 async def assess_result(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     """The assessment's separate structured call, only when banking's answer leaves a cause a
     single purchase could explain, and only within the model budget."""
@@ -512,6 +602,24 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
     """The presenter's answer, then the canonical compare-and-set. The answer and the saved state
     go to the invocation's cache: they are this turn's output, not something to resume."""
     ctx = runtime.context
+    if state.get("status") == "paused_payment":
+        current = await _canonical(state, ctx)
+        payment = current.payment
+        if not isinstance(payment, PaymentDraftPending) or not payment.suspended:
+            raise RuntimeError("paused-payment reply has no suspended draft")
+        result = AskFinancialQuestionResult(
+            outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+            text=payment_writer.paused(payment.draft),
+        )
+        saved = await ctx.ports.store.save(
+            current.remembered(DialogueTurn(ctx.sentence, result.text)),
+            account_id=UUID(state["account_id"]),
+            expected_version=state["expected_version"],
+        )
+        ctx.cache["result"], ctx.cache["saved"] = result, saved
+        return {"status": "committed", "expected_version": saved.version}
+    if any(isinstance(op, ListContacts) for op in codec.loads(state["ops"])):
+        return await _list_contacts_and_commit(state, ctx)
     moved = await _transition(state, ctx)
     grounds = await _grounds(state, ctx)
     names = {holding.account_id: holding.display_name for holding in grounds.accounts}
@@ -545,6 +653,17 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
         )
         in_words = result.plan_in_words or ""
     canonical = moved.state
+    if isinstance(canonical.payment, PaymentDraftPending) and not any(
+        isinstance(op, (PrepareBizum, PrepareTransfer, PrepareOwnTransfer))
+        for op in codec.loads(state["ops"])
+    ):
+        # A different subject takes the floor, so a bare slot answer on a later turn cannot
+        # complete this payment by accident. Listing contacts is handled above and does not pause
+        # it.
+        canonical = replace(
+            canonical,
+            payment=replace(canonical.payment, suspended=True),
+        )
     # Keep the bounded aggregate answer available for later graph visualization operations.
     # Movement evidence remains in the response and is never copied into dialogue state.
     final_run = ctx.cache.get("run")
@@ -603,6 +722,9 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
                     comparison_groups=(prior, groups),
                 ),
             )
+    context_plan = _context_plan(final_run)
+    if context_plan is not None:
+        result = replace(result, plan_context=_spoken_plan(context_plan))
     remembered = canonical.remembered(DialogueTurn(said=ctx.sentence, answered=in_words))
     if any(
         isinstance(op, (PrepareBizum, PrepareTransfer, PrepareOwnTransfer))
@@ -624,6 +746,45 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
     )
     ctx.cache["dialogue"] = saved
     ctx.cache["result"], ctx.cache["saved"] = result, saved
+    return {
+        "status": "committed",
+        "expected_version": saved.version,
+        "bank_calls": _bank_calls(state, ctx),
+    }
+
+
+async def _list_contacts_and_commit(state: TurnGraphState, ctx: GraphContext) -> TurnGraphState:
+    """Read payees while retaining the canonical payment draft, as a normal conversation turn."""
+    account_id = UUID(state["account_id"])
+    current = await _canonical(state, ctx)
+    if "composition" in state.get("refused", []):
+        result = AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text="No puedo combinar la consulta de contactos con otra operación en el mismo turno.",
+        )
+    elif "bank_budget" in state.get("refused", []):
+        result = AskFinancialQuestionResult(
+            outcome="BANKING_UNAVAILABLE",
+            text="He alcanzado el límite de consultas de este turno. Puedes volver a preguntarlo.",
+        )
+    else:
+        ctx.unsaved_calls += 1
+        contacts = await ctx.ports.contacts.all_of(account_id)
+        result = AskFinancialQuestionResult(
+            outcome=Spoken.CONTACTS.value,
+            text=answer_writer.contacts(contacts),
+            contacts=[
+                SpokenContact(str(item.contact_id), item.display_name, item.phone)
+                for item in contacts
+            ],
+        )
+    remembered = current.remembered(DialogueTurn(ctx.sentence, result.text))
+    saved = await ctx.ports.store.save(
+        remembered,
+        account_id=account_id,
+        expected_version=state["expected_version"],
+    )
+    ctx.cache["dialogue"], ctx.cache["result"], ctx.cache["saved"] = saved, result, saved
     return {
         "status": "committed",
         "expected_version": saved.version,
@@ -770,6 +931,7 @@ async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState
         recipient_name=recipient_name,
         recipient_contact_id=recipient_contact_id,
         recipient_iban=resolved.draft.recipient_iban,
+        concept=resolved.draft.concept,
         amount_minor=resolved.draft.amount_minor,
         currency=resolved.draft.currency,
         idempotency_key=f"conversation-payment:{state['turn_id']}",
@@ -1375,6 +1537,11 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
             current,
             active_visual=(current.active_visual if visual_op.target == "ACTIVE_CHART" else None),
         )
+    if isinstance(canonical.payment, PaymentDraftPending):
+        canonical = replace(
+            canonical,
+            payment=replace(canonical.payment, suspended=True),
+        )
     saved = await ctx.ports.store.save(
         canonical.remembered(DialogueTurn(ctx.sentence, result.plan_in_words or result.text)),
         account_id=UUID(state["account_id"]),
@@ -1400,7 +1567,7 @@ def _after_validation(state: TurnGraphState) -> str:
             return "visualize_and_commit"
         case "compare":
             return "execute_read_only"
-        case "replied" | "refused" | "canonical":
+        case "replied" | "refused" | "canonical" | "paused_payment":
             return "present_and_commit"
         case _:
             return "execute_read_only"

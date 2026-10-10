@@ -98,10 +98,20 @@ def resolve_contact_payment_draft(
         amount_minor = prior.amount_minor
         if operation.amount_minor is not None and operation.amount_minor != amount_minor:
             return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
+    written_concept = payment_words.concept_in(sentence, contacts)
+    concept = prior.concept
+    if payment_words.clears_concept(sentence):
+        concept = None
+    if written_concept is not None:
+        concept = written_concept
 
     spoken = payment_words.contacts_in(sentence, contacts)
     if candidate_contact_ids:
-        spoken = tuple(c for c in spoken if c.contact_id in candidate_contact_ids)
+        allowed = set(candidate_contact_ids)
+        outside_candidates = tuple(c for c in spoken if c.contact_id not in allowed)
+        if outside_candidates:
+            return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
+        spoken = tuple(c for c in spoken if c.contact_id in allowed)
     modeled = (
         payment_words.contacts_in(operation.recipient, contacts)
         if operation.recipient is not None
@@ -130,9 +140,21 @@ def resolve_contact_payment_draft(
         ):
             return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
     elif operation.recipient is not None and typed_recipient is None:
-        if len(modeled) != 1 or prior.recipient_contact_id != modeled[0].contact_id:
-            return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
-        contact = modeled[0]
+        # A model-written recipient cannot resolve or replace a recipient. Only a name grounded in
+        # this sentence (`spoken` above), a user-written IBAN, or the saved draft can do that.
+        # In particular, amount-only replies must retain an earlier ambiguous candidate list even
+        # if the model repeats one candidate as though the user had selected it.
+        if candidate_contact_ids:
+            candidates = tuple(
+                item for item in contacts if item.contact_id in candidate_contact_ids
+            )
+        elif previous is not None and previous.recipient_contact_id is not None:
+            contact = next(
+                (item for item in contacts if item.contact_id == previous.recipient_contact_id),
+                None,
+            )
+            if contact is None:
+                return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
     elif prior.recipient_contact_id is not None:
         contact = next((c for c in contacts if c.contact_id == prior.recipient_contact_id), None)
         if contact is None:
@@ -152,22 +174,13 @@ def resolve_contact_payment_draft(
             # label that was written beside the typed destination.
             return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
 
-    if (
-        operation.recipient is not None
-        and contact is None
-        and not candidates
-        and typed_recipient is None
-    ):
-        # An unknown name cannot be passed to banking for a fuzzy guess.
-        return ContactPaymentDraftResolution(prior, candidate_contact_ids, rejected=True)
-
     draft = PaymentDraft(
         recipient_name=contact.display_name if contact else typed_recipient,
         recipient_contact_id=contact.contact_id if contact else None,
         recipient_iban=recipient_iban,
         amount_minor=amount_minor,
         currency=prior.currency,
-        concept=prior.concept,
+        concept=concept,
         rail=rail,
     )
     return ContactPaymentDraftResolution(

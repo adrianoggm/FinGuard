@@ -1,5 +1,5 @@
-"""The investigation graph's own flag: off by default, built only beside the model engine, and with
-it off the model engine is exactly the one Task 7 measured."""
+"""LangGraph rollout wiring: opt-in beside the model interpreter; legacy stays the default until
+the ADR-013 promotion gates are closed."""
 
 import os
 import subprocess

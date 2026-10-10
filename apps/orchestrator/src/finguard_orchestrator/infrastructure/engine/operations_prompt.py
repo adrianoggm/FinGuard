@@ -1,9 +1,10 @@
 """What the model reads to turn one sentence into operations.
 
 The model interprets; this only tells it what there is to say and what is on screen. It is not a
-list of phrasings, and no instruction quotes one: the vocabulary is the operations' and the
-fields', each value said once, the rules are principles, and the prompt uses a compact,
-representative example set written for this prompt and taken from no measured set.
+list of phrasings: the vocabulary is the operations' and the fields', each value said once, and
+the rules are principles. The compact examples are representative, but some are drawn from frozen
+regression failures during repair; those cases remain regression checks and are not generalization
+evidence.
 
 **The state is shown, not summarised.** What is on screen is written in the schema's own words
 with an explicit ISO range beside every window, relative ones included, so a reference to another
@@ -41,8 +42,9 @@ from finguard_orchestrator.domain.engine.state import (
     QueryFocus,
     RatioFocus,
 )
-from finguard_orchestrator.domain.enums import PERIODS_NEEDING_COUNT, GroupBy, Period, Rail
+from finguard_orchestrator.domain.enums import PERIODS_NEEDING_COUNT, GroupBy, Metric, Period, Rail
 from finguard_orchestrator.domain.ports.turn_operations import NO_ACCOUNT_NAMES
+from finguard_orchestrator.domain.services import spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -51,43 +53,43 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 _TEMPLATE: Final = Template("""\
-Interpret this Spanish turn. Return typed operations; \
+Read this Spanish turn. Return typed operations; \
 code applies them and banking supplies figures. \
 Today: $today ($weekday).
 
 ## Categories
 Categories (key: name): $glossary
-Periods: $periods. Months begun, newest first; an unnamed year means the latest begun month:
+Periods: $periods. THIS_MONTH=month start to today; LAST_MONTH=previous full month;
+THIS_YEAR=Jan 1 to today; LAST_N_MONTHS=n rolling months through today; LAST_N_DAYS=n days
+through today. Months begun, newest first; an unnamed year means the latest begun month:
 $months
 Groupings: $group_by. Measures: $measures.
 
 ## Plan fields
-A plan is a list of one-key fields, each at most once. In a patch, omitted fields stay unchanged;
-in a new ask, omitted fields are unspecified. Fields: direction EXPENSE/INCOME/ALL; window named
-period, counted LAST_N_DAYS or LAST_N_MONTHS with n, or inclusive ISO date range; categories and
-excluded_categories use listed keys; merchants/excluded_merchants are exact shop names;
-merchant_terms are fragments for place types ("en el gimnasio" -> ["gimnasio"]); people/accounts
-are names as said ([] accounts means all); metric SUM/COUNT/AVERAGE/
+A plan is one-key fields. In a patch, omitted fields stay; in a new ask, they are unspecified.
+Fields: direction EXPENSE/INCOME/ALL; window named, counted LAST_N_DAYS/LAST_N_MONTHS with n, or
+inclusive ISO range; categories/excluded_categories use listed keys; merchants/excluded_merchants
+are exact shop names; merchant_terms are shop fragments ("en el gimnasio" -> ["gimnasio"]);
+people/accounts are names as said ([] accounts means all); metric SUM/COUNT/AVERAGE/
 PERIOD_AVERAGE/CUMULATIVE/FREQUENCY/RECURRENCE; group_by is a breakdown; limit is top N movements
-or groups. Do not set a limit unless asked for top N or for highest-spending months.
-On all-results requests,
-clear_limit=true removes a prior limit; otherwise it stays. PERIOD_AVERAGE/CUMULATIVE require
-DAY/WEEK/MONTH grouping.
+or groups. Set limit only for top N or highest-spending months. clear_limit=true removes a prior
+limit on all-results requests. PERIOD_AVERAGE/CUMULATIVE require DAY/WEEK/MONTH grouping.
 
 ## Operations
 Return 1-4 one-key operations in order: ask starts a query; patch changes named fields on focus,
 side or pending; compare uses explicit windows; compare_previous=N compares the active rolling N
 months with the prior N; investigate_comparison explains a shown pair by merchant, keeping its
 windows and filters. measure selects a metric; select_operand chooses a side; reset clears;
-restore_previous=N reruns history (1=newest); balance reads accounts; clarify is
-WINDOW/SUBJECT/ACCOUNT/PERSON/OPERAND; smalltalk is GREETING/THANKS/IDENTITY/HELP.
-create_visualization/update_visualization choose AUTO/BAR/LINE (no bank call);
-prepare_bizum(recipient, amount_minor) starts Bizum; prepare_transfer(recipient, amount_minor)
-starts a transfer to a named payee when "transferencia" is said. A new payee needs a user-written
-IBAN beside the name; deterministic code extracts it, so never output an IBAN. Null means missing;
-never invent amounts. Even with no amount, use prepare_transfer. prepare_own_transfer
-(destination_account) moves money between holder accounts. delegate is
-PAYMENT/TRANSFER/BOOKING/CHART/UNSUPPORTED.
+restore_previous=N; balance; list_contacts (keeps payment draft); clarify (WINDOW/SUBJECT/ACCOUNT/
+PERSON/OPERAND); smalltalk (GREETING/THANKS/IDENTITY/HELP);
+create_visualization/update_visualization choose AUTO/BAR/LINE (no bank call).
+prepare_bizum(recipient, amount_minor); prepare_transfer
+(recipient, amount_minor) for a named payee when "transferencia" is said. A new payee needs a
+user-written IBAN beside the name; code extracts it; never output an IBAN. Null means missing;
+never invent amounts. Recipient must be specifically named, never generic ("someone"). For payments,
+put missing slots as null; do not add clarify or another payment operation. The concept is extracted
+from the user's words. Even with no amount, use prepare_transfer. prepare_own_transfer moves money
+between holder accounts; delegate is PAYMENT/TRANSFER/BOOKING/CHART/UNSUPPORTED.
 
 ## Examples
 $examples
@@ -107,12 +109,16 @@ Rules: "el último año" means counted LAST_N_MONTHS n=12, not a date range.
 "Which months had most expenses?" means EXPENSE by MONTH, top 3. Compare only when asked; default to
 the last two complete months and equal named durations. A named month is its latest begun window
 from the list. Never ask for a future window; delegate UNSUPPORTED.
+Patch only fields a follow-up names; otherwise keep the active query's scope and window. A plain
+"how much" or total request means SUM; never carry AVERAGE/COUNT into it. Shift an
+explicit window back a year for "previous year"; compare only when requested. SHARE is part / same-
+direction total. If a ratio needs unavailable data (e.g., salary), delegate UNSUPPORTED; do not ask
+for a period.
 "Why did spending rise?" compares by MERCHANT. For the cause of a shown comparison, use
 investigate_comparison; it keeps the exact windows and filters. Do not ask which periods when state
 shows them.
 For a rolling N-month query and its prior N months, use compare_previous=N. Named comparisons keep
-filters/order. Follow-ups change the
-current focus; period-only turns change its window. Use
+filters/order. Follow-ups change the current focus; period-only turns change its window. Use
 pending only for an open question; otherwise corrections patch focus. "Return to the previous query"
 restores history item 1. "All categories/movements" clears top-N. Explicit account names populate
 accounts; [] means all. Named-payee transfers use prepare_transfer, including missing amounts or a
@@ -341,6 +347,11 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
         ),
         (
             "",
+            "Bizum de 15 euros a Marta con concepto tapas",
+            _answer({"prepare_bizum": {"recipient": "Marta", "amount_minor": 1500}}),
+        ),
+        (
+            "",
             "Haz una transferencia de 25 euros a Aitor Beltran Diaz",
             _answer(
                 {"prepare_transfer": {"recipient": "Aitor Beltran Diaz", "amount_minor": 2500}}
@@ -410,6 +421,31 @@ _ANSWERED_CHARACTERS: Final = 16
 # An account's name is the bank's data, as long as the bank lets it be; it only has to be told
 # apart from the others.
 _ACCOUNT_CHARACTERS: Final = 40
+_ACCOUNT_STOP_WORDS: Final = frozenset(
+    {
+        "a",
+        "al",
+        "con",
+        "cuenta",
+        "cuentas",
+        "de",
+        "del",
+        "el",
+        "en",
+        "la",
+        "las",
+        "los",
+        "mi",
+        "mis",
+        "para",
+        "por",
+        "una",
+        "unas",
+        "un",
+        "unos",
+        "y",
+    }
+)
 _REJECTED_CHARACTERS: Final = 600
 _PROBLEM_CHARACTERS: Final = 400
 
@@ -433,7 +469,7 @@ def build_prompt(
         months=", ".join(_months_begun(today)) + ".",
         measures=", ".join(m.value for m in Measure),
         examples="\n".join(_example(*example) for example in _prompt_examples(today, state)),
-        state=_fenced(_state(state, today, account_names)),
+        state=_fenced(_state(state, today, account_names, sentence=sentence)),
         sentence=_fenced(sentence),
     )
 
@@ -449,6 +485,11 @@ def repair_note(answer: str, problem: str) -> str:
 def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str, str], ...]:
     """A compact representative set; the full set remains decoder-tested below."""
     all_examples = examples(today)
+    list_contacts_example = (
+        "a Bizum draft is in progress; keep it while listing saved payees",
+        "Que contactos tengo?",
+        _answer({"list_contacts": True}),
+    )
     category_breakdown = (
         "no current query",
         "Cuanto gaste por categoria en los ultimos tres meses?",
@@ -489,20 +530,68 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
         "Compara estos gastos con los 3 meses anteriores",
         _answer({"compare_previous": 3}),
     )
+    category_follow_up = (
+        f"On screen: {_focus(state.focus, today)}",
+        "Cuanto gaste en restaurantes?",
+        _answer({"patch": {"target": "focus", "changes": _items(categories=["RESTAURANTS"])}}),
+    )
     restore_query = (
         "expenses by category, last three months; open question: OPERAND",
         "Vuelve a la consulta anterior",
         _answer({"restore_previous": 1}),
     )
+    unsupported_salary_share = (
+        "the bank cannot supply salary as the denominator",
+        "Que porcentaje de mi sueldo se va en ocio?",
+        _answer({"delegate": "UNSUPPORTED"}),
+    )
+    bizum_by_person = (
+        "no active query",
+        "A que personas les he hecho bizum en los ultimos 5 meses?",
+        _answer(
+            {
+                "ask": _items(
+                    direction="EXPENSE",
+                    window={"counted": {"period": "LAST_N_MONTHS", "n": 5}},
+                    categories=["TRANSFER_BIZUM"],
+                    group_by="COUNTERPARTY",
+                )
+            }
+        ),
+    )
+    average_to_total = (
+        f"On screen: {_focus(state.focus, today)}",
+        "Cuanto gaste en el supermercado?",
+        _answer({"patch": {"target": "focus", "changes": _items(metric="SUM")}}),
+    )
     # Keep the month-reference comparison example. It is the bridge from a prior query to a
     # comparison; without it a small model may ask for both windows even when one is on screen and
     # the other is in history. Keep the month ranking, comparison, visual and payment examples too.
-    selected = [all_examples[index] for index in (2, 3, 7, 8, 9, 16, 18)]
-    selected.insert(2, category_breakdown)
-    selected.insert(3, category_month_follow_up)
-    selected.extend((restore_query,))
+    selected = [all_examples[index] for index in (2, 3, 7, 8, 9, 16, 19)]
     if state.focus is None and state.pending is None:
-        selected.insert(0, all_examples[0])
+        selected[2] = bizum_by_person
+    if state.focus is None or isinstance(state.focus, QueryFocus):
+        selected.insert(2, category_breakdown)
+        selected.insert(3, category_month_follow_up)
+    if state.focus_history or state.previous_focus is not None:
+        selected.append(restore_query)
+    elif (
+        isinstance(state.focus, QueryFocus)
+        and isinstance(state.focus.plan, FinancialPlan)
+        and state.focus.plan.metric is Metric.AVERAGE
+    ):
+        selected.append(average_to_total)
+    else:
+        selected.append(unsupported_salary_share)
+    if state.focus is None and state.pending is None:
+        selected.insert(
+            0,
+            list_contacts_example
+            if isinstance(state.payment, PaymentDraftPending)
+            else all_examples[0],
+        )
+    elif isinstance(state.payment, PaymentDraftPending):
+        selected[-1] = list_contacts_example
     focus = state.focus
     if (
         isinstance(focus, QueryFocus)
@@ -516,6 +605,13 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
         selected.insert(4, previous_three_months_comparison)
     elif isinstance(focus, ComparisonFocus):
         selected[4] = _why_comparison_example()
+    elif (
+        isinstance(focus, QueryFocus)
+        and isinstance(focus.plan, FinancialPlan)
+        and focus.plan.period is not None
+        and focus.plan.group_by is GroupBy.NONE
+    ):
+        selected[3] = category_follow_up
     if state.active_visual is not None:
         selected[7] = all_examples[17]
     return tuple(selected)
@@ -560,7 +656,13 @@ def _clipped(text: str, limit: int) -> str:
 # --- the state, in the schema's words ---------------------------------------------------------
 
 
-def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
+def _state(
+    state: DialogueState,
+    today: date,
+    names: Mapping[UUID, str],
+    *,
+    sentence: str = "",
+) -> str:
     lines = [f"On screen: {_focus(state.focus, today, names)}"]
     history = state.focus_history
     if not history and state.previous_focus is not None:
@@ -630,6 +732,9 @@ def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
             f"Own-account transfer in progress: destination {destination}; amount {amount}."
         )
     lines.append(f"Accounts: {_accounts(state.scope.account_ids, names)}")
+    account_hint = _account_catalogue_hint(sentence, names)
+    if account_hint:
+        lines.append(account_hint)
     if state.turns:
         lines.append("Last turns, oldest first, as said → answered:")
         lines += [
@@ -638,6 +743,45 @@ def _state(state: DialogueState, today: date, names: Mapping[UUID, str]) -> str:
             for turn in state.turns
         ]
     return "\n".join(lines)
+
+
+def _account_catalogue_hint(sentence: str, names: Mapping[UUID, str]) -> str | None:
+    """Expose account labels that overlap with this utterance, without guessing aliases.
+
+    The list gives the planner grounding data; it does not decide what the utterance means. It is
+    bounded by the names that could actually resolve from the current sentence, so a large holder
+    catalogue cannot push the financial plan or its history out of the prompt budget.
+    """
+    words = set(spanish.folded(sentence).split()) - _ACCOUNT_STOP_WORDS
+    if not words:
+        return None
+    partial = tuple(
+        dict.fromkeys(
+            name
+            for name in names.values()
+            if words.intersection(set(spanish.folded(name).split()) - _ACCOUNT_STOP_WORDS)
+        )
+    )
+    if not partial:
+        return None
+    exact = tuple(
+        name
+        for name in partial
+        if (set(spanish.folded(name).split()) - _ACCOUNT_STOP_WORDS) <= words
+    )
+    matches = exact or partial
+    shown = [_clipped(name, _ACCOUNT_CHARACTERS) for name in matches[:3]]
+    if len(matches) > len(shown):
+        shown.append(f"and {len(matches) - len(shown)} more")
+    if exact:
+        return (
+            "Exact account catalogue match: "
+            f"{', '.join(shown)}. Use the exact listed name in accounts."
+        )
+    return (
+        "No exact account catalogue match; these entries only share words: "
+        f"{', '.join(shown)}. Do not select one; clarify which account."
+    )
 
 
 def _accounts(ids: tuple[UUID, ...], names: Mapping[UUID, str]) -> str:

@@ -19,6 +19,8 @@ The filter is named in Spanish, from the same vocabulary the planner's prompt us
 from dataclasses import replace
 from datetime import date, datetime
 
+from finguard_orchestrator.application.engine.executor import RankingRun
+from finguard_orchestrator.application.engine.presenter import answered
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import answer_writer, continuation_patch
@@ -539,3 +541,61 @@ def test_the_planners_line_is_unchanged() -> None:
     assert answer_writer.describe(plan(direction=Direction.INCOME, counterparties=("Marta",))) == (
         "el mes pasado, income, Marta"
     )
+
+
+def test_a_requested_rank_returns_only_that_movement_and_its_amount() -> None:
+    first = Movement(
+        occurred_at=datetime(2026, 7, 14, 10, 0),
+        description="Carrefour",
+        amount_minor=8_940,
+        direction="EXPENSE",
+        merchant_name="Carrefour",
+        currency="EUR",
+    )
+    second = Movement(
+        occurred_at=datetime(2026, 7, 12, 10, 0),
+        description="Mercadona",
+        amount_minor=7_250,
+        direction="EXPENSE",
+        merchant_name="Mercadona",
+        currency="EUR",
+    )
+    ranking = TopMovements(direction=Direction.EXPENSE, period=LAST_MONTH, rank=2)
+
+    result = answered(
+        RankingRun(ranking, (first, second)),
+        scope=(),
+        account_names={},
+        reporting_timezone="Europe/Madrid",
+    )
+
+    assert result.text.startswith("El segundo fue de 72,50")
+    assert "Mercadona" in result.text
+    assert "los 2 mayores gastos" not in result.text
+    assert result.total_minor == 7_250
+    assert result.movement_count == 1
+    assert [movement.merchant_name for movement in result.movements] == ["Mercadona"]
+
+
+def test_a_missing_requested_rank_does_not_leak_the_previous_movement_as_its_result() -> None:
+    first = Movement(
+        occurred_at=datetime(2026, 7, 14, 10, 0),
+        description="Carrefour",
+        amount_minor=8_940,
+        direction="EXPENSE",
+        merchant_name="Carrefour",
+        currency="EUR",
+    )
+    ranking = TopMovements(direction=Direction.EXPENSE, period=LAST_MONTH, rank=2)
+
+    result = answered(
+        RankingRun(ranking, (first,)),
+        scope=(),
+        account_names={},
+        reporting_timezone="Europe/Madrid",
+    )
+
+    assert result.text.startswith("No hay el segundo movimiento")
+    assert result.total_minor is None
+    assert result.movement_count == 0
+    assert result.movements == []

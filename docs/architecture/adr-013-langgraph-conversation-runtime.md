@@ -20,16 +20,18 @@ idempotency and compare-and-set version checks remain mandatory at the operation
 The graph's versioned conversation state is the source of truth. It includes the active financial
 plan, pending operation or clarification, recent turns, a bounded aggregate-only result artifact,
 and the verified chart specification/profile with result and chart versions. Its canonical state
-schema is version 10, its LangGraph checkpoint schema is version 11, and the conversation graph
-version is `conversation/12`; these advance independently when their respective payloads or behavior
+schema is version 13, its LangGraph checkpoint schema is version 15, and the conversation graph
+version is `conversation/17`; these advance independently when their respective payloads or behavior
 change.
 also has typed slots for an unfinished payment draft or the exact bank-authored confirmation
 preview, so a later graph turn can resume from canonical state without reconstructing payment data
 from the client. Bizum preparation and confirmation now run in the same conversation graph. Mixed
 analytics/Bizum turns save the analytic result and pending bank preview with one canonical version
-advance. Bizum and own-account transfers use typed pending drafts when a contact/account or amount is
-missing, then the existing bank preview and explicit-confirmation path. Drafts survive unrelated
-analytics turns; ambiguous Bizum contacts remain restricted to the bank directory candidates, and
+advance. Bizum, saved-contact and user-specified-IBAN transfers, and own-account transfers use typed
+pending drafts when a recipient/account or amount is missing, then the existing bank preview and
+explicit-confirmation path. A typed `list_contacts` operation reads payees without dismissing an
+active payment draft. Drafts survive unrelated analytics turns; ambiguous Bizum contacts remain
+restricted to the bank directory candidates, and
 the two kinds of draft cannot overwrite each other. Transfer drafts retain an opaque idempotency key
 across clarification turns. Supplied values are grounded against the relevant account catalogue and
 closed amount/contact readers before the payment command is called. A confirmation reply is reduced
@@ -67,7 +69,7 @@ result. Bizum draft/preparation, own-account transfer draft/preparation and conf
 banking commands. The confirmation node reuses the
 persisted bank preview, requires the account-scoped workflow id and confirmation scope, and does not
 treat a pause or failure as authorization. Mixed analytics/Bizum turns share one checkpoint and one
-canonical version advance. External transfers and booking still have no graph workflow.
+canonical version advance. Booking still has no graph workflow.
 
 The graph may call one model repeatedly within explicit turn budgets. It is not a multi-agent
 system. Nodes are adapters to existing financial contracts, validators and renderers, not new
@@ -87,17 +89,17 @@ is off; the web Bizum and own-account transfer tabs now enter the canonical chat
    concurrency, idempotency and schema migration together.
 3. Finish chart explanation, analytical regrouping and browser-level rendering. Visual-only edits
    must retain result lineage and make zero banking reads.
-4. Extend graph coverage to transfers using newly typed bank details and booking flows, preserving
-   banking authorization, confirmation and idempotency checks. Saved-contact transfers now use the
-   existing guarded payment command through the graph.
+4. Finish end-to-end verification of saved-contact, user-specified-IBAN and own-account transfers;
+   then add booking only when its authorization, confirmation and idempotency contracts can be
+   reused without a second conversational coordinator.
 5. Remove legacy conversation coordination only after API and browser coverage of full
    multi-turn analytics, visuals and protected financial actions; then remove the rollout flag.
 
 Until each capability is migrated, it must be explicitly unavailable on the graph route or handled
 by a typed, non-linguistic adapter. It must never silently send the user's words to a legacy
-interpreter. The graph route prepares and confirms Bizum, saved-contact transfers and own-account
-transfers in its own conversation checkpoint. Transfers to newly typed bank details and booking
-remain explicitly unavailable there. A
+interpreter. The graph route prepares and confirms Bizum, saved-contact transfers, user-specified-IBAN
+transfers and own-account transfers in its own conversation checkpoint. Booking remains explicitly
+unavailable there. A
 payment/transfer/booking workflow echoed from a
 legacy session is refused without invoking either coordinator; its complete confirmation payload is
 preserved on the wire so this refusal cannot discard or accidentally confirm a staged payment. Such

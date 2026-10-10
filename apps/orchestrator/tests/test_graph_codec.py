@@ -86,6 +86,7 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
                 recipient_iban="ES9121000418450200051332",
             ),
             candidates,
+            suspended=True,
         ),
     )
     confirmation_state = DialogueState(
@@ -98,12 +99,31 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
     assert draft_restored == draft_state
     assert isinstance(draft_restored.payment, PaymentDraftPending)
     assert draft_restored.payment.candidate_contact_ids == candidates
+    assert draft_restored.payment.suspended
     assert draft_restored.payment.draft.recipient_iban == "ES9121000418450200051332"
     assert confirmation_restored == confirmation_state
     assert confirmation_restored.payment is not None
     assert confirmation_restored.payment.preview.intent_id == intent_id
     assert confirmation_restored.payment.preview.expires_at == expires
     assert confirmation_restored.payment.workflow_id == "workflow-opaque-123"
+
+
+def test_dialogue_checkpoint_migrates_payment_draft_without_suspended_field() -> None:
+    encoded = json.loads(
+        codec.dumps_state(
+            DialogueState(
+                uuid4(),
+                payment=PaymentDraftPending(PaymentDraft(recipient_name="Marta Solis Vega")),
+            )
+        )
+    )
+    encoded["schema_version"] = 12
+    encoded["state"]["f"]["payment"]["f"].pop("suspended")
+
+    restored = codec.loads_state(json.dumps(encoded))
+
+    assert isinstance(restored.payment, PaymentDraftPending)
+    assert not restored.payment.suspended
 
 
 def test_dialogue_checkpoint_round_trips_own_transfer_draft() -> None:

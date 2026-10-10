@@ -156,6 +156,9 @@ class PrepareChosenPaymentCommand(Command[PaymentAnswer]):
     # Present only for transfers. Conversation code must supply an exact IBAN extracted from the
     # user's own message and checked against that message; the model reader is not its source.
     recipient_iban: str | None = None
+    # Explicitly captured from the user's sentence and carried across the graph boundary so the
+    # bank preview can show it back for confirmation.
+    concept: str | None = None
 
 
 @dataclass(frozen=True)
@@ -365,6 +368,7 @@ class PrepareChosenPaymentHandler:
                 rail=command.rail,
                 recipient_contact_id=command.recipient_contact_id,
                 recipient_iban=command.recipient_iban,
+                concept=command.concept,
             )
         except InvalidValueError as refused:
             # A payment of nothing, a negative one, or one beyond the ceiling. The same value

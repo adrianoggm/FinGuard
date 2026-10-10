@@ -213,10 +213,15 @@ class ActiveVisual:
 
 @dataclass(frozen=True)
 class PaymentDraftPending:
-    """A payment paused while it still needs a recipient or amount."""
+    """A payment paused while it still needs a recipient or amount.
+
+    `suspended` means the holder changed subjects after the draft asked a question. A bare amount
+    or contact then stays ambiguous until the holder explicitly resumes the payment.
+    """
 
     draft: PaymentDraft
     candidate_contact_ids: tuple[UUID, ...] = ()
+    suspended: bool = False
 
     def __post_init__(self) -> None:
         if len(set(self.candidate_contact_ids)) != len(self.candidate_contact_ids):

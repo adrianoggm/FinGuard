@@ -37,6 +37,7 @@ that red is the finding.
 
 import argparse
 import asyncio
+import json
 import math
 import re
 import sys
@@ -148,7 +149,7 @@ def violations(body: dict[str, Any]) -> list[str]:
     one it broke is the whole diagnostic value.
     """
     broken: list[str] = []
-    context = (body.get("conversation") or {}).get("last_plan") or {}
+    context = (body.get("conversation") or {}).get("last_plan") or body.get("plan_context") or {}
     headline = (body.get("text") or "").splitlines()[0] if body.get("text") else ""
 
     if body.get("outcome") == "PLANNED":
@@ -352,6 +353,82 @@ def sliced(cases: list[dict[str, Any]], limit: int | None) -> list[dict[str, Any
     return cases if limit is None else cases[:limit]
 
 
+def select_conversations(
+    cases: list[dict[str, Any]], selected_ids: list[str] | None
+) -> list[dict[str, Any]]:
+    """Select named threads without changing their canonical dataset order."""
+    if not selected_ids:
+        return cases
+    known = {case["id"] for case in cases}
+    unknown = sorted(set(selected_ids) - known)
+    if unknown:
+        raise ValueError(f"unknown conversation id(s): {', '.join(unknown)}")
+    wanted = set(selected_ids)
+    return [case for case in cases if case["id"] in wanted]
+
+
+def write_report(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def conversation_evidence(
+    case_id: str,
+    turn_number: int,
+    turn: dict[str, Any],
+    body: dict[str, Any],
+    broken: list[str],
+) -> dict[str, Any]:
+    """A reviewable, privacy-bounded record for a single corpus turn.
+
+    Keep the executed semantic plan and answer evidence, but do not dump the echoed conversation:
+    its payment workflow can contain recipient contact data and opaque identifiers.
+    """
+    state = body.get("conversation") or {}
+    groups = body.get("groups") or []
+    movements = body.get("movements") or []
+    return {
+        "case_id": case_id,
+        "turn": turn_number,
+        "utterance": turn.get("say"),
+        "violations": sorted(set(broken)),
+        "outcome": body.get("outcome"),
+        "text": body.get("text"),
+        "plan_context": body.get("plan_context") or state.get("last_plan"),
+        "figures": {
+            "currency": body.get("currency"),
+            "total_minor": body.get("total_minor"),
+            "difference_minor": body.get("difference_minor"),
+            "movement_count": body.get("movement_count"),
+        },
+        "groups": [
+            {
+                "key": group.get("key"),
+                "total_minor": group.get("total_minor"),
+                "movement_count": group.get("movement_count"),
+            }
+            for group in groups
+        ],
+        "movements": [
+            {
+                "occurred_at": movement.get("occurred_at"),
+                "description": movement.get("description"),
+                "merchant_name": movement.get("merchant_name"),
+                "amount_minor": movement.get("amount_minor"),
+                "direction": movement.get("direction"),
+                "category": movement.get("category"),
+            }
+            for movement in movements
+        ],
+        "conversation": {
+            "version": state.get("version"),
+            "workflow": state.get("workflow"),
+            "has_draft": bool(state.get("draft") or state.get("payment")),
+            "has_pending_plan": bool(state.get("pending_plan")),
+        },
+    }
+
+
 def questions(dataset: str, limit: int | None) -> list[dict[str, Any]]:
     data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
     return sliced(list(data["cases"]), limit)
@@ -526,7 +603,13 @@ async def _ask(
     return dict(response.json())
 
 
-async def run(base_url: str, token: str, dataset: str, limit: int | None) -> int:
+async def run(
+    base_url: str,
+    token: str,
+    dataset: str,
+    limit: int | None,
+    min_request_interval: float = 0.0,
+) -> int:
     cases = questions(dataset, limit)
     walks_the_real_path = unsettled(cases)
     failures: list[tuple[str, list[str], str]] = []
@@ -550,6 +633,8 @@ async def run(base_url: str, token: str, dataset: str, limit: int | None) -> int
             opening = opening_for(case, real_path)
             with_context += "previous" in case
             try:
+                if min_request_interval:
+                    await asyncio.sleep(min_request_interval)
                 body = await _ask(client, base_url, token, case["question"], opening)
                 broken = violations(body)
 
@@ -559,6 +644,8 @@ async def run(base_url: str, token: str, dataset: str, limit: int | None) -> int
                     # conversation back and send the chip. The reply reaches no planner, so this
                     # buys the production path for the price of a round trip.
                     asked_first += 1
+                    if min_request_interval:
+                        await asyncio.sleep(min_request_interval)
                     body = await _ask(client, base_url, token, ALL_ACCOUNTS, state)
                     broken += violations(body)
                     if body.get("outcome") == "NEEDS_CLARIFICATION":
@@ -696,6 +783,16 @@ def shape_of(body: dict[str, Any]) -> str:
     return "NONE"
 
 
+def has_server_managed_state(state: dict[str, Any]) -> bool:
+    """The LangGraph API returns a versioned thread key while keeping drafts in Postgres.
+
+    Legacy conversations echo their draft on the wire. Requiring that private payload from the
+    graph would test the old state-transfer design, not continuity; later corpus turns exercise the
+    same thread by id and version.
+    """
+    return isinstance(state.get("conversation_id"), str) and isinstance(state.get("version"), int)
+
+
 def turn_violations(
     turn: dict[str, Any], body: dict[str, Any], asked_before: bool, plan_before: dict[str, Any]
 ) -> list[str]:
@@ -707,7 +804,7 @@ def turn_violations(
     """
     broken: list[str] = []
     outcome = body.get("outcome")
-    context = (body.get("conversation") or {}).get("last_plan") or {}
+    context = (body.get("conversation") or {}).get("last_plan") or body.get("plan_context") or {}
 
     expected = turn.get("expect")
     if expected and outcome != expected:
@@ -731,7 +828,7 @@ def turn_violations(
 
     state = body.get("conversation") or {}
     half_built = state.get("draft") or state.get("payment") or state.get("pending_plan")
-    if outcome == "NEEDS_CLARIFICATION" and not half_built:
+    if outcome == "NEEDS_CLARIFICATION" and not half_built and not has_server_managed_state(state):
         # Without something on the way out the client has nothing to echo, so the next turn is a
         # fresh question however well it is phrased. This is the defect, at its source.
         #
@@ -896,13 +993,20 @@ def corpus_vacuity(threads: int, declared: int, replayed: int) -> list[str]:
     return []
 
 
-async def run_conversations(base_url: str, token: str, limit: int | None) -> int:
-    """Each conversation replayed the way the client has one: the plan and the draft echoed
-    back, nothing kept on the server."""
+async def run_conversations(
+    base_url: str,
+    token: str,
+    limit: int | None,
+    min_request_interval: float = 0.0,
+    selected_ids: list[str] | None = None,
+    report_file: Path | None = None,
+) -> int:
+    """Replay the public contract, including server state and typed plan trace."""
     data = yaml.safe_load((PLANNING / "conversations.yaml").read_text(encoding="utf-8"))
-    cases = sliced(list(data["conversations"]), limit)
+    cases = sliced(select_conversations(list(data["conversations"]), selected_ids), limit)
     declared = sum(len(case["turns"]) for case in cases)
     failures: list[tuple[str, list[str], str]] = []
+    evidence: list[dict[str, Any]] = []
     turns_run = 0
 
     async with httpx.AsyncClient(timeout=180.0) as client:
@@ -911,6 +1015,7 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
             # were four chances for the harness to combine them differently from the client, which
             # would have made it pass while the browser broke.
             conversation: dict[str, Any] | None = None
+            active_plan_context: dict[str, Any] | None = None
             asked = False
             # The slot the previous turn asked about, and how many turns in a row it has been the
             # same one. Kept per thread because a loop is a property of the thread.
@@ -919,27 +1024,51 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
             allowed = case.get("max_repeated_clarifications", MAX_REPEATED_CLARIFICATIONS)
 
             for index, turn in enumerate(case["turns"], start=1):
-                plan_before = (conversation or {}).get("last_plan") or {}
+                plan_before = (conversation or {}).get("last_plan") or active_plan_context or {}
                 where = f"{case['id']}#{index}"
                 try:
+                    if min_request_interval:
+                        await asyncio.sleep(min_request_interval)
                     response = await client.post(
                         f"{base_url}/v1/questions",
                         json={"question": turn["say"], "conversation": conversation},
                         headers={"Authorization": f"Bearer {token}"},
                     )
                 except httpx.HTTPError as exc:
-                    failures.append((where, ["TRANSPORT"], str(exc)))
+                    broken = ["TRANSPORT"]
+                    detail = str(exc)
+                    failures.append((where, broken, detail))
+                    evidence.append(
+                        conversation_evidence(case["id"], index, turn, {"text": detail}, broken)
+                    )
                     break
 
                 if response.status_code != 200:
-                    failures.append((where, [f"HTTP_{response.status_code}"], response.text[:80]))
+                    broken = [f"HTTP_{response.status_code}"]
+                    detail = response.text[:80]
+                    failures.append((where, broken, detail))
+                    evidence.append(
+                        conversation_evidence(case["id"], index, turn, {"text": detail}, broken)
+                    )
                     break
 
                 body = response.json()
                 turns_run += 1
                 broken = violations(body) + turn_violations(turn, body, asked, plan_before)
                 state = body.get("conversation") or {}
-                if turn.get("keeps_payment") and state.get("workflow") != "PAYMENT_IN_PROGRESS":
+                previous_state = conversation or {}
+                if has_server_managed_state(state) and has_server_managed_state(previous_state):
+                    if state["conversation_id"] != previous_state["conversation_id"]:
+                        broken.append("CONVERSATION_ID_CHANGED")
+                    elif (
+                        body.get("outcome") not in {"PROVIDER_ERROR", "BANKING_UNAVAILABLE"}
+                        and state["version"] != previous_state["version"] + 1
+                    ):
+                        broken.append("VERSION_DID_NOT_ADVANCE")
+                if turn.get("keeps_payment") and (
+                    state.get("workflow") != "PAYMENT_IN_PROGRESS"
+                    and not (state.get("workflow") is None and has_server_managed_state(state))
+                ):
                     # A payment under way that stopped being under way. This is the defect from the
                     # report: the half-built bizum was dropped and the next reply was classified
                     # from scratch, which sent "15 euros" to the financial planner.
@@ -955,6 +1084,7 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
 
                 if broken:
                     failures.append((where, broken, (body.get("text") or "")[:60]))
+                evidence.append(conversation_evidence(case["id"], index, turn, body, broken))
 
                 # Exactly what the client does, and the reason this runs over HTTP: the contract
                 # is what the client implements, not what the handler would accept.
@@ -962,7 +1092,22 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
                 # harness matches it: an answer that carries no state (the payment endpoints) leaves
                 # the conversation where it was.
                 conversation = body.get("conversation") or conversation
+                active_plan_context = body.get("plan_context") or active_plan_context
                 asked = body.get("outcome") == "NEEDS_CLARIFICATION"
+
+    if report_file is not None:
+        await asyncio.to_thread(
+            write_report,
+            report_file,
+            {
+                "dataset": "conversations",
+                "threads": len(cases),
+                "declared_turns": declared,
+                "replayed_turns": turns_run,
+                "violation_count": len(failures),
+                "turns": evidence,
+            },
+        )
 
     print()
     print(f"=== conversations · {len(cases)} threads · {turns_run} turns ===")
@@ -1004,10 +1149,42 @@ def main() -> int:
         choices=("dev", "validation", "adversarial", "conversations"),
     )
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--min-request-interval",
+        type=float,
+        default=0.0,
+        help="seconds to wait before each request (useful for hosted provider quotas)",
+    )
+    parser.add_argument(
+        "--case",
+        action="append",
+        dest="conversation_ids",
+        help="run only this conversation id (repeatable; conversations dataset only)",
+    )
+    parser.add_argument(
+        "--report-file",
+        type=Path,
+        help="write privacy-bounded per-turn JSON evidence (conversations dataset only)",
+    )
     args = parser.parse_args()
+    if args.min_request_interval < 0:
+        parser.error("--min-request-interval must be >= 0")
     if args.dataset == "conversations":
-        return asyncio.run(run_conversations(args.base_url, args.token, args.limit))
-    return asyncio.run(run(args.base_url, args.token, args.dataset, args.limit))
+        return asyncio.run(
+            run_conversations(
+                args.base_url,
+                args.token,
+                args.limit,
+                args.min_request_interval,
+                args.conversation_ids,
+                args.report_file,
+            )
+        )
+    if args.conversation_ids or args.report_file:
+        parser.error("--case and --report-file are only supported with --dataset conversations")
+    return asyncio.run(
+        run(args.base_url, args.token, args.dataset, args.limit, args.min_request_interval)
+    )
 
 
 if __name__ == "__main__":

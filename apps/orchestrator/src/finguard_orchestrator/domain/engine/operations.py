@@ -23,6 +23,7 @@ __all__ = [
     "Compare",
     "ComparePrevious",
     "InvestigateComparison",
+    "ListContacts",
     "Delegate",
     "Operation",
     "Patch",
@@ -112,6 +113,11 @@ class RestorePrevious:
 @dataclass(frozen=True)
 class Balance:
     accounts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ListContacts:
+    """Read the holder's payee directory without changing an active payment draft."""
 
 
 @dataclass(frozen=True)
@@ -217,6 +223,7 @@ Operation = (
     | Reset
     | RestorePrevious
     | Balance
+    | ListContacts
     | Clarify
     | Smalltalk
     | Delegate

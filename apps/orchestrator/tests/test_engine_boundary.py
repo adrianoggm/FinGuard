@@ -212,6 +212,8 @@ def test_the_graph_limits_sentence_uses_and_normalizes_confirmation_before_check
         "DialogueTurn(...)",
         "DialogueTurn(...)",
         "DialogueTurn(...)",
+        "DialogueTurn(...)",
+        "DialogueTurn(...)",
         "DialogueTurn(said=)",
         "_remember_result(...)",
         "_remember_result(...)",
@@ -225,6 +227,9 @@ def test_the_graph_limits_sentence_uses_and_normalizes_confirmation_before_check
         "payment_input.destination_candidates(...)",
         "payment_input.mentions_amount(...)",
         "payment_input.resolve_contact_payment_draft(...)",
+        "payment_router.continues(...)",
+        "payment_router.is_payment(...)",
+        "payment_router.resumes(...)",
     ]
 
 
@@ -247,7 +252,7 @@ def test_no_other_engine_step_takes_a_sentence() -> None:
         for path in ENGINE
         if path.parent.name == "engine"
         and path.parent.parent.name in ("domain", "application")
-        and path.name != "answer_turn.py"
+        and path.name not in ("answer_turn.py", "turn_handler.py")
     ]
     named = {
         path.name

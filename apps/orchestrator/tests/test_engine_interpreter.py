@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.engine.operations import (
     ComparePrevious,
     Delegate,
     InvestigateComparison,
+    ListContacts,
     Operation,
     Patch,
     PlanFields,
@@ -43,6 +44,7 @@ from finguard_orchestrator.domain.engine.state import (
     DialogueState,
     DialogueTurn,
     Focus,
+    FocusHistoryEntry,
     Measure,
     Missing,
     PaymentDraftPending,
@@ -605,6 +607,7 @@ def test_operations_are_keyed_by_their_name() -> None:
         "reset",
         "restore_previous",
         "balance",
+        "list_contacts",
         "clarify",
         "smalltalk",
         "delegate",
@@ -623,6 +626,7 @@ def test_bizum_is_a_typed_prepare_operation_with_a_bounded_integer_amount() -> N
     )
 
     assert parsed == (PrepareBizum("Marta Solis Vega", 2500),)
+
     assert read(
         '{"operations":[{"prepare_bizum":{"recipient":"Marta Solis Vega","amount_minor":null}}]}',
         CATALOGUE,
@@ -636,6 +640,10 @@ def test_bizum_is_a_typed_prepare_operation_with_a_bounded_integer_amount() -> N
             '{"operations":[{"prepare_bizum":{"recipient":"Marta","amount_minor":0}}]}',
             CATALOGUE,
         )
+
+
+def test_list_contacts_is_a_typed_read_operation() -> None:
+    assert read('{"operations":[{"list_contacts":true}]}', CATALOGUE) == (ListContacts(),)
 
 
 def test_bank_transfer_is_a_separate_typed_prepare_operation() -> None:
@@ -860,7 +868,7 @@ LONGEST = (
 def test_prompt_keeps_category_breakdowns_unlimited_by_default() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
 
-    assert "Do not set a limit unless asked for top N or for highest-spending months" in prompt
+    assert "Set limit only for top N or highest-spending months" in prompt
     assert '"group_by":"CATEGORY"' in prompt
     assert '"limit":3' in prompt  # Reserved for the explicit monthly-highest question.
 
@@ -882,6 +890,64 @@ def test_prompt_teaches_a_previous_three_months_comparison_on_the_active_categor
 
     assert "previous turn kept all categories" in prompt
     assert '"compare_previous":3' in prompt
+
+
+def test_prompt_teaches_a_category_change_as_a_patch_of_the_active_query() -> None:
+    plan = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("TRANSPORT_FUEL",),
+    )
+    state = dataclasses.replace(EMPTY, focus=QueryFocus(plan))
+
+    prompt = build_prompt(
+        "Cuanto gaste en restaurantes?",
+        state,
+        today=TODAY,
+        categories=CATEGORIES,
+    )
+
+    assert "On screen: a query" in prompt
+    assert '"patch":{"target":"focus","changes":[{"categories":["RESTAURANTS"]}]}' in prompt
+    assert "Patch only fields a follow-up names" in prompt
+    assert "otherwise keep the active query's scope and window" in prompt
+
+
+def test_prompt_changes_an_active_average_to_a_total_without_losing_its_window() -> None:
+    plan = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=12),
+        categories=("GROCERIES",),
+        metric=Metric.AVERAGE,
+    )
+    state = dataclasses.replace(EMPTY, focus=QueryFocus(plan))
+
+    prompt = build_prompt(
+        "Cuanto gaste en el supermercado?",
+        state,
+        today=TODAY,
+        categories=CATEGORIES,
+    )
+
+    assert '"patch":{"target":"focus","changes":[{"metric":"SUM"}]}' in prompt
+    assert "never carry AVERAGE/COUNT into it" in prompt
+
+
+def test_prompt_teaches_bizum_by_counterparty_when_the_window_is_explicit() -> None:
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    assert '"categories":["TRANSFER_BIZUM"]' in prompt
+    assert '"group_by":"COUNTERPARTY"' in prompt
+    assert '"n":5' in prompt
+
+
+def test_prompt_treats_same_month_last_year_as_a_shift_not_a_comparison() -> None:
+    prompt = build_prompt("Y el ano anterior?", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    compact = " ".join(prompt.split())
+    assert 'Shift an explicit window back a year for "previous year"' in compact
+    assert "compare only when requested" in compact
+    assert "ratio needs unavailable data" in " ".join(prompt.split())
 
 
 def test_structured_previous_window_operation_decodes_to_a_bounded_month_count() -> None:
@@ -912,6 +978,13 @@ def test_prompt_maps_last_year_to_a_rolling_twelve_month_window() -> None:
     assert "not a date range" in prompt
 
 
+def test_prompt_shows_when_a_salary_ratio_is_not_expressible() -> None:
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    assert "the bank cannot supply salary as the denominator" in prompt
+    assert '"delegate":"UNSUPPORTED"' in prompt
+
+
 def test_prompt_includes_the_month_named_comparison_follow_up_example() -> None:
     prompt = build_prompt(
         "Â¿Y comparado con septiembre?", EMPTY, today=TODAY, categories=CATEGORIES
@@ -935,9 +1008,20 @@ def test_prompt_includes_the_answer_to_a_pending_two_period_comparison() -> None
 
 
 def test_prompt_shows_explicit_account_scope_and_restore_of_the_previous_query() -> None:
+    earlier = QueryFocus(
+        FinancialPlan(
+            Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            categories=("TRANSPORT_FUEL",),
+        )
+    )
+    state = dataclasses.replace(
+        EMPTY,
+        focus_history=(FocusHistoryEntry(earlier, Scope()),),
+    )
     prompt = build_prompt(
         "Cuanto he gastado este mes en mi cuenta corriente",
-        EMPTY,
+        state,
         today=TODAY,
         categories=CATEGORIES,
     )
@@ -1176,6 +1260,7 @@ def test_a_pending_bizum_draft_is_part_of_the_interpreted_state() -> None:
     assert "Bizum draft in progress" in shown
     assert "recipient Aitor Beltran Diaz" in shown
     assert "amount not given" in shown
+    assert '{"operations":[{"list_contacts":true}]}' in prompt
 
 
 async def test_the_interpreter_shows_the_names_it_is_given() -> None:
@@ -1186,6 +1271,33 @@ async def test_the_interpreter_shows_the_names_it_is_given() -> None:
     )
 
     assert "Accounts: Cuenta corriente, Hucha" in provider.prompts[0]
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected", "forbidden"),
+    [
+        ("Cuánto gasté en Hucha el mes pasado", "Exact account catalogue match: Hucha", None),
+        (
+            "Cuánto gasté en la cuenta principal el mes pasado",
+            "",
+            "Exact account catalogue match: Cuenta corriente",
+        ),
+    ],
+)
+def test_prompt_supplies_account_grounding_without_guessing_aliases(
+    sentence: str, expected: str, forbidden: str | None
+) -> None:
+    prompt = build_prompt(
+        sentence,
+        EMPTY,
+        today=TODAY,
+        categories=CATEGORIES,
+        account_names=NAMES,
+    )
+
+    assert expected in prompt
+    if forbidden is not None:
+        assert forbidden not in prompt
 
 
 THREE = (UUID(int=11), UUID(int=12), UUID(int=13))

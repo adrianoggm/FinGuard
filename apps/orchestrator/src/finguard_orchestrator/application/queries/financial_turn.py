@@ -138,6 +138,7 @@ class SpokenPlan:
     only_account_ids: list[str] = field(default_factory=list)
     transaction_ids: list[str] = field(default_factory=list)
     transaction_types: list[str] = field(default_factory=list)
+    rank: int | None = None
 
 
 @dataclass(frozen=True)

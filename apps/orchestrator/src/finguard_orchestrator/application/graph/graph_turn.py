@@ -363,6 +363,11 @@ def _failed(error: DomainError) -> AskFinancialQuestionResult:
 
 
 def _unavailable(capability: str) -> AskFinancialQuestionResult:
+    if capability == "UNSUPPORTED":
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.UNSUPPORTED.value,
+            text="Todav\u00eda no puedo resolver esa operaci\u00f3n desde esta conversaci\u00f3n.",
+        )
     if capability == "TRANSFER":
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.INVALID_DOMAIN.value,

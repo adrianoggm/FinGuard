@@ -119,23 +119,21 @@ def _query(run: QueryRun, reporting_timezone: str) -> AskFinancialQuestionResult
 
 def _ranking(run: RankingRun) -> AskFinancialQuestionResult:
     ranking, found = run.ranking, run.movements
-    if ranking.rank == 1:
-        text = answer_writer.ranked(found[0] if found else None, ranking)
-        in_words = answer_writer.plan_in_words(ranking)
-    else:
-        text = answer_writer.ranked_many(found, ranking, requested=ranking.rank)
-        in_words = f"{answer_writer.plan_in_words(ranking.at_rank(1))}, top {ranking.rank}"
-    currencies = {movement.currency for movement in found}
-    currency = next(iter(currencies)) if len(currencies) == 1 else None
+    selected = found[ranking.rank - 1] if len(found) >= ranking.rank else None
+    text = answer_writer.ranked(selected, ranking)
+    in_words = answer_writer.plan_in_words(ranking)
+    currency = selected.currency if selected is not None else None
     return AskFinancialQuestionResult(
         outcome=_PLANNED,
         text=text,
         plan_in_words=in_words,
         currency=currency,
-        # Rows in different currencies have no total, so none is invented for them.
-        total_minor=sum(m.amount_minor for m in found) if found and currency else None,
-        movement_count=len(found),
-        movements=[_spoken(m) for m in found],
+        # The person asked for one rank, so the answer and its evidence expose only that row.
+        # Earlier rows are read to establish its position but must not become a misleading total
+        # or a list that looks like the answer was a top-N request.
+        total_minor=selected.amount_minor if selected is not None else None,
+        movement_count=int(selected is not None),
+        movements=[_spoken(selected)] if selected is not None else [],
     )
 
 

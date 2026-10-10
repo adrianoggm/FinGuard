@@ -67,6 +67,7 @@ from finguard_orchestrator.domain.engine.operations import (
     ComparePrevious,
     Delegate,
     InvestigateComparison,
+    ListContacts,
     Operation,
     Patch,
     PlanFields,
@@ -399,6 +400,13 @@ class BalanceOp(_Closed):
         return Balance(self.balance)
 
 
+class ListContactsOp(_Closed):
+    list_contacts: Literal[True]
+
+    def as_operation(self) -> ListContacts:
+        return ListContacts()
+
+
 class ClarifyOp(_Closed):
     # What is missing and nothing else: a name to quote comes from grounding (ruling R21), so
     # there is no field for the model to write one in.
@@ -485,6 +493,7 @@ AnyOp = Annotated[
     | Annotated[ResetOp, Tag("reset")]
     | Annotated[RestorePreviousOp, Tag("restore_previous")]
     | Annotated[BalanceOp, Tag("balance")]
+    | Annotated[ListContactsOp, Tag("list_contacts")]
     | Annotated[ClarifyOp, Tag("clarify")]
     | Annotated[SmalltalkOp, Tag("smalltalk")]
     | Annotated[DelegateOp, Tag("delegate")]

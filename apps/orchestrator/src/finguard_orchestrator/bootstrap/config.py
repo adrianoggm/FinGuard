@@ -426,17 +426,12 @@ class Settings(BaseSettings):
     # numbers there is no case for flipping it.
     turn_interpreter: Literal["router", "shadow", "hybrid", "model"] = "router"
 
-    # Which engine leads an analytics conversation (spec 2026-10-09, "LLM conversation engine").
-    #
-    #   rules   the handler every turn has run on: readers, a turn arbiter, a planner. What ships.
-    #   model   the phase-1 prototype: a model turns each turn into typed operations, pure code
-    #           applies them to a versioned state held server-side, and money turns (payments,
-    #           transfers, bookings, confirmations) still go to the rules route, which guards them.
-    #
-    # `rules` by default because `model` is a prototype under measurement, not a promotion: its
-    # store lives in one process and forgets every conversation on a restart, and whether it beats
-    # the rules is what Task 7 of the plan measures. With `rules` nothing of the engine is built and
-    # both question routes answer byte for byte as they did before it existed.
+    # Transitional engine selector. `rules` builds the deprecated legacy coordinator. `model`
+    # builds the typed-operation interpreter. With `conversation_graph=off`, the latter still uses
+    # its in-memory store and legacy payment routing; with the graph on, LangGraph is authoritative,
+    # canonical state/checkpoints are in PostgreSQL, and graph-owned protected actions use the
+    # existing guarded banking commands. Keep the compatibility default until the ADR-013 promotion
+    # gates (full corpus, browser workflows, recovery and operational review) are closed.
     conversation_engine: Literal["rules", "model"] = "rules"
     # The engine's model, on the planner's provider (`planner_provider`). None means the planner's
     # own model, so pointing the planner at a hosted provider moves the engine with it.
@@ -448,9 +443,10 @@ class Settings(BaseSettings):
     # be measured.
     engine_temperature: float = Field(default=0.0, ge=0)
     # Migration switch: graph turns use PostgreSQL for canonical state, idempotency reservations
-    # and LangGraph checkpoints. It requires `conversation_engine=model` and DATABASE_URL. It is
-    # off until visual, payment and full-conversation coverage is complete; unsupported graph
-    # operations are returned explicitly and never reinterpreted by the legacy route.
+    # and LangGraph checkpoints. It requires `conversation_engine=model` and DATABASE_URL. It stays
+    # off until the ADR-013 promotion gates are complete. In graph mode the graph owns supported
+    # visual and protected payment workflows; unsupported operations return explicitly and are
+    # never reinterpreted by the legacy route.
     conversation_graph: Literal["off", "on"] = "off"
 
     # What a spending or income question means when it names no account and the conversation has

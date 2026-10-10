@@ -1089,6 +1089,23 @@ class SaveCandidate(_Payload):
     chart_id: str | None = None
 
 
+class PlanContextTraceResponse(_Payload):
+    """The non-sensitive fields of the query that produced an answer, for display and evaluation."""
+
+    direction: str
+    period: str | None = None
+    n: int | None = None
+    start: str | None = None
+    end: str | None = None
+    categories: list[str] = []
+    merchants: list[str] = []
+    merchant_terms: list[str] = []
+    group_by: str = "NONE"
+    metric: str = "SUM"
+    group_limit: int | None = None
+    rank: int | None = None
+
+
 class QuestionResponse(_Payload):
     """The answer, and everything needed to disbelieve it.
 
@@ -1104,6 +1121,10 @@ class QuestionResponse(_Payload):
     # chat endpoint answers both kinds of sentence, so the shape has to admit both.
     intent_id: str | None = None
     plan: str | None = None
+    # A safe typed description of the query this answer actually executed. Kept separate from the
+    # human-readable `plan` string so clients and evaluation can inspect scope without parsing
+    # prose.
+    plan_context: PlanContextTraceResponse | None = None
     # Where the conversation is after this turn, echoed back verbatim on the next one. `plan`
     # above is the same query in words, for a person to read.
     conversation: ConversationPayload | None = None
