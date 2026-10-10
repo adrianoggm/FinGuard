@@ -585,6 +585,14 @@ describe("¿Por qué este gráfico?", () => {
     expect(markup).not.toContain("¿Por qué este gráfico?");
   });
 
+  it("lets the response composition suppress a chart that has no chart block", () => {
+    const markup = markupFor({
+      visualization: chart,
+      visual_response: { response_id: "response-1", layout: "compact", blocks: [] },
+    });
+    expect(markup).not.toContain("visualization-chart");
+  });
+
   it("renders on a materialised restyle turn too, not only a freshly drawn chart", () => {
     // M-10 (fix wave, D-4.5-7): `explainsAChart` reads `answer.visualization`, which
     // `materializeVisualizationDerivation` fills in from `visualization_derivation` before the

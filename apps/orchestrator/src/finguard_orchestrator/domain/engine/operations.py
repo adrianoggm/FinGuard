@@ -24,6 +24,8 @@ __all__ = [
     "ComparePrevious",
     "InvestigateComparison",
     "ListContacts",
+    "ListCategories",
+    "AskCorrection",
     "Delegate",
     "Operation",
     "Patch",
@@ -118,6 +120,16 @@ class Balance:
 @dataclass(frozen=True)
 class ListContacts:
     """Read the holder's payee directory without changing an active payment draft."""
+
+
+@dataclass(frozen=True)
+class ListCategories:
+    """Read FinGuard's supported spending categories without changing the current query."""
+
+
+@dataclass(frozen=True)
+class AskCorrection:
+    """Ask what the user meant to correct while preserving the current focus and open payment."""
 
 
 @dataclass(frozen=True)
@@ -225,6 +237,8 @@ Operation = (
     | RestorePrevious
     | Balance
     | ListContacts
+    | ListCategories
+    | AskCorrection
     | Clarify
     | Smalltalk
     | Delegate

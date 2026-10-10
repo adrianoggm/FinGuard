@@ -60,12 +60,14 @@ from finguard_orchestrator.domain.constants import (
 )
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
+    AskCorrection,
     Balance,
     ChangeMeasure,
     Compare,
     ComparePrevious,
     Delegate,
     InvestigateComparison,
+    ListCategories,
     ListContacts,
     Operation,
     Patch,
@@ -86,6 +88,7 @@ from finguard_orchestrator.domain.enums import (
     GroupBy,
     Metric,
     Period,
+    ResultKind,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, RelativePeriod
@@ -256,6 +259,10 @@ class GroupByItem(_Closed):
     group_by: GroupBy
 
 
+class ResultKindItem(_Closed):
+    result_kind: ResultKind
+
+
 class LimitItem(_Closed):
     limit: Annotated[int, Field(ge=1, le=MAX_RANK)]
 
@@ -275,6 +282,7 @@ FieldItem = Annotated[
     | Annotated[ExcludedCategoriesItem, Tag("excluded_categories")]
     | Annotated[ExcludedMerchantsItem, Tag("excluded_merchants")]
     | Annotated[MetricItem, Tag("metric")]
+    | Annotated[ResultKindItem, Tag("result_kind")]
     | Annotated[GroupByItem, Tag("group_by")]
     | Annotated[LimitItem, Tag("limit")]
     | Annotated[ClearLimitItem, Tag("clear_limit")],
@@ -331,6 +339,8 @@ class AskOp(_Closed):
 
     def as_operation(self) -> Ask:
         fields = _plan_fields(self.ask)
+        if fields.result_kind is None:
+            raise InvalidValueError("ask requires an explicit result_kind")
         if fields.direction is Direction.ALL and fields.metric is None:
             raise InvalidValueError("direction ALL requires an explicit metric (SUM or COUNT)")
         return Ask(fields)
@@ -407,6 +417,20 @@ class ListContactsOp(_Closed):
 
     def as_operation(self) -> ListContacts:
         return ListContacts()
+
+
+class ListCategoriesOp(_Closed):
+    list_categories: Literal[True]
+
+    def as_operation(self) -> ListCategories:
+        return ListCategories()
+
+
+class AskCorrectionOp(_Closed):
+    ask_correction: Literal[True]
+
+    def as_operation(self) -> AskCorrection:
+        return AskCorrection()
 
 
 class SmalltalkOp(_Closed):
@@ -487,6 +511,8 @@ AnyOp = Annotated[
     | Annotated[RestorePreviousOp, Tag("restore_previous")]
     | Annotated[BalanceOp, Tag("balance")]
     | Annotated[ListContactsOp, Tag("list_contacts")]
+    | Annotated[ListCategoriesOp, Tag("list_categories")]
+    | Annotated[AskCorrectionOp, Tag("ask_correction")]
     | Annotated[SmalltalkOp, Tag("smalltalk")]
     | Annotated[DelegateOp, Tag("delegate")]
     | Annotated[CreateVisualizationOp, Tag("create_visualization")]

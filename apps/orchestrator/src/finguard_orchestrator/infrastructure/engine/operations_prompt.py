@@ -42,7 +42,14 @@ from finguard_orchestrator.domain.engine.state import (
     QueryFocus,
     RatioFocus,
 )
-from finguard_orchestrator.domain.enums import PERIODS_NEEDING_COUNT, GroupBy, Metric, Period, Rail
+from finguard_orchestrator.domain.enums import (
+    PERIODS_NEEDING_COUNT,
+    GroupBy,
+    Metric,
+    Period,
+    Rail,
+    ResultKind,
+)
 from finguard_orchestrator.domain.ports.turn_operations import NO_ACCOUNT_NAMES
 from finguard_orchestrator.domain.services import spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -66,22 +73,23 @@ Groupings: $group_by. Measures: $measures.
 
 ## Plan fields
 A plan is one-key fields. Patches keep omitted fields; asks start fresh.
-Fields: direction EXPENSE/INCOME/ALL; window named, counted LAST_N_DAYS/LAST_N_MONTHS with n, or
-inclusive ISO range; categories/excluded_categories use listed keys; merchants/excluded_merchants
-are exact shop names; merchant_terms are shop fragments ("en el gimnasio" -> ["gimnasio"]);
-people/accounts are names as said ([] accounts means all); metric SUM/COUNT/AVERAGE/
-PERIOD_AVERAGE/CUMULATIVE/FREQUENCY/RECURRENCE; group_by is a breakdown; limit is top N movements
-or groups. Set limit only for top N or highest-spending months. clear_limit=true removes a prior
-limit on all-results requests. PERIOD_AVERAGE/CUMULATIVE require DAY/WEEK/MONTH grouping.
+Fields: direction EXPENSE/INCOME/ALL; window named, counted LAST_N_DAYS/MONTHS(n), or inclusive
+ISO range; category keys, exact merchant names, merchant_terms fragments; people/accounts as said
+([] means all); metric SUM/COUNT/AVERAGE/PERIOD_AVERAGE/CUMULATIVE/FREQUENCY/RECURRENCE; group_by
+dimensions. Each ask names result_kind (SCALAR/RECORDS/RANKING/BREAKDOWN/TIME_SERIES), separate
+from metric. COUNT may accompany RECORDS. Only RANKING takes a limit; other groups are complete
+unless top N is explicit. clear_limit removes a limit.
+PERIOD_AVERAGE/CUMULATIVE require DAY/WEEK/MONTH grouping.
 
 ## Operations
 Return 1-4 one-key operations in order: ask starts a query; patch changes named fields on focus,
 side or pending; compare uses explicit windows; compare_previous=N compares the active rolling N
 months with the prior N; investigate_comparison explains a shown pair by merchant, keeping its
 windows and filters. measure selects a metric; select_operand chooses a side; reset clears;
-restore_previous=N; balance; list_contacts (keeps payment draft); smalltalk (GREETING/THANKS/
-IDENTITY/HELP);
-create_visualization/update_visualization choose AUTO/BAR/LINE (no bank call).
+restore_previous=N; balance; list_contacts; list_categories (supported labels, no query);
+ask_correction (the user says you misunderstood but has not said what to change);
+smalltalk (GREETING/THANKS/IDENTITY/HELP); visualize/update_visualization AUTO/BAR/LINE
+(no bank call).
 prepare_bizum(recipient, amount_minor); prepare_transfer
 (recipient, amount_minor) for a named payee when "transferencia" is said. New payees require a
 user-written IBAN; code extracts it; never output an IBAN. Null means missing;
@@ -110,10 +118,11 @@ the last two complete months and equal named durations. A named month is its lat
 from the list. Never ask for a future window; delegate UNSUPPORTED.
 Highest individual expense: `limit=1`, no `group_by`; highest merchant total:
 `group_by=MERCHANT, limit=1`.
-Counts and movement lists use COUNT; lists include matching rows.
-Missing query window: never assume THIS_MONTH; ask for it. Incomplete financial queries use `ask`
-with every understood field and omit only what is missing. With no understood subject, return an
-empty `ask` so the transition can request one.
+Shape: list=RECORDS+COUNT; "how many"=SCALAR+COUNT; category/shop/account=BREAKDOWN;
+time evolution=TIME_SERIES+DAY/WEEK/MONTH; top N=RANKING+limit. Use compare operations when needed.
+"Cuantos/cuántas" uses COUNT, never SUM.
+Never assume a missing window: ask. Balances use `balance` without a period. Incomplete queries use
+`ask` with understood fields only; an empty `ask` requests the subject.
 Patch only fields a follow-up names; otherwise keep the active query's scope and window. A plain
 "how much" or total request means SUM; never carry AVERAGE/COUNT into it. Shift an
 explicit window back a year for "previous year"; compare only when requested. SHARE is part / same-
@@ -124,14 +133,18 @@ investigate_comparison; it keeps the exact windows and filters. Do not ask which
 shows them.
 For a rolling N-month query and its prior N months, use compare_previous=N. Named comparisons keep
 filters/order. Follow-ups change the current focus; period-only turns change its window. If a
-question is open, patch its missing field on pending; keep the draft, never restart it. Use pending
+question is open, patch its missing field on pending; keep the draft. For CORRECTION, patch only
+named fields onto focus. A bare "you misunderstood" uses `ask_correction`; never reset. Use pending
 only for an open question; otherwise patch focus. "Return to the previous query"
 restores history item 1. "All categories/movements" clears top-N. Explicit account names populate
 accounts; [] means all. Named-payee transfers use prepare_transfer, including missing amounts or a
 user-written IBAN; Bizum uses prepare_bizum. Never invent amounts. Delegate other transfers and
 bookings.
-Past activity is a query, never a payment: "envié", "hice", "mandé" and "pagué" use ask/patch;
-prepare_bizum/prepare_transfer require an explicit request to send money. Nómina/sueldo/salario
+Past activity is a query, never a payment: "envié", "hice", "mandé" and "pagué" use ask/patch.
+When the user proposes making a Bizum, start a resumable draft even if amount or recipient is
+missing;
+listing available contacts alone uses `list_contacts`. A draft only prepares a bank preview;
+confirmation stays explicit. Transfers require an explicit request. Nómina/sueldo/salario
 filters mean SALARY and INCOME, including in a follow-up.
 Visuals: restyle a shown chart; else create one.
 Operations JSON only.
@@ -223,7 +236,7 @@ def examples(today: date) -> tuple[tuple[str, str, str], ...]:
             _answer(
                 {
                     "patch": {
-                        "target": "pending",
+                        "target": "focus",
                         "changes": _items(window={"counted": {"period": "LAST_N_MONTHS", "n": 12}}),
                     }
                 }
@@ -396,7 +409,34 @@ def _items(**fields: object) -> list[dict[str, object]]:
 
 
 def _answer(*operations: dict[str, object]) -> str:
-    return json.dumps({"operations": list(operations)}, ensure_ascii=False, separators=(",", ":"))
+    """Render few-shot asks with the required result discriminator in their fields."""
+    normalized: list[dict[str, object]] = []
+    for operation in operations:
+        fields = operation.get("ask")
+        if not isinstance(fields, list):
+            normalized.append(operation)
+            continue
+        names = {next(iter(item)) for item in fields if isinstance(item, dict) and item}
+        if "result_kind" not in names:
+            values = {
+                key: value
+                for item in fields
+                if isinstance(item, dict)
+                for key, value in item.items()
+            }
+            group_by = values.get("group_by", "NONE")
+            kind = (
+                ResultKind.RANKING
+                if values.get("limit") is not None
+                else ResultKind.TIME_SERIES
+                if group_by in {"DAY", "WEEK", "MONTH"}
+                else ResultKind.BREAKDOWN
+                if group_by != "NONE"
+                else ResultKind.SCALAR
+            )
+            fields = [*fields, {"result_kind": kind.value}]
+        normalized.append({**operation, "ask": fields})
+    return json.dumps({"operations": normalized}, ensure_ascii=False, separators=(",", ":"))
 
 
 _REPAIR: Final = Template("""
@@ -503,6 +543,11 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
         "Que contactos tengo?",
         _answer({"list_contacts": True}),
     )
+    list_categories_example = (
+        "",
+        "Categorias?",
+        _answer({"list_categories": True}),
+    )
     category_breakdown = (
         "no current query",
         "Cuanto gaste por categoria en los ultimos tres meses?",
@@ -588,7 +633,7 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
     movement_count = (
         "no current query",
         "Enséñame los movimientos",
-        _answer({"ask": _items(direction="ALL", metric="COUNT")}),
+        _answer({"ask": _items(direction="ALL", metric="COUNT", result_kind="RECORDS")}),
     )
     average_to_total = (
         f"On screen: {_focus(state.focus, today)}",
@@ -614,7 +659,7 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
     else:
         selected.append(unsupported_salary_share)
     pending_window_example = (
-        "open question asks for WINDOW; already understood subject and filters stay unchanged",
+        "pending period; keep subject and filters",
         "El mes pasado",
         _answer(
             {
@@ -650,7 +695,12 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
     ):
         selected.insert(4, previous_three_months_comparison)
     elif isinstance(focus, ComparisonFocus):
-        selected[4] = _why_comparison_example()
+        selected = [
+            _why_comparison_example(),
+            all_examples[10],
+            all_examples[11],
+            all_examples[16],
+        ]
     elif (
         isinstance(focus, QueryFocus)
         and isinstance(focus.plan, FinancialPlan)
@@ -658,8 +708,6 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
         and focus.plan.group_by is GroupBy.NONE
     ):
         selected[3] = category_follow_up
-    if state.active_visual is not None:
-        selected[7] = all_examples[17]
     # Keep the month-reference example with an active analytical query. A comparison already on
     # screen has its own change-measure and investigation examples, so this is redundant there.
     if state.focus is not None and not isinstance(state.focus, QueryFocus):
@@ -668,7 +716,8 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
     # active; freeing that space keeps the largest comparison prompt within the model's context.
     if state.focus is not None and state.payment is None:
         selected = [example for example in selected if example is not all_examples[19]]
-    selected.append(single_largest_movement)
+    if not isinstance(state.focus, ComparisonFocus):
+        selected.append(single_largest_movement)
     if state.focus is None and state.pending is None:
         selected.append(movement_count)
     elif not isinstance(state.focus, ComparisonFocus):
@@ -682,8 +731,6 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
                 _why_comparison_example(),
                 all_examples[10],
                 all_examples[11],
-                all_examples[16],
-                all_examples[17],
             ]
         elif isinstance(state.focus, QueryFocus):
             selected = [
@@ -696,7 +743,31 @@ def _prompt_examples(today: date, state: DialogueState) -> tuple[tuple[str, str,
             ]
         else:
             selected = [all_examples[0], pending_window_example, all_examples[16], all_examples[17]]
-        selected.append(movement_count)
+        if not isinstance(state.focus, ComparisonFocus):
+            selected.append(movement_count)
+    if state.pending is not None and state.pending.missing.value == "CORRECTION":
+        ask_correction_example = (
+            "an active query; the user says they were misunderstood without naming a change",
+            "Perdona, no me has entendido",
+            _answer({"ask_correction": True}),
+        )
+        fill_correction_example = (
+            "an open CORRECTION question; the previous query is expenses for gasoline last month",
+            "Me refería al alquiler",
+            _answer(
+                {
+                    "patch": {
+                        "target": "focus",
+                        "changes": _items(categories=["HOUSING_RENT"]),
+                    }
+                }
+            ),
+        )
+        selected = [ask_correction_example, fill_correction_example]
+    if state.active_visual is not None:
+        selected = [example for example in selected if example != all_examples[16]]
+        selected.append(all_examples[17])
+    selected.append(list_categories_example)
     return tuple(selected)
 
 
@@ -757,7 +828,7 @@ def _state(
             lines.append(f"Previous answered query [{index}]: {_focus(entry.focus, today, names)}")
         if not history:
             lines.append("Previous answered query: none")
-    if state.active_result is not None:
+    if state.active_artifact is not None:
         lines.append(
             "Reusable bank result: the last answered financial query is available as bounded "
             "aggregates; a visual restyle can reuse it without another bank query."
@@ -796,8 +867,13 @@ def _state(
         )
     elif isinstance(state.payment, PaymentConfirmationPending):
         lines.append(
-            "A bank-authored payment preview is awaiting an explicit yes or no; "
-            "do not start another payment or treat any other reply as confirmation."
+            "A bank-authored payment preview is awaiting an explicit yes or no. The application "
+            "routes a clear yes or no to that preview without asking you. If the user clearly "
+            "changes the payment, express the replacement with a typed payment operation; never "
+            "treat a changed amount, recipient, or concept as approval of the shown preview. If "
+            "an unrelated question should be answered while leaving the preview pending. "
+            "The application cancels the old bank intent before preparing any replacement and "
+            "requires a fresh confirmation."
         )
     if state.own_transfer is not None:
         transfer = state.own_transfer
@@ -916,11 +992,12 @@ def _fields_of(plan: FinancialPlan | TopMovements) -> PlanFields:
         excluded_merchants=plan.excluded_merchants or None,
     )
     if isinstance(plan, TopMovements):
-        return replace(said, limit=plan.rank)
+        return replace(said, limit=plan.rank, result_kind=ResultKind.RANKING)
     return replace(
         said,
         people=plan.counterparties or None,
         metric=plan.metric,
+        result_kind=plan.result_kind,
         group_by=None if plan.group_by is GroupBy.NONE else plan.group_by,
         limit=plan.group_limit,
     )

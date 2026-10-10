@@ -49,7 +49,7 @@ from finguard_orchestrator.domain.engine.transitions import (
     Work,
     apply,
 )
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, ResultKind
 from finguard_orchestrator.domain.models.account_summary import Holding
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -1367,3 +1367,86 @@ def test_every_engine_type_resolves_its_own_annotations(cls: type) -> None:
     # A codec or a schema builder reads these with `get_type_hints`; a forward reference to a
     # name another module defines would make that raise.
     assert typing.get_type_hints(cls)
+
+
+def test_breakdown_plan_preserves_result_shape_and_does_not_default_to_top_one() -> None:
+    transition = apply(
+        EMPTY,
+        [
+            Ask(
+                PlanFields(
+                    direction=Direction.EXPENSE,
+                    window=JULY,
+                    group_by=GroupBy.CATEGORY,
+                    result_kind=ResultKind.BREAKDOWN,
+                )
+            )
+        ],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert isinstance(transition.work.plan, FinancialPlan)
+    assert transition.work.plan.result_kind is ResultKind.BREAKDOWN
+    assert transition.work.plan.group_by is GroupBy.CATEGORY
+    assert transition.work.plan.group_limit is None
+
+
+def test_records_and_scalar_count_are_distinct_query_contracts() -> None:
+    records = apply(
+        EMPTY,
+        [
+            Ask(
+                PlanFields(
+                    direction=Direction.ALL,
+                    window=JULY,
+                    metric=Metric.COUNT,
+                    result_kind=ResultKind.RECORDS,
+                )
+            )
+        ],
+        today=TODAY,
+        grounds=G,
+    )
+    count = apply(
+        EMPTY,
+        [
+            Ask(
+                PlanFields(
+                    direction=Direction.ALL,
+                    window=JULY,
+                    metric=Metric.COUNT,
+                    result_kind=ResultKind.SCALAR,
+                )
+            )
+        ],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert isinstance(records.work.plan, FinancialPlan)
+    assert records.work.plan.result_kind is ResultKind.RECORDS
+    assert isinstance(count.work.plan, FinancialPlan)
+    assert count.work.plan.result_kind is ResultKind.SCALAR
+
+
+def test_breakdown_rejects_a_top_limit_that_changes_the_requested_shape() -> None:
+    transition = apply(
+        EMPTY,
+        [
+            Ask(
+                PlanFields(
+                    direction=Direction.EXPENSE,
+                    window=JULY,
+                    group_by=GroupBy.CATEGORY,
+                    limit=1,
+                    result_kind=ResultKind.BREAKDOWN,
+                )
+            )
+        ],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert transition.work is None
+    assert transition.reply is not None and transition.reply.missing is Missing.SUBJECT

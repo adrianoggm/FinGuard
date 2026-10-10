@@ -17,7 +17,7 @@ from uuid import UUID
 
 from finguard_orchestrator.domain.constants import MAX_SUPPORTING_MOVEMENTS
 from finguard_orchestrator.domain.engine.transitions import Work
-from finguard_orchestrator.domain.enums import Metric
+from finguard_orchestrator.domain.enums import Metric, ResultKind
 from finguard_orchestrator.domain.errors import DomainError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
@@ -116,7 +116,10 @@ async def execute(
         case FinancialPlan() as asked:
             plan = _scoped(asked, ids)
             answer = await run(
-                plan, MAX_SUPPORTING_MOVEMENTS if plan.metric in _READ_FROM_MOVEMENTS else None
+                plan,
+                MAX_SUPPORTING_MOVEMENTS
+                if plan.metric in _READ_FROM_MOVEMENTS or plan.result_kind is ResultKind.RECORDS
+                else None,
             )
             if plan.metric is Metric.CUMULATIVE:
                 answer = cumulative_calculator.accumulate(answer, plan.group_by)

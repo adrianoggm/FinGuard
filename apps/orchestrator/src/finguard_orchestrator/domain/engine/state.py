@@ -16,7 +16,7 @@ from typing import ClassVar
 from uuid import UUID, uuid4
 
 from finguard_orchestrator.domain.constants import MAX_PAYMENT_MINOR
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, ResultKind
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import ChartSpec, VisualProfile
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview
@@ -55,6 +55,7 @@ class Missing(StrEnum):
     ACCOUNT = "ACCOUNT"
     PERSON = "PERSON"
     OPERAND = "OPERAND"
+    CORRECTION = "CORRECTION"
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,9 @@ class PlanFields:
     excluded_categories: tuple[str, ...] | None = None
     excluded_merchants: tuple[str, ...] | None = None
     metric: Metric | None = None
+    # Desired result shape is separate from metric: COUNT may be a scalar answer or accompany a
+    # RECORDS collection. None is reserved for old checkpoints and non-query operations.
+    result_kind: ResultKind | None = None
     group_by: GroupBy | None = None
     limit: int | None = None
     clear_limit: bool | None = None
@@ -166,12 +170,23 @@ class DialogueTurn:
     answered: str
 
 
-@dataclass(frozen=True)
-class ActiveQueryResult:
-    """Bounded, aggregate-only result that later graph operations may visualize or refine.
+class ArtifactStatus(StrEnum):
+    VERIFIED = "VERIFIED"
+    PARTIAL = "PARTIAL"
+    EMPTY = "EMPTY"
 
-    It deliberately carries no movement rows. The original plan and aggregates let a chart edit
-    reuse what banking already answered without copying a transaction ledger into checkpoints.
+
+class ArtifactSource(StrEnum):
+    BANKING_API = "BANKING_API"
+
+
+@dataclass(frozen=True)
+class FinancialArtifact:
+    """Bounded, bank-backed financial data with semantic identity and verified provenance.
+
+    This first artifact version retains the aggregate shapes needed for chart edits and comparison
+    views. It deliberately carries no movement rows; record artifacts will use a separately scoped
+    data reference instead of copying a transaction ledger into conversational checkpoints.
     """
 
     plan: FinancialPlan
@@ -179,20 +194,32 @@ class ActiveQueryResult:
     total_minor: int
     movement_count: int
     groups: tuple[Group, ...]
+    # Stable identities let follow-up operations address the plan and its bank-authored result
+    # without treating an aggregate, a chart, and a query as interchangeable.
+    query_id: str = ""
+    artifact_id: str = ""
     period_start: date | None = None
     period_end: date | None = None
     result_version: int = 1
     comparison: ComparisonPlan | None = None
     comparison_groups: tuple[tuple[Group, ...], tuple[Group, ...]] | None = None
+    result_kind: ResultKind = ResultKind.SCALAR
+    status: ArtifactStatus = ArtifactStatus.VERIFIED
+    source: ArtifactSource = ArtifactSource.BANKING_API
+    provenance: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if (self.result_kind is ResultKind.COMPARISON) != (self.comparison is not None):
+            raise ValueError("comparison artifact kind and operands must agree")
+        if self.status is ArtifactStatus.EMPTY and self.movement_count != 0:
+            raise ValueError("empty financial artifact cannot contain movements")
         if len(self.groups) > 100 or any(len(group.key) > 256 for group in self.groups):
-            raise ValueError("active query result exceeds its bounded artifact size")
+            raise ValueError("financial artifact exceeds its bounded result size")
         if self.comparison_groups is not None and any(
             len(side) > 100 or any(len(group.key) > 256 for group in side)
             for side in self.comparison_groups
         ):
-            raise ValueError("active comparison result exceeds its bounded artifact size")
+            raise ValueError("financial comparison artifact exceeds its bounded result size")
         if (self.comparison is None) != (self.comparison_groups is None):
             raise ValueError("comparison plan and aggregates must be stored together")
 
@@ -205,6 +232,7 @@ class ActiveVisual:
     version: int
     spec: ChartSpec
     profile: VisualProfile
+    view_id: str = ""
 
     def __post_init__(self) -> None:
         if self.result_version < 1 or self.version < 1:
@@ -267,6 +295,10 @@ class PaymentConfirmationPending:
     # Opaque LangGraph workflow handle. It identifies the durable pause, never authorizes a payment;
     # the exact preview and the bank command remain the authority when a reply resumes it.
     workflow_id: str | None = None
+    # The user-supplied, bank-grounded fields that produced this preview. Retaining the draft lets
+    # the planner interpret a later correction without asking the user to repeat the payee or note.
+    # The preview remains authoritative for the confirmation that is currently open.
+    draft: PaymentDraft | None = None
 
 
 PaymentWorkflow = PaymentDraftPending | PaymentConfirmationPending
@@ -280,7 +312,7 @@ class DialogueState:
     pending: Pending | None = None
     scope: Scope = Scope()
     turns: tuple[DialogueTurn, ...] = ()
-    active_result: ActiveQueryResult | None = None
+    active_artifact: FinancialArtifact | None = None
     active_visual: ActiveVisual | None = None
     payment: PaymentWorkflow | None = None
     own_transfer: OwnTransferDraftPending | None = None

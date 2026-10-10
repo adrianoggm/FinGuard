@@ -15,6 +15,7 @@ from typing import Any, Final
 from uuid import UUID
 
 from finguard_orchestrator.application.commands import pay
+from finguard_orchestrator.application.engine import executor as engine_executor
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.application.queries import financial_turn
 from finguard_orchestrator.domain import enums
@@ -42,6 +43,7 @@ from finguard_orchestrator.domain.enums import (
     TransactionType,
 )
 from finguard_orchestrator.domain.models import (
+    account_summary,
     chart,
     contact,
     conversation,
@@ -69,7 +71,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
-STATE_SCHEMA_VERSION: Final = 13
+STATE_SCHEMA_VERSION: Final = 17
 ANSWER_SCHEMA_VERSION: Final = 1
 
 _CLASSES: Final[dict[str, type]] = {
@@ -86,6 +88,8 @@ _CLASSES: Final[dict[str, type]] = {
         operations.RestorePrevious,
         operations.Balance,
         operations.ListContacts,
+        operations.ListCategories,
+        operations.AskCorrection,
         operations.Clarify,
         operations.Smalltalk,
         operations.Delegate,
@@ -128,11 +132,13 @@ _ENUMS: Final[dict[str, type[StrEnum]]] = {
 # Reservation replay serializes a completed answer too. Register dataclasses and string enums
 # only from these source modules; JSON payloads cannot name an arbitrary import path or class.
 _SERIALIZATION_MODULES = (
+    engine_executor,
     financial_turn,
     pay,
     dialogue_state,
     conversation,
     chart,
+    account_summary,
     contact,
     expert_agents,
     query_answer,
@@ -163,6 +169,9 @@ for _module in _SERIALIZATION_MODULES:
                 raise RuntimeError(f"duplicate checkpoint enum name: {_name}")
             _ENUMS[_name] = _candidate
 _CLASSES[EngineAnswer.__name__] = EngineAnswer
+# Schema 1–16 stored this value as `ActiveQueryResult` under `active_result`. The name remains a
+# decoder alias only; all current writes and state access use `FinancialArtifact`/`active_artifact`.
+_CLASSES["ActiveQueryResult"] = dialogue_state.FinancialArtifact
 
 
 class UnknownCheckpointTypeError(ValueError):
@@ -197,25 +206,60 @@ def dumps_state(state: DialogueState) -> str:
 
 
 def loads_state(text: str) -> DialogueState:
-    """Decode current state and migrate the two earlier typed state schemas in memory."""
+    """Decode current state and migrate earlier typed state schemas in memory."""
     value = json.loads(text)
     schema = value.get("schema_version")
-    if schema not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, STATE_SCHEMA_VERSION}:
+    if schema not in {*range(1, STATE_SCHEMA_VERSION), STATE_SCHEMA_VERSION}:
         raise UnknownCheckpointTypeError(f"dialogue schema {value.get('schema_version')}")
+    stored_state = value.get("state", {}).get("f", {})
+    if schema < STATE_SCHEMA_VERSION and "active_result" in stored_state:
+        stored_state["active_artifact"] = stored_state.pop("active_result")
+        _migrate_financial_artifact(stored_state.get("active_artifact"))
     state = _decoded(value.get("state"))
     if not isinstance(state, DialogueState):
         raise UnknownCheckpointTypeError("payload is not DialogueState")
-    stored_state = value.get("state", {}).get("f", {})
-    stored_result = stored_state.get("active_result")
-    result_fields = stored_result.get("f", {}) if isinstance(stored_result, dict) else {}
-    if state.active_result is not None and "result_version" not in result_fields:
+    stored_artifact = stored_state.get("active_artifact")
+    artifact_fields = stored_artifact.get("f", {}) if isinstance(stored_artifact, dict) else {}
+    if state.active_artifact is not None and "result_version" not in artifact_fields:
         state = dataclasses.replace(
             state,
-            active_result=dataclasses.replace(
-                state.active_result, result_version=max(1, state.version)
+            active_artifact=dataclasses.replace(
+                state.active_artifact, result_version=max(1, state.version)
             ),
         )
     return state
+
+
+def _migrate_financial_artifact(encoded: Any) -> None:
+    """Upgrade the old aggregate cache to the explicit artifact contract before decoding."""
+    if not isinstance(encoded, dict):
+        return
+    fields = encoded.get("f")
+    if not isinstance(fields, dict):
+        return
+    if encoded.get("$type") == "ActiveQueryResult":
+        encoded["$type"] = "FinancialArtifact"
+    if "result_kind" not in fields:
+        comparison = fields.get("comparison")
+        plan_value = fields.get("plan", {})
+        plan = plan_value.get("f", {}) if isinstance(plan_value, dict) else {}
+        plan_kind = plan.get("result_kind")
+        group_by = plan.get("group_by")
+        if comparison is not None:
+            kind = "COMPARISON"
+        elif isinstance(plan_kind, dict):
+            kind = plan_kind.get("v", "SCALAR")
+        elif isinstance(group_by, dict) and group_by.get("v") == "MONTH":
+            kind = "TIME_SERIES"
+        elif isinstance(group_by, dict) and group_by.get("v") not in {None, "NONE"}:
+            kind = "BREAKDOWN"
+        else:
+            kind = "SCALAR"
+        fields["result_kind"] = {"$enum": "ResultKind", "v": kind}
+    fields.setdefault("status", {"$enum": "ArtifactStatus", "v": "VERIFIED"})
+    fields.setdefault("source", {"$enum": "ArtifactSource", "v": "BANKING_API"})
+    query_id = fields.get("query_id")
+    fields.setdefault("provenance", {"$tuple": [query_id] if query_id else []})
 
 
 def dumps_answer(answer: EngineAnswer) -> str:

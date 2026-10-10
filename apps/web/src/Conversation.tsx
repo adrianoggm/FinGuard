@@ -647,8 +647,9 @@ function Bubble({ turn }: { turn: Turn }) {
 
   const { answer } = turn;
   const parts = answer.parts ?? [];
+  const chart = chartForResponse(answer);
   const hasVisualization = Boolean(
-    answer.visualization || parts.some((part) => part.visualization),
+    chart || parts.some((part) => chartForResponse(part)),
   );
   const className = [
     "bubble",
@@ -664,13 +665,13 @@ function Bubble({ turn }: { turn: Turn }) {
           {parts.map((part, index) => (
             <section className="compound-part" key={index}>
               <p>{part.text}</p>
-              <Chart visualization={part.visualization ?? null} currency={part.currency} />
+              <Chart visualization={chartForResponse(part)} currency={part.currency} />
               {/* Each part carries its own save authority and always did; this end was dropping it,
                   so a chart asked for in a compound question was the one chart nobody could keep. */}
               {part.save_candidate && (
                 <SaveMetricControl
                   token={part.save_candidate.definition_token}
-                  suggestion={chartTitle(part.visualization ?? null)}
+                  suggestion={chartTitle(chartForResponse(part))}
                 />
               )}
               <AnswerEvidence answer={part} />
@@ -680,11 +681,11 @@ function Bubble({ turn }: { turn: Turn }) {
       ) : (
         <>
           <p>{answer.text}</p>
-          <Chart visualization={answer.visualization ?? null} currency={answer.currency} />
+          <Chart visualization={chart} currency={answer.currency} />
           {answer.save_candidate && (
             <SaveMetricControl
               token={answer.save_candidate.definition_token}
-              suggestion={chartTitle(answer.visualization ?? null)}
+              suggestion={chartTitle(chart)}
             />
           )}
           <AnswerEvidence answer={answer} />
@@ -697,6 +698,18 @@ function Bubble({ turn }: { turn: Turn }) {
       <BookingPanel state={answer.conversation} />
     </div>
   );
+}
+
+/** The server composition decides whether the chart block belongs in this response. */
+function chartForResponse(answer: Answer): NonNullable<Answer["visualization"]> | null {
+  const visualization = answer.visualization ?? null;
+  if (answer.visual_response === undefined || answer.visual_response === null) {
+    return visualization;
+  }
+  const block = answer.visual_response.blocks.find((item) => item.type === "chart");
+  return block && visualization?.kind === "chart" && block.chart_id === visualization.chart_id
+    ? visualization
+    : null;
 }
 
 /**
@@ -742,7 +755,12 @@ export function AnswerEvidence({ answer }: { answer: Answer }) {
   // `answer.visualization` (`materializeVisualizationDerivation`, called before the turn is ever
   // pushed), so `answer.visualization` alone is what "shows a chart" means here, same as
   // `Bubble`'s own `hasVisualization` above. §12/R6: inert -- no button, no link, no handler.
-  const explainsAChart = answer.explanation && answer.visualization?.kind === "chart";
+  const displayedChart = chartForResponse(answer);
+  const breakdownBlock = answer.visual_response?.blocks.find((item) => item.type === "breakdown");
+  const showsBreakdown = answer.visual_response
+    ? Boolean(breakdownBlock)
+    : isBreakdown(answer);
+  const explainsAChart = answer.explanation && displayedChart?.kind === "chart";
   return (
     <>
       {explainsAChart && (
@@ -797,12 +815,12 @@ export function AnswerEvidence({ answer }: { answer: Answer }) {
           </p>
         </details>
       )}
-      {isBreakdown(answer) && (
+      {showsBreakdown && (
         <details open={
           answer.conversation?.last_plan?.group_by === "MONTH" ||
           answer.conversation?.last_plan?.group_by === "CATEGORY"
         }>
-          <summary>{answer.visualization ? "Ver los datos" : "Ver el desglose"}</summary>
+          <summary>{displayedChart ? "Ver los datos" : "Ver el desglose"}</summary>
         <ul className="groups">
           {answer.groups.map((group) => (
             <li key={group.key}>

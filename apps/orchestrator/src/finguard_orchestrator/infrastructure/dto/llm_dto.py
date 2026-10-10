@@ -1102,8 +1102,54 @@ class PlanContextTraceResponse(_Payload):
     merchant_terms: list[str] = []
     group_by: str = "NONE"
     metric: str = "SUM"
+    result_kind: str | None = Field(default=None, exclude_if=lambda value: value is None)
     group_limit: int | None = None
     rank: int | None = None
+    query_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    artifact_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    view_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class MetricCardBlock(_Payload):
+    type: Literal["metric"] = "metric"
+    block_id: str
+    artifact_id: str
+    field: Literal["total", "difference", "movement_count"]
+
+
+class BreakdownBlock(_Payload):
+    type: Literal["breakdown"] = "breakdown"
+    block_id: str
+    artifact_id: str
+    dimension: Literal["category", "merchant", "month", "account", "counterparty"]
+
+
+class ChartBlock(_Payload):
+    type: Literal["chart"] = "chart"
+    block_id: str
+    artifact_id: str
+    view_id: str
+    chart_id: str
+
+
+class TransactionTableBlock(_Payload):
+    type: Literal["transaction_table"] = "transaction_table"
+    block_id: str
+    artifact_id: str
+
+
+VisualResponseBlock = Annotated[
+    MetricCardBlock | BreakdownBlock | ChartBlock | TransactionTableBlock,
+    Field(discriminator="type"),
+]
+
+
+class VisualResponseSpec(_Payload):
+    """Closed, value-free renderer composition over verified financial artifacts."""
+
+    response_id: str
+    layout: Literal["compact", "financial_analysis", "table", "comparison"]
+    blocks: list[VisualResponseBlock]
 
 
 class QuestionResponse(_Payload):
@@ -1141,6 +1187,9 @@ class QuestionResponse(_Payload):
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
     visualization: VisualizationResponse | None = None
+    visual_response: VisualResponseSpec | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     visualization_derivation: VisualizationDerivation | None = None
     # What a voice client speaks instead of `text` -- present only on a VOICE request that drew a
     # chart this turn (Task 3); the screen keeps `text` regardless of channel.

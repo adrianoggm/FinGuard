@@ -425,6 +425,8 @@ def _question(
             if about:
                 return f"No tengo ninguna categoría «{about}». ¿Sobre qué quieres preguntar?"
             return "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo."
+        case Missing.CORRECTION:
+            return "¿Qué parte de la consulta anterior querías corregir?"
 
 
 # Stands in for the window a period question asks for, only so the subject can be named in the

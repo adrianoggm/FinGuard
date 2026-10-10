@@ -29,17 +29,21 @@ from finguard_orchestrator.application.commands.pay import (
     PrepareOwnTransferHandler,
 )
 from finguard_orchestrator.application.engine.answer_turn import AnswerTurnHandler, EngineAnswer
+from finguard_orchestrator.application.engine.executor import QueryRun
+from finguard_orchestrator.application.graph import codec, graph_turn, investigation
 from finguard_orchestrator.application.graph import graph as investigation_graph
-from finguard_orchestrator.application.graph import graph_turn, investigation
 from finguard_orchestrator.application.graph.graph import GraphPorts
 from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
+from finguard_orchestrator.domain.constants import MAX_SUPPORTING_MOVEMENTS
 from finguard_orchestrator.domain.engine.grounding import Grounds
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
+    AskCorrection,
     Clarify,
     Compare,
     Delegate,
     InvestigateComparison,
+    ListCategories,
     ListContacts,
     Operation,
     Patch,
@@ -51,12 +55,14 @@ from finguard_orchestrator.domain.engine.operations import (
     Visualize,
 )
 from finguard_orchestrator.domain.engine.state import (
+    ArtifactStatus,
     ComparisonFocus,
     DialogueState,
     DialogueTurn,
     Missing,
     PaymentConfirmationPending,
     PaymentDraftPending,
+    Pending,
     QueryFocus,
 )
 from finguard_orchestrator.domain.engine.transitions import apply
@@ -68,6 +74,7 @@ from finguard_orchestrator.domain.enums import (
     Period,
     PlanningOutcome,
     Rail,
+    ResultKind,
 )
 from finguard_orchestrator.domain.errors import BankingUnavailableError, NotAuthorisedError
 from finguard_orchestrator.domain.models.conversation import Workflow
@@ -185,17 +192,26 @@ class MerchantLedger:
 
     def __init__(self) -> None:
         self.ran: list[FinancialPlan | TopMovements] = []
+        self.requested_movements: list[int | None] = []
         self.failures: list[Exception] = []
         self.fail_on: dict[int, Exception] = {}
         self.attempts = 0
 
-    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+    async def run(
+        self, plan: FinancialPlan, *, movements: int | None = None, **_: object
+    ) -> QueryAnswer:
         self._fail()
         self.ran.append(plan)
+        self.requested_movements.append(movements)
         assert plan.date_range is not None
         groups = FIGURES[plan.date_range] if plan.group_by is GroupBy.MERCHANT else ()
         total = sum(g.total_minor for g in FIGURES[plan.date_range])
-        return QueryAnswer("EUR", total, 9, groups=groups)
+        rows = (
+            (Movement(datetime(2026, 7, 5, tzinfo=UTC), "Compra Mercadona", -1_250, "EXPENSE"),)
+            if plan.result_kind is ResultKind.RECORDS
+            else ()
+        )
+        return QueryAnswer("EUR", total, 9, groups=groups, movements=rows)
 
     async def ranked(self, ranking: TopMovements, **_: object) -> Movement | None:
         self._fail()
@@ -337,6 +353,45 @@ async def test_a_period_clarification_resumes_the_typed_movement_list() -> None:
     assert "movimientos" in second.result.text
 
 
+@pytest.mark.asyncio
+async def test_an_empty_model_ask_keeps_an_unanswered_account_clarification() -> None:
+    draft = PlanFields(
+        direction=Direction.EXPENSE,
+        window=JULY,
+        accounts=("cuenta principal",),
+    )
+    world = World(
+        (Clarify(Missing.ACCOUNT, about="cuenta principal", draft=draft),),
+        (Patch("focus", PlanFields(window=JUNE)),),
+        (Patch("focus", PlanFields(accounts=("Cuenta corriente",))),),
+    )
+    first = await world.ask(
+        sentence="Cuánto gasté en la cuenta principal este mes", request_id="account-1"
+    )
+    second = await world.ask(
+        conversation_id=first.state.conversation_id,
+        version=first.state.version,
+        sentence="¿Y el mes pasado?",
+        request_id="account-2",
+    )
+
+    assert second.result is not None
+    assert second.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert second.state.pending == Pending(Missing.ACCOUNT, draft.merged(PlanFields(window=JUNE)))
+    assert "cuenta" in second.result.text
+
+    third = await world.ask(
+        conversation_id=second.state.conversation_id,
+        version=second.state.version,
+        sentence="Cuenta corriente",
+        request_id="account-3",
+    )
+
+    assert third.result is not None and third.result.outcome == PlanningOutcome.PLANNED.value
+    assert third.state.pending is None
+    assert world.ledger.ran[-1].date_range == JUNE
+
+
 async def test_scalar_comparison_checkpoints_both_reads_without_merchant_relabeling() -> None:
     world = World(
         (
@@ -353,9 +408,11 @@ async def test_scalar_comparison_checkpoints_both_reads_without_merchant_relabel
     assert [plan.group_by for plan in world.ledger.ran] == [GroupBy.NONE, GroupBy.NONE]
     assert answer.result is not None
     assert "210,00" in answer.result.text and "410,00" in answer.result.text
-    assert answer.state.active_result is not None
-    assert answer.state.active_result.comparison is not None
-    assert answer.state.active_result.comparison_groups == ((), ())
+    assert answer.state.active_artifact is not None
+    assert answer.state.active_artifact.comparison is not None
+    assert answer.state.active_artifact.result_kind is ResultKind.COMPARISON
+    assert answer.state.active_artifact.status is ArtifactStatus.VERIFIED
+    assert answer.state.active_artifact.comparison_groups == ((), ())
 
 
 async def test_investigate_comparison_keeps_its_periods_and_reads_merchants() -> None:
@@ -987,6 +1044,34 @@ async def test_a_checkpoint_from_another_graph_version_is_not_resumed(
     assert GROUNDED_AMAZON in text_of(answer)
 
 
+@pytest.mark.asyncio
+async def test_explicit_payment_confirmation_survives_discarding_an_old_graph_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+    preview = await world.ask(
+        sentence="Hazle un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="old-checkpoint-payment-prepare",
+        caller_scopes=scopes,
+    )
+    calls = world.calls.count
+
+    monkeypatch.setattr(graph_turn, "GRAPH_VERSION", f"{investigation_graph.GRAPH_VERSION}+next")
+    paid = await world.ask(
+        conversation_id=preview.state.conversation_id,
+        version=preview.state.version,
+        sentence="sí",
+        request_id="old-checkpoint-payment-confirm",
+        caller_scopes=scopes,
+    )
+
+    assert paid.result is not None and paid.result.outcome == PaymentOutcome.PAID.value
+    assert bank.confirmed == [INTENT]
+    assert world.calls.count == calls
+
+
 # --- what never runs here -------------------------------------------------------------------------
 
 
@@ -1071,10 +1156,10 @@ async def test_chart_operation_reuses_the_prior_banking_result_and_keeps_continu
     assert chart.result.text == "Aqu\u00ed tienes el gr\u00e1fico de los resultados de la consulta."
     assert restyled.result.text == "He actualizado el gr\u00e1fico con la misma consulta."
     assert reads_after_chart == reads_after_query
-    assert chart.state.active_result == query.state.active_result
+    assert chart.state.active_artifact == query.state.active_artifact
     assert chart.state.active_visual is not None
     assert chart.state.active_visual.version == 1
-    assert chart.state.active_visual.result_version == query.state.active_result.result_version
+    assert chart.state.active_visual.result_version == query.state.active_artifact.result_version
     assert restyled.state.active_visual is not None
     assert restyled.state.active_visual.version == 2
     assert restyled.state.active_visual.result_version == chart.state.active_visual.result_version
@@ -1149,6 +1234,70 @@ async def test_category_chart_uses_human_readable_labels() -> None:
     assert chart.result.visual_decision.spec.limit is None
 
 
+async def test_query_and_visualization_compose_in_one_turn_without_hiding_the_breakdown() -> None:
+    class CategoryLedger(MerchantLedger):
+        async def run(self, plan: FinancialPlan, **kwargs: object) -> QueryAnswer:
+            answer = await super().run(plan, **kwargs)
+            return replace(
+                answer,
+                groups=(
+                    Group("HOUSING_RENT", 4_000, 1),
+                    Group("GROCERIES", 2_000, 2),
+                    Group("RESTAURANTS", 1_500, 1),
+                ),
+            )
+
+    world = World(
+        (
+            Ask(
+                PlanFields(
+                    direction=Direction.EXPENSE,
+                    window=JULY,
+                    result_kind=ResultKind.BREAKDOWN,
+                    group_by=GroupBy.CATEGORY,
+                )
+            ),
+            Visualize("ACTIVE_RESULT", "BAR"),
+        )
+    )
+    world.ledger = CategoryLedger()
+    world.handler = world.build()
+
+    answer = await world.ask(
+        sentence="Desglósame los gastos por categoría de julio y enséñamelo en un gráfico"
+    )
+
+    assert answer.result is not None
+    assert answer.result.outcome == PlanningOutcome.PLANNED.value
+    assert answer.result.visual_dataset is not None
+    assert answer.result.visual_decision is not None
+    rendered = question_to_dto(answer.result)
+    replayed_render = question_to_dto(answer.result)
+    assert rendered.plan_context is not None
+    assert rendered.plan_context.query_id
+    assert rendered.plan_context.artifact_id
+    assert rendered.plan_context.view_id
+    assert isinstance(rendered.visualization, ChartVisualizationResponse)
+    assert rendered.visualization.chart_id == rendered.plan_context.view_id
+    assert replayed_render.visualization == rendered.visualization
+    assert len(answer.result.groups) == 3
+    assert [group.key for group in answer.result.groups] == [
+        "HOUSING_RENT",
+        "GROCERIES",
+        "RESTAURANTS",
+    ]
+    assert answer.state.version == 1
+    assert answer.state.active_artifact is not None
+    assert answer.state.active_artifact.result_kind is ResultKind.BREAKDOWN
+    assert answer.state.active_artifact.status is ArtifactStatus.VERIFIED
+    assert answer.state.active_artifact.source.value == "BANKING_API"
+    assert answer.state.active_visual is not None
+    assert rendered.plan_context.query_id == answer.state.active_artifact.query_id
+    assert rendered.plan_context.artifact_id == answer.state.active_artifact.artifact_id
+    assert answer.state.active_visual.view_id == rendered.plan_context.view_id
+    assert len(world.ledger.ran) == 1
+
+
 async def test_an_ordinary_question_is_answered_as_the_engine_answers_it() -> None:
     world = World(GROCERIES_IN_JULY)
     canonical = AnswerTurnHandler(
@@ -1179,11 +1328,49 @@ async def test_an_ordinary_question_is_answered_as_the_engine_answers_it() -> No
     # The graph keeps a bounded bank aggregate in its canonical state for native chart operations;
     # the legacy adapter remains frozen and has no such reusable artifact yet.
     assert (
-        replace(answer.state, conversation_id=control.state.conversation_id, active_result=None)
+        replace(answer.state, conversation_id=control.state.conversation_id, active_artifact=None)
         == control.state
     )
-    assert answer.state.active_result is not None
+    assert answer.state.active_artifact is not None
     assert world.assessor.seen == []
+
+
+async def test_ordinary_bank_execution_is_checkpointed_before_presentation() -> None:
+    world = World(GROCERIES_IN_JULY)
+
+    answer = await world.ask(request_id="ordinary-checkpoint")
+
+    assert answer.result is not None
+    saved_graph = (await world.handler._graph.aget_state(world.last_config())).values  # noqa: SLF001
+    assert saved_graph["status"] == "committed"
+    assert isinstance(codec.loads_typed(saved_graph["execution_result"]), QueryRun)
+    assert saved_graph["bank_calls"] == world.ledger.attempts == 1
+
+    # Replaying the same request returns its committed answer and never repeats the banking read.
+    replay = await world.ask(request_id="ordinary-checkpoint")
+    assert replay.result == answer.result
+    assert world.ledger.attempts == 1
+
+
+async def test_records_result_kind_requests_and_returns_bank_movements() -> None:
+    world = World(
+        (
+            Ask(
+                PlanFields(
+                    direction=Direction.ALL,
+                    window=JULY,
+                    metric=Metric.COUNT,
+                    result_kind=ResultKind.RECORDS,
+                )
+            ),
+        )
+    )
+
+    answer = await world.ask(sentence="Enséñame los movimientos de julio")
+
+    assert answer.result is not None
+    assert world.ledger.requested_movements == [MAX_SUPPORTING_MOVEMENTS]
+    assert len(answer.result.movements) == 1
 
 
 # --- the reservation is released on every exit (R43) ----------------------------------------------
@@ -1582,6 +1769,171 @@ async def test_graph_prepares_a_grounded_contact_transfer_and_requires_explicit_
 
 
 @pytest.mark.asyncio
+async def test_payment_amount_correction_cancels_old_preview_and_requires_new_confirmation() -> (
+    None
+):
+    class IdentifiedBank(Bank):
+        async def prepare(self, request: Any, *, account_id: UUID, key: str) -> Any:
+            preview = await super().prepare(request, account_id=account_id, key=key)
+            return replace(preview, intent_id=UUID(int=600 + len(self.prepared)))
+
+    world = World((PrepareBizum("Marta Solis Vega", 1_500),))
+    bank = with_payment_commands(world, IdentifiedBank())
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+    preview = await world.ask(
+        sentence="Hazle un bizum de 15 euros a Marta Solis Vega con concepto tapas",
+        request_id="correct-bizum-prepare",
+        caller_scopes=scopes,
+    )
+    assert isinstance(preview.state.payment, PaymentConfirmationPending)
+    old_intent = preview.state.payment.preview.intent_id
+    assert preview.state.payment.draft is not None
+    assert preview.state.payment.draft.concept == "tapas"
+
+    world.interpreter._turns.append((PrepareBizum(None, 2_000),))  # noqa: SLF001
+    corrected = await world.ask(
+        conversation_id=preview.state.conversation_id,
+        version=preview.state.version,
+        sentence="mejor 20 euros",
+        request_id="correct-bizum-amount",
+        caller_scopes=scopes,
+    )
+
+    assert corrected.result is not None
+    assert corrected.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert "20,00" in corrected.result.text
+    assert isinstance(corrected.state.payment, PaymentConfirmationPending)
+    new_intent = corrected.state.payment.preview.intent_id
+    assert new_intent != old_intent
+    assert corrected.state.payment.preview.amount_minor == 2_000
+    assert corrected.state.payment.draft is not None
+    assert corrected.state.payment.draft.recipient_name == "Marta Solis Vega"
+    assert corrected.state.payment.draft.concept == "tapas"
+    assert bank.cancelled == [old_intent]
+    assert bank.confirmed == []
+    assert [request.amount_minor for request in bank.prepared] == [1_500, 2_000]
+
+    paid = await world.ask(
+        conversation_id=corrected.state.conversation_id,
+        version=corrected.state.version,
+        sentence="sí",
+        request_id="confirm-corrected-bizum",
+        caller_scopes=scopes,
+    )
+    assert paid.result is not None and paid.result.outcome == PaymentOutcome.PAID.value
+    assert bank.confirmed == [new_intent]
+
+
+@pytest.mark.asyncio
+async def test_question_during_preview_preserves_and_confirms_payment() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", 2_000),), GROCERIES_IN_JULY)
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+    preview = await world.ask(
+        sentence="Hazle un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="question-during-payment-prepare",
+        caller_scopes=scopes,
+    )
+
+    world.ledger.groups_for_next_turn = (Group("Mercadona", 41_000, 7),)
+    answered = await world.ask(
+        conversation_id=preview.state.conversation_id,
+        version=preview.state.version,
+        sentence="¿Cuánto gasté en julio?",
+        request_id="question-during-payment-preview",
+        caller_scopes=scopes,
+    )
+
+    assert answered.result is not None and "410,00" in answered.result.text
+    assert isinstance(answered.state.payment, PaymentConfirmationPending)
+    assert answered.state.payment.preview.amount_minor == 2_000
+    assert bank.cancelled == [] and bank.confirmed == []
+
+    paid = await world.ask(
+        conversation_id=answered.state.conversation_id,
+        version=answered.state.version,
+        sentence="sí",
+        request_id="confirm-after-interruption",
+        caller_scopes=scopes,
+    )
+    assert paid.result is not None and paid.result.outcome == PaymentOutcome.PAID.value
+    assert bank.confirmed == [INTENT]
+
+
+@pytest.mark.asyncio
+async def test_category_catalogue_is_answered_during_payment_and_preserves_the_preview() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", 2_000),), (ListCategories(),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+    preview = await world.ask(
+        sentence="Hazle un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="category-during-payment-prepare",
+        caller_scopes=scopes,
+    )
+
+    catalogue = await world.ask(
+        conversation_id=preview.state.conversation_id,
+        version=preview.state.version,
+        sentence="¿Qué categorías puedo consultar?",
+        request_id="category-during-payment-preview",
+        caller_scopes=scopes,
+    )
+
+    assert catalogue.result is not None
+    assert catalogue.result.outcome == "CATEGORIES"
+    assert "Puedo consultar estas categorías" in catalogue.result.text
+    assert isinstance(catalogue.state.payment, PaymentConfirmationPending)
+    assert catalogue.state.payment.preview.amount_minor == 2_000
+    assert bank.cancelled == [] and bank.confirmed == []
+
+    paid = await world.ask(
+        conversation_id=catalogue.state.conversation_id,
+        version=catalogue.state.version,
+        sentence="sí",
+        request_id="confirm-after-category-catalogue",
+        caller_scopes=scopes,
+    )
+    assert paid.result is not None and paid.result.outcome == PaymentOutcome.PAID.value
+    assert bank.confirmed == [INTENT]
+
+
+@pytest.mark.asyncio
+async def test_bare_correction_keeps_focus_and_applies_the_next_named_change() -> None:
+    world = World(
+        (Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, categories=("GROCERIES",))),),
+        (AskCorrection(),),
+        (Patch("focus", PlanFields(categories=("RESTAURANTS",))),),
+    )
+    first = await world.ask(
+        sentence="Cuánto gasté en supermercado en julio", request_id="correction-1"
+    )
+    asked = await world.ask(
+        conversation_id=first.state.conversation_id,
+        version=first.state.version,
+        sentence="Perdona, no me has entendido",
+        request_id="correction-2",
+    )
+
+    assert asked.result is not None
+    assert asked.result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "corregir" in asked.result.text
+    assert asked.state.pending is not None
+    assert asked.state.pending.missing is Missing.CORRECTION
+    assert asked.state.focus == first.state.focus
+
+    corrected = await world.ask(
+        conversation_id=asked.state.conversation_id,
+        version=asked.state.version,
+        sentence="Me refería a restaurantes",
+        request_id="correction-3",
+    )
+
+    assert corrected.state.pending is None
+    assert world.ledger.ran[-1].date_range == JULY
+    assert world.ledger.ran[-1].categories == ("RESTAURANTS",)
+
+
+@pytest.mark.asyncio
 async def test_transfer_operation_cannot_change_a_bizum_sentence_into_a_transfer() -> None:
     world = World((PrepareTransfer("Aitor Beltran Diaz", 2_000),))
     bank = with_payment_commands(world)
@@ -1970,7 +2322,7 @@ async def test_mixed_query_and_bizum_commit_once_and_keep_query_result() -> None
     assert "20,00" in answer.result.text
     assert "410,00" in answer.result.text
     assert answer.state.version == 1
-    assert answer.state.active_result is not None
+    assert answer.state.active_artifact is not None
     assert isinstance(answer.state.payment, PaymentConfirmationPending)
     assert len(world.ledger.ran) == 1
     assert len(bank.prepared) == 1
@@ -2002,6 +2354,7 @@ async def test_unclear_bizum_reply_reinterrupts_then_explicit_yes_confirms_once(
         request_id="prepare-unclear",
         caller_scopes=scopes,
     )
+    world.interpreter._turns.append((PrepareBizum(None, None),))  # noqa: SLF001
 
     unclear = await world.ask(
         conversation_id=prepared.state.conversation_id,
@@ -2130,7 +2483,7 @@ async def test_mixed_query_and_own_transfer_share_one_canonical_commit() -> None
     assert "410,00" in answer.result.text
     assert "20,00" in answer.result.text
     assert answer.state.version == 1
-    assert answer.state.active_result is not None
+    assert answer.state.active_artifact is not None
     assert isinstance(answer.state.payment, PaymentConfirmationPending)
     assert len(world.ledger.ran) == 1
     assert len(bank.prepared) == 1
@@ -2254,6 +2607,6 @@ async def test_explained_comparison_can_be_charted_and_restyled_without_another_
     assert restyled.result is not None and restyled.result.visual_decision is not None
     assert restyled.result.visual_decision.spec.mark == "line"
     assert len(world.ledger.ran) == read_count
-    assert chart.state.active_result is not None
-    assert chart.state.active_result.comparison is not None
-    assert chart.state.active_result.comparison_groups is not None
+    assert chart.state.active_artifact is not None
+    assert chart.state.active_artifact.comparison is not None
+    assert chart.state.active_artifact.comparison_groups is not None

@@ -25,6 +25,8 @@ build/
 # Playwright's MCP output: page snapshots and console logs from driving the web client. They are a
 # record of one session, not of the repository.
 .playwright-mcp/
+playwright-report/
+test-results/
 
 # Nota local sobre la evolución del orquestador. Es material de lectura personal, no del repositorio.
 docs/evolucion-orchestrator.md

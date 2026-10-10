@@ -33,6 +33,7 @@ from finguard_orchestrator.domain.enums import (
     GroupBy,
     Metric,
     Period,
+    ResultKind,
     TransactionType,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
@@ -132,6 +133,9 @@ class FinancialPlan:
     transaction_ids: tuple[UUID, ...] = field(default_factory=tuple)
     transaction_types: tuple[TransactionType, ...] = field(default_factory=tuple)
     explain: bool = False
+    # Result shape is independent from `metric`: COUNT can be a scalar or the measure attached to
+    # a movement collection. None means a migrated plan did not carry the discriminator.
+    result_kind: ResultKind | None = None
 
     def __post_init__(self) -> None:
         if (self.period is None) == (self.date_range is None):

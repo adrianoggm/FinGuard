@@ -52,7 +52,7 @@ from finguard_orchestrator.domain.engine.state import (
     RatioFocus,
     Scope,
 )
-from finguard_orchestrator.domain.enums import GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import GroupBy, Metric, Period, ResultKind
 from finguard_orchestrator.domain.errors import DomainError, InvalidValueError
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -145,14 +145,6 @@ def apply(
             # The legacy route accepts the operation through its existing chart adapter. The
             # LangGraph route intercepts it earlier and executes it against canonical artifacts.
             return Transition(state, None, Delegate("CHART"))
-        if isinstance(op, Clarify):
-            # Only what it asks for (ruling R21). A name to quote comes from grounding, which
-            # found it in the holder's catalogues; from the model it is free text, and quoting
-            # it would show the person the model's words, a figure among them. Persist the open
-            # question even when the model itself chose to ask it, so a later restore can dismiss
-            # it and a later planner sees that the reply belongs to this question.
-            open_question = Pending(op.missing, op.draft)
-            return Transition(replace(resting, pending=open_question), None, Clarify(op.missing))
         if isinstance(op, RestorePrevious):
             try:
                 current, work = _restored(current, op.steps_back)
@@ -163,6 +155,13 @@ def apply(
         if isinstance(op, (PrepareBizum, PrepareOwnTransfer)):
             raise InvariantViolationError("payment operation escaped graph dispatch")
         op = _fill_pending(current, op)
+        if isinstance(op, Clarify):
+            # Only what it asks for (ruling R21). A name to quote comes from grounding, which
+            # found it in the holder's catalogues; from the model it is free text, and quoting
+            # it would show the person the model's words, a figure among them. Persist the open
+            # question even when it came from an empty answer to an existing clarification.
+            open_question = Pending(op.missing, op.draft)
+            return Transition(replace(resting, pending=open_question), None, Clarify(op.missing))
         if isinstance(op, (Smalltalk, Delegate, Visualize, Clarify)):
             raise InvariantViolationError("non-domain operation escaped transition dispatch")
         if not isinstance(
@@ -236,11 +235,19 @@ def _fill_pending(state: DialogueState, op: Operation) -> Operation:
         return op
     if isinstance(op, Ask):
         changes = op.fields
-    elif isinstance(op, Patch) and op.target == "focus":
+        if not changes.named():
+            return Clarify(pending.missing, draft=pending.draft)
+    elif isinstance(op, Patch) and op.target in {"focus", "pending"}:
         changes = op.changes
     else:
         return op
     fields = changes.named()
+    if pending.missing is Missing.CORRECTION and fields:
+        return Patch("focus", changes)
+    if pending.missing is Missing.ACCOUNT and fields:
+        # A period or filter can arrive while account scope is still unresolved. Accumulate it on
+        # the pending draft, then ask for the account again; there is no focus to patch yet.
+        return Patch("pending", changes)
     if pending.missing is Missing.WINDOW:
         expected = frozenset({"window"})
         fills_gap = fields == expected
@@ -714,6 +721,7 @@ _MOVES: Final[dict[str, frozenset[str]]] = {
     "excluded_categories": frozenset({"excluded_categories"}),
     "excluded_merchants": frozenset({"excluded_merchants"}),
     "metric": frozenset({"metric"}),
+    "result_kind": frozenset({"result_kind"}),
     "group_by": frozenset({"group_by"}),
     "limit": frozenset({"group_limit", "rank"}),
     "clear_limit": frozenset({"group_limit", "rank"}),
@@ -741,11 +749,12 @@ def _fields_of(plan: Plan) -> PlanFields:
         excluded_merchants=plan.excluded_merchants,
     )
     if isinstance(plan, TopMovements):
-        return replace(fields, people=(), limit=plan.rank)
+        return replace(fields, people=(), limit=plan.rank, result_kind=ResultKind.RANKING)
     return replace(
         fields,
         people=plan.counterparties,
         metric=plan.metric,
+        result_kind=plan.result_kind,
         group_by=plan.group_by,
         limit=plan.group_limit,
     )
@@ -760,9 +769,32 @@ def _built(said: PlanFields, today: date) -> Plan:
         raise _CannotApplyError(Missing.WINDOW)
     if direction is None:
         raise _CannotApplyError(Missing.SUBJECT)
+    group_by = said.group_by or GroupBy.NONE
+    result_kind = said.result_kind
+    if result_kind in {ResultKind.COMPARISON, ResultKind.INVESTIGATION}:
+        raise _CannotApplyError(Missing.OPERAND)
+    if result_kind is ResultKind.SCALAR and (
+        group_by is not GroupBy.NONE or said.limit is not None
+    ):
+        raise _CannotApplyError(Missing.SUBJECT)
+    if result_kind is ResultKind.RECORDS and (
+        group_by is not GroupBy.NONE or said.limit is not None or said.metric is not Metric.COUNT
+    ):
+        raise _CannotApplyError(Missing.SUBJECT)
+    if result_kind is ResultKind.RANKING and said.limit is None:
+        raise _CannotApplyError(Missing.SUBJECT)
+    if result_kind is ResultKind.BREAKDOWN and (
+        group_by not in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
+        or said.limit is not None
+    ):
+        raise _CannotApplyError(Missing.SUBJECT)
+    if result_kind is ResultKind.TIME_SERIES and (
+        group_by not in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH} or said.limit is not None
+    ):
+        raise _CannotApplyError(Missing.SUBJECT)
     period = window if isinstance(window, RelativePeriod) else None
     date_range = window if isinstance(window, AbsoluteRange) else None
-    if said.limit is not None and said.group_by in (None, GroupBy.NONE):
+    if said.limit is not None and group_by is GroupBy.NONE:
         if said.people or said.metric not in (None, Metric.SUM):
             # A ranking carries neither, and building one would drop them without a word.
             raise _CannotApplyError(Missing.SUBJECT)
@@ -790,6 +822,7 @@ def _built(said: PlanFields, today: date) -> Plan:
         metric=said.metric or Metric.SUM,
         group_by=said.group_by or GroupBy.NONE,
         group_limit=said.limit,
+        result_kind=result_kind,
     )
 
 

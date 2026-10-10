@@ -8022,6 +8022,7 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         counterparty_types=[item.value for item in plan.counterparty_types],
         group_by=plan.group_by.value,
         metric=plan.metric.value,
+        result_kind=plan.result_kind.value if plan.result_kind is not None else None,
         group_limit=plan.group_limit,
         include_internal=plan.include_internal,
         internal_only=plan.internal_only,

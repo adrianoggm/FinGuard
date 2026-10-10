@@ -146,6 +146,10 @@ export type PlanContext = {
   counterparty_types?: ("MERCHANT" | "PERSON" | "EMPLOYER" | "BILLER" | "ACCOUNT" | "BANK" | "UNKNOWN")[];
   group_by: string;
   metric: string;
+  result_kind?: "SCALAR" | "RECORDS" | "RANKING" | "BREAKDOWN" | "TIME_SERIES" | "COMPARISON" | "INVESTIGATION" | null;
+  query_id?: string | null;
+  artifact_id?: string | null;
+  view_id?: string | null;
   group_limit?: number | null;
   include_internal?: boolean;
   internal_only?: boolean;
@@ -399,6 +403,17 @@ export type Answer = {
   }[];
   movements: Movement[];
   visualization?: Visualization | null;
+  /** Value-free renderer composition whose blocks refer to verified artifacts. */
+  visual_response?: {
+    response_id: string;
+    layout: "compact" | "financial_analysis" | "table" | "comparison";
+    blocks: (
+      | { type: "metric"; block_id: string; artifact_id: string; field: "total" | "difference" | "movement_count" }
+      | { type: "breakdown"; block_id: string; artifact_id: string; dimension: "category" | "merchant" | "month" | "account" | "counterparty" }
+      | { type: "chart"; block_id: string; artifact_id: string; view_id: string; chart_id: string }
+      | { type: "transaction_table"; block_id: string; artifact_id: string }
+    )[];
+  } | null;
   visualization_derivation?: {
     source_chart_id: string;
     chart_id: string;

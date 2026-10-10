@@ -7,9 +7,11 @@ import pytest
 from finguard_orchestrator.application.graph import codec
 from finguard_orchestrator.domain.engine.operations import Ask, PrepareTransfer
 from finguard_orchestrator.domain.engine.state import (
-    ActiveQueryResult,
+    ArtifactSource,
+    ArtifactStatus,
     DialogueState,
     DialogueTurn,
+    FinancialArtifact,
     FocusHistoryEntry,
     OwnTransferDraftPending,
     PaymentConfirmationPending,
@@ -19,7 +21,7 @@ from finguard_orchestrator.domain.engine.state import (
     QueryFocus,
     Scope,
 )
-from finguard_orchestrator.domain.enums import Direction, Rail
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Rail, ResultKind
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview
 from finguard_orchestrator.domain.models.query_answer import Group
@@ -51,14 +53,21 @@ def test_dialogue_checkpoint_round_trips_bounded_aggregate_artifact() -> None:
     )
     state = DialogueState(
         uuid4(),
-        active_result=ActiveQueryResult(plan, "EUR", 12_500, 3, (Group("SUPERMARKET", 12_500, 3),)),
+        active_artifact=FinancialArtifact(
+            plan, "EUR", 12_500, 3, (Group("SUPERMARKET", 12_500, 3),)
+        ),
     )
 
-    restored = codec.loads_state(codec.dumps_state(state))
+    encoded = codec.dumps_state(state)
+    assert '"active_artifact"' in encoded
+    assert '"active_result"' not in encoded
+    restored = codec.loads_state(encoded)
 
     assert restored == state
-    assert restored.active_result is not None
-    assert restored.active_result.groups == (Group("SUPERMARKET", 12_500, 3),)
+    assert restored.active_artifact is not None
+    assert restored.active_artifact.groups == (Group("SUPERMARKET", 12_500, 3),)
+    assert restored.active_artifact.status is ArtifactStatus.VERIFIED
+    assert restored.active_artifact.source is ArtifactSource.BANKING_API
 
 
 def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation() -> None:
@@ -90,7 +99,17 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
         ),
     )
     confirmation_state = DialogueState(
-        uuid4(), payment=PaymentConfirmationPending(preview, "workflow-opaque-123")
+        uuid4(),
+        payment=PaymentConfirmationPending(
+            preview,
+            "workflow-opaque-123",
+            PaymentDraft(
+                recipient_name="Marta Solis Vega",
+                amount_minor=2_600,
+                concept="tapas",
+                rail=Rail.BIZUM,
+            ),
+        ),
     )
 
     draft_restored = codec.loads_state(codec.dumps_state(draft_state))
@@ -106,6 +125,7 @@ def test_dialogue_checkpoint_round_trips_paused_payment_draft_and_confirmation()
     assert confirmation_restored.payment.preview.intent_id == intent_id
     assert confirmation_restored.payment.preview.expires_at == expires
     assert confirmation_restored.payment.workflow_id == "workflow-opaque-123"
+    assert confirmation_restored.payment.draft == confirmation_state.payment.draft
 
 
 def test_dialogue_checkpoint_migrates_payment_draft_without_suspended_field() -> None:
@@ -193,7 +213,7 @@ def test_previous_dialogue_schema_migrates_result_reference_version() -> None:
     state = DialogueState(
         uuid4(),
         version=7,
-        active_result=ActiveQueryResult(
+        active_artifact=FinancialArtifact(
             FinancialPlan(
                 direction=Direction.EXPENSE,
                 date_range=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31)),
@@ -207,13 +227,77 @@ def test_previous_dialogue_schema_migrates_result_reference_version() -> None:
     encoded = json.loads(codec.dumps_state(state))
     encoded["schema_version"] = 2
     encoded["state"]["f"].pop("active_visual")
-    encoded["state"]["f"]["active_result"]["f"].pop("result_version")
+    encoded["state"]["f"]["active_artifact"]["f"].pop("result_version")
 
     restored = codec.loads_state(json.dumps(encoded))
 
-    assert restored.active_result is not None
-    assert restored.active_result.result_version == 7
+    assert restored.active_artifact is not None
+    assert restored.active_artifact.result_version == 7
     assert restored.active_visual is None
+
+
+def test_schema_fifteen_active_artifact_migrates_without_stable_ids() -> None:
+    state = DialogueState(
+        uuid4(),
+        active_artifact=FinancialArtifact(
+            FinancialPlan(
+                direction=Direction.EXPENSE,
+                date_range=AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30)),
+            ),
+            "EUR",
+            1_200,
+            2,
+            (Group("GROCERIES", 1_200, 2),),
+        ),
+    )
+    encoded = json.loads(codec.dumps_state(state))
+    encoded["schema_version"] = 15
+    encoded["state"]["f"]["active_artifact"]["f"].pop("query_id")
+    encoded["state"]["f"]["active_artifact"]["f"].pop("artifact_id")
+
+    restored = codec.loads_state(json.dumps(encoded))
+
+    assert restored.active_artifact is not None
+    assert restored.active_artifact.query_id == ""
+    assert restored.active_artifact.artifact_id == ""
+
+
+def test_schema_sixteen_active_result_migrates_to_verified_financial_artifact() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        date_range=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31)),
+        group_by=GroupBy.CATEGORY,
+    )
+    state = DialogueState(
+        uuid4(),
+        version=3,
+        active_artifact=FinancialArtifact(
+            plan,
+            "EUR",
+            12_500,
+            3,
+            (Group("SUPERMARKET", 12_500, 3),),
+            query_id="query-3",
+            artifact_id="artifact-3",
+        ),
+    )
+    encoded = json.loads(codec.dumps_state(state))
+    encoded["schema_version"] = 16
+    state_fields = encoded["state"]["f"]
+    artifact = state_fields.pop("active_artifact")
+    artifact["$type"] = "ActiveQueryResult"
+    artifact_fields = artifact["f"]
+    for field in ("result_kind", "status", "source", "provenance"):
+        artifact_fields.pop(field)
+    state_fields["active_result"] = artifact
+
+    restored = codec.loads_state(json.dumps(encoded))
+
+    assert restored.active_artifact is not None
+    assert restored.active_artifact.result_kind is ResultKind.BREAKDOWN
+    assert restored.active_artifact.status is ArtifactStatus.VERIFIED
+    assert restored.active_artifact.source is ArtifactSource.BANKING_API
+    assert restored.active_artifact.provenance == ("query-3",)
 
 
 def test_schema_three_conversation_loads_with_no_pending_payment() -> None:
@@ -243,6 +327,7 @@ def test_schema_four_pending_payment_migrates_without_workflow_handle() -> None:
     encoded = json.loads(codec.dumps_state(state))
     encoded["schema_version"] = 4
     encoded["state"]["f"]["payment"]["f"].pop("workflow_id")
+    encoded["state"]["f"]["payment"]["f"].pop("draft")
 
     restored = codec.loads_state(json.dumps(encoded))
 

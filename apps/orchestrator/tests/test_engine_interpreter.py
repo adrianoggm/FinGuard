@@ -18,6 +18,7 @@ import pytest
 
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
+    AskCorrection,
     Balance,
     ChangeMeasure,
     Clarify,
@@ -25,6 +26,7 @@ from finguard_orchestrator.domain.engine.operations import (
     ComparePrevious,
     Delegate,
     InvestigateComparison,
+    ListCategories,
     ListContacts,
     Operation,
     Patch,
@@ -60,6 +62,7 @@ from finguard_orchestrator.domain.enums import (
     Metric,
     Period,
     Rail,
+    ResultKind,
 )
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.models.chart import ChartSpec, VisualProfile
@@ -188,6 +191,7 @@ EVERY_FIELD = {
     "excluded_categories": ["LEISURE"],
     "excluded_merchants": ["Kiosko Sur"],
     "metric": "COUNT",
+    "result_kind": "RANKING",
     "group_by": "MERCHANT",
     "limit": 3,
 }
@@ -205,6 +209,7 @@ PARSED: list[tuple[dict[str, Any], Operation]] = [
                 excluded_categories=("LEISURE",),
                 excluded_merchants=("Kiosko Sur",),
                 metric=Metric.COUNT,
+                result_kind=ResultKind.RANKING,
                 group_by=GroupBy.MERCHANT,
                 limit=3,
             )
@@ -263,13 +268,48 @@ async def test_each_op_parses_to_its_dataclass(said: dict[str, Any], expected: O
 
 async def test_all_direction_requires_the_model_to_choose_a_metric() -> None:
     ops, provider = await interpreted(
-        answer({"ask": items(direction="ALL")}),
-        answer({"ask": items(direction="ALL", metric="COUNT")}),
+        answer({"ask": items(direction="ALL", result_kind="SCALAR")}),
+        answer({"ask": items(direction="ALL", metric="COUNT", result_kind="SCALAR")}),
     )
 
-    assert ops == (Ask(PlanFields(direction=Direction.ALL, metric=Metric.COUNT)),)
+    assert ops == (
+        Ask(
+            PlanFields(
+                direction=Direction.ALL,
+                metric=Metric.COUNT,
+                result_kind=ResultKind.SCALAR,
+            )
+        ),
+    )
     assert len(provider.prompts) == 2
     assert "explicit metric" in provider.prompts[1]
+
+
+async def test_a_new_ask_requires_its_result_shape() -> None:
+    ops, provider = await interpreted(
+        answer({"ask": items(direction="EXPENSE", window={"named": "LAST_MONTH"})}),
+        answer(
+            {
+                "ask": items(
+                    direction="EXPENSE",
+                    window={"named": "LAST_MONTH"},
+                    result_kind="SCALAR",
+                )
+            }
+        ),
+    )
+
+    assert ops == (
+        Ask(
+            PlanFields(
+                direction=Direction.EXPENSE,
+                window=RelativePeriod(Period.LAST_MONTH),
+                result_kind=ResultKind.SCALAR,
+            )
+        ),
+    )
+    assert len(provider.prompts) == 2
+    assert "explicit result_kind" in provider.prompts[1]
 
 
 async def test_several_operations_keep_their_order() -> None:
@@ -319,6 +359,7 @@ async def test_a_past_payment_question_gets_one_consistency_repair_before_paymen
                     direction="EXPENSE",
                     window={"counted": {"period": "LAST_N_MONTHS", "n": 3}},
                     people=["mi hermana"],
+                    result_kind="SCALAR",
                 )
             }
         ),
@@ -334,6 +375,7 @@ async def test_a_past_payment_question_gets_one_consistency_repair_before_paymen
                 direction=Direction.EXPENSE,
                 window=RelativePeriod(Period.LAST_N_MONTHS, n=3),
                 people=("mi hermana",),
+                result_kind=ResultKind.SCALAR,
             )
         ),
     )
@@ -356,14 +398,22 @@ async def test_a_past_payment_question_is_clarified_if_the_model_repeats_the_mis
 async def test_a_past_payment_question_cannot_delegate_into_the_payment_flow() -> None:
     provider = Provider(
         answer({"delegate": "PAYMENT"}),
-        answer({"ask": items(direction="EXPENSE", people=["mi hermana"])}),
+        answer({"ask": items(direction="EXPENSE", people=["mi hermana"], result_kind="SCALAR")}),
     )
 
     operations = await interpreter(provider).interpret(
         "Cuanto le envie a mi hermana este mes?", EMPTY, today=TODAY
     )
 
-    assert operations == (Ask(PlanFields(direction=Direction.EXPENSE, people=("mi hermana",))),)
+    assert operations == (
+        Ask(
+            PlanFields(
+                direction=Direction.EXPENSE,
+                people=("mi hermana",),
+                result_kind=ResultKind.SCALAR,
+            )
+        ),
+    )
     assert "asks about a past transaction" in provider.prompts[1]
 
 
@@ -682,6 +732,8 @@ def test_operations_are_keyed_by_their_name() -> None:
         "restore_previous",
         "balance",
         "list_contacts",
+        "list_categories",
+        "ask_correction",
         "smalltalk",
         "delegate",
         "create_visualization",
@@ -717,6 +769,14 @@ def test_bizum_is_a_typed_prepare_operation_with_a_bounded_integer_amount() -> N
 
 def test_list_contacts_is_a_typed_read_operation() -> None:
     assert read('{"operations":[{"list_contacts":true}]}', CATALOGUE) == (ListContacts(),)
+
+
+def test_list_categories_is_a_typed_product_operation() -> None:
+    assert read('{"operations":[{"list_categories":true}]}', CATALOGUE) == (ListCategories(),)
+
+
+def test_ask_correction_is_a_typed_conversation_operation() -> None:
+    assert read('{"operations":[{"ask_correction":true}]}', CATALOGUE) == (AskCorrection(),)
 
 
 def test_bank_transfer_is_a_separate_typed_prepare_operation() -> None:
@@ -941,7 +1001,7 @@ LONGEST = (
 def test_prompt_keeps_category_breakdowns_unlimited_by_default() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
 
-    assert "Set limit only for top N or highest-spending months" in prompt
+    assert "Only RANKING takes a limit" in prompt
     assert '"group_by":"CATEGORY"' in prompt
     assert '"limit":3' in prompt  # Reserved for the explicit monthly-highest question.
 
@@ -1073,7 +1133,9 @@ def test_prompt_distinguishes_largest_movement_from_group_total_and_counts() -> 
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
 
     assert "Highest individual expense" in prompt
-    assert "never assume THIS_MONTH" in prompt
+    assert "Never assume a missing window" in prompt
+    assert "Balances use `balance` without a period" in prompt
+    assert "visualize/update_visualization AUTO/BAR/LINE" in prompt
     assert "no `group_by`" in prompt
     assert "`group_by=MERCHANT, limit=1`" in prompt
     assert '"metric":"COUNT"' in prompt
@@ -1217,7 +1279,7 @@ def test_pending_window_shows_a_period_only_patch_example() -> None:
 
     prompt = build_prompt("el mes pasado", state, today=TODAY, categories=CATEGORIES)
 
-    assert "open question asks for WINDOW" in prompt
+    assert "pending period; keep subject and filters" in prompt
     assert '"patch":{"target":"pending"' in prompt
     assert '"named":"LAST_MONTH"' in prompt
 
@@ -1290,7 +1352,8 @@ RESTAURANTS_JULY = FinancialPlan(Direction.EXPENSE, date_range=JULY, categories=
             ),
             {},
             "On screen: a ranking of movements: direction EXPENSE; "
-            "window LAST_MONTH = 2026-09-01..2026-09-30; categories RESTAURANTS; limit 3",
+            "window LAST_MONTH = 2026-09-01..2026-09-30; categories RESTAURANTS; "
+            "result_kind RANKING; limit 3",
         ),
         (
             RatioFocus(
@@ -1362,6 +1425,7 @@ def test_a_pending_bizum_draft_is_part_of_the_interpreted_state() -> None:
     assert "recipient Aitor Beltran Diaz" in shown
     assert "amount not given" in shown
     assert '{"operations":[{"list_contacts":true}]}' in prompt
+    assert '{"operations":[{"list_categories":true}]}' in prompt
 
 
 async def test_the_interpreter_shows_the_names_it_is_given() -> None:

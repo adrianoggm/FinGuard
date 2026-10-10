@@ -139,6 +139,10 @@ class SpokenPlan:
     transaction_ids: list[str] = field(default_factory=list)
     transaction_types: list[str] = field(default_factory=list)
     rank: int | None = None
+    result_kind: str | None = None
+    query_id: str | None = None
+    artifact_id: str | None = None
+    view_id: str | None = None
 
 
 @dataclass(frozen=True)

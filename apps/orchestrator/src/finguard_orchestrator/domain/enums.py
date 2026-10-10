@@ -186,6 +186,24 @@ class Metric(StrEnum):
     RECURRENCE = "RECURRENCE"
 
 
+class ResultKind(StrEnum):
+    """The user's requested shape of answer, independent of the calculation's metric.
+
+    COUNT is a measure; RECORDS is a collection of bank movements. Keeping these separate prevents
+    a request to show transactions from being answered with only a count. COMPARISON is represented
+    by the pair plan today, but remains in the closed result vocabulary so response artifacts have
+    one explicit discriminator across query families.
+    """
+
+    SCALAR = "SCALAR"
+    RECORDS = "RECORDS"
+    RANKING = "RANKING"
+    BREAKDOWN = "BREAKDOWN"
+    TIME_SERIES = "TIME_SERIES"
+    COMPARISON = "COMPARISON"
+    INVESTIGATION = "INVESTIGATION"
+
+
 # Periods that are a count of something, and therefore need `n`. Kept beside the enum
 # so a new counted period cannot be added without seeing this.
 PERIODS_NEEDING_COUNT = frozenset({Period.LAST_N_DAYS, Period.LAST_N_MONTHS})

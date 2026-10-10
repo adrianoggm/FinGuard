@@ -36,7 +36,7 @@ class PostgresDialogueStore:
         if row is None:
             return None
         schema = int(row["schema_version"])
-        if schema not in {4, 5, 6, 7, 8, 9, codec.STATE_SCHEMA_VERSION}:
+        if schema not in {4, 5, 6, 7, 8, 9, 13, 14, 15, 16, codec.STATE_SCHEMA_VERSION}:
             raise ValueError(f"unsupported conversation schema version: {schema}")
         state = codec.loads_state(row["payload"])
         if state.version != int(row["state_version"]):
@@ -85,7 +85,7 @@ class PostgresDialogueStore:
                     return saved
 
                 schema = int(row["schema_version"])
-                if schema not in {4, 5, 6, 7, 8, 9, codec.STATE_SCHEMA_VERSION}:
+                if schema not in {4, 5, 6, 7, 8, 9, 13, 14, 15, 16, codec.STATE_SCHEMA_VERSION}:
                     raise ValueError(f"unsupported conversation schema version: {schema}")
                 held = codec.loads_state(row["payload"])
                 if held.version != int(row["state_version"]):

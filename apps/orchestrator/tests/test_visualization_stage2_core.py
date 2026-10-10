@@ -377,6 +377,64 @@ async def test_chart_response_emits_id_and_structural_context_without_rows() -> 
     assert len(response.conversation.visual_contexts) == 1
 
 
+def test_visual_response_spec_is_value_free_and_references_the_verified_artifact() -> None:
+    result = AskFinancialQuestionResult(
+        outcome="PLANNED",
+        text="Hecho",
+        currency="EUR",
+        total_minor=15_000,
+        plan_context=SpokenPlan(
+            direction="EXPENSE",
+            group_by="CATEGORY",
+            metric="SUM",
+            result_kind="BREAKDOWN",
+            query_id="query-1",
+            artifact_id="artifact-1",
+        ),
+        groups=[SpokenGroup("Casa", 10_000, 1), SpokenGroup("Comida", 5_000, 2)],
+    )
+
+    response = question_to_dto(result)
+
+    assert response.visual_response is not None
+    assert response.visual_response.layout == "financial_analysis"
+    assert [block.type for block in response.visual_response.blocks] == ["metric", "breakdown"]
+    assert all(block.artifact_id == "artifact-1" for block in response.visual_response.blocks)
+    assert "15000" not in response.visual_response.model_dump_json()
+
+
+async def test_visual_response_spec_composes_breakdown_and_chart_on_one_artifact() -> None:
+    result = await _decided(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="Hecho",
+            total_minor=15_000,
+            plan_context=SpokenPlan(
+                direction="EXPENSE",
+                group_by="CATEGORY",
+                metric="SUM",
+                result_kind="BREAKDOWN",
+                query_id="query-1",
+                artifact_id="artifact-1",
+                view_id="view-1",
+            ),
+            groups=[SpokenGroup("Casa", 10_000, 1), SpokenGroup("Comida", 5_000, 2)],
+            visual_dataset=VisualDataset(
+                (VisualRow("Casa", 10_000), VisualRow("Comida", 5_000)), "SUM"
+            ),
+        )
+    )
+
+    response = question_to_dto(result)
+
+    assert response.visual_response is not None
+    blocks = response.visual_response.blocks
+    assert [block.type for block in blocks] == ["metric", "breakdown", "chart"]
+    chart = blocks[-1]
+    assert chart.type == "chart" and chart.view_id == "view-1"
+    assert {block.artifact_id for block in blocks} == {"artifact-1"}
+
+
 def test_visual_interpreter_is_value_free_and_skips_financial_changes() -> None:
     spec, profile = _base()
     context = VisualContext("chart-1", spec, profile)

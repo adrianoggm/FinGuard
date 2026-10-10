@@ -54,11 +54,13 @@ from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
+    BreakdownBlock,
     BreakdownResponse,
     CardPayload,
     CatalogueResponse,
     ChargePayload,
     ChargesResponse,
+    ChartBlock,
     ChartVisualizationResponse,
     ContactPayload,
     ContactsResponse,
@@ -66,6 +68,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     HoldingPayload,
     KpiVisualizationResponse,
     MessageResponse,
+    MetricCardBlock,
     ModelResponse,
     MovementsResponse,
     PlanContextTraceResponse,
@@ -77,8 +80,11 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     SpokenGroupResponse,
     SpokenMovementResponse,
     SummaryMovementResponse,
+    TransactionTableBlock,
     VisualExplanationResponse,
     VisualizationResponse,
+    VisualResponseBlock,
+    VisualResponseSpec,
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
@@ -278,6 +284,8 @@ def _visualization_to_dto(
 
 
 def _chart_id(result: AskFinancialQuestionResult, spec: ChartSpec) -> str:
+    if result.plan_context is not None and result.plan_context.view_id is not None:
+        return result.plan_context.view_id
     return "chart-" + uuid4().hex[:16]
 
 
@@ -730,6 +738,73 @@ def question_to_dto(
                 pass
             else:
                 candidate = SaveCandidate(chart_id=chart_id, definition_token=token)
+    visual_response = None
+    context_ids = result.plan_context
+    if context_ids is not None and context_ids.artifact_id is not None:
+        artifact_id = context_ids.artifact_id
+        blocks: list[VisualResponseBlock] = []
+        metric_field: Literal["difference", "total", "movement_count"] | None = (
+            "difference"
+            if result.difference_minor is not None
+            else "total"
+            if result.total_minor is not None
+            else "movement_count"
+            if result.movement_count is not None
+            else None
+        )
+        if metric_field is not None:
+            blocks.append(
+                MetricCardBlock(
+                    block_id=f"{artifact_id}:metric:{metric_field}",
+                    artifact_id=artifact_id,
+                    field=metric_field,
+                )
+            )
+        if result.groups and context_ids.group_by != "NONE":
+            dimension_raw = context_ids.group_by.lower()
+            if dimension_raw in {"category", "merchant", "month", "account", "counterparty"}:
+                dimension = cast(
+                    Literal["category", "merchant", "month", "account", "counterparty"],
+                    dimension_raw,
+                )
+                blocks.append(
+                    BreakdownBlock(
+                        block_id=f"{artifact_id}:breakdown:{dimension}",
+                        artifact_id=artifact_id,
+                        dimension=dimension,
+                    )
+                )
+        if isinstance(visualization, ChartVisualizationResponse) and context_ids.view_id:
+            blocks.append(
+                ChartBlock(
+                    block_id=f"{context_ids.view_id}:chart",
+                    artifact_id=artifact_id,
+                    view_id=context_ids.view_id,
+                    chart_id=visualization.chart_id,
+                )
+            )
+        if context_ids.result_kind == "RECORDS" and result.movements:
+            blocks.append(
+                TransactionTableBlock(
+                    block_id=f"{artifact_id}:transactions",
+                    artifact_id=artifact_id,
+                )
+            )
+        if blocks:
+            layout: Literal["compact", "financial_analysis", "table", "comparison"] = (
+                "comparison"
+                if result.difference_minor is not None
+                else "financial_analysis"
+                if len(blocks) > 1
+                else "table"
+                if result.movements
+                else "compact"
+            )
+            visual_response = VisualResponseSpec(
+                response_id=context_ids.view_id or artifact_id,
+                layout=layout,
+                blocks=blocks,
+            )
     return QuestionResponse(
         outcome=result.outcome,
         text=result.text,
@@ -749,8 +824,12 @@ def question_to_dto(
                 merchant_terms=result.plan_context.merchant_terms,
                 group_by=result.plan_context.group_by,
                 metric=result.plan_context.metric,
+                result_kind=result.plan_context.result_kind,
                 group_limit=result.plan_context.group_limit,
                 rank=result.plan_context.rank,
+                query_id=result.plan_context.query_id,
+                artifact_id=result.plan_context.artifact_id,
+                view_id=result.plan_context.view_id,
             )
             if result.plan_context is not None
             else None
@@ -793,6 +872,7 @@ def question_to_dto(
             for movement in result.movements
         ],
         visualization=visualization,
+        visual_response=visual_response,
         # Never over the planner's own: those recover a question that did not land, and a chip about
         # bar charts does not belong next to "¿de qué periodo?".
         suggestions=result.suggestions or (_chart_suggestions(context) if context else []),

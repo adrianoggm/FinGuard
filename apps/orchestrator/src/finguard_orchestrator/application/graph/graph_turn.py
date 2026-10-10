@@ -330,7 +330,7 @@ class GraphTurnHandler:
             logger.warning("graph.checkpoint_version_mismatch")
         if values:
             await self._checkpointer.adelete_thread(_thread(turn))
-        return {
+        fresh: TurnGraphState = {
             "graph_version": GRAPH_VERSION,
             "schema_version": STATE_SCHEMA_VERSION,
             "turn_id": turn.request_id,
@@ -343,6 +343,19 @@ class GraphTurnHandler:
             "refused": [],
             "next_inspect": None,
         }
+        pending = turn.held.payment
+        if (
+            isinstance(pending, PaymentConfirmationPending)
+            and pending.workflow_id == config["configurable"]["thread_id"]
+        ):
+            reply = confirmation.canonical_reply(sentence)
+            if reply != "respuesta ambigua":
+                # A versioned checkpoint can be discarded during a graph upgrade, but a bank
+                # preview is still live in canonical state. Route an explicit yes/no through the
+                # guarded confirmation node even when its old interrupt checkpoint is unusable.
+                fresh["direct_payment_confirmation"] = True
+                fresh["payment_reply"] = reply
+        return fresh
 
 
 def _fingerprint(sentence: str) -> str:

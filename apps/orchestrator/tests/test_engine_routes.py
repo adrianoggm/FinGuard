@@ -618,6 +618,7 @@ ASKS_RESTAURANTS_IN_JULY = {
         {
             "ask": [
                 {"direction": "EXPENSE"},
+                {"result_kind": "SCALAR"},
                 {"categories": ["RESTAURANTS"]},
                 {"window": {"range": {"start": "2026-07-01", "end": "2026-07-31"}}},
             ]
