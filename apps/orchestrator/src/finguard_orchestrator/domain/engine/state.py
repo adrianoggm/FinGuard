@@ -432,8 +432,9 @@ class DialogueState:
             )
             for entry in self.focus_history
         )
-        if history != self.focus_history:
-            object.__setattr__(self, "focus_history", history)
+        # Always stored: entries compare without their task_id, so `history != self.focus_history`
+        # was false after filling ids in, the ids were dropped, and two entries with none collided.
+        object.__setattr__(self, "focus_history", history)
         if len(self.focus_history) > self.MAX_FOCUS_HISTORY:
             raise InvalidValueError("focus history exceeds its bounded size")
         if len(self.suspended_pending) > self.MAX_SUSPENDED_PENDING:

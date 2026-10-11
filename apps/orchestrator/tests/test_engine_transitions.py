@@ -1644,3 +1644,23 @@ def test_breakdown_rejects_a_top_limit_that_changes_the_requested_shape() -> Non
 
     assert transition.work is None
     assert transition.reply is not None and transition.reply.missing is Missing.SUBJECT
+
+
+def test_history_entries_without_ids_each_get_their_own() -> None:
+    """Entries compare without their task_id, so the filled-in ids must be stored regardless:
+    two answered tasks in history once both kept an empty id and the state refused itself."""
+    june = FinancialPlan(
+        direction=Direction.EXPENSE, date_range=AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
+    )
+    july = replace(june, date_range=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31)))
+
+    state = DialogueState(
+        UUID(int=1),
+        focus_history=(
+            FocusHistoryEntry(QueryFocus(june), Scope()),
+            FocusHistoryEntry(QueryFocus(july), Scope()),
+        ),
+    )
+
+    ids = [entry.task_id for entry in state.focus_history]
+    assert all(ids) and len(set(ids)) == 2

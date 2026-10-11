@@ -156,17 +156,26 @@ def apply(
             # The legacy route accepts the operation through its existing chart adapter. The
             # LangGraph route intercepts it earlier and executes it against canonical artifacts.
             return Transition(state, None, Delegate("CHART"))
-        if current.pending is not None and isinstance(
-            op,
-            (
-                Ask,
-                Compare,
-                ComparePrevious,
-                ListMovements,
-                PatchMovementList,
-                RestorePrevious,
-                ResumeFocus,
-            ),
+        # «Back to what I had» while a question is open dismisses that question (`_restored`): it
+        # is not a new task, so the question is not kept aside to come back to.
+        dismisses_question = (
+            isinstance(op, RestorePrevious) and op.steps_back == 1 and current.focus is not None
+        )
+        if (
+            current.pending is not None
+            and not dismisses_question
+            and isinstance(
+                op,
+                (
+                    Ask,
+                    Compare,
+                    ComparePrevious,
+                    ListMovements,
+                    PatchMovementList,
+                    RestorePrevious,
+                    ResumeFocus,
+                ),
+            )
         ):
             # These operations take the conversational floor. Balance and courtesy are asides;
             # patches that answer the current clarification remain attached to their owner.
