@@ -94,7 +94,7 @@ test("one banking session keeps list, analysis, visualization, and payment cance
   expect(runtimeIdentity.webSourceSha256).toMatch(/^[a-f0-9]{64}$/);
   expect(version.source_sha256).toMatch(/^[a-f0-9]{64}$/);
 
-  await page.getByRole("button", { name: "Hablar con FinGuard" }).last().click();
+  await page.getByRole("button", { name: "Pregúntale a FinGuard" }).click();
   const input = page.getByRole("textbox", { name: "Mensaje" });
 
   async function ask(question: string): Promise<Record<string, any>> {

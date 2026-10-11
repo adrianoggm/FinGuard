@@ -12,13 +12,15 @@
  * the tap arrives as "go to Cuentas" and the screen shows every account, which is what it did.
  */
 
+import type { IconName } from "./Icon";
+
 export const TABS = [
-  ["inicio", "Inicio", "◧"],
-  ["cuentas", "Cuentas", "≡"],
-  ["tarjetas", "Tarjetas", "💳"],
-  ["finanzas", "Finanzas", "📊"],
-  ["bizum", "Bizum", "📲"],
-] as const;
+  ["inicio", "Inicio", "home"],
+  ["cuentas", "Cuentas", "accounts"],
+  ["tarjetas", "Tarjetas", "card"],
+  ["finanzas", "Finanzas", "chart"],
+  ["bizum", "Bizum", "bizum"],
+] as const satisfies readonly (readonly [string, string, IconName])[];
 
 export type Tab = (typeof TABS)[number][0] | "cuentas-buscar" | "traspaso" | `cuentas:${string}`;
 

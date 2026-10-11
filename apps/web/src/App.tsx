@@ -18,11 +18,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { configured, summary as fetchSummary, type Summary } from "./api";
 import { Accounts } from "./Accounts";
+import { AskBar } from "./AskBar";
 import { MoneyAction } from "./MoneyAction";
 import { Cards } from "./Cards";
 import { Conversation, EMPTY_THREAD, type Thread } from "./Conversation";
 import { Finances } from "./Finances";
 import { Home } from "./Home";
+import { Icon } from "./Icon";
 import { TABS, accountOf, tabOf, type Tab } from "./tabs";
 
 export function App() {
@@ -84,11 +86,10 @@ export function App() {
               error={error}
               holder="Laura"
               onGo={go}
-              onAsk={() => setTalking(true)}
             />
           )}
           {where === "traspaso" && (
-            <MoneyAction kind="transfer" onContinue={openMoneyConversation} />
+            <MoneyAction kind="transfer" onContinue={openConversation} />
           )}
           {tabOf(where) === "cuentas" && where !== "traspaso" && (
             <Accounts
@@ -103,15 +104,11 @@ export function App() {
           {where === "tarjetas" && <Cards />}
           {where === "finanzas" && <Finances />}
           {where === "bizum" && (
-            <MoneyAction kind="bizum" onContinue={openMoneyConversation} />
+            <MoneyAction kind="bizum" onContinue={openConversation} />
           )}
         </main>
 
-        {!talking && (
-          <button className="fab" onClick={() => setTalking(true)} aria-label="Hablar con FinGuard">
-            <span aria-hidden="true">✨</span>
-          </button>
-        )}
+        {!talking && <AskBar where={where} onAsk={openConversation} />}
 
         {talking && (
           <>
@@ -134,7 +131,7 @@ export function App() {
               onClick={() => go(tab)}
               aria-current={tabOf(where) === tab ? "page" : undefined}
             >
-              <span aria-hidden="true">{icon}</span>
+              <Icon name={icon} size={22} />
               <small>{label}</small>
             </button>
           ))}
@@ -143,7 +140,8 @@ export function App() {
     </div>
   );
 
-  function openMoneyConversation(draft: string) {
+  /** The conversation, opened with `draft` written in its field and not sent. */
+  function openConversation(draft: string) {
     setConversationDraft(draft);
     setTalking(true);
   }

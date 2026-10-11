@@ -25,8 +25,9 @@ import {
   type Charge,
   type Wallet,
 } from "./api";
-import { categoryName, day, glyph, money } from "./format";
+import { categoryName, day, money } from "./format";
 import { displayText } from "./displayText";
+import { categoryIcon, Icon } from "./Icon";
 
 const WINDOWS = [
   [30, "30 días"],
@@ -201,7 +202,7 @@ function ChargeList({ cardId, days }: { cardId: string; days: number }) {
           {charges.map((charge) => (
             <li key={charge.transaction_id}>
               <span className="glyph" aria-hidden="true">
-                {glyph(charge.category)}
+                <Icon name={categoryIcon(charge.category)} />
               </span>
               <span className="what">
                 <strong>{displayText(charge.merchant_name ?? charge.description)}</strong>

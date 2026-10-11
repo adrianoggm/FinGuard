@@ -27,6 +27,7 @@ import { useEffect, useRef, useState } from "react";
 import { ask, createVoiceClient, newAttempt, saveMetric, validateVoiceAnswer, type Answer, type ConversationState, type MetricSource } from "./api";
 import { categoryName, day, ibanGroups, money, outgoing, signed } from "./format";
 import { displayText } from "./displayText";
+import { Icon } from "./Icon";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 import { Chart, chartTitle } from "./Chart";
@@ -375,17 +376,19 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
     <section className="sheet" aria-label="Conversación">
       <header className="sheet-head">
         <span className="handle" aria-hidden="true" />
+        <span className="mark" aria-hidden="true" />
         <div className="sheet-title">
           <strong>FinGuard</strong>
           <small>Pregunta por tus gastos o envía un bizum</small>
         </div>
         <button className="close" onClick={onClose} aria-label="Cerrar">
-          ✕
+          <Icon name="close" size={18} />
         </button>
       </header>
       {voiceEnabled && <div className="voice-controls" aria-label="Control de voz">
         <button type="button" className="voice-button" onClick={() => void toggleVoice()} aria-pressed={voiceStatus !== "idle" && voiceStatus !== "error"} aria-label={voiceStatus === "processing" || voiceStatus === "speaking" ? "Interrumpir y hablar" : undefined}>
-          {voiceStatus === "idle" || voiceStatus === "error" ? "🎙️ Iniciar voz" : voiceStatus === "processing" || voiceStatus === "speaking" ? "🎙️ Interrumpir y hablar" : voiceStatus === "connecting" ? "Cancelar conexión" : "⏹ Detener voz"}
+          <Icon name={voiceStatus === "listening" ? "stop" : "mic"} size={18} />
+          {voiceStatus === "idle" || voiceStatus === "error" ? "Iniciar voz" : voiceStatus === "processing" || voiceStatus === "speaking" ? "Interrumpir y hablar" : voiceStatus === "connecting" ? "Cancelar conexión" : "Detener voz"}
         </button>
         <span role="status">{voiceStatus === "connecting" ? "Conectando…" : voiceStatus === "listening" ? "Escuchando" : voiceStatus === "processing" ? "Procesando…" : voiceStatus === "speaking" ? "Reproduciendo" : voiceStatus === "error" ? "Voz no disponible" : "Voz apagada"}</span>
         <VoiceError message={voiceError} />
@@ -458,7 +461,7 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
           autoFocus
         />
         <button type="submit" disabled={busy || !draft.trim()} aria-label="Enviar">
-          ▶
+          <Icon name="send" size={20} />
         </button>
       </form>
     </section>

@@ -20,17 +20,17 @@ import {
   type Summary,
 } from "./api";
 import {
-  accountGlyph,
   accountName,
   categoryName,
+  compactMoney,
   day,
-  glyph,
   money,
   monthName,
   signed,
   spendable,
 } from "./format";
 import { displayText } from "./displayText";
+import { accountIcon, categoryIcon, Icon } from "./Icon";
 import { accountTab, type Tab } from "./tabs";
 
 type Props = {
@@ -38,10 +38,9 @@ type Props = {
   error: string | null;
   holder: string;
   onGo: (tab: Tab) => void;
-  onAsk: () => void;
 };
 
-export function Home({ summary, error, holder, onGo, onAsk }: Props) {
+export function Home({ summary, error, holder, onGo }: Props) {
   const [months, setMonths] = useState<Breakdown | null>(null);
   const [thisMonth, setThisMonth] = useState<Breakdown | null>(null);
 
@@ -79,6 +78,10 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
 
   const bars = months?.groups.slice(-6) ?? [];
   const biggest = Math.max(1, ...bars.map((group) => group.total_minor));
+  // The month that has not finished. Drawn apart, so a short bar reads as «so far» rather than as
+  // a month of spending less.
+  const today = new Date();
+  const runningMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
   const [build, setBuild] = useState<string | null>(null);
 
   useEffect(() => {
@@ -93,22 +96,11 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
   return (
     <div className="screen home">
       <header className="brand">
-        <span className="mark" aria-hidden="true">
-          ◆
-        </span>
+        <span className="mark" aria-hidden="true" />
         <strong>FinGuard</strong>
-        {/*
-          Which build this is talking to, in development only. It exists because "I read HEAD and
-          the app still does X" is unanswerable without it: the container may be older than the
-          tree. Hidden in a production build, where a commit is nobody's business.
-        */}
-        {import.meta.env.DEV && build && <span className="build">{build}</span>}
         <span className="brand-right">
           <button onClick={() => onGo("cuentas-buscar")} aria-label="Buscar movimientos">
-            🔍
-          </button>
-          <button onClick={onAsk} aria-label="Hablar con FinGuard">
-            ✨
+            <Icon name="search" />
           </button>
         </span>
       </header>
@@ -116,7 +108,7 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
       <p className="hello">Hola, {holder}</p>
 
       <section className="figures" aria-label="Resumen">
-        <div>
+        <div className="figure-main">
           <p className="figure-label">Tu dinero</p>
           <p className="figure">
             {/*
@@ -140,67 +132,78 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
             <p className="figure-aside">+ {money(invested.minor, invested.currency)} invertidos</p>
           )}
         </div>
-        <div>
-          <p className="figure-label">Gastos del mes</p>
-          <p className="figure out">
+        <p className="figure-spent">
+          Gastado este mes
+          <span className="out">
             {thisMonth ? (
               `-${money(thisMonth.total_minor, thisMonth.currency)}`
             ) : (
               <span className="figure-missing">···</span>
             )}
-          </p>
-        </div>
+          </span>
+        </p>
       </section>
 
       {bars.length > 1 && (
         <section className="card chart" aria-label="Gasto por mes">
-          <div className="bars">
-            {bars.map((group) => (
-              <div className="bar-slot" key={group.key}>
-                <div
-                  className="bar"
-                  style={{ height: `${Math.round((group.total_minor / biggest) * 100)}%` }}
-                  title={money(group.total_minor, months?.currency ?? "EUR")}
-                />
-                <small>{monthName(group.key)}</small>
-              </div>
-            ))}
+          <div className="card-heading">
+            <h2>Gasto por mes</h2>
+            <button className="chart-more" onClick={() => onGo("finanzas")}>
+              Ver mis finanzas
+            </button>
           </div>
-          <button className="chart-more" onClick={() => onGo("finanzas")}>
-            Ver mis finanzas →
-          </button>
+          <div className="bars">
+            {bars.map((group) => {
+              const running = group.key === runningMonth;
+              return (
+                <div className={running ? "bar-slot running" : "bar-slot"} key={group.key}>
+                  <span className="bar-amount">{compactMoney(group.total_minor)}</span>
+                  <div
+                    className="bar"
+                    style={{ height: `${Math.round((group.total_minor / biggest) * 100)}%` }}
+                    title={money(group.total_minor, months?.currency ?? "EUR")}
+                  />
+                  <small>
+                    {monthName(group.key)}
+                    {running && <em>en curso</em>}
+                  </small>
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
 
       <nav className="shortcuts" aria-label="Accesos">
         <button className="shortcut" onClick={() => onGo("bizum")}>
-          <span className="shortcut-icon" aria-hidden="true">
-            📲
+          <span className="shortcut-icon">
+            <Icon name="bizum" size={22} />
           </span>
           <span>Bizum</span>
         </button>
         <button className="shortcut" onClick={() => onGo("cuentas")}>
-          <span className="shortcut-icon" aria-hidden="true">
-            ≡
+          <span className="shortcut-icon">
+            <Icon name="list" size={22} />
           </span>
           <span>Movimientos</span>
         </button>
         <button className="shortcut" onClick={() => onGo("tarjetas")}>
-          <span className="shortcut-icon" aria-hidden="true">
-            💳
+          <span className="shortcut-icon">
+            <Icon name="card" size={22} />
           </span>
           <span>Tarjetas</span>
         </button>
-        <button className="shortcut" onClick={onAsk}>
-          <span className="shortcut-icon" aria-hidden="true">
-            💬
+        <button className="shortcut" onClick={() => onGo("traspaso")}>
+          <span className="shortcut-icon">
+            <Icon name="transfer" size={22} />
           </span>
-          <span>Preguntar</span>
+          <span>Mover dinero</span>
         </button>
       </nav>
 
       <section aria-label="Cuentas">
         <h2 className="section-head">Cuentas</h2>
+        <div className="group">
         {/*
           One row per account the holder has. This was a single hardcoded row reading "Cuenta
           corriente · ES-0001", which was accurate while there was one account and became a lie the
@@ -221,7 +224,7 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
                 onClick={() => onGo(accountTab(holding.account_id))}
               >
                 <span className="account-glyph" aria-hidden="true">
-                  {accountGlyph(holding.kind)}
+                  <Icon name={accountIcon(holding.kind)} />
                 </span>
                 <span className="account-who">
                   <strong>{accountName(holding)}</strong>
@@ -245,6 +248,7 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
                 </span>
               </button>
             )}
+        </div>
       </section>
 
       <section className="movements" aria-label="Últimos movimientos">
@@ -259,7 +263,7 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
           {summary?.movements.slice(0, 5).map((movement, index) => (
             <li key={`${movement.occurred_at}-${index}`}>
               <span className="glyph" aria-hidden="true">
-                {glyph(movement.category)}
+                <Icon name={categoryIcon(movement.category)} />
               </span>
               <span className="what">
                 <strong>{displayText(movement.merchant_name ?? movement.description)}</strong>
@@ -274,6 +278,13 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
           ))}
         </ul>
       </section>
+
+      {/*
+        Which build this is talking to, in development only. It exists because "I read HEAD and the
+        app still does X" is unanswerable without it: the container may be older than the tree. At
+        the foot of the screen rather than beside the name, where a person reads the app.
+      */}
+      {import.meta.env.DEV && build && <p className="build">{build}</p>}
     </div>
   );
 }

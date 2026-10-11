@@ -23,7 +23,8 @@ import {
   type Breakdown,
   type SavedMetric,
 } from "./api";
-import { categoryName, glyph, money, monthName, time } from "./format";
+import { categoryName, money, monthName, time } from "./format";
+import { categoryIcon, Icon } from "./Icon";
 import { Chart, chartTitle } from "./Chart";
 import { AnswerEvidence } from "./Conversation";
 
@@ -388,7 +389,7 @@ export function Finances() {
             {categories.groups.map((group) => (
               <li key={group.key}>
                 <span className="glyph" aria-hidden="true">
-                  {glyph(group.key)}
+                  <Icon name={categoryIcon(group.key)} />
                 </span>
                 <span className="share-what">
                   <strong>{categoryName(group.key)}</strong>

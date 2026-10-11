@@ -29,7 +29,7 @@ test("category breakdown renders, restyles, and regroups its chart", async ({
   });
 
   await page.goto("/");
-  const openChat = page.getByRole("button", { name: "Hablar con FinGuard" }).last();
+  const openChat = page.getByRole("button", { name: "Pregúntale a FinGuard" });
   await expect(openChat).toBeVisible();
   await openChat.click();
 

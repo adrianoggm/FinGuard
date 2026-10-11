@@ -18,13 +18,12 @@ import { useEffect, useRef, useState } from "react";
 import { movements as fetchMovements, type Movements, type Summary } from "./api";
 import type { Tab } from "./tabs";
 import { displayText } from "./displayText";
+import { accountIcon, categoryIcon, Icon } from "./Icon";
 import {
-  accountGlyph,
   accountName,
   categoryName,
   categorySource,
   day,
-  glyph,
   money,
   signed,
 } from "./format";
@@ -168,7 +167,7 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
           {about.map((holding) => (
             <article className="holding" key={holding.account_id}>
               <span className="holding-glyph" aria-hidden="true">
-                {accountGlyph(holding.kind)}
+                <Icon name={accountIcon(holding.kind)} />
               </span>
               <span className="holding-what">
                 <strong>{accountName(holding)}</strong>
@@ -185,7 +184,7 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
               take the other accounts away, and this is an action rather than a figure. */}
           {holdings.length > 1 && (
             <button className="move-money" onClick={() => onGo("traspaso")}>
-              ⇄ Mover dinero entre cuentas
+              <Icon name="transfer" /> Mover dinero entre cuentas
             </button>
           )}
         </section>
@@ -199,7 +198,7 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
       )}
 
       <div className="finder">
-        <span aria-hidden="true">🔍</span>
+        <Icon name="search" />
         <input
           ref={search}
           value={term}
@@ -292,7 +291,7 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
           {shown.map((movement, index) => (
             <li key={`${movement.occurred_at}-${index}`}>
               <span className="glyph" aria-hidden="true">
-                {glyph(movement.category)}
+                <Icon name={categoryIcon(movement.category)} />
               </span>
               <span className="what">
                 <strong>{displayText(movement.merchant_name ?? movement.description)}</strong>

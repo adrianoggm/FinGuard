@@ -7,16 +7,19 @@
  */
 
 :root {
-  --ink: #0d1b18;
-  --ink-soft: #5c6b66;
-  --brand: #0d3b33;
-  --brand-bright: #14806a;
-  --accent: #14806a;
-  --surface: #f4f6f5;
+  --ink: #16241f;
+  --ink-soft: #5b6a64;
+  --brand: #1e5a48;
+  --brand-bright: #2a7a62;
+  --accent: #2a7a62;
+  /* The assistant's colour, and nothing else's: its mark and the bar it lives in. Never under
+     text, where it would not carry the contrast. */
+  --signal: #f0b04a;
+  --surface: #edf1ee;
   --card: #ffffff;
-  --line: #e3e8e6;
-  --out: #b3261e;
-  --in: #0f7a4f;
+  --line: #dde4e0;
+  --out: #b5473a;
+  --in: #2e7d5b;
   /*
    * Chart marks. Six slots in a fixed order, never cycled, and read by `Chart.tsx` so a chart and
    * the screen around it are painted from one palette. Slot 1 is the brand teal. --out and --in are
@@ -29,14 +32,26 @@
   --chart-4: #cc79a7;
   --chart-5: #4d7c0f;
   --chart-6: #6d28d9;
-  --radius: 1.25rem;
-  --shadow: 0 0.5rem 1.5rem rgb(13 27 24 / 8%);
+  --radius: 1rem;
+  --radius-small: 0.65rem;
+  --shadow: 0 1px 2px rgb(22 36 31 / 6%), 0 0.6rem 1.4rem rgb(22 36 31 / 6%);
+  --display: "Bricolage Grotesque", "Instrument Sans", -apple-system, "Segoe UI", system-ui,
+    sans-serif;
   font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue",
+    Arial, sans-serif;
+  font-feature-settings: "tnum" 1;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* The drawn icons (Icon.tsx): sized by their attributes, coloured by whatever holds them. */
+.icon {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
 }
 
 /*
@@ -117,7 +132,7 @@
 body {
   margin: 0;
   color: var(--ink);
-  background: #0b1512;
+  background: #0e1a16;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -127,7 +142,7 @@ body {
   display: grid;
   place-items: center;
   padding: 1.5rem;
-  background: radial-gradient(circle at 50% 0%, #1b3b34 0%, #0b1512 60%);
+  background: radial-gradient(circle at 50% 0%, #223a32 0%, #0e1a16 62%);
 }
 
 .phone {
@@ -144,8 +159,9 @@ body {
   flex-direction: column;
 }
 
-/* On an actual phone the frame gets out of the way: the app is the whole screen. */
-@media (max-width: 26rem) {
+/* On an actual phone the frame gets out of the way: the app is the whole screen. The largest
+   phones are about 430 px wide, so the frame is only drawn on something wider than one. */
+@media (max-width: 32rem) {
   .stage {
     padding: 0;
   }
@@ -197,14 +213,14 @@ body {
 }
 
 .voice-controls { display: grid; gap: .35rem; padding: .65rem 1rem; background: var(--card); border-bottom: 1px solid var(--line); font-size: .78rem; }
-.voice-button { border: 0; border-radius: 999px; padding: .55rem .8rem; color: white; background: var(--brand); font: inherit; cursor: pointer; }
-.voice-button:focus-visible { outline: 3px solid #f0b429; outline-offset: 2px; }
+.voice-button { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; border: 0; border-radius: 999px; padding: .55rem .9rem; color: white; background: var(--brand); font: inherit; font-weight: 600; cursor: pointer; }
+.voice-button:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
 .voice-error { color: var(--out); }
 
 /* --- the screens ----------------------------------------------------------------- */
 
 .screen {
-  padding: 0.25rem 1.25rem 6rem;
+  padding: 0.25rem 1.25rem 1.5rem;
 }
 
 .screen-title {
@@ -217,12 +233,12 @@ body {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin: 1.25rem 0 0.5rem;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
+  margin: 1.6rem 0 0.6rem;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .see-all,
@@ -242,7 +258,7 @@ body {
 .card {
   background: var(--card);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
   padding: 1rem;
   margin-bottom: 1rem;
 }
@@ -345,56 +361,67 @@ body {
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.5rem 0 0.75rem;
-  font-size: 1.05rem;
+  gap: 0.5rem;
+  padding: 0.6rem 0 0.9rem;
+  font-family: var(--display);
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
 }
 
+/* The mark: a rounded shield in pine with the assistant's amber at its heart. */
 .mark {
-  color: var(--brand-bright);
+  display: inline-block;
+  width: 1.15rem;
+  height: 1.3rem;
+  border-radius: 0.3rem 0.3rem 0.65rem 0.65rem;
+  background: radial-gradient(circle at 50% 45%, var(--signal) 0 0.17rem, transparent 0.19rem),
+    var(--brand);
 }
 
 .brand-right {
   margin-left: auto;
   display: flex;
-  gap: 0.35rem;
+  gap: 0.4rem;
 }
 
 .brand-right button {
-  width: 2.1rem;
-  height: 2.1rem;
-  border: 0;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--line);
   border-radius: 50%;
   background: var(--card);
-  box-shadow: var(--shadow);
-  font-size: 0.95rem;
+  color: var(--ink);
   cursor: pointer;
 }
 
 .hello {
-  margin: 0 0 0.75rem;
-  font-size: 1.35rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  color: var(--ink-soft);
 }
 
+/* The balance is the headline of the app: one large figure, the investments and the month's
+   spending as quieter lines under it. */
 .figures {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
+  gap: 0.55rem;
 }
 
 .figure-label {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: var(--ink-soft);
 }
 
 .figure {
-  margin: 0.15rem 0 0;
-  font-size: 1.35rem;
+  margin: 0.1rem 0 0;
+  font-family: var(--display);
+  font-size: 2.6rem;
   font-weight: 650;
-  letter-spacing: -0.03em;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -408,8 +435,39 @@ body {
   font-weight: 400;
 }
 
+/* What is invested, under what can be spent. Quieter than the balance on purpose: it is a real
+   figure and it is not money anybody can spend today. */
+.figure-aside {
+  margin: 0.3rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.figure-spent {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0;
+  padding: 0.7rem 0 0;
+  border-top: 1px solid var(--line);
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+}
+
+.figure-spent .out {
+  font-size: 1rem;
+}
+
 .chart {
-  margin-top: 1rem;
+  margin-top: 1.1rem;
+}
+
+.chart .card-heading h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 650;
 }
 
 .bars {
@@ -417,16 +475,16 @@ body {
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
   align-items: stretch;
-  gap: 0.5rem;
-  height: 6.5rem;
+  gap: 0.45rem;
+  height: 8rem;
+  margin-top: 0.9rem;
 }
 
-/* Two rows: the bar grows into the first, the label sits in the second. The first version
-   end-aligned the slots, which made them content-sized — and a percentage height against a parent
-   with no definite height resolves to nothing, so every bar came out as a 2px sliver. */
+/* Three rows: the amount, the bar growing into the free space, the month. The bar needs a
+   definite height to grow into, which the middle row gives it. */
 .bar-slot {
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: auto 1fr auto;
   justify-items: center;
   gap: 0.3rem;
   height: 100%;
@@ -438,37 +496,66 @@ body {
 
 .bar {
   width: 100%;
-  max-width: 2rem;
+  max-width: 2.2rem;
   min-height: 0.2rem;
-  border-radius: 0.35rem 0.35rem 0 0;
-  background: linear-gradient(180deg, var(--brand-bright) 0%, var(--brand) 100%);
+  border-radius: 0.4rem 0.4rem 0.15rem 0.15rem;
+  background: var(--brand);
+}
+
+.bar-amount {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .bar-slot small {
-  font-size: 0.65rem;
+  display: grid;
+  justify-items: center;
+  font-size: 0.68rem;
+  line-height: 1.2;
   color: var(--ink-soft);
+  white-space: nowrap;
 }
 
-.chart-more {
-  margin-top: 0.75rem;
+.bar-slot small em {
+  font-style: normal;
+  font-size: 0.6rem;
+}
+
+/* The month still running: hatched and lighter, so a short bar reads as «so far». */
+.bar-slot.running .bar {
+  background: repeating-linear-gradient(
+      135deg,
+      rgb(30 90 72 / 35%) 0 0.25rem,
+      rgb(30 90 72 / 18%) 0.25rem 0.5rem
+    ),
+    var(--card);
+  box-shadow: inset 0 0 0 1px rgb(30 90 72 / 45%);
+}
+
+.bar-slot.running small {
+  color: var(--brand);
+  font-weight: 600;
 }
 
 .shortcuts {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 0.5rem;
-  margin: 1.25rem 0 0.5rem;
+  margin: 1.4rem 0 0.25rem;
 }
 
 .shortcut {
   display: grid;
   justify-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   border: 0;
   background: none;
   padding: 0;
-  font-size: 0.68rem;
-  color: var(--ink-soft);
+  font-size: 0.74rem;
+  color: var(--ink);
   font-family: inherit;
   cursor: pointer;
 }
@@ -476,39 +563,66 @@ body {
 .shortcut-icon {
   display: grid;
   place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 50%;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.95rem;
   background: var(--card);
-  font-size: 1.1rem;
-  box-shadow: var(--shadow);
+  color: var(--brand);
+  border: 1px solid var(--line);
 }
 
 .shortcut:active .shortcut-icon {
   transform: scale(0.94);
 }
 
+/* One block, rows divided by hairlines: a list of accounts is one thing, not three cards. */
+.group {
+  background: var(--card);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
 .account-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 0.8rem;
   width: 100%;
-  padding: 0.9rem 1rem;
+  padding: 0.85rem 1rem;
   border: 0;
-  border-radius: var(--radius);
-  background: var(--card);
-  box-shadow: var(--shadow);
+  background: none;
   font-family: inherit;
+  color: inherit;
   text-align: left;
   cursor: pointer;
 }
 
+.account-row + .account-row {
+  border-top: 1px solid var(--line);
+}
+
+.account-row:hover {
+  background: rgb(30 90 72 / 4%);
+}
+
+.account-glyph {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.7rem;
+  background: var(--surface);
+  color: var(--brand);
+}
+
 .account-who {
   display: grid;
+  flex: 1;
 }
 
 .account-who strong {
   font-size: 0.95rem;
+  font-weight: 600;
 }
 
 .account-who small {
@@ -517,33 +631,17 @@ body {
 }
 
 .account-figure {
-  font-weight: 650;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-/* Two or more account rows in a row need air between them; one did not. */
-.account-row + .account-row {
-  margin-top: 0.5rem;
-}
-
-.account-glyph {
-  margin-right: 0.7rem;
-  font-size: 1.2rem;
-}
-
-/* The row is a flex with the figure pushed right, so the name has to take the slack — otherwise
-   the glyph and the name sit apart with the gap between them. */
-.account-row .account-who {
-  flex: 1;
-}
-
-/* What is invested, under what can be spent. Quieter than the balance on purpose: it is a real
-   figure and it is not money anybody can spend today. */
-.figure-aside {
-  margin: 0.15rem 0 0;
+/* Which build answered, in development only, at the foot of the screen. */
+.build {
+  margin: 1.5rem 0 0;
+  text-align: center;
+  font-size: 0.68rem;
   color: var(--ink-soft);
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
 }
 
 /* --- the holder's accounts, on the accounts screen ------------------------------- */
@@ -626,7 +724,7 @@ body {
   padding: 0;
   background: var(--card);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
   overflow: hidden;
 }
 
@@ -648,8 +746,9 @@ body {
   place-items: center;
   width: 2.25rem;
   height: 2.25rem;
-  border-radius: 50%;
+  border-radius: 0.7rem;
   background: var(--surface);
+  color: var(--brand);
 }
 
 .what {
@@ -1114,11 +1213,10 @@ body {
 
 /* --- the tab bar ---------------------------------------------------------------- */
 
+/* In the phone's column, under the content and the ask bar, rather than laid over the content:
+   the screens no longer need a bottom padding to keep their last row out from under it. */
 .tabs {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: relative;
   display: grid;
   /* Five, since Tarjetas joined. At 24rem that is 4.8rem each, which still fits a label. */
   grid-template-columns: repeat(5, 1fr);
@@ -1149,34 +1247,73 @@ body {
   color: var(--brand);
 }
 
-/* --- the floating button -------------------------------------------------------- */
+/* --- the ask bar --------------------------------------------------------------- */
 
-.fab {
-  position: absolute;
-  z-index: 10;
-  right: 1.1rem;
-  bottom: 4.5rem;
-  width: 3.5rem;
-  height: 3.5rem;
-  border: 0;
+/* The assistant's place on every screen: a field to ask and two suggestions about what the screen
+   shows. The one place the amber appears. */
+.askbar {
+  padding: 0.6rem 0.9rem 0.5rem;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+.askbar-field {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  min-height: 2.9rem;
+  padding: 0.3rem 1rem 0.3rem 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 0.95rem;
+  text-align: left;
+  cursor: text;
+  box-shadow: var(--shadow);
+}
+
+.askbar-mark {
+  display: grid;
+  place-items: center;
+  width: 2.15rem;
+  height: 2.15rem;
   border-radius: 50%;
-  background: linear-gradient(150deg, var(--brand-bright) 0%, var(--brand) 100%);
-  color: #fff;
-  font-size: 1.4rem;
-  box-shadow: 0 0.5rem 1.25rem rgb(13 59 51 / 45%);
+  background: var(--ink);
+  color: var(--signal);
+}
+
+.askbar-chips {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.askbar-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.askbar-chip {
+  flex: none;
+  padding: 0.32rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  font-size: 0.76rem;
+  white-space: nowrap;
   cursor: pointer;
-  animation: rise 260ms ease both;
 }
 
-.fab:active {
-  transform: scale(0.94);
-}
-
-@keyframes rise {
-  from {
-    transform: scale(0.6);
-    opacity: 0;
-  }
+.askbar-field:focus-visible,
+.askbar-chip:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 /* --- conversation mode ---------------------------------------------------------- */
@@ -1229,8 +1366,9 @@ body {
 
 .sheet-head {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
+  column-gap: 0.65rem;
   padding: 0.5rem 1rem 0.75rem;
   border-bottom: 1px solid var(--line);
 }
@@ -1250,7 +1388,10 @@ body {
 }
 
 .sheet-title strong {
-  font-size: 1rem;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .sheet-title small {
@@ -1259,12 +1400,14 @@ body {
 }
 
 .close {
+  display: grid;
+  place-items: center;
   border: 0;
   background: var(--surface);
-  width: 2rem;
-  height: 2rem;
+  width: 2.25rem;
+  height: 2.25rem;
   border-radius: 50%;
-  color: var(--ink-soft);
+  color: var(--ink);
   cursor: pointer;
 }
 
@@ -1274,7 +1417,7 @@ body {
   padding: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.75rem;
 }
 
 .bubble {
@@ -1296,7 +1439,8 @@ body {
 
 .bubble.theirs {
   align-self: flex-start;
-  background: var(--surface);
+  background: var(--card);
+  border: 1px solid var(--line);
   border-bottom-left-radius: 0.35rem;
 }
 
@@ -1315,9 +1459,8 @@ body {
 .financial-metric {
   min-width: 0;
   padding: 0.75rem 0.85rem;
-  border: 1px solid var(--line);
   border-radius: 0.9rem;
-  background: var(--card);
+  background: var(--surface);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1334,8 +1477,11 @@ body {
 
 .financial-metric strong {
   margin-top: 0.2rem;
-  color: var(--brand);
-  font-size: 1.05rem;
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
@@ -1475,76 +1621,81 @@ summary {
 }
 
 .suggestions {
-  display: grid;
-  gap: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
   color: var(--ink-soft);
 }
 
 .suggestions p {
+  flex-basis: 100%;
   margin: 0 0 0.2rem;
   font-size: 0.82rem;
 }
 
 .suggestions button {
   text-align: left;
-  padding: 0.6rem 0.8rem;
-  border-radius: 1rem;
-  border: 1px solid var(--line);
+  padding: 0.5rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid rgb(30 90 72 / 30%);
   background: var(--card);
-  color: var(--ink);
-  font-size: 0.88rem;
+  color: var(--brand);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 550;
   cursor: pointer;
+}
+
+.suggestions button:hover {
+  background: rgb(30 90 72 / 6%);
 }
 
 .composer {
   display: flex;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
-  border-top: 1px solid var(--line);
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.6rem 0.85rem;
+  margin-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  padding: 0.3rem 0.3rem 0.3rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.composer:focus-within {
+  border-color: var(--brand-bright);
+  box-shadow: 0 0 0 3px rgb(42 122 98 / 15%);
 }
 
 .composer input {
   flex: 1;
-  padding: 0.75rem 1rem;
-  border-radius: 1.5rem;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  min-width: 0;
+  padding: 0.55rem 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
   font-size: 0.95rem;
   font-family: inherit;
-}
-
-.composer input:focus {
-  outline: 2px solid var(--brand-bright);
-  outline-offset: -1px;
+  outline: none;
 }
 
 .composer button {
-  width: 2.9rem;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
   border: 0;
   border-radius: 50%;
   background: var(--brand);
   color: #fff;
-  font-size: 1rem;
   cursor: pointer;
 }
 
 .composer button:disabled {
-  background: var(--line);
+  background: transparent;
   color: var(--ink-soft);
   cursor: default;
-}
-
-/* The build label, development only. Small and grey: it is a debugging aid that happens to live on
-   the home screen, not something the product is about. */
-.brand .build {
-  margin-left: 0.4rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.65rem;
-  color: var(--muted);
-  background: var(--surface-2, rgba(0, 0, 0, 0.05));
-  padding: 0.1rem 0.35rem;
-  border-radius: 0.35rem;
 }
 
 /* --- what a payment is about to do ------------------------------------------------ */

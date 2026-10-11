@@ -56,12 +56,6 @@ export function accountName(holding: { kind: string; display_name: string | null
   return holding.display_name ?? KIND_NAMES[holding.kind] ?? "Cuenta";
 }
 
-const KIND_GLYPHS: Record<string, string> = { CURRENT: "💳", SAVINGS: "🐷", ASSET: "📈" };
-
-export function accountGlyph(kind: string): string {
-  return KIND_GLYPHS[kind] ?? "🏦";
-}
-
 /**
  * What the holder can actually spend, and what it deliberately leaves out.
  *
@@ -130,31 +124,27 @@ export function time(iso: string): string {
  * The keys are the ledger's identifiers, which are English and are data. The words are Spanish
  * because they are read by the user — the one exception to English everywhere.
  */
-const CATEGORIES: Record<string, [string, string]> = {
-  GROCERIES: ["🛒", "Supermercado"],
-  TRANSPORT_FUEL: ["⛽", "Gasolina"],
-  RESTAURANTS: ["🍽️", "Restaurantes"],
-  TRANSPORT_PUBLIC: ["🚇", "Transporte"],
-  HEALTH: ["💊", "Salud"],
-  LEISURE: ["🎬", "Ocio"],
-  SUBSCRIPTIONS: ["🔁", "Suscripciones"],
-  HOUSING_RENT: ["🏠", "Alquiler"],
-  SALARY: ["💼", "Nómina"],
-  TRANSFER_BIZUM: ["📲", "Bizum"],
-  OPENING: ["🏦", "Apertura"],
-  INTEREST: ["🪙", "Intereses"],
+const CATEGORIES: Record<string, string> = {
+  GROCERIES: "Supermercado",
+  TRANSPORT_FUEL: "Gasolina",
+  RESTAURANTS: "Restaurantes",
+  TRANSPORT_PUBLIC: "Transporte",
+  HEALTH: "Salud",
+  LEISURE: "Ocio",
+  SUBSCRIPTIONS: "Suscripciones",
+  HOUSING_RENT: "Alquiler",
+  SALARY: "Nómina",
+  TRANSFER_BIZUM: "Bizum",
+  OPENING: "Apertura",
+  INTEREST: "Intereses",
   // Written by the dataset generator on its internal transfers. New ones carry no category at all,
   // because a category partitions spending and this is not spending — the word is here so the
   // rows that predate that decision do not render as "Otros".
-  INTERNAL: ["⇄", "Traspaso"],
+  INTERNAL: "Traspaso",
 };
 
-export function glyph(category: string | null): string {
-  return (category && CATEGORIES[category]?.[0]) || "💳";
-}
-
 export function categoryName(category: string | null): string {
-  return (category && CATEGORIES[category]?.[1]) || "Otros";
+  return (category && CATEGORIES[category]) || "Otros";
 }
 
 
@@ -178,6 +168,16 @@ export function minorUnits(typed: string): number | null {
 
 /** A month key ("2026-07") as somebody reads it. */
 const MONTH = new Intl.DateTimeFormat("es-ES", { month: "short" });
+
+const COMPACT = new Intl.NumberFormat("es-ES", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+/** «2,1 mil»: a bar's label, where a full «2.099,80 €» does not fit and the axis says it is euros. */
+export function compactMoney(amountMinor: number): string {
+  return COMPACT.format(amountMinor / 100);
+}
 
 export function monthName(key: string): string {
   const [year, month] = key.split("-");
