@@ -253,16 +253,19 @@ def test_a_rate_limited_turn_is_sent_again_with_the_conversation_from_before_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A free-tier provider answers 429 in bursts. With retries asked for, the same turn goes again
-    — same sentence, same conversation — and the record says it took one retry."""
+    — same sentence, same conversation, same request id, so the graph replays one turn rather than
+    starting a second — and the record says it took one retry."""
     before = {"workflow": None}
-    sent: list[tuple[str, object]] = []
+    sent: list[tuple[str, object, str]] = []
     answers = [
         {"outcome": "PROVIDER_ERROR", "text": "No he podido pensar", "conversation": {"x": 1}},
         {"outcome": "COURTESY", "text": "De nada.", "conversation": {"x": 2}},
     ]
 
-    async def ask(_client: object, _options: object, said: str, conversation: object) -> Any:
-        sent.append((said, conversation))
+    async def ask(
+        _client: object, _options: object, said: str, conversation: object, request_id: str
+    ) -> Any:
+        sent.append((said, conversation, request_id))
         return answers.pop(0), 0.1, None, {}
 
     async def no_wait(_: float) -> None:
@@ -280,7 +283,11 @@ def test_a_rate_limited_turn_is_sent_again_with_the_conversation_from_before_it(
     record, following = asyncio.run(
         real._turn(None, options, name="a", turn=1, said="gracias", conversation=before)  # type: ignore[arg-type]
     )
-    assert sent == [("gracias", before), ("gracias", before)]
+    assert [(said, conversation) for said, conversation, _ in sent] == [
+        ("gracias", before),
+        ("gracias", before),
+    ]
+    assert sent[0][2] == sent[1][2]
     assert record["outcome"] == "COURTESY" and record["provider_retries"] == 1
     assert following == {"x": 2}
 
@@ -503,9 +510,26 @@ def test_a_session_task_succeeds_only_when_every_turn_in_that_task_passes() -> N
         _record("session", 2, "fail", expect={"task": "movements"}),
         _record("session", 3, expect={"task": "payment"}),
     ]
-    assert real.summarise(records)["tasks"] == {
-        "movements": {"turns": 2, "succeeded": False, "failed": 1, "unjudged": 0},
-        "payment": {"turns": 1, "succeeded": True, "failed": 0, "unjudged": 0},
+    # Task labels are local to their session, so a task is keyed by both.
+    tasks = real.summarise(records)["tasks"]
+    counted = ("conversation", "name", "turns", "succeeded", "failed", "unjudged")
+    assert {key: {field: task[field] for field in counted} for key, task in tasks.items()} == {
+        "session::movements": {
+            "conversation": "session",
+            "name": "movements",
+            "turns": 2,
+            "succeeded": False,
+            "failed": 1,
+            "unjudged": 0,
+        },
+        "session::payment": {
+            "conversation": "session",
+            "name": "payment",
+            "turns": 1,
+            "succeeded": True,
+            "failed": 0,
+            "unjudged": 0,
+        },
     }
 
 
@@ -516,7 +540,7 @@ def test_a_task_fails_when_the_judge_says_its_goal_was_not_met() -> None:
         expect={"task": "visualization"},
         judgement={"verdict": "pass", "goal_met": False},
     )
-    assert real.summarise([record])["tasks"]["visualization"]["succeeded"] is False
+    assert real.summarise([record])["tasks"]["session::visualization"]["succeeded"] is False
 
 
 def test_the_full_banking_acceptance_session_is_ten_turns_and_groups_tasks() -> None:
