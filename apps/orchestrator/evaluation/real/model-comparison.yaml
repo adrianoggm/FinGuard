@@ -1,0 +1,92 @@
+# Batteries for the gemini-3.5-flash-lite / gemini-3.5-flash comparison of 2026-10-11, beside the four
+# long sessions, the eleven-turn session and the reserved holdout. Each one exercises a contract
+# changed on task/legacy-removal: references to the answer on screen, continuous chart editing, and a
+# Bizum draft paused by another question and resumed. A «sí» is never sent: the replay refuses it,
+# so no money moves.
+conversations:
+- name: referencias-ranking-comparacion-categoria
+  goal: Encontrar el mes de mayor gasto, compararlo con el mes actual y desglosar ese mismo mes.
+  turns:
+  - say: ¿Cuál fue el mes de mayor gasto este año?
+    expect:
+      task: mes-de-mayor-gasto
+      mechanism: intent
+      route: QUERY
+      want: Nombra el mes de mayor gasto del año (abril de 2026 en el seed) con su importe.
+  - say: Compáralo con el actual
+    expect:
+      task: mes-de-mayor-gasto
+      mechanism: reference
+      route: QUERY
+      want: Compara ese mes (abril) con el mes en curso (octubre), con ambos importes del banco.
+  - say: ¿Y en qué categoría gasté más ese mes?
+    expect:
+      task: mes-de-mayor-gasto
+      mechanism: reference
+      route: QUERY
+      want: La categoría de mayor gasto de abril de 2026, no del año ni del mes en curso.
+- name: edicion-continua-de-grafico
+  goal: Crear un gráfico de gastos por categoría y editarlo varias veces sin perder cambios ni leer el banco.
+  turns:
+  - say: Muéstrame mis gastos de este año por categoría
+    expect:
+      task: grafico-por-categoria
+      mechanism: intent
+      route: QUERY
+      want: Desglose de gastos del año por categoría.
+  - say: Ponlo en gráfico
+    expect:
+      task: grafico-por-categoria
+      mechanism: reference
+      route: VISUAL
+      want: Un gráfico de esas categorías, sin nueva lectura bancaria.
+  - say: Vertical
+    expect:
+      task: grafico-por-categoria
+      mechanism: follow_up
+      route: VISUAL
+      want: Las mismas barras en vertical; mismo total, sin nueva lectura bancaria.
+  - say: Ordena ascendente
+    expect:
+      task: grafico-por-categoria
+      mechanism: follow_up
+      route: VISUAL
+      want: Barras verticales ordenadas de menor a mayor; mismo total.
+  - say: Solo las cinco mayores
+    expect:
+      task: grafico-por-categoria
+      mechanism: follow_up
+      route: VISUAL
+      want: Las cinco categorías mayores, verticales y ascendentes; el total de la consulta no cambia.
+  - say: Vuelve a mostrar todas
+    expect:
+      task: grafico-por-categoria
+      mechanism: follow_up
+      route: VISUAL
+      want: Todas las categorías otra vez, verticales y ascendentes.
+- name: bizum-interrumpido-y-reanudado
+  goal: Empezar un Bizum, interrumpirlo con una consulta de saldo, retomarlo y cancelarlo en la vista previa.
+  turns:
+  - say: Quiero hacerle un bizum a Marta Solis Vega
+    expect:
+      task: bizum-a-marta
+      mechanism: intent
+      route: PAYMENT
+      want: Pide solo el importe; destinatario Marta Solis Vega.
+  - say: Espera, ¿cuánto tengo en la cuenta corriente?
+    expect:
+      task: saldo-intercalado
+      mechanism: interruption
+      route: BALANCE
+      want: Saldo de la cuenta corriente, sin crear ni perder el borrador del Bizum.
+  - say: Vale, sigamos con el bizum, que sean 15 euros
+    expect:
+      task: bizum-a-marta
+      mechanism: pending_resolution
+      route: PAYMENT
+      want: Vista previa de 15 € a Marta Solis Vega con botones de confirmación; no envía dinero.
+  - say: No, mejor no
+    expect:
+      task: bizum-a-marta
+      mechanism: reset
+      want: Cancela la vista previa; no se envía nada.

@@ -1072,7 +1072,7 @@ def _state(
             "Reusable bank result: the last answered financial query is available as bounded "
             "aggregates; a visual restyle can reuse it without another bank query."
         )
-        shown = _result_in_words(state.active_artifact)
+        shown = _result_in_words(state.active_artifact, today)
         if shown:
             lines.append(shown)
     elif state.active_movement_artifact is not None:
@@ -1297,12 +1297,21 @@ def _fields_of(plan: FinancialPlan | TopMovements) -> PlanFields:
 _RESULT_GROUPS: Final = MAX_RESULT_REFERENCES
 
 
-def _result_in_words(artifact: FinancialArtifact) -> str:
+def _result_in_words(artifact: FinancialArtifact, today: date) -> str:
     """What the last answer found, as values a reference can resolve to: its groups' keys in the
     bank's order, a month with its exact dates. «¿Cuál fue el mes de mayor gasto?» answered April;
     without this line «compáralo con el actual» could only guess which month «it» was. Keys only:
     the figures stay with the answer, and a shop's name is clipped like an account's."""
-    if artifact.comparison is not None or not artifact.groups:
+    if artifact.comparison is not None:
+        # A pair's two periods are what «ese mes» after «compáralo con el actual» can mean.
+        earlier, latest = artifact.comparison.earlier, artifact.comparison.latest
+        return (
+            "Result on screen, a comparison of two periods: "
+            f"1 = {_window(earlier.date_range or earlier.period, today)}, "
+            f"2 = {_window(latest.date_range or latest.period, today)}. A reference to one of "
+            "them (that month, the first one) is from_result=N."
+        )
+    if not artifact.groups:
         return ""
     dimension = artifact.plan.group_by
     if dimension is GroupBy.NONE:
@@ -1333,7 +1342,7 @@ def _group_key(key: str, dimension: GroupBy) -> str:
 def _chart_in_words(spec: ChartSpec) -> str:
     """The chart on screen as the model needs it to edit it relatively: its type, which way its
     bars run, its order, its top-N and its stacking. Read off the spec; no value is quoted."""
-    parts = [spec.mark]
+    parts: list[str] = [spec.mark]
     if spec.mark == "bar":
         measure_on_x = any(
             item.channel == "x" and item.type == "quantitative" for item in spec.encodings

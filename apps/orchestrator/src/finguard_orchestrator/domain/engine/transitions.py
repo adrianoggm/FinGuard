@@ -466,13 +466,20 @@ def _with_result_references[Op](op: Op, state: DialogueState) -> Op:
 
 
 def _referenced(fields: PlanFields, state: DialogueState) -> PlanFields:
-    """The Nth group of the answer on screen as the field its dimension fills: a month or a day
-    is the window, a category, a shop or a person is that filter. A reference to nothing (no
-    result, a comparison, a value past what the prompt showed) is asked about, never guessed."""
+    """The Nth value of the answer on screen as the field it fills: a month or a day of a
+    breakdown is the window, a category, a shop or a person is that filter, and a side of a
+    comparison is its period. A reference to nothing (no result, a value past what the prompt
+    showed) is asked about, never guessed."""
     artifact = state.active_artifact
     index = fields.from_result
-    if artifact is None or artifact.comparison is not None or index is None:
+    if artifact is None or index is None:
         raise _CannotApplyError(Missing.SUBJECT)
+    if artifact.comparison is not None:
+        # A pair's values are its two periods: 1 the earlier, 2 the latest.
+        if index not in (1, 2):
+            raise _CannotApplyError(Missing.SUBJECT)
+        side = artifact.comparison.earlier if index == 1 else artifact.comparison.latest
+        return replace(fields, from_result=None, window=side.date_range or side.period)
     shown = answer_writer.shown_groups(artifact.groups, artifact.plan)
     if not 1 <= index <= min(len(shown), MAX_RESULT_REFERENCES):
         raise _CannotApplyError(Missing.SUBJECT)

@@ -1902,3 +1902,61 @@ def test_the_first_result_is_the_one_the_answer_showed_not_the_banks_first() -> 
     assert t.work.plan.date_range == APRIL
     # The answer showed one month; there is no second one to point at.
     assert beyond.work is None and isinstance(beyond.reply, Clarify)
+
+
+def test_that_month_after_a_comparison_is_the_side_the_person_points_at() -> None:
+    """«Compáralo con el actual» compared April with this month; «¿en qué categoría gasté más ese
+    mes?» then had nothing to refer to. A pair's values are its two periods."""
+    pair = ComparisonPlan.between(
+        replace(
+            MONTH_RANKING,
+            period=None,
+            date_range=APRIL,
+            group_by=GroupBy.NONE,
+            group_limit=None,
+            result_kind=ResultKind.SCALAR,
+        ),
+        replace(
+            MONTH_RANKING,
+            period=RelativePeriod(Period.THIS_MONTH),
+            group_by=GroupBy.NONE,
+            group_limit=None,
+            result_kind=ResultKind.SCALAR,
+        ),
+    )
+    assert pair is not None
+    state = replace(
+        EMPTY,
+        focus=ComparisonFocus(pair),
+        active_artifact=FinancialArtifact(
+            plan=pair.latest,
+            currency="EUR",
+            total_minor=0,
+            movement_count=0,
+            groups=(),
+            comparison=pair,
+            comparison_groups=((), ()),
+            comparison_values=(229_413, 103_042),
+            result_kind=ResultKind.COMPARISON,
+        ),
+    )
+
+    t = apply(
+        state,
+        [
+            Ask(
+                PlanFields(
+                    direction=Direction.EXPENSE,
+                    group_by=GroupBy.CATEGORY,
+                    limit=1,
+                    result_kind=ResultKind.RANKING,
+                    from_result=1,
+                )
+            )
+        ],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert t.work is not None and isinstance(t.work.plan, FinancialPlan)
+    assert t.work.plan.date_range == APRIL
