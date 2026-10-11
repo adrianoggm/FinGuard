@@ -606,8 +606,10 @@ async def test_an_empty_model_ask_keeps_an_unanswered_account_clarification() ->
     )
     world = World(
         (Clarify(Missing.ACCOUNT, about="cuenta principal", draft=draft),),
-        (Patch("focus", PlanFields(window=JUNE)),),
-        (Patch("focus", PlanFields(accounts=("Cuenta corriente",))),),
+        # A reply that changes the open question's draft is a patch of that question: the model
+        # says so, and the transition applies it rather than rewriting a focus patch into one.
+        (Patch("pending", PlanFields(window=JUNE)),),
+        (Patch("pending", PlanFields(accounts=("Cuenta corriente",))),),
     )
     first = await world.ask(
         sentence="Cuánto gasté en la cuenta principal este mes", request_id="account-1"
@@ -1256,6 +1258,7 @@ async def test_a_stale_version_is_refused_before_any_work() -> None:
 
 async def test_the_checkpoint_holds_no_sentence_no_prompt_and_no_movement_text() -> None:
     world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
+    world.keep_checkpoints()
 
     await world.ask()
 
@@ -1286,7 +1289,11 @@ async def test_a_checkpoint_from_another_graph_version_is_not_resumed(
     # Started again: the interpreter was asked a second time, and the turn still saved once.
     assert len(world.interpreter.sentences) == 2
     assert answer.state.version == 1
-    assert GROUNDED_AMAZON in text_of(answer)
+    # Still the same turn, so the read that failed before the restart counts: the inspection would
+    # be a fourth bank call, and the answer says it stopped at the cap instead of making it.
+    assert "No he investigado más" in text_of(answer)
+    assert GROUNDED_AMAZON not in text_of(answer)
+    assert world.ledger.attempts == investigation_graph.MAX_BANK_EXECUTIONS
 
 
 @pytest.mark.asyncio
