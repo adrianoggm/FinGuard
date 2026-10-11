@@ -171,6 +171,7 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
         "select_operand",
         "reset",
         "restore_previous",
+        "resume_focus",
         "balance",
         "list_contacts",
         "list_categories",
@@ -218,6 +219,7 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
         "accounts",
         "categories",
         "merchant_terms",
+        "window",
         "page_size",
         "continue_current",
     }
@@ -227,12 +229,19 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
         "type": "array",
         "items": {"type": "string"},
     }
-    assert movement_fields["page_size"] == {"type": "integer"}
+    # Null keeps the shown list's page size.
+    assert movement_fields["page_size"] == {"anyOf": [{"type": "integer"}, {"type": "null"}]}
     assert movement_fields["continue_current"] == {"type": "boolean"}
     assert movement_list["additionalProperties"] is False
 
     patch = operations["patch"]
-    assert patch["properties"]["target"]["enum"] == ["focus", "earlier", "latest", "pending"]
+    assert patch["properties"]["target"]["enum"] == [
+        "focus",
+        "earlier",
+        "latest",
+        "pending",
+        "suspended",
+    ]
     change_variants = patch["properties"]["changes"]["items"]["anyOf"]
     change_fields = {
         next(iter(variant["properties"])): next(iter(variant["properties"].values()))
@@ -273,7 +282,9 @@ async def test_complete_sends_gemini_schema_and_bearer_key(
     sent_schema = endpoint.request["json"]["response_format"]["json_schema"]["schema"]
     assert "$defs" not in sent_schema
     operations = sent_schema["properties"]["operations"]["items"]["anyOf"]
-    assert len(operations) == 21
+    # Compacted, but every operation the schema defines is still offered.
+    defined = schema_for(["FOOD"])["properties"]["operations"]["items"]["anyOf"]
+    assert len(operations) == len(defined)
     patch = next(v["properties"]["patch"] for v in operations if "patch" in v["properties"])
     assert "changes" in patch["properties"]
 

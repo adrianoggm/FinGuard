@@ -20,7 +20,8 @@ def test_the_service_says_which_commit_it_is() -> None:
     body = client.get("/version").json()
 
     assert body["service"] == "orchestrator"
-    assert set(body) == {"service", "sha", "ref"}
+    # The commit, and a fingerprint of the source the image was built from.
+    assert set(body) == {"service", "sha", "ref", "source_sha256"}
 
 
 def test_a_build_that_was_given_no_commit_says_so() -> None:

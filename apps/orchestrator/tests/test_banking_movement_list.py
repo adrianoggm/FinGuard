@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import pytest
@@ -72,7 +72,9 @@ async def test_movement_list_adapter_keeps_the_newest_page_contract(monkeypatch)
 
     page = await HttpFinancialQuery(
         base_url="http://banking", timeout_seconds=1, supporting_movements=5
-    ).list_movements(plan, account_id=ACCOUNT, reporting_timezone="Europe/Madrid")
+    ).list_movements(
+        plan, account_id=ACCOUNT, today=date(2026, 10, 8), reporting_timezone="Europe/Madrid"
+    )
 
     assert client.request is not None
     url, body = client.request
