@@ -51,6 +51,7 @@ from finguard_orchestrator.domain.enums import (
     Rail,
     ResultKind,
 )
+from finguard_orchestrator.domain.models.chart import ChartSpec
 from finguard_orchestrator.domain.ports.turn_operations import NO_ACCOUNT_NAMES
 from finguard_orchestrator.domain.services import spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -99,7 +100,9 @@ patch_movement_list (only the movement-list fields the user changes, or clear_wi
 remove its date filter);
 ask_correction (the user says you misunderstood but has not said what to change);
 smalltalk (GREETING/THANKS/IDENTITY/HELP); visualize/update_visualization AUTO/BAR/LINE
-(no bank call).
+draws or redraws a chart (no bank call); edit_visualization changes only the properties it names
+on the chart on screen (mark, orientation, sort by amount ascending/descending, limit N, show_all,
+stack) and keeps every earlier change (no bank call).
 prepare_bizum(recipient, amount_minor); prepare_transfer
 (recipient, amount_minor) for a named payee when "transferencia" is said. New payees require a
 user-written IBAN; code extracts it; never output an IBAN. Null means missing;
@@ -1073,9 +1076,11 @@ def _state(
     if state.active_visual is not None:
         lines.append(
             "Active visualization: "
-            f"{state.active_visual.spec.mark}, chart version {state.active_visual.version}, "
-            f"from result version {state.active_visual.result_version}. A requested change to "
-            "its presentation MUST use update_visualization and reuse this chart; use "
+            f"{_chart_in_words(state.active_visual.spec)}, chart version "
+            f"{state.active_visual.version}, from result version "
+            f"{state.active_visual.result_version}. A requested change to its presentation "
+            "(type, orientation, order, how many items, stacking) MUST use edit_visualization "
+            "naming only what changes; update_visualization redraws it from scratch; use "
             "create_visualization only when no chart is active."
         )
     if state.pending is None:
@@ -1277,6 +1282,24 @@ def _fields_of(plan: FinancialPlan | TopMovements) -> PlanFields:
         group_by=None if plan.group_by is GroupBy.NONE else plan.group_by,
         limit=plan.group_limit,
     )
+
+
+def _chart_in_words(spec: ChartSpec) -> str:
+    """The chart on screen as the model needs it to edit it relatively: its type, which way its
+    bars run, its order, its top-N and its stacking. Read off the spec; no value is quoted."""
+    parts = [spec.mark]
+    if spec.mark == "bar":
+        measure_on_x = any(
+            item.channel == "x" and item.type == "quantitative" for item in spec.encodings
+        )
+        parts.append("horizontal" if measure_on_x else "vertical")
+    if spec.sort in {"ascending", "descending"}:
+        parts.append(f"sorted {spec.sort}")
+    if spec.limit is not None:
+        parts.append(f"top {spec.limit}")
+    if spec.stack is not None:
+        parts.append(f"stack {spec.stack}")
+    return ", ".join(parts)
 
 
 def _said(fields: PlanFields, today: date) -> str:

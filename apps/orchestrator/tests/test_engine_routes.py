@@ -938,3 +938,182 @@ def test_money_moved_to_the_hucha_is_a_query_of_own_transfers(route: str) -> Non
     assert ran.internal_only and ran.include_internal
     assert ran.direction is Direction.INCOME
     assert ran.period == RelativePeriod(Period.THIS_YEAR)
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_an_unreadable_turn_is_reported_as_a_failure_and_the_query_continues(route: str) -> None:
+    """«Dame otros 10» came back unreadable twice and was answered «¿Qué quieres consultar?»: the
+    model's failure presented as the person's. It is now reported as what it is, nothing is saved,
+    and the next turn continues the query on screen."""
+    stack = a_stack()
+    restaurants_last_month = {
+        "operations": [
+            {
+                "ask": [
+                    {"direction": "EXPENSE"},
+                    {"window": {"named": "LAST_MONTH"}},
+                    {"result_kind": "SCALAR"},
+                    {"categories": ["RESTAURANTS"]},
+                ]
+            }
+        ]
+    }
+    engine_on(
+        stack,
+        an_adapter(
+            Canned(
+                restaurants_last_month,
+                "esto no es JSON",
+                "tampoco",
+                patched("focus", categories=["LEISURE"]),
+            )
+        ),
+    )
+    first = post(stack, route, "¿Cuánto gasté en restaurantes el mes pasado?")
+    failed = post(stack, route, "Dame otros 10", first.conversation)
+    retried = post(stack, route, "¿Y en ocio?", failed.conversation)
+
+    assert failed.status == 200
+    assert failed.body["outcome"] == "PROVIDER_ERROR"
+    assert "Qué quieres consultar" not in failed.body["text"]
+    assert failed.conversation["version"] == first.conversation["version"]
+    assert retried.body["outcome"] != "NEEDS_CLARIFICATION", retried.body["text"]
+    restaurants, leisure = stack.ledger.plans
+    assert leisure.categories == ("LEISURE",)
+    assert leisure.period == restaurants.period == RelativePeriod(Period.LAST_MONTH)
+
+
+YEARLY_BY_CATEGORY = tuple(
+    Group(key, amount, 3)
+    for key, amount in (
+        ("HOUSING_RENT", 1_104_000),
+        ("GROCERIES", 400_000),
+        ("RESTAURANTS", 200_000),
+        ("SUBSCRIPTIONS", 90_000),
+        ("HEALTH", 60_000),
+        ("LEISURE", 50_000),
+    )
+)
+ASKS_YEARLY_BY_CATEGORY = {
+    "operations": [
+        {
+            "ask": [
+                {"direction": "EXPENSE"},
+                {"window": {"named": "THIS_YEAR"}},
+                {"group_by": "CATEGORY"},
+                {"result_kind": "BREAKDOWN"},
+            ]
+        }
+    ]
+}
+
+
+def edits(*changes: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{"operations": [{"edit_visualization": change}]} for change in changes]
+
+
+def chart(turn: Turn) -> tuple[str, str, int | None]:
+    """The shown chart as the person sees it: which axis holds the categories, their order, and
+    the top-N it keeps."""
+    spec = turn.body["visualization"]["spec"]
+    axis = "x" if spec["encoding"]["x"]["type"] == "nominal" else "y"
+    order = spec["encoding"][axis]["sort"]["order"]
+    limit = next(
+        (
+            int(step["filter"].rsplit("<=", 1)[1])
+            for step in spec.get("transform", ())
+            if "filter" in step
+        ),
+        None,
+    )
+    return ("vertical" if axis == "x" else "horizontal"), order, limit
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_chart_is_edited_turn_after_turn_keeping_every_change_without_bank_reads(
+    route: str,
+) -> None:
+    """VISUAL-001: «ponlo vertical», «de menor a mayor», «solo las cinco mayores», «todas otra vez»,
+    «horizontal otra vez». Each edit changes what it names on the chart on screen, keeps the earlier
+    ones, and reads nothing from the bank: the total and the categories stay those of the query."""
+    stack = a_stack()
+    stack.ledger.groups_for_next_turn = YEARLY_BY_CATEGORY
+    engine_on(
+        stack,
+        an_adapter(
+            Canned(
+                ASKS_YEARLY_BY_CATEGORY,
+                {"operations": [{"create_visualization": "AUTO"}]},
+                *edits(
+                    {"orientation": "vertical"},
+                    {"sort": "ascending"},
+                    {"limit": 5},
+                    {"show_all": True},
+                    {"orientation": "horizontal"},
+                ),
+            )
+        ),
+    )
+    conversation = None
+    turns = []
+    for said in (
+        "Muéstrame mis gastos anuales por categoría",
+        "Ponlo en un gráfico",
+        "Haz las barras verticales",
+        "Ordénalas de menor a mayor",
+        "Muéstrame solo las cinco categorías con mayor gasto",
+        "Vuelve a mostrar todas",
+        "Ponlo horizontal otra vez",
+    ):
+        turn = post(stack, route, said, conversation)
+        assert turn.status == 200 and turn.body["outcome"] == "PLANNED", (said, turn.body)
+        conversation = turn.conversation
+        turns.append(turn)
+
+    assert len(stack.ledger.ran) == 1
+    assert {turn.body["total_minor"] for turn in turns} == {
+        sum(g.total_minor for g in YEARLY_BY_CATEGORY)
+    }
+    assert chart(turns[2]) == ("vertical", "descending", None)
+    assert chart(turns[3]) == ("vertical", "ascending", None)
+    assert chart(turns[4]) == ("vertical", "ascending", 5)
+    assert chart(turns[5]) == ("vertical", "ascending", None)
+    assert chart(turns[6]) == ("horizontal", "ascending", None)
+    shown = {row["dimension"] for row in turns[6].body["visualization"]["data"]}
+    assert len(shown) == len(YEARLY_BY_CATEGORY)
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_an_edit_the_chart_cannot_take_leaves_it_as_it_was(route: str) -> None:
+    """A donut of six categories is refused by the verifier: the answer says so, the chart on
+    screen is untouched, and the next edit still applies to it."""
+    stack = a_stack()
+    stack.ledger.groups_for_next_turn = YEARLY_BY_CATEGORY
+    engine_on(
+        stack,
+        an_adapter(
+            Canned(
+                ASKS_YEARLY_BY_CATEGORY,
+                {"operations": [{"create_visualization": "AUTO"}]},
+                *edits({"sort": "ascending"}, {"mark": "donut"}, {"orientation": "vertical"}),
+            )
+        ),
+    )
+    conversation = None
+    turns = []
+    for said in (
+        "gastos anuales por categoría",
+        "en un gráfico",
+        "de menor a mayor",
+        "en donut",
+        "vertical",
+    ):
+        turn = post(stack, route, said, conversation)
+        conversation = turn.conversation
+        turns.append(turn)
+
+    refused = turns[3]
+    assert refused.body["outcome"] == "INVALID_DOMAIN"
+    assert "lo dejo como estaba" in refused.body["text"]
+    assert chart(turns[4]) == ("vertical", "ascending", None)
+    assert len(stack.ledger.ran) == 1

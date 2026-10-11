@@ -296,11 +296,43 @@ class Delegate:
 
 
 @dataclass(frozen=True)
+class ChartEdit:
+    """A change to the chart on screen, named property by property and holding no data.
+
+    Applied to the chart as it is (`merge_encoding_patch`), so each edit keeps every earlier one,
+    and checked by the visual verifier against the data the chart already has: an edit never
+    reads the bank. `show_all` removes a top-N; `limit` sets one.
+    """
+
+    mark: Literal["bar", "line", "area", "point", "donut"] | None = None
+    orientation: Literal["horizontal", "vertical"] | None = None
+    sort: Literal["ascending", "descending"] | None = None
+    limit: int | None = None
+    show_all: bool | None = None
+    stack: Literal["zero", "normalize", "disabled"] | None = None
+
+    def __post_init__(self) -> None:
+        said = [name for name, value in vars(self).items() if value is not None]
+        if not said:
+            raise InvalidValueError("a chart edit names at least one property")
+        if self.limit is not None and self.show_all:
+            raise InvalidValueError("a chart edit cannot set and clear its limit at once")
+        if self.limit is not None and not 1 <= self.limit <= 100:
+            raise InvalidValueError("a chart limit is between 1 and 100")
+        if self.show_all is False:
+            raise InvalidValueError("show_all is only ever true")
+
+
+@dataclass(frozen=True)
 class Visualize:
-    """A first-class visual operation over the last query result or current chart."""
+    """A first-class visual operation over the last query result or current chart.
+
+    `edit` is a typed change to the active chart; without one, the chart is chosen again for the
+    result (`style` only pins bars or lines)."""
 
     target: Literal["ACTIVE_RESULT", "ACTIVE_CHART"]
     style: Literal["AUTO", "BAR", "LINE"] = "AUTO"
+    edit: ChartEdit | None = None
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,7 @@ from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionResult,
     SpokenPlan,
 )
-from finguard_orchestrator.domain.engine.operations import Visualize
+from finguard_orchestrator.domain.engine.operations import ChartEdit, Visualize
 from finguard_orchestrator.domain.engine.state import (
     ActiveVisual,
     ArtifactStatus,
@@ -18,13 +18,17 @@ from finguard_orchestrator.domain.engine.state import (
     PaymentDraftPending,
 )
 from finguard_orchestrator.domain.enums import GroupBy, Metric, PlanningOutcome
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ROWS_THAT_FIT,
+    EncodingPatch,
     Mark,
     PresentationContext,
     VisualDataset,
+    VisualDecision,
     VisualRow,
+    merge_encoding_patch,
 )
 from finguard_orchestrator.domain.models.query_answer import Group
 from finguard_orchestrator.domain.models.visual_plan import Rejection, draft_of
@@ -224,11 +228,25 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                 viewport=DEFAULT_PRESENTATION.viewport,
                 max_visible_rows=min(100, max(ROWS_THAT_FIT, len(rows))),
             )
-        before = ctx.ports.count_calls()
-        decision = await ctx.ports.visual_policy.decide(ctx.sentence, profile, presentation)
-        ctx.cache["visual_model_calls"] = max(0, ctx.ports.count_calls() - before)
         style_note: str | None = None
-        if decision is not None and visual_op.style != "AUTO":
+        decision: VisualDecision | None
+        if visual_op.edit is not None:
+            # An edit changes the chart on screen; it never chooses one again. No planner, no
+            # bank: the verified data the chart was drawn from is the data it keeps.
+            shown = current.active_visual
+            if shown is None or shown.result_version != artifact.result_version:
+                decision = None
+                style_note = (
+                    "El gr\u00e1fico que quieres cambiar ya no corresponde a la consulta en "
+                    "pantalla. P\u00eddeme el gr\u00e1fico de nuevo."
+                )
+            else:
+                decision, style_note = _edited(shown, visual_op.edit)
+        else:
+            before = ctx.ports.count_calls()
+            decision = await ctx.ports.visual_policy.decide(ctx.sentence, profile, presentation)
+            ctx.cache["visual_model_calls"] = max(0, ctx.ports.count_calls() - before)
+        if decision is not None and visual_op.style != "AUTO" and visual_op.edit is None:
             mark: Mark = "line" if visual_op.style == "LINE" else "bar"
             styled = replace(decision.spec, mark=mark, stack=None)
             verified = verify(draft_of(styled), profile)
@@ -417,6 +435,61 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
         "model_calls": state.get("model_calls", 0) + ctx.cache.get("visual_model_calls", 0),
         "rearm_payment": isinstance(saved.payment, PaymentConfirmationPending),
     }
+
+
+def _edited(shown: ActiveVisual, edit: ChartEdit) -> tuple[VisualDecision | None, str | None]:
+    """The chart on screen with this edit applied and verified, or why it stays as it is.
+
+    Ordering means the measure: the chart's quantitative field, read off its own spec, so «de
+    menor a mayor» orders the bars by amount whichever axis the bars run along.
+    """
+    sort_field = (
+        next((item.field for item in shown.spec.encodings if item.type == "quantitative"), None)
+        if edit.sort is not None
+        else None
+    )
+    changed = {
+        name
+        for name, value in (
+            ("mark", edit.mark),
+            ("orientation", edit.orientation),
+            ("sort", edit.sort),
+            ("limit", edit.limit),
+            ("stack", edit.stack),
+            ("sort_field", sort_field),
+        )
+        if value is not None
+    }
+    if edit.show_all:
+        changed.add("limit")
+    patch = EncodingPatch(
+        mark=edit.mark,
+        stack=edit.stack,
+        sort=edit.sort,
+        sort_field=sort_field,
+        limit=edit.limit,
+        orientation=edit.orientation,
+        changed=frozenset(changed),
+    )
+    try:
+        merged = merge_encoding_patch(shown.spec, patch, shown.profile)
+    except InvalidValueError:
+        return None, "Ese cambio no encaja con los datos de este gr\u00e1fico; lo dejo como estaba."
+    verified = verify(draft_of(merged), shown.profile)
+    if isinstance(verified, Rejection):
+        return None, "Ese cambio no encaja con los datos de este gr\u00e1fico; lo dejo como estaba."
+    return (
+        VisualDecision(
+            spec=verified,
+            profile=shown.profile,
+            source="patch",
+            proposed=True,
+            valid=True,
+            accepted=True,
+            proposed_spec=verified,
+        ),
+        None,
+    )
 
 
 async def _visualize_movement_page(

@@ -354,6 +354,17 @@ def _shallow_operations_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 },
                 "additionalProperties": False,
             }
+        elif name == "edit_visualization" and isinstance(field, dict):
+            # Reduced to a bare object, Gemini answered `{}` for «ordénalas de menor a mayor»: an
+            # edit naming nothing, which the reader refuses twice and the turn fails on.
+            edit = resolve(field)
+            value = {
+                "type": "object",
+                "properties": {
+                    key: simple_value(child) for key, child in edit.get("properties", {}).items()
+                },
+                "additionalProperties": False,
+            }
         elif name == "patch_movement_list" and isinstance(field, dict):
             patch_properties = field.get("properties", {})
             value = {

@@ -181,6 +181,7 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
         "delegate",
         "create_visualization",
         "update_visualization",
+        "edit_visualization",
         "prepare_bizum",
         "prepare_transfer",
         "prepare_own_transfer",
@@ -211,6 +212,17 @@ def test_operation_schema_is_compacted_but_keeps_closed_operation_tags() -> None
 
     own_transfer = operations["prepare_own_transfer"]
     assert own_transfer == {"anyOf": [{"type": "string"}, {"type": "null"}]}
+
+    chart_edit = operations["edit_visualization"]
+    assert set(chart_edit["properties"]) == {
+        "mark",
+        "orientation",
+        "sort",
+        "limit",
+        "show_all",
+        "stack",
+    }
+    assert chart_edit["additionalProperties"] is False
 
     movement_list = operations["list_movements"]
     movement_fields = movement_list["properties"]

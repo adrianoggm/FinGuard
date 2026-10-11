@@ -17,7 +17,9 @@ does not: a new ask is asked back keeping everything but the suspect values, and
 never prepared.
 
 A provider that cannot answer at all is different: no question to the person fixes it, so it is
-raised as `InterpretationFailedError` for the handler to report. There is no fallback across
+raised as `InterpretationFailedError` for the handler to report. So is an answer the schema cannot
+read after its one repair: it is the model failing, not missing information, and asking the person
+«¿Qué quieres consultar?» would blame them for it. There is no fallback across
 models here; walking the catalogue is the provider layer's policy and lives there.
 
 **A hosted runtime with strict decoding refuses a wrong shape after generating it.** Groq's
@@ -198,8 +200,13 @@ class LlmTurnOperations(TurnOperationsPort):
             try:
                 operations = self._read(answer)
             except UnreadableError as refused_again:
+                # Two answers the schema cannot read are the model failing, not the person being
+                # unclear: answered as an outage, nothing saved, any open question left as it was.
+                # Neither the person's words nor the model's reach the error: only that it failed.
                 logger.warning("engine.operations_unreadable problem=%s", refused_again.logged)
-                return (Clarify(Missing.SUBJECT),)
+                raise InterpretationFailedError(
+                    "the interpreter's answer could not be read twice"
+                ) from None
         held = _held_by_tasks(state, account_names)
         suspicions = _suspicions(operations, state, held, self._categories)
         semantic_reviewed = False

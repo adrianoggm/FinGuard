@@ -65,6 +65,7 @@ from finguard_orchestrator.domain.engine.operations import (
     AskCorrection,
     Balance,
     ChangeMeasure,
+    ChartEdit,
     Compare,
     ComparePrevious,
     Delegate,
@@ -543,6 +544,35 @@ class UpdateVisualizationOp(_Closed):
         return Visualize("ACTIVE_CHART", self.update_visualization)
 
 
+class ChartEditFields(_Closed):
+    """Each property optional; at least one is said (checked by `ChartEdit`)."""
+
+    mark: Literal["bar", "line", "area", "point", "donut"] | None = None
+    orientation: Literal["horizontal", "vertical"] | None = None
+    sort: Literal["ascending", "descending"] | None = None
+    limit: Annotated[int | None, Field(ge=1, le=100)] = None
+    show_all: Literal[True] | None = None
+    stack: Literal["zero", "normalize", "disabled"] | None = None
+
+
+class EditVisualizationOp(_Closed):
+    edit_visualization: ChartEditFields
+
+    def as_operation(self) -> Visualize:
+        said = self.edit_visualization
+        return Visualize(
+            "ACTIVE_CHART",
+            edit=ChartEdit(
+                mark=said.mark,
+                orientation=said.orientation,
+                sort=said.sort,
+                limit=said.limit,
+                show_all=said.show_all,
+                stack=said.stack,
+            ),
+        )
+
+
 class BizumFields(_Closed):
     recipient: Annotated[Name | None, Field()]
     amount_minor: Annotated[int | None, Field(ge=1, le=MAX_PAYMENT_MINOR)]
@@ -599,6 +629,7 @@ AnyOp = Annotated[
     | Annotated[DelegateOp, Tag("delegate")]
     | Annotated[CreateVisualizationOp, Tag("create_visualization")]
     | Annotated[UpdateVisualizationOp, Tag("update_visualization")]
+    | Annotated[EditVisualizationOp, Tag("edit_visualization")]
     | Annotated[PrepareBizumOp, Tag("prepare_bizum")]
     | Annotated[PrepareTransferOp, Tag("prepare_transfer")]
     | Annotated[PrepareOwnTransferOp, Tag("prepare_own_transfer")],

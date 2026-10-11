@@ -99,6 +99,7 @@ _CLASSES: Final[dict[str, type]] = {
         operations.Smalltalk,
         operations.Delegate,
         operations.Visualize,
+        operations.ChartEdit,
         operations.PrepareBizum,
         operations.PrepareTransfer,
         operations.PrepareOwnTransfer,

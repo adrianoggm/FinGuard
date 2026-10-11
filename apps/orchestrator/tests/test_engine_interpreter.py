@@ -495,10 +495,19 @@ async def test_a_merchant_term_that_names_the_selected_category_is_reviewed() ->
 # --- an answer that cannot be read: one repair, then a question back ---------------------------
 
 
-async def test_malformed_output_becomes_clarify() -> None:
-    ops, provider = await interpreted("esto no es JSON", '{"operations": [{"reset":')
+async def unreadable(*answers: str) -> tuple[InterpretationFailedError, Provider]:
+    """An interpretation that must fail as the model's failure, with the provider it ran on."""
+    provider = Provider(*answers)
+    with pytest.raises(InterpretationFailedError) as failed:
+        await interpreter(provider).interpret("¿y eso?", EMPTY, today=TODAY)
+    return failed.value, provider
 
-    assert ops == (Clarify(Missing.SUBJECT),)
+
+async def test_malformed_output_twice_is_the_models_failure_not_a_question() -> None:
+    """Two unreadable answers are a technical failure: reported as one (nothing saved, the open
+    question kept), never turned into «¿Qué quieres consultar?», which blames the person."""
+    _, provider = await unreadable("esto no es JSON", '{"operations": [{"reset":')
+
     assert len(provider.prompts) == 2
 
 
@@ -688,10 +697,9 @@ UNEXPRESSIBLE = [
 
 
 @pytest.mark.parametrize("said", UNEXPRESSIBLE)
-async def test_what_the_schema_cannot_express_becomes_clarify(said: str) -> None:
-    ops, provider = await interpreted(said)
+async def test_what_the_schema_cannot_express_twice_is_the_models_failure(said: str) -> None:
+    _, provider = await unreadable(said)
 
-    assert ops == (Clarify(Missing.SUBJECT),)
     assert len(provider.prompts) == 2
 
 
@@ -742,12 +750,12 @@ async def test_no_model_text_reaches_a_log(echo: str, caplog: pytest.LogCaptureF
     because it goes back to the model; a log record keeps only error types and where they were."""
     caplog.set_level(logging.DEBUG)
 
-    ops, provider = await interpreted(echo)
+    failed, provider = await unreadable(echo)
 
-    assert ops == (Clarify(Missing.SUBJECT),)
     assert MARKER in provider.prompts[1][len(provider.prompts[0]) :]
     assert caplog.records
     assert all(MARKER not in record.getMessage() for record in caplog.records)
+    assert MARKER not in "".join(traceback.format_exception(failed))
 
 
 async def test_no_provider_text_reaches_the_failure() -> None:
@@ -967,6 +975,7 @@ def test_operations_are_keyed_by_their_name() -> None:
         "delegate",
         "create_visualization",
         "update_visualization",
+        "edit_visualization",
         "prepare_bizum",
         "prepare_transfer",
         "prepare_own_transfer",
@@ -1640,8 +1649,11 @@ def test_an_active_chart_makes_visual_changes_updates_instead_of_new_charts() ->
     prompt = build_prompt("c\u00e1mbialo a l\u00edneas", state, today=TODAY, categories=CATEGORIES)
     current_state = prompt[prompt.index("<<<STATE") : prompt.index("STATE>>>")]
 
-    assert "A requested change to its presentation MUST use update_visualization" in current_state
-    assert "create_visualization only when no chart is active" in current_state
+    compact = " ".join(current_state.split())
+    assert "Active visualization: bar, vertical, chart version 1" in compact
+    assert "A requested change to its presentation" in compact
+    assert "MUST use edit_visualization naming only what changes" in compact
+    assert "create_visualization only when no chart is active" in compact
     assert '"update_visualization":"LINE"' in prompt
 
 

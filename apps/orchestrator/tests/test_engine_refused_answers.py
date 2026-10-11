@@ -15,8 +15,8 @@ from uuid import UUID
 
 import pytest
 
-from finguard_orchestrator.domain.engine.operations import Clarify, Reset
-from finguard_orchestrator.domain.engine.state import DialogueState, Missing
+from finguard_orchestrator.domain.engine.operations import Reset
+from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.errors import AnswerRefusedError, ProviderFailedError
 from finguard_orchestrator.domain.ports.turn_operations import InterpretationFailedError
 from finguard_orchestrator.domain.services import category_words
@@ -75,10 +75,11 @@ async def test_a_refused_answer_gets_the_one_repair(caplog: pytest.LogCaptureFix
     assert "forecast" not in logged and "secreto" not in logged
 
 
-async def test_refused_twice_is_asked_back() -> None:
+async def test_refused_twice_is_the_models_failure_not_a_question() -> None:
     provider = Provider(refused(), refused())
 
-    assert await interpreted(provider) == (Clarify(Missing.SUBJECT),)
+    with pytest.raises(InterpretationFailedError):
+        await interpreted(provider)
     assert len(provider.prompts) == 2
 
 
