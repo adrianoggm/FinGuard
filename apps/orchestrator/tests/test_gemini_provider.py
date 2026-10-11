@@ -12,6 +12,7 @@ from finguard_orchestrator.infrastructure.engine.operations_schema import (
     schema_for,
 )
 from finguard_orchestrator.infrastructure.llm import openai_compatible_provider
+from finguard_orchestrator.infrastructure.llm.counting_provider import counting_calls
 from finguard_orchestrator.infrastructure.llm.gemini import (
     GEMINI,
     GeminiProvider,
@@ -416,3 +417,21 @@ async def test_gemini_is_registered_only_when_its_key_is_set(
         get_settings.cache_clear()
 
     assert (GEMINI in catalogue.available_providers) is available
+
+
+async def test_a_turn_reports_its_pacing_wait_apart_from_its_requests(
+    endpoint: _Endpoint,
+) -> None:
+    """Two requests in one turn 0.2 s apart by pace: the second one's wait is counted as waiting,
+    not as the model's time, so a turn's latency can be read without its pacing."""
+    provider = GeminiProvider(api_key=KEY, min_request_interval_seconds=0.2)
+
+    with counting_calls() as calls:
+        for _ in range(2):
+            await provider.complete(
+                "hello", model="gemini-test", temperature=0, max_output_tokens=12
+            )
+
+    assert calls.provider_requests == 2
+    assert 150 <= calls.provider_wait_ms <= 600
+    assert calls.provider_request_ms < calls.provider_wait_ms

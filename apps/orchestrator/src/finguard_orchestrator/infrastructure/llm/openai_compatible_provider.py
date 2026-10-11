@@ -118,32 +118,35 @@ class OpenAiCompatibleProvider(LlmProviderPort):
         Every attempt, including retry and model failover, consumes a slot. The local lock protects
         one provider instance; Gemini additionally reserves shared Postgres slots across replicas.
         """
-        async with self._request_lock:
-            # Import locally so the generic provider remains usable without request middleware.
-            # The tally is ContextVar-backed and shared by child tasks spawned for this request.
-            from finguard_orchestrator.infrastructure.llm.counting_provider import (
-                record_provider_request,
-            )
+        # Import locally so the generic provider remains usable without request middleware.
+        # The tally is ContextVar-backed and shared by child tasks spawned for this request.
+        from finguard_orchestrator.infrastructure.llm.counting_provider import (
+            record_provider_request,
+            record_provider_request_time,
+            record_provider_wait,
+        )
 
-            loop = asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
+        # From here until the request is sent is waiting: for the lock, then for the pace.
+        waiting_since = loop.time()
+        async with self._request_lock:
             pacer = self._shared_request_pacer
-            if pacer is not None and pacer.active and await pacer.wait_for_slot():
-                self._last_request_started = loop.time()
-                record_provider_request(str(payload.get("model", "unknown")), self.name)
-                return await client.post(
-                    f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
-                )
-            if self._last_request_started is not None and self._min_request_interval_seconds:
+            shared = pacer is not None and pacer.active and await pacer.wait_for_slot()
+            if not shared and self._last_request_started is not None:
                 wait = self._min_request_interval_seconds - (
                     loop.time() - self._last_request_started
                 )
-                if wait > 0:
+                if self._min_request_interval_seconds and wait > 0:
                     await asyncio.sleep(wait)
-            self._last_request_started = loop.time()
+            sent = loop.time()
+            record_provider_wait(sent - waiting_since)
+            self._last_request_started = sent
             record_provider_request(str(payload.get("model", "unknown")), self.name)
-            return await client.post(
+            response = await client.post(
                 f"{self._base_url}/chat/completions", json=payload, headers=self._headers()
             )
+            record_provider_request_time(loop.time() - sent)
+            return response
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
@@ -187,6 +190,7 @@ class OpenAiCompatibleProvider(LlmProviderPort):
                 response = await self._post(client, payload)
                 if (wait := _short_rate_wait(response)) is not None:
                     _record_provider_failure(self.name, "rate_limited")
+                    _record_provider_wait(wait)
                     await asyncio.sleep(wait)
                     response = await self._post(client, payload)
                 elif 500 <= response.status_code < 600:
@@ -198,6 +202,7 @@ class OpenAiCompatibleProvider(LlmProviderPort):
                         self.name,
                         response.status_code,
                     )
+                    _record_provider_wait(_TRANSIENT_RETRY_DELAY_SECONDS)
                     await asyncio.sleep(_TRANSIENT_RETRY_DELAY_SECONDS)
                     response = await self._post(client, payload)
                 response.raise_for_status()
@@ -448,3 +453,10 @@ def _record_provider_failure(provider: str, category: str) -> None:
     )
 
     record_provider_failure(provider, category)
+
+
+def _record_provider_wait(seconds: float) -> None:
+    """A retry's pause is waiting, as a request slot is: the person sees it, the model does not."""
+    from finguard_orchestrator.infrastructure.llm.counting_provider import record_provider_wait
+
+    record_provider_wait(seconds)

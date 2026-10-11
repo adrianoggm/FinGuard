@@ -514,7 +514,18 @@ async def _ask(
     completion_tokens = response.headers.get("X-FinGuard-Completion-Tokens")
     token_reports = response.headers.get("X-FinGuard-Token-Reports")
     financial_reads = response.headers.get("X-FinGuard-Financial-Reads")
+    provider_wait = response.headers.get("X-FinGuard-Provider-Wait-Ms")
+    provider_request_time = response.headers.get("X-FinGuard-Provider-Request-Ms")
     engine = {
+        # Where the provider time went: waiting for a request slot (the pace), and the requests.
+        "provider_wait_ms": (
+            int(provider_wait) if provider_wait and provider_wait.isdigit() else None
+        ),
+        "provider_request_ms": (
+            int(provider_request_time)
+            if provider_request_time and provider_request_time.isdigit()
+            else None
+        ),
         "engine": response.headers.get("X-FinGuard-Engine"),
         "model_calls": int(calls) if calls is not None and calls.isdigit() else None,
         "model_calls_malformed": calls is not None and not calls.isdigit(),
@@ -620,6 +631,8 @@ async def record_of(
         "token_reports": (engine or {}).get("token_reports", 0),
         "financial_reads": (engine or {}).get("financial_reads"),
         "financial_reads_malformed": bool((engine or {}).get("financial_reads_malformed")),
+        "provider_wait_ms": (engine or {}).get("provider_wait_ms"),
+        "provider_request_ms": (engine or {}).get("provider_request_ms"),
         # Keep the exact normalized query used for the independent ledger check. In graph mode,
         # the wire state may omit last_plan and the verifier derives this from plan_context.
         # Persist the read-only query, not the full conversation or account identifiers.
@@ -966,6 +979,10 @@ def _availability_failure(record: dict[str, Any]) -> str | None:
     if outcome == "PROVIDER_ERROR":
         terminal = record.get("provider_terminal_failure")
         if not isinstance(terminal, str) or ":" not in terminal:
+            if record.get("provider_requests") and not record.get("provider_failures"):
+                # Every request was answered: the model's answer could not be read twice. That is
+                # a semantic failure of this turn, not an outage, and the session goes on.
+                return None
             # Older runtimes do not send the terminal diagnostic header.
             return "provider"
         return (
@@ -1159,6 +1176,21 @@ def summarise(
         )
 
     latency = _latency(timed(turns))
+    # The same turns without the time spent waiting for provider request slots: what the person
+    # would wait with no pacing. And the provider requests alone. Only turns that report both.
+    paced = [
+        record
+        for record in turns
+        if record.get("seconds") is not None
+        and not record.get("error")
+        and record.get("provider_wait_ms") is not None
+    ]
+    unpaced = _latency(
+        sorted(max(0.0, record["seconds"] - record["provider_wait_ms"] / 1000) for record in paced)
+    )
+    provider_time = _latency(
+        sorted((record.get("provider_request_ms") or 0) / 1000 for record in paced)
+    )
     engines = sorted({record["engine"] for record in turns if record.get("engine")})
     latency_by_engine = {
         engine: _latency(timed([record for record in turns if record.get("engine") == engine]))
@@ -1314,6 +1346,8 @@ def summarise(
         "recovery": {"recovered": recovered, "after_a_failure": opportunities},
         "figures": figures,
         "latency": latency,
+        "latency_without_pacing": unpaced,
+        "provider_request_time": provider_time,
         "latency_by_engine": latency_by_engine,
         "model_calls": model_calls,
         "model_calls_malformed": malformed,
@@ -1489,6 +1523,17 @@ def report(run: dict[str, Any], previous: dict[str, Any] | None = None) -> str:
         f"p95 {_seconds(latency.get('p95'))} · máx {_seconds(latency.get('max'))} "
         f"({latency.get('turns', 0)} turnos)",
     ]
+    for label, key in (
+        ("sin la espera del proveedor", "latency_without_pacing"),
+        ("solo peticiones al modelo", "provider_request_time"),
+    ):
+        measured = summary.get(key)
+        if measured:
+            lines.append(
+                f"  - {label}: mediana {_seconds(measured['median'])} · "
+                f"p95 {_seconds(measured['p95'])} · máx {_seconds(measured['max'])} "
+                f"({measured['turns']} turnos)"
+            )
     for engine, measured in summary["latency_by_engine"].items():
         if not measured:
             lines.append(f"  - motor `{engine}`: sin mediciones")

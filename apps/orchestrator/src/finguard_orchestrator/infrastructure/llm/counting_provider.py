@@ -43,6 +43,11 @@ class ModelCalls:
     completion_tokens: int = 0
     token_reports: int = 0
     provider_request_limit: int | None = None
+    # Where a turn's provider time went: waiting for a request slot (the per-provider pace, the
+    # serialising lock, a retry's pause) and the HTTP requests themselves. A turn's latency minus
+    # the wait is what the person would see with no pacing.
+    provider_wait_ms: int = 0
+    provider_request_ms: int = 0
 
 
 def record_provider_request(model: str, provider: str) -> None:
@@ -71,6 +76,20 @@ def provider_request_budget(limit: int) -> Iterator[None]:
         yield
     finally:
         calls.provider_request_limit = previous
+
+
+def record_provider_wait(seconds: float) -> None:
+    """Time spent waiting for a provider request slot or a retry's pause, not on the request."""
+    calls = _current.get()
+    if calls is not None and seconds > 0:
+        calls.provider_wait_ms += round(seconds * 1000)
+
+
+def record_provider_request_time(seconds: float) -> None:
+    """Time one outbound provider HTTP request took, from send to response."""
+    calls = _current.get()
+    if calls is not None and seconds > 0:
+        calls.provider_request_ms += round(seconds * 1000)
 
 
 def record_successful_model(model: str) -> None:

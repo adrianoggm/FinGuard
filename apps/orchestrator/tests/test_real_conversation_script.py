@@ -624,3 +624,18 @@ def test_p95_of_a_small_sample_is_its_largest_value() -> None:
     assert real._latency([2.0])["p95"] == 2.0
     assert real._latency([1.0, 3.0])["p95"] == 3.0
     assert real._p95_index(1) == 0 and real._p95_index(2) == 1
+
+
+def test_an_unreadable_answer_is_a_failed_turn_not_an_outage() -> None:
+    """Since 50592459 an answer unreadable twice is PROVIDER_ERROR too, with every request
+    answered. The replay stopped the session as if the provider were down."""
+    unreadable = {"outcome": "PROVIDER_ERROR", "provider_requests": 2, "provider_failures": []}
+    down = {
+        "outcome": "PROVIDER_ERROR",
+        "provider_requests": 1,
+        "provider_failures": ["gemini:transport"],
+    }
+
+    assert real._availability_failure(unreadable) is None
+    assert real._availability_failure(down) == "provider"
+    assert real._status(unreadable) == "failed"

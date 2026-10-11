@@ -74,6 +74,10 @@ MODELS_USED_HEADER: Final = "X-FinGuard-Models-Used"
 PROMPT_TOKENS_HEADER: Final = "X-FinGuard-Prompt-Tokens"
 COMPLETION_TOKENS_HEADER: Final = "X-FinGuard-Completion-Tokens"
 TOKEN_REPORTS_HEADER: Final = "X-FinGuard-Token-Reports"
+# Milliseconds this turn waited for provider request slots (pace, lock, retry pauses) and spent on
+# the provider requests themselves, so a turn's latency can be read without its pacing.
+PROVIDER_WAIT_HEADER: Final = "X-FinGuard-Provider-Wait-Ms"
+PROVIDER_REQUEST_TIME_HEADER: Final = "X-FinGuard-Provider-Request-Ms"
 FINANCIAL_READS_HEADER: Final = "X-FinGuard-Financial-Reads"
 PROVIDER_FAILURES_HEADER: Final = "X-FinGuard-Provider-Failures"
 PROVIDER_TERMINAL_FAILURE_HEADER: Final = "X-FinGuard-Provider-Terminal-Failure"
@@ -271,6 +275,11 @@ class _Reported:
                             headers.append(PROMPT_TOKENS_HEADER, str(calls.prompt_tokens))
                             headers.append(COMPLETION_TOKENS_HEADER, str(calls.completion_tokens))
                             headers.append(TOKEN_REPORTS_HEADER, str(calls.token_reports))
+                        if calls.provider_requests:
+                            headers.append(PROVIDER_WAIT_HEADER, str(calls.provider_wait_ms))
+                            headers.append(
+                                PROVIDER_REQUEST_TIME_HEADER, str(calls.provider_request_ms)
+                            )
                         if answered.financial_reads is not None:
                             headers.append(FINANCIAL_READS_HEADER, str(answered.financial_reads))
                     await send(message)
