@@ -16,7 +16,6 @@ from uuid import UUID
 
 from finguard_orchestrator.application.bus.command_bus import Command
 from finguard_orchestrator.application.bus.query_bus import Query
-from finguard_orchestrator.application.engine.form_actions import FormAction
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.domain.errors import GraphUnavailableError
@@ -45,12 +44,6 @@ class AnswerTurnCommand(Command[EngineAnswer]):
 
 
 @dataclass(frozen=True)
-class RunFormActionCommand(Command[EngineAnswer]):
-    action: FormAction
-    turn: Turn
-
-
-@dataclass(frozen=True)
 class OwnsWorkflowQuery(Query[bool]):
     conversation_id: UUID
     account_id: UUID
@@ -72,24 +65,6 @@ class AnswerTurnHandler:
         turn = command.turn
         return await _graph(self._graph).answer(
             command.sentence,
-            conversation_id=turn.conversation_id,
-            version=turn.version,
-            account_id=turn.account_id,
-            today=turn.today,
-            reporting_timezone=turn.reporting_timezone,
-            request_id=turn.request_id,
-            caller_scopes=turn.caller_scopes,
-        )
-
-
-class RunFormActionHandler:
-    def __init__(self, graph: GraphProvider) -> None:
-        self._graph = graph
-
-    async def handle(self, command: RunFormActionCommand) -> EngineAnswer:
-        turn = command.turn
-        return await _graph(self._graph).act(
-            command.action,
             conversation_id=turn.conversation_id,
             version=turn.version,
             account_id=turn.account_id,

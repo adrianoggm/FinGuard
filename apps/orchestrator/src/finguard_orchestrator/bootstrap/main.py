@@ -35,8 +35,6 @@ from finguard_orchestrator.application.engine.turn_commands import (
     AnswerTurnHandler,
     OwnsWorkflowHandler,
     OwnsWorkflowQuery,
-    RunFormActionCommand,
-    RunFormActionHandler,
 )
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
@@ -469,7 +467,6 @@ def create_app() -> FastAPI:
         return graph
 
     command_bus.register(AnswerTurnCommand, AnswerTurnHandler(the_graph))
-    command_bus.register(RunFormActionCommand, RunFormActionHandler(the_graph))
     query_bus.register(OwnsWorkflowQuery, OwnsWorkflowHandler(the_graph))
     app.state.query_bus = query_bus
     app.state.command_bus = command_bus

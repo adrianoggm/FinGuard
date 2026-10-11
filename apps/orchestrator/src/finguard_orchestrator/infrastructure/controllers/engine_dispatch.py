@@ -41,11 +41,9 @@ from starlette.datastructures import MutableHeaders
 from finguard_orchestrator.application.bus.command_bus import Command, CommandBus
 from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.application.engine.budgets import MAX_MODEL_CALLS
-from finguard_orchestrator.application.engine.form_actions import FormAction
 from finguard_orchestrator.application.engine.turn_commands import (
     AnswerTurnCommand,
     OwnsWorkflowQuery,
-    RunFormActionCommand,
     Turn,
 )
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
@@ -81,8 +79,7 @@ FINANCIAL_READS_HEADER: Final = "X-FinGuard-Financial-Reads"
 PROVIDER_FAILURES_HEADER: Final = "X-FinGuard-Provider-Failures"
 PROVIDER_TERMINAL_FAILURE_HEADER: Final = "X-FinGuard-Provider-Terminal-Failure"
 _STREAM_ROUTE: Final = "/v1/questions/stream"
-_ACTION_ROUTE: Final = "/v1/conversation/actions"
-_QUESTION_ROUTES: Final = frozenset({"/v1/questions", _STREAM_ROUTE, _ACTION_ROUTE})
+_QUESTION_ROUTES: Final = frozenset({"/v1/questions", _STREAM_ROUTE})
 # The directory and the contacts are read before the sentence is: a refusal there means the turn
 # was never interpreted, so it must not say it was («He entendido la pregunta…»).
 _UNREAD: Final = "No he podido leer tus cuentas y tus contactos: el banco ha rechazado la consulta."
@@ -130,33 +127,6 @@ async def try_engine(
         lambda turn: AnswerTurnCommand(question.question, turn),
         today=today,
         request_id=request_id,
-        refuse_retired_workflows=True,
-    )
-
-
-async def try_action(
-    commands: CommandBus,
-    queries: QueryBus,
-    action: FormAction,
-    echoed: ConversationPayload | None,
-    who: Caller,
-    today: date,
-    metric_tokens: MetricTokenCodec,
-    request_id: str,
-) -> QuestionResponse:
-    """A form's typed action, answered by the same graph and in the same shape as a question."""
-    return await _turn(
-        commands,
-        queries,
-        echoed,
-        who,
-        metric_tokens,
-        lambda turn: RunFormActionCommand(action, turn),
-        today=today,
-        request_id=request_id,
-        # An action names its own target: a preview's decision is checked against the preview the
-        # graph holds, and a form starts a new payment, so no echoed workflow is trusted here.
-        refuse_retired_workflows=False,
     )
 
 
@@ -170,11 +140,10 @@ async def _turn(
     *,
     today: date,
     request_id: str | None,
-    refuse_retired_workflows: bool,
 ) -> QuestionResponse:
     conversation_id = echoed.conversation_id if echoed is not None else None
     version = echoed.version if echoed is not None else None
-    if refuse_retired_workflows and echoed is not None and echoed.workflow is not None:
+    if echoed is not None and echoed.workflow is not None:
         owns_workflow = conversation_id is not None and await queries.ask(
             OwnsWorkflowQuery(conversation_id, who.account_id, echoed.workflow)
         )

@@ -53,6 +53,8 @@ def graph_engine(
         # Graph turn budgets count every hosted HTTP attempt (including 429 retry/failover), while
         # local providers still consume one unit per logical generation call.
         count_calls=budget_calls_so_far,
-        commands=commands,
+        # The payment switch: without it the graph has no payment commands, so a payment asked
+        # for in the conversation is answered as unavailable and banking is never called.
+        commands=commands if settings.payments_enabled else None,
     )
     return GraphTurnHandler(ports, reservations, checkpointer)

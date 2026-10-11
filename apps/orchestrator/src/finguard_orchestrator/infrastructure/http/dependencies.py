@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from collections.abc import Callable
 from datetime import date
 from typing import Annotated
@@ -51,28 +50,11 @@ def questions_enabled(request: Request) -> None:
         )
 
 
-def payments_enabled(request: Request) -> None:
-    """Refuses the payment endpoints unless a deployment opted in.
-
-    Separate from `questions_enabled` because they are separate risks: a deployment that answers
-    questions has not thereby agreed to move money. Off by default, like the other one, so a
-    surface that can pay somebody is something an operator turned on.
-    """
-    if not request.app.state.payments_enabled:
-        raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
-
-
 def metrics_enabled(request: Request) -> None:
     if not request.app.state.metrics_enabled:
         raise FeatureDisabledError(
             "saved metrics are disabled; set ORCHESTRATOR_METRICS_ENABLED=true"
         )
-
-
-def metrics_available(request: Request) -> bool:
-    """Whether question responses may offer a save action without refusing the question."""
-    enabled: bool = request.app.state.metrics_enabled
-    return enabled
 
 
 def known_categories(request: Request) -> tuple[str, ...]:
@@ -85,16 +67,6 @@ def known_categories(request: Request) -> tuple[str, ...]:
     """
     categories: tuple[str, ...] = request.app.state.categories
     return categories
-
-
-def payments_available(request: Request) -> bool:
-    """Whether payments are on, without refusing when they are not.
-
-    The chat route needs to *answer* rather than fail: a sentence asking for a payment on a
-    deployment that does not make them is answered with words, not with a 503.
-    """
-    enabled: bool = request.app.state.payments_enabled
-    return enabled
 
 
 def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> date:
@@ -112,35 +84,13 @@ def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> da
     return who.today_in()
 
 
-def attempt_key(
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)] = None,
-) -> str:
-    """The caller's name for this attempt, or a fresh one.
-
-    Inventing it was the defect. A key minted per request differs between a request and its retry,
-    which is the same as having no key: a client that resent a request whose answer it never saw
-    got a second intent for one intention. No money moves — confirming is keyed on the intent — but
-    the holder is left holding two previews of a payment they meant once, and only one of them can
-    be the one they approve.
-
-    Optional, unlike banking's, which requires one: this is the surface a browser talks to and a
-    client written before the header existed has to keep working. What sending none costs is
-    exactly the orphan above. What sending the same one for a *different* payment costs is a 409
-    from banking, which is the guard that makes handing this over safe at all.
-
-    A dependency rather than a helper each route calls, so a route that forgets it forgets it
-    visibly, and so the header appears in the schema.
-    """
-    return idempotency_key or str(uuid.uuid4())
-
-
 def required_attempt_key(
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
 ) -> str:
     """Require a caller-stable key for a durable graph turn and its HTTP retries.
 
-    Compatibility routes retain ``attempt_key`` for clients predating the header. The graph cannot
-    mint a replacement per request: that would make a retry a second checkpoint/reservation.
+    The service cannot mint a replacement per request: that would make a retry a second
+    checkpoint/reservation, and for a payment a second preview.
     """
     return idempotency_key
 

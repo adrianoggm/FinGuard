@@ -34,8 +34,6 @@ from finguard_orchestrator.application.engine.turn_commands import (
     AnswerTurnHandler,
     OwnsWorkflowHandler,
     OwnsWorkflowQuery,
-    RunFormActionCommand,
-    RunFormActionHandler,
 )
 from finguard_orchestrator.application.queries.list_contacts import (
     ContactRow,
@@ -726,7 +724,6 @@ def a_stack() -> Stack:
         return app.state.engine
 
     commands.register(AnswerTurnCommand, AnswerTurnHandler(the_graph))
-    commands.register(RunFormActionCommand, RunFormActionHandler(the_graph))
     queries = QueryBus()
     queries.register(ListContactsQuery, ContactDirectory())
     queries.register(OwnsWorkflowQuery, OwnsWorkflowHandler(the_graph))

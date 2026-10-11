@@ -36,3 +36,41 @@ def test_the_app_refuses_to_start_without_a_database(monkeypatch: pytest.MonkeyP
     # The graph persists its conversations in PostgreSQL; without one there is no runtime at all.
     with pytest.raises(ValueError, match="DATABASE_URL is required"):
         built(monkeypatch, "")
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_the_payment_switch_decides_whether_the_graph_can_pay(
+    monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    """ORCHESTRATOR_PAYMENTS_ENABLED once only closed the direct payment routes; the conversation
+    could prepare and confirm payments with it off. The graph gets the commands only when it is
+    on."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from support.memory_dialogue_store import MemoryDialogueStore
+    from support.memory_turn_reservations import MemoryTurnReservations
+
+    from finguard_orchestrator.application.bus.command_bus import CommandBus
+    from finguard_orchestrator.bootstrap.config import get_settings
+    from finguard_orchestrator.bootstrap.graph_wiring import graph_engine
+
+    monkeypatch.setenv("ORCHESTRATOR_PAYMENTS_ENABLED", "true" if enabled else "false")
+    get_settings.cache_clear()
+    try:
+        commands = CommandBus()
+        graph = graph_engine(
+            get_settings(),
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            MemoryDialogueStore(),
+            MemoryTurnReservations(),
+            InMemorySaver(),
+            commands=commands,
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert (graph._ports.commands is commands) is enabled  # noqa: SLF001

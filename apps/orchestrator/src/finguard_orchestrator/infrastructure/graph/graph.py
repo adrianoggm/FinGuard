@@ -179,14 +179,6 @@ async def plan(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     if state.get("next_inspect") is not None:
         return {}
     ctx = runtime.context
-    if ctx.operations is not None:
-        # A form already said what it wants; the payment node still grounds every value in the
-        # canonical sentence before banking is asked for anything.
-        logger.info(
-            "graph.plan.preset operation_types=%s",
-            ",".join(type(operation).__name__ for operation in ctx.operations),
-        )
-        return {"ops": codec.dumps(ctx.operations), "status": "planned"}
     current = await _canonical(state, ctx)
     if (
         isinstance(current.payment, PaymentDraftPending)

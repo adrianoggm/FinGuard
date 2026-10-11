@@ -13,7 +13,6 @@ from uuid import UUID
 from langgraph.runtime import Runtime
 
 from finguard_orchestrator.application.bus.command_bus import CommandBus
-from finguard_orchestrator.domain.engine.operations import Operation
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
@@ -118,9 +117,6 @@ class GraphContext:
     reporting_timezone: str
     ports: GraphPorts
     caller_scopes: frozenset[str] = frozenset()
-    # Operations already decided by a typed action (a form), so `plan` calls no model. None is a
-    # sentence the interpreter has to read.
-    operations: tuple[Operation, ...] | None = None
     thread_id: str = ""
     request_id: str | None = None
     lease_token: UUID | None = None
