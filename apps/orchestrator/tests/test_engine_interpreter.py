@@ -177,10 +177,10 @@ def items(**fields: Any) -> list[dict[str, Any]]:
 
 
 async def interpreted(
-    *answers: str | Exception, state: DialogueState = EMPTY
+    *answers: str | Exception, state: DialogueState = EMPTY, sentence: str = "¿y eso?"
 ) -> tuple[tuple[Operation, ...], Provider]:
     provider = Provider(*answers)
-    ops = await interpreter(provider).interpret("¿y eso?", state, today=TODAY)
+    ops = await interpreter(provider).interpret(sentence, state, today=TODAY)
     return ops, provider
 
 
@@ -264,9 +264,17 @@ PARSED: list[tuple[dict[str, Any], Operation]] = [
 ]
 
 
+# Every filter value PARSED uses, said: a filter the sentence never names is sent back to the model
+# for review (tested below), and these cases are about reading, not about that review.
+STATES_EVERY_FILTER = (
+    "Restaurantes en Bar Lumbre con Lucía desde la hucha y la Cuenta corriente, "
+    "sin ocio ni Kiosko Sur"
+)
+
+
 @pytest.mark.parametrize(("said", "expected"), PARSED, ids=lambda case: str(case)[:40])
 async def test_each_op_parses_to_its_dataclass(said: dict[str, Any], expected: Operation) -> None:
-    ops, provider = await interpreted(answer(said))
+    ops, provider = await interpreted(answer(said), sentence=STATES_EVERY_FILTER)
 
     assert ops == (expected,)
     assert len(provider.prompts) == 1
@@ -323,13 +331,66 @@ async def test_several_operations_keep_their_order() -> None:
         answer(
             {"patch": {"target": "focus", "changes": items(categories=["HEALTH"])}},
             {"measure": "COUNT"},
-        )
+        ),
+        sentence="¿y cuántas veces en salud?",
     )
 
     assert ops == (
         Patch("focus", PlanFields(categories=("HEALTH",))),
         ChangeMeasure(Measure.COUNT),
     )
+
+
+# --- a filter the sentence never names: one review, then a question back -----------------------
+
+LAST_MONTH = {"named": "LAST_MONTH"}
+
+
+async def test_a_filter_the_sentence_never_names_is_reviewed_once() -> None:
+    ops, provider = await interpreted(
+        answer(
+            {
+                "ask": items(
+                    direction="EXPENSE",
+                    window=LAST_MONTH,
+                    result_kind="SCALAR",
+                    categories=["RESTAURANTS"],
+                )
+            }
+        ),
+        answer({"ask": items(direction="EXPENSE", window=LAST_MONTH, result_kind="SCALAR")}),
+        sentence="¿cuánto gasté el mes pasado?",
+    )
+
+    assert ops == (
+        Ask(
+            PlanFields(
+                direction=Direction.EXPENSE,
+                window=RelativePeriod(Period.LAST_MONTH),
+                result_kind=ResultKind.SCALAR,
+            )
+        ),
+    )
+    assert len(provider.prompts) == 2
+
+
+async def test_a_review_that_keeps_the_unstated_filter_is_asked_back() -> None:
+    ops, provider = await interpreted(
+        answer(
+            {
+                "ask": items(
+                    direction="EXPENSE",
+                    window=LAST_MONTH,
+                    result_kind="SCALAR",
+                    categories=["RESTAURANTS"],
+                )
+            }
+        ),
+        sentence="¿cuánto gasté el mes pasado?",
+    )
+
+    assert ops == (Clarify(Missing.SUBJECT),)
+    assert len(provider.prompts) == 2
 
 
 # --- an answer that cannot be read: one repair, then a question back ---------------------------
@@ -633,7 +694,8 @@ def test_categories_are_the_catalogue_keys_only() -> None:
     category_enums = [
         node["enum"] for node in nodes(schema) if "RESTAURANTS" in node.get("enum", ())
     ]
-    assert len(category_enums) == 3  # ask filters, excluded categories, and movement-list filters
+    # ask filters, excluded categories, a movement list's filters and a patch of that list
+    assert len(category_enums) == 4
     assert all(found == list(CATALOGUE) for found in category_enums)
 
 
@@ -736,6 +798,7 @@ def test_operations_are_keyed_by_their_name() -> None:
         "select_operand",
         "reset",
         "restore_previous",
+        "resume_focus",
         "balance",
         "list_contacts",
         "list_categories",
@@ -788,7 +851,7 @@ def test_recent_movements_are_a_periodless_list_operation() -> None:
         '{"operations":[{"list_movements":{"direction":"EXPENSE","accounts":[],'
         '"categories":[],"merchant_terms":[],"page_size":20,"continue_current":false}}]}'
     )
-    assert read(payload, CATALOGUE) == (ListMovements(page_size=20),)
+    assert read(payload, CATALOGUE) == (ListMovements(direction=Direction.EXPENSE, page_size=20),)
 
 
 def test_recent_movement_list_defaults_omitted_optional_filters() -> None:
@@ -801,7 +864,7 @@ def test_recent_movement_list_defaults_omitted_optional_filters() -> None:
 def test_recent_movement_prompt_applies_requested_page_size_and_account() -> None:
     prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
 
-    assert "page_size=N (default 20) and named filters" in prompt
+    assert "page_size=N (default 20), optional window and named filters" in prompt
     assert '"accounts":["Cuenta corriente"]' in prompt
     assert '"page_size":5' in prompt
 
@@ -841,9 +904,9 @@ def test_movement_list_focus_prompt_switches_account_without_asking_for_a_period
     )
 
     assert "Y los de la Hucha?" in prompt
-    assert '"accounts":["Hucha"]' in prompt
-    assert '"page_size":20' in prompt
-    assert '"continue_current":false' in prompt
+    # A shown list changes its account by patching only that field; its page and cursor stay.
+    assert '"patch_movement_list":{"accounts":["Hucha"]}' in prompt
+    assert "patch_movement_list changes only named filters" in prompt
 
 
 def test_exhausted_movement_list_prompt_keeps_pagination_turn_typed() -> None:
@@ -919,7 +982,7 @@ def test_pending_transfer_prompt_preserves_the_canonical_rail() -> None:
 
 def test_restore_previous_has_a_bounded_one_based_history_position() -> None:
     assert read('{"operations":[{"restore_previous":2}]}', CATALOGUE) == (RestorePrevious(2),)
-    for value in (0, 9, True):
+    for value in (0, DialogueState.MAX_FOCUS_HISTORY + 1, True):
         with pytest.raises(UnreadableError):
             read(json.dumps({"operations": [{"restore_previous": value}]}), CATALOGUE)
 
@@ -1125,8 +1188,11 @@ def test_prompt_teaches_a_category_change_as_a_patch_of_the_active_query() -> No
     )
 
     assert "On screen: a query" in prompt
-    assert '"patch":{"target":"focus","changes":[{"categories":["RESTAURANTS"]}]}' in prompt
-    assert "patches change only named fields" in prompt
+    assert (
+        '"patch":{"target":"focus","changes":[{"categories":["RESTAURANTS"]}],"task_id":null}'
+        in prompt
+    )
+    assert "Patch operations change only named fields" in prompt
     assert "A period-only follow-up moves the active window" in prompt
 
 
@@ -1146,7 +1212,7 @@ def test_prompt_changes_an_active_average_to_a_total_without_losing_its_window()
         categories=CATEGORIES,
     )
 
-    assert '"patch":{"target":"focus","changes":[{"metric":"SUM"}]}' in prompt
+    assert '"patch":{"target":"focus","changes":[{"metric":"SUM"}],"task_id":null}' in prompt
     assert "never carry AVERAGE/COUNT into them" in prompt
 
 
@@ -1220,8 +1286,8 @@ def test_prompt_distinguishes_largest_movement_from_group_total_and_counts() -> 
     assert "Balances use balance without a period" in compact
     assert "visualize/update_visualization AUTO/BAR/LINE" in prompt
     assert "top merchant total = MERCHANT + limit 1" in compact
-    assert '"metric":"COUNT"' in prompt
-    assert '"direction":"ALL"' in prompt
+    assert 'Use COUNT for "cuantos", never SUM' in compact
+    assert "An unspecified direction means all movements" in compact
 
 
 def test_prompt_includes_the_answer_to_a_pending_two_period_comparison() -> None:
@@ -1346,7 +1412,8 @@ def test_pending_is_only_for_a_question_the_state_shows_open() -> None:
     rules = prompt[prompt.index("## Rules") :]
 
     normalized = " ".join(rules.split())
-    assert "Clarification replies fill pending and retain the draft" in normalized
+    assert "answers an open query clarification" in normalized
+    assert "emit `patch` with target `pending`" in normalized
     assert "without an open question, patch focus" in normalized
 
 
@@ -1470,9 +1537,9 @@ def test_prompt_distinguishes_new_period_queries_from_elliptical_followups() -> 
     prompt = build_prompt("gastos de julio", EMPTY, today=TODAY, categories=CATEGORIES)
 
     compact = " ".join(prompt.split())
-    assert "A named subject + window starts a new ask" in compact
-    assert "a bare period follow-up patches focus" in compact
-    assert "Changing category clears old merchant filters" in compact
+    assert "explicitly supplies both direction and window is an `ask`" in compact
+    assert "a bare period follow-up keeps the active subject" in compact
+    assert "replacing a category clears old merchant filters" in compact
 
 
 RESTAURANTS_JULY = FinancialPlan(Direction.EXPENSE, date_range=JULY, categories=("RESTAURANTS",))

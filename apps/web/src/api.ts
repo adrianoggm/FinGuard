@@ -884,62 +884,6 @@ export async function breakdown(by: GroupBy, days: number): Promise<Breakdown> {
 
 
 
-/**
- * A screen's typed action, run by the conversation graph: the same preview, state and confirmation
- * as a payment asked for in the chat, answered in the chat's shape.
- */
-async function act(body: Record<string, unknown>, attempt: string): Promise<Answer> {
-  const response = await fetch(`${BASE}/v1/conversation/actions`, {
-    method: "POST",
-    headers: headers(attempt),
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) await readError(response);
-  return validateVoiceAnswer(await response.json());
-}
-
-/**
- * A payment built in a form: a contact picked from the list, an amount typed in a field. By name,
- * because banking verifies it against this holder's contacts; an identifier would have to be trusted.
- */
-export function payChosen(recipientName: string, amountMinor: number, attempt: string): Promise<Answer> {
-  return act({ action: "pay_contact", recipient_name: recipientName, amount_minor: amountMinor }, attempt);
-}
-
-/**
- * Money into another of the holder's own accounts, by the id the account list showed. The service
- * accepts only an account its own directory lists for this holder.
- */
-export function transferBetweenAccounts(
-  toAccountId: string,
-  amountMinor: number,
-  attempt: string,
-): Promise<Answer> {
-  return act(
-    { action: "move_between_accounts", to_account_id: toAccountId, amount_minor: amountMinor },
-    attempt,
-  );
-}
-
-/**
- * Answers the preview the conversation holds, with one of the screen's two buttons.
- *
- * A decision, not words: the service reads it with the same allow-list a typed «sí» goes through,
- * against the preview it holds for this conversation, and refuses a preview that is no longer
- * open. The key is the conversation, its version and the decision, so pressing again after a
- * timeout replays the first answer instead of paying twice.
- */
-export async function confirm(conversation: ConversationState, reply: "sí" | "no"): Promise<Answer> {
-  return act(
-    {
-      action: "answer_preview",
-      decision: reply === "sí" ? "confirm" : "cancel",
-      conversation,
-    },
-    `answer:${conversation.conversation_id}:${conversation.version}:${reply}`,
-  );
-}
-
 export type Card = {
   card_id: string;
   display_name: string;
