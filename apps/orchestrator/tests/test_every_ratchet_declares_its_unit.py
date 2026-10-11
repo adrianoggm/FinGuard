@@ -20,6 +20,7 @@ TESTS = Path(__file__).resolve().parent
 # Integers that are not ratchets, with why. Anything not here has to declare its unit.
 NOT_A_RATCHET: dict[str, str] = {
     "MAX_TURNS": "a bound on a loop, not a measurement of the corpus",
+    "ALEMBIC_VERSION_LENGTH": "the width of alembic_version.version_num, a schema fact",
 }
 
 

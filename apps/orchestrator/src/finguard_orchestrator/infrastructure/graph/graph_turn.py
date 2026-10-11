@@ -33,7 +33,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -63,7 +63,7 @@ from finguard_orchestrator.domain.errors import (
     QueryRejectedError,
     TurnCheckpointExpiredError,
 )
-from finguard_orchestrator.domain.models.conversation import Workflow
+from finguard_orchestrator.domain.models.conversation import PaymentConfirmation, Workflow
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.ports.turn_operations import InterpretationFailedError
 from finguard_orchestrator.domain.ports.turn_reservations import (
@@ -355,7 +355,7 @@ class GraphTurnHandler:
                 await self._discard_completed_checkpoint(config)
                 return answer
             answer = EngineAnswer(
-                context.cache["result"],
+                _with_open_preview(context.cache["result"], context.cache["saved"]),
                 context.cache["saved"],
                 None,
                 self._ports.count_calls() - calls_before,
@@ -633,6 +633,33 @@ class GraphTurnHandler:
                 fresh["direct_payment_confirmation"] = True
                 fresh["payment_reply"] = reply
         return fresh
+
+
+def _with_open_preview(
+    result: AskFinancialQuestionResult, saved: DialogueState
+) -> AskFinancialQuestionResult:
+    """An answer given while a bank preview stays open still says so on the wire.
+
+    A question, a chart or the category list answered during a preview re-arms the wait for its
+    yes or no, but its own result carries no workflow: the client dropped the confirm buttons and
+    the person could not see that a payment was waiting. The preview is the canonical one.
+    """
+    pending = saved.payment
+    if (
+        not isinstance(pending, PaymentConfirmationPending)
+        or result.conversation.active is not None
+    ):
+        return result
+    preview = pending.preview
+    active = PaymentConfirmation(
+        intent_id=preview.intent_id,
+        recipient=preview.recipient,
+        amount_minor=preview.amount_minor,
+        currency=preview.currency,
+        rail=preview.rail,
+        recipient_iban=preview.recipient_iban,
+    )
+    return replace(result, conversation=replace(result.conversation, active=active))
 
 
 def _fingerprint(sentence: str) -> str:

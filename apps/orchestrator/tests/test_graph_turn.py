@@ -80,7 +80,7 @@ from finguard_orchestrator.domain.enums import (
     Spoken,
 )
 from finguard_orchestrator.domain.errors import BankingUnavailableError, NotAuthorisedError
-from finguard_orchestrator.domain.models.conversation import Workflow
+from finguard_orchestrator.domain.models.conversation import PaymentConfirmation, Workflow
 from finguard_orchestrator.domain.models.query_answer import (
     Group,
     Movement,
@@ -2229,6 +2229,9 @@ async def test_question_during_preview_preserves_and_confirms_payment() -> None:
     assert answered.result is not None and "410,00" in answered.result.text
     assert isinstance(answered.state.payment, PaymentConfirmationPending)
     assert answered.state.payment.preview.amount_minor == 2_000
+    # The answer still says a payment is waiting, so the client keeps its confirm buttons.
+    assert isinstance(answered.result.conversation.active, PaymentConfirmation)
+    assert answered.result.conversation.active.intent_id == INTENT
     assert bank.cancelled == [] and bank.confirmed == []
 
     paid = await world.ask(
