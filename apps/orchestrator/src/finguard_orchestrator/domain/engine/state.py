@@ -121,6 +121,10 @@ class PlanFields:
     # Only money moved between the holder's own accounts («¿cuánto transferí a la hucha?»). Such
     # transfers are left out of every other query, where they would count the same money twice.
     own_transfers: bool | None = None
+    # The Nth value (1 first) of the result on screen, standing for the field of that result's
+    # dimension: «compáralo con el actual» after «abril fue el mes de mayor gasto». The transition
+    # replaces it with the bank's own value before anything else reads these fields.
+    from_result: int | None = None
 
     def named(self) -> frozenset[str]:
         """The fields that were said."""

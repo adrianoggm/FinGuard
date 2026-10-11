@@ -21,6 +21,7 @@ from finguard_orchestrator.domain.engine.operations import (
     AskCorrection,
     Balance,
     ChangeMeasure,
+    ChartEdit,
     Clarify,
     Compare,
     ComparePrevious,
@@ -46,6 +47,7 @@ from finguard_orchestrator.domain.engine.state import (
     ComparisonFocus,
     DialogueState,
     DialogueTurn,
+    FinancialArtifact,
     Focus,
     FocusHistoryEntry,
     Measure,
@@ -68,6 +70,7 @@ from finguard_orchestrator.domain.enums import (
 )
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.models.chart import ChartSpec, VisualProfile
+from finguard_orchestrator.domain.models.query_answer import Group
 from finguard_orchestrator.domain.ports.turn_operations import (
     InterpretationFailedError,
     TurnOperationsPort,
@@ -523,6 +526,93 @@ async def test_one_repair_then_success() -> None:
     assert repair.startswith(first)
     assert "forecast" in repair[len(first) :]
     assert "operations.0" in repair[len(first) :]
+
+
+CHART_ON_SCREEN = dataclasses.replace(
+    RESTAURANTS_ON_SCREEN,
+    active_visual=ActiveVisual(1, 1, ChartSpec("bar", ()), VisualProfile((), "SUM", "money")),
+)
+
+
+async def test_a_top_n_patch_with_a_chart_on_screen_is_reviewed_into_a_chart_edit() -> None:
+    """«Muéstrame solo las cinco mayores» over a chart re-queried the bank for a top 5, changing
+    the total and dropping the chart. The shape is suspect with a chart on screen: one review,
+    and the model's edit of the chart stands."""
+    ops, provider = await interpreted(
+        answer(a_focus_patch(limit=5, result_kind="RANKING")),
+        answer({"edit_visualization": {"limit": 5}}),
+        state=CHART_ON_SCREEN,
+        sentence="Muéstrame solo las cinco categorías con mayor gasto",
+    )
+
+    assert ops == (Visualize("ACTIVE_CHART", edit=ChartEdit(limit=5)),)
+    assert "A chart is on screen" in provider.prompts[1]
+
+
+async def test_a_patch_beside_a_redraw_with_a_chart_on_screen_is_reviewed() -> None:
+    ops, provider = await interpreted(
+        answer(a_focus_patch(categories=["LEISURE"]), {"update_visualization": "AUTO"}),
+        state=CHART_ON_SCREEN,
+        sentence="y en ocio, en el gráfico",
+    )
+
+    assert len(provider.prompts) == 2
+    assert ops == (
+        Patch("focus", PlanFields(categories=("LEISURE",))),
+        Visualize("ACTIVE_CHART"),
+    )
+
+
+async def test_a_new_filter_on_a_charted_query_is_not_second_guessed() -> None:
+    ops, provider = await interpreted(
+        answer(a_focus_patch(categories=["LEISURE"])),
+        state=CHART_ON_SCREEN,
+        sentence="¿y en ocio?",
+    )
+
+    assert ops == (Patch("focus", PlanFields(categories=("LEISURE",))),)
+    assert len(provider.prompts) == 1
+
+
+async def test_compare_previous_over_a_screen_it_cannot_compare_is_reviewed() -> None:
+    """«Compáralo con el actual» after «abril fue el mes de mayor gasto»: the model chose
+    compare_previous, which only compares a rolling window with the one before, and the turn asked
+    which periods. The review names the contract; its compare with from_result stands."""
+    this_year = dataclasses.replace(
+        EMPTY,
+        focus=QueryFocus(
+            FinancialPlan(
+                Direction.EXPENSE,
+                period=RelativePeriod(Period.THIS_YEAR),
+                group_by=GroupBy.MONTH,
+                group_limit=1,
+                result_kind=ResultKind.RANKING,
+            )
+        ),
+    )
+    with_this_month = {
+        "compare": {
+            "shared": items(direction="EXPENSE"),
+            "earlier": items(from_result=1),
+            "latest": items(window={"named": "THIS_MONTH"}),
+        }
+    }
+
+    ops, provider = await interpreted(
+        answer({"compare_previous": 1}),
+        answer(with_this_month),
+        state=this_year,
+        sentence="Compáralo con el actual",
+    )
+
+    assert ops == (
+        Compare(
+            shared=PlanFields(direction=Direction.EXPENSE),
+            earlier=PlanFields(from_result=1),
+            latest=PlanFields(window=RelativePeriod(Period.THIS_MONTH)),
+        ),
+    )
+    assert "compare_previous only compares an active rolling" in provider.prompts[1]
 
 
 async def test_a_past_payment_question_read_as_a_payment_is_reviewed_into_a_query() -> None:
@@ -1911,3 +2001,63 @@ def test_relative_windows_are_shown_with_their_dates(
     prompt = build_prompt("hola", state, today=TODAY, categories=CATEGORIES)
 
     assert shown in prompt[prompt.index("<<<STATE") : prompt.index("STATE>>>")]
+
+
+def test_the_result_on_screen_is_a_value_a_reference_can_resolve_to() -> None:
+    """«¿Cuál fue el mes de mayor gasto?» answered April; «compáralo con el actual» then compared
+    September with October, because the prompt described the query and not what it found. The
+    groups the bank returned are in the state now, in its order, a month with its dates."""
+    ranking = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        group_by=GroupBy.MONTH,
+        group_limit=1,
+        result_kind=ResultKind.RANKING,
+    )
+    state = dataclasses.replace(
+        EMPTY,
+        focus=QueryFocus(ranking),
+        active_artifact=FinancialArtifact(
+            plan=ranking,
+            currency="EUR",
+            total_minor=250_000,
+            movement_count=30,
+            groups=(Group("2026-04", 250_000, 30),),
+            result_kind=ResultKind.RANKING,
+        ),
+    )
+
+    prompt = build_prompt("Compáralo con el actual", state, today=TODAY, categories=CATEGORIES)
+    current_state = " ".join(prompt[prompt.index("<<<STATE") : prompt.index("STATE>>>")].split())
+
+    assert "Result on screen, by MONTH, largest first: 2026-04 (2026-04-01..2026-04-30)" in (
+        current_state
+    )
+
+
+def test_a_long_result_shows_its_first_groups_and_how_many_more() -> None:
+    breakdown = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        group_by=GroupBy.MERCHANT,
+        result_kind=ResultKind.BREAKDOWN,
+    )
+    shops = tuple(Group(f"Comercio {n}", 1_000 * (20 - n), 1) for n in range(12))
+    state = dataclasses.replace(
+        EMPTY,
+        focus=QueryFocus(breakdown),
+        active_artifact=FinancialArtifact(
+            plan=breakdown,
+            currency="EUR",
+            total_minor=sum(group.total_minor for group in shops),
+            movement_count=12,
+            groups=shops,
+            result_kind=ResultKind.BREAKDOWN,
+        ),
+    )
+
+    prompt = " ".join(build_prompt("¿y ese?", state, today=TODAY, categories=CATEGORIES).split())
+
+    assert "Result on screen, by MERCHANT, in the order shown: Comercio 0," in prompt
+    assert "Comercio 7 and 4 more" in prompt
+    assert "Comercio 8" not in prompt

@@ -38,6 +38,7 @@ from finguard_orchestrator.domain.engine.state import (
     ComparisonFocus,
     DialogueState,
     DialogueTurn,
+    FinancialArtifact,
     Focus,
     FocusHistoryEntry,
     Measure,
@@ -56,6 +57,7 @@ from finguard_orchestrator.domain.engine.transitions import (
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, ResultKind
 from finguard_orchestrator.domain.models.account_summary import Holding
 from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.models.query_answer import Group
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -1764,3 +1766,139 @@ def test_history_entries_without_ids_each_get_their_own() -> None:
 
     ids = [entry.task_id for entry in state.focus_history]
     assert all(ids) and len(set(ids)) == 2
+
+
+# --- references to the result on screen ------------------------------------------------------
+
+APRIL = AbsoluteRange(date(2026, 4, 1), date(2026, 4, 30))
+
+
+def answered(plan: FinancialPlan, *keys: str) -> DialogueState:
+    """A state whose last answer is `plan`, with the bank's groups in `keys` order."""
+    return replace(
+        EMPTY,
+        focus=QueryFocus(plan),
+        active_artifact=FinancialArtifact(
+            plan=plan,
+            currency="EUR",
+            total_minor=1_000 * len(keys),
+            movement_count=len(keys),
+            groups=tuple(Group(key, 1_000, 1) for key in keys),
+            result_kind=plan.result_kind or ResultKind.BREAKDOWN,
+        ),
+    )
+
+
+MONTH_RANKING = FinancialPlan(
+    Direction.EXPENSE,
+    period=RelativePeriod(Period.THIS_YEAR),
+    group_by=GroupBy.MONTH,
+    group_limit=1,
+    result_kind=ResultKind.RANKING,
+)
+
+
+def test_compare_it_with_this_month_takes_the_month_the_answer_found() -> None:
+    """«¿Cuál fue el mes de mayor gasto?» → abril; «compáralo con el actual» compared September
+    with October. The earlier side refers to the answer's first month, resolved from its key."""
+    t = apply(
+        answered(MONTH_RANKING, "2026-04"),
+        [
+            Compare(
+                shared=PlanFields(direction=Direction.EXPENSE),
+                earlier=PlanFields(from_result=1),
+                latest=PlanFields(window=RelativePeriod(Period.THIS_MONTH)),
+            )
+        ],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert t.work is not None and isinstance(t.work.plan, ComparisonPlan)
+    assert t.work.plan.earlier.date_range == APRIL
+    assert t.work.plan.latest.period == RelativePeriod(Period.THIS_MONTH)
+
+
+def test_that_category_is_the_category_the_answer_found() -> None:
+    by_category = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.CATEGORY,
+        result_kind=ResultKind.BREAKDOWN,
+    )
+
+    t = apply(
+        answered(by_category, "RESTAURANTS", "LEISURE"),
+        [Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, from_result=2))],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert t.work is not None and isinstance(t.work.plan, FinancialPlan)
+    assert t.work.plan.categories == ("LEISURE",)
+
+
+def test_a_patch_can_move_the_window_to_the_month_the_answer_found() -> None:
+    t = apply(
+        answered(MONTH_RANKING, "2026-04"),
+        [Patch("focus", PlanFields(from_result=1, group_by=GroupBy.CATEGORY))],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert t.work is not None and isinstance(t.work.plan, FinancialPlan)
+    assert t.work.plan.date_range == APRIL
+
+
+@pytest.mark.parametrize(
+    ("state", "index"),
+    [(EMPTY, 1), (answered(MONTH_RANKING, "2026-04"), 2)],
+    ids=["no-result-on-screen", "past-the-last-value"],
+)
+def test_a_reference_to_no_result_is_asked_rather_than_guessed(
+    state: DialogueState, index: int
+) -> None:
+    said = Ask(PlanFields(direction=Direction.EXPENSE, window=JULY, from_result=index))
+
+    t = apply(state, [said], today=TODAY, grounds=G)
+
+    assert t.work is None
+    assert isinstance(t.reply, Clarify)
+
+
+def test_the_first_result_is_the_one_the_answer_showed_not_the_banks_first() -> None:
+    """Banking returns a ranking of months chronologically; the answer sorts them and keeps its
+    top 1. «Ese mes» resolved to January, the bank's first group, instead of April."""
+    state = replace(
+        answered(MONTH_RANKING, "2026-01"),
+        active_artifact=FinancialArtifact(
+            plan=MONTH_RANKING,
+            currency="EUR",
+            total_minor=330_000,
+            movement_count=50,
+            groups=(
+                Group("2026-01", 100_000, 10),
+                Group("2026-04", 229_413, 32),
+                Group("2026-02", 700, 8),
+            ),
+            result_kind=ResultKind.RANKING,
+        ),
+    )
+
+    t = apply(
+        state,
+        [Patch("focus", PlanFields(from_result=1, group_by=GroupBy.CATEGORY))],
+        today=TODAY,
+        grounds=G,
+    )
+    beyond = apply(
+        state,
+        [Patch("focus", PlanFields(from_result=2, group_by=GroupBy.CATEGORY))],
+        today=TODAY,
+        grounds=G,
+    )
+
+    assert t.work is not None and isinstance(t.work.plan, FinancialPlan)
+    assert t.work.plan.date_range == APRIL
+    # The answer showed one month; there is no second one to point at.
+    assert beyond.work is None and isinstance(beyond.reply, Clarify)

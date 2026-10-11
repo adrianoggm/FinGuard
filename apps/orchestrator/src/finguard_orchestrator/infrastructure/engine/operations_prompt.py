@@ -20,6 +20,7 @@ the last thing read is the instruction and not whatever the sentence claims.
 Everything in `_TEMPLATE` is sent to the model; notes about it belong out here.
 """
 
+import calendar
 import dataclasses
 import json
 from calendar import monthrange
@@ -30,11 +31,13 @@ from string import Template
 from typing import Final
 from uuid import UUID
 
+from finguard_orchestrator.domain.constants import MAX_RESULT_REFERENCES
 from finguard_orchestrator.domain.engine.operations import PlanFields
 from finguard_orchestrator.domain.engine.state import (
     BalanceFocus,
     ComparisonFocus,
     DialogueState,
+    FinancialArtifact,
     Focus,
     Measure,
     MovementListFocus,
@@ -53,7 +56,7 @@ from finguard_orchestrator.domain.enums import (
 )
 from finguard_orchestrator.domain.models.chart import ChartSpec
 from finguard_orchestrator.domain.ports.turn_operations import NO_ACCOUNT_NAMES
-from finguard_orchestrator.domain.services import spanish
+from finguard_orchestrator.domain.services import answer_writer, spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -80,7 +83,9 @@ ISO range; category keys, exact merchant names, merchant_terms fragments; people
 ([] means all); metric SUM/COUNT/AVERAGE/PERIOD_AVERAGE/CUMULATIVE/FREQUENCY/RECURRENCE; group_by
 dimensions. Each analytical ask names result_kind (SCALAR/RANKING/BREAKDOWN/TIME_SERIES), separate
 from metric. Only RANKING takes a limit; other groups are complete unless top N is explicit.
-clear_limit removes a limit. own_transfers=true limits a query to money moved between the
+clear_limit removes a limit. from_result=N stands for the Nth value of the result on screen (1
+first): a month becomes the window, a category, shop or person that filter; use it rather than
+copying a result's dates or name. own_transfers=true limits a query to money moved between the
 holder's own accounts. When the destination is named, query that receiving account with INCOME;
 query the sending account with EXPENSE only for everything moved out of it. Transaction lists
 use the separate, periodless list_movements
@@ -1067,6 +1072,9 @@ def _state(
             "Reusable bank result: the last answered financial query is available as bounded "
             "aggregates; a visual restyle can reuse it without another bank query."
         )
+        shown = _result_in_words(state.active_artifact)
+        if shown:
+            lines.append(shown)
     elif state.active_movement_artifact is not None:
         lines.append(
             "Reusable bank result: a chart-ready summary of the displayed movement page is "
@@ -1282,6 +1290,44 @@ def _fields_of(plan: FinancialPlan | TopMovements) -> PlanFields:
         group_by=None if plan.group_by is GroupBy.NONE else plan.group_by,
         limit=plan.group_limit,
     )
+
+
+# How many of a result's groups the model sees: enough to name the winner and its neighbours
+# («el segundo», «esos tres») without copying a hundred-row breakdown into every prompt.
+_RESULT_GROUPS: Final = MAX_RESULT_REFERENCES
+
+
+def _result_in_words(artifact: FinancialArtifact) -> str:
+    """What the last answer found, as values a reference can resolve to: its groups' keys in the
+    bank's order, a month with its exact dates. «¿Cuál fue el mes de mayor gasto?» answered April;
+    without this line «compáralo con el actual» could only guess which month «it» was. Keys only:
+    the figures stay with the answer, and a shop's name is clipped like an account's."""
+    if artifact.comparison is not None or not artifact.groups:
+        return ""
+    dimension = artifact.plan.group_by
+    if dimension is GroupBy.NONE:
+        return ""
+    shown = answer_writer.shown_groups(artifact.groups, artifact.plan)
+    keys = [_group_key(group.key, dimension) for group in shown[:_RESULT_GROUPS]]
+    more = len(shown) - len(keys)
+    ranked = artifact.result_kind is ResultKind.RANKING
+    return (
+        f"Result on screen, by {dimension.value}"
+        f"{', largest first' if ranked else ', in the order shown'}: {', '.join(keys)}"
+        f"{f' and {more} more' if more > 0 else ''}. A reference to one of these results (that "
+        "month, that category, the first one) is from_result=N, 1 for the first."
+    )
+
+
+def _group_key(key: str, dimension: GroupBy) -> str:
+    if dimension is GroupBy.MONTH:
+        try:
+            year, month = (int(part) for part in key.split("-")[:2])
+            last = calendar.monthrange(year, month)[1]
+        except (ValueError, calendar.IllegalMonthError):
+            return _clipped(key, _ACCOUNT_CHARACTERS)
+        return f"{key} ({year:04d}-{month:02d}-01..{year:04d}-{month:02d}-{last:02d})"
+    return _clipped(key, _ACCOUNT_CHARACTERS)
 
 
 def _chart_in_words(spec: ChartSpec) -> str:

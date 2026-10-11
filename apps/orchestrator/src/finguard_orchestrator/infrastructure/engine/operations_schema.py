@@ -57,6 +57,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_PAYMENT_MINOR,
     MAX_PERIOD_DAYS,
     MAX_RANK,
+    MAX_RESULT_REFERENCES,
     MAX_SELECTED_ACCOUNTS,
     MAX_SUPPORTING_MOVEMENTS,
 )
@@ -282,6 +283,10 @@ class OwnTransfersItem(_Closed):
     own_transfers: Literal[True]
 
 
+class FromResultItem(_Closed):
+    from_result: Annotated[int, Field(ge=1, le=MAX_RESULT_REFERENCES)]
+
+
 FieldItem = Annotated[
     Annotated[DirectionItem, Tag("direction")]
     | Annotated[WindowItem, Tag("window")]
@@ -297,7 +302,8 @@ FieldItem = Annotated[
     | Annotated[GroupByItem, Tag("group_by")]
     | Annotated[LimitItem, Tag("limit")]
     | Annotated[ClearLimitItem, Tag("clear_limit")]
-    | Annotated[OwnTransfersItem, Tag("own_transfers")],
+    | Annotated[OwnTransfersItem, Tag("own_transfers")]
+    | Annotated[FromResultItem, Tag("from_result")],
     Discriminator(_only_key),
 ]
 

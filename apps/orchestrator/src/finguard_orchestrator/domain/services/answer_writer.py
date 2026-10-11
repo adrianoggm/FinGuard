@@ -863,8 +863,20 @@ def _one_line(plan: FinancialPlan | TopMovements, *, in_words: bool) -> str:
 
 def ordered_groups(answer: QueryAnswer, plan: FinancialPlan) -> tuple[Group, ...]:
     """Rank requested month buckets while ordinary timelines stay chronological."""
+    return _ranked(answer.groups, plan)
+
+
+def shown_groups(groups: tuple[Group, ...], plan: FinancialPlan) -> tuple[Group, ...]:
+    """The groups as the answer shows them: in its order and cut to its top-N. What a later turn's
+    «el primero» or «ese mes» points at; banking returns a ranking of months chronologically, and
+    its first group is January, not the month the person was told about."""
+    ranked = _ranked(groups, plan)
+    return ranked[: plan.group_limit] if plan.group_limit is not None else ranked
+
+
+def _ranked(groups: tuple[Group, ...], plan: FinancialPlan) -> tuple[Group, ...]:
     if plan.group_limit is None or plan.group_by is not GroupBy.MONTH:
-        return answer.groups
+        return groups
 
     def score(group: Group) -> int | Fraction:
         if plan.metric is Metric.COUNT:
@@ -873,7 +885,7 @@ def ordered_groups(answer: QueryAnswer, plan: FinancialPlan) -> tuple[Group, ...
             return Fraction(group.total_minor, max(group.movement_count, 1))
         return group.total_minor
 
-    return tuple(sorted(answer.groups, key=lambda group: (-score(group), group.key)))
+    return tuple(sorted(groups, key=lambda group: (-score(group), group.key)))
 
 
 def write(answer: QueryAnswer, plan: FinancialPlan) -> str:

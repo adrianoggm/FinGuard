@@ -10,7 +10,11 @@ what the model proposed against the conversation's own state, never by reading t
 - a patch that restates a direction and a window over a filtered task, which may be a new task;
 - a merchant search term that is one of the selected category's own names;
 - a new payment, when no payment is open: whether it asks to send money now or about one already
-  made is the model's call, asked once more on purpose.
+  made is the model's call, asked once more on purpose;
+- with a chart on screen, a patch that only moves the top-N, or a patch beside a redraw: changing
+  how the chart shows its data and changing what is queried look alike until the model is asked;
+- compare_previous over a screen that is not the rolling window it compares: the domain would
+  refuse it, and a comparison with a result on screen is a compare with from_result.
 
 After the review the model's reading stands. If the review cannot run or be read, a risky reading
 does not: a new ask is asked back keeping everything but the suspect values, and a payment is
@@ -41,6 +45,7 @@ from finguard_orchestrator.domain.engine.operations import (
     Ask,
     Clarify,
     Compare,
+    ComparePrevious,
     Delegate,
     ListMovements,
     Operation,
@@ -49,8 +54,10 @@ from finguard_orchestrator.domain.engine.operations import (
     PrepareBizum,
     PrepareOwnTransfer,
     PrepareTransfer,
+    Visualize,
 )
 from finguard_orchestrator.domain.engine.state import DialogueState, Missing
+from finguard_orchestrator.domain.enums import Period
 from finguard_orchestrator.domain.errors import AnswerRefusedError
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_operations import (
@@ -127,6 +134,19 @@ _NEW_PAYMENT_REVIEW = (
     "person and the direction) and never a payment operation. Return the corrected typed "
     "operation, or the same payment operation if they do ask to send money now."
 )
+_CHART_PRESENTATION_REVIEW = (
+    "A chart is on screen, and the proposal changes the query behind it (a top-N, or a patch "
+    "beside a redraw). Decide whether the person asks to change how the chart shows the same data "
+    "(order, how many items, orientation, type, stacking), which is edit_visualization alone and "
+    "keeps the query and its total, or to change what is queried, which is patch. Return the "
+    "corrected typed operation."
+)
+_ROLLING_COMPARISON_REVIEW = (
+    "compare_previous only compares an active rolling LAST_N_MONTHS query with the N months before "
+    "it, and the query on screen is not one. To compare a result on screen or a named period with "
+    "another period, use compare with explicit sides: from_result=N for a result on screen, a "
+    "window for the other. Return the corrected typed operation."
+)
 _REVIEWS: Mapping[str, str] = {
     "clarification": _CLARIFICATION_REVIEW,
     "inherited_filters": _INHERITED_FILTER_REVIEW,
@@ -134,6 +154,8 @@ _REVIEWS: Mapping[str, str] = {
     "restated_patch": _RESTATED_PATCH_REVIEW,
     "category_merchant_collision": _CATEGORY_MERCHANT_COLLISION_REVIEW,
     "new_payment": _NEW_PAYMENT_REVIEW,
+    "chart_presentation": _CHART_PRESENTATION_REVIEW,
+    "rolling_comparison": _ROLLING_COMPARISON_REVIEW,
 }
 # What must not run unreviewed: a payment, and a new task built on a suspect filter. A
 # clarification or a patch that could not be reviewed is no worse than the model's first reading.
@@ -306,6 +328,10 @@ def _suspicions(
         found.append("category_merchant_collision")
     if _opens_a_payment(operations, state):
         found.append("new_payment")
+    if _queries_where_a_chart_is_shown(operations, state):
+        found.append("chart_presentation")
+    if any(_compares_a_window_not_on_screen(operation, state) for operation in operations):
+        found.append("rolling_comparison")
     return tuple(found)
 
 
@@ -479,6 +505,38 @@ def _names_of(category: str, categories: Mapping[str, str]) -> set[str]:
         phrases.update(gloss.split(", "))
     folded = {spanish.folded(phrase).strip() for phrase in phrases if phrase}
     return folded | {word for phrase in folded for word in phrase.split() if len(word) > 3}
+
+
+# What a top-N patch moves: its limit, and the result shape that limit reconciles.
+_LIMIT_ONLY = frozenset({"limit", "clear_limit", "result_kind"})
+
+
+def _queries_where_a_chart_is_shown(
+    operations: tuple[Operation, ...], state: DialogueState
+) -> bool:
+    """A chart is on screen and the proposal re-queries it: a focus patch that only moves the
+    top-N, or any focus patch beside a redraw. «Solo las cinco mayores» can mean either."""
+    if state.active_visual is None:
+        return False
+    patches = [
+        operation
+        for operation in operations
+        if isinstance(operation, Patch) and operation.target == "focus"
+    ]
+    if not patches:
+        return False
+    redraws = any(isinstance(operation, Visualize) for operation in operations)
+    return redraws or any(patch.changes.named() <= _LIMIT_ONLY for patch in patches)
+
+
+def _compares_a_window_not_on_screen(operation: Operation, state: DialogueState) -> bool:
+    """compare_previous=N where the screen is not a rolling LAST_N_MONTHS of that N."""
+    if not isinstance(operation, ComparePrevious):
+        return False
+    period = getattr(getattr(state.focus, "plan", None), "period", None)
+    return (
+        period is None or period.period is not Period.LAST_N_MONTHS or period.n != operation.months
+    )
 
 
 def _opens_a_payment(operations: tuple[Operation, ...], state: DialogueState) -> bool:

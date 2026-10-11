@@ -166,3 +166,8 @@ MAX_CONTEXT_ID = 128
 
 # The longest session a slot may claim. Four hours covers any class; a longer "slot" is a day.
 MAX_SLOT_MINUTES = 240
+
+# How many values of the answer on screen a later turn can refer to by position («el segundo»,
+# «ese mes»): what the interpreter is shown, what the schema accepts and what the transition
+# resolves, one number so the three cannot disagree.
+MAX_RESULT_REFERENCES = 8

@@ -1117,3 +1117,46 @@ def test_an_edit_the_chart_cannot_take_leaves_it_as_it_was(route: str) -> None:
     assert "lo dejo como estaba" in refused.body["text"]
     assert chart(turns[4]) == ("vertical", "ascending", None)
     assert len(stack.ledger.ran) == 1
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_compare_it_with_this_month_compares_the_month_the_answer_found(route: str) -> None:
+    """«¿Cuál fue el mes de mayor gasto este año?» → abril; «Compáralo con el actual» compared
+    September with October. The model now points at the answer (from_result=1) and the bank is
+    asked for April against this month."""
+    stack = a_stack()
+    stack.ledger.groups_for_next_turn = (Group("2026-04", 229_413, 32),)
+    top_month = {
+        "operations": [
+            {
+                "ask": [
+                    {"direction": "EXPENSE"},
+                    {"window": {"named": "THIS_YEAR"}},
+                    {"group_by": "MONTH"},
+                    {"limit": 1},
+                    {"result_kind": "RANKING"},
+                ]
+            }
+        ]
+    }
+    against_this_month = {
+        "operations": [
+            {
+                "compare": {
+                    "shared": [{"direction": "EXPENSE"}],
+                    "earlier": [{"from_result": 1}],
+                    "latest": [{"window": {"named": "THIS_MONTH"}}],
+                }
+            }
+        ]
+    }
+    engine_on(stack, an_adapter(Canned(top_month, against_this_month)))
+
+    first = post(stack, route, "¿Cuál fue el mes de mayor gasto este año?")
+    compared = post(stack, route, "Compáralo con el actual", first.conversation)
+
+    assert compared.status == 200
+    assert compared.body["outcome"] != "NEEDS_CLARIFICATION", compared.body["text"]
+    april = AbsoluteRange(date(2026, 4, 1), date(2026, 4, 30))
+    assert any(plan.date_range == april for plan in stack.ledger.plans[1:])
+    assert any(plan.period == RelativePeriod(Period.THIS_MONTH) for plan in stack.ledger.plans[1:])

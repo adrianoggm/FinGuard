@@ -9,14 +9,16 @@ one exception that escapes is `InvariantViolationError`: it means this module is
 model, and the handler reports it as that.
 """
 
+import calendar
 import dataclasses
 from calendar import monthrange
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
-from typing import Final, Literal, assert_never
+from typing import Final, Literal, assert_never, cast
 from uuid import UUID, uuid4
 
+from finguard_orchestrator.domain.constants import MAX_RESULT_REFERENCES
 from finguard_orchestrator.domain.engine.grounding import Grounds, Unknown, ground
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
@@ -58,6 +60,7 @@ from finguard_orchestrator.domain.engine.state import (
 )
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, ResultKind
 from finguard_orchestrator.domain.errors import DomainError, InvalidValueError
+from finguard_orchestrator.domain.services import answer_writer
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -317,6 +320,7 @@ def _applied(
     today: date,
     grounds: Grounds,
 ) -> Applied:
+    op = _with_result_references(op, state)
     match op:
         case Ask(fields=said):
             return _asked(state, said, today, grounds)
@@ -442,6 +446,59 @@ def _asked(
             pending=Pending(missing, grounded, task_state.scope, task_id or uuid4().hex),
         ) from None
     return _on_query(task_state, plan)
+
+
+def _with_result_references[Op](op: Op, state: DialogueState) -> Op:
+    """Every `from_result` in an ask, a patch or a side of a comparison, replaced by the value the
+    bank returned there. Done first, so nothing downstream ever sees a reference."""
+    match op:
+        case Ask(fields=fields) if fields.from_result is not None:
+            return cast(Op, replace(op, fields=_referenced(fields, state)))
+        case Patch(changes=changes) if changes.from_result is not None:
+            return cast(Op, replace(op, changes=_referenced(changes, state)))
+        case Compare(shared=shared, earlier=earlier, latest=latest):
+            sides = tuple(
+                _referenced(side, state) if side.from_result is not None else side
+                for side in (shared, earlier, latest)
+            )
+            return cast(Op, replace(op, shared=sides[0], earlier=sides[1], latest=sides[2]))
+    return op
+
+
+def _referenced(fields: PlanFields, state: DialogueState) -> PlanFields:
+    """The Nth group of the answer on screen as the field its dimension fills: a month or a day
+    is the window, a category, a shop or a person is that filter. A reference to nothing (no
+    result, a comparison, a value past what the prompt showed) is asked about, never guessed."""
+    artifact = state.active_artifact
+    index = fields.from_result
+    if artifact is None or artifact.comparison is not None or index is None:
+        raise _CannotApplyError(Missing.SUBJECT)
+    shown = answer_writer.shown_groups(artifact.groups, artifact.plan)
+    if not 1 <= index <= min(len(shown), MAX_RESULT_REFERENCES):
+        raise _CannotApplyError(Missing.SUBJECT)
+    key = shown[index - 1].key
+    resolved = replace(fields, from_result=None)
+    try:
+        match artifact.plan.group_by:
+            case GroupBy.MONTH:
+                year, month = (int(part) for part in key.split("-")[:2])
+                last = calendar.monthrange(year, month)[1]
+                return replace(
+                    resolved,
+                    window=AbsoluteRange(date(year, month, 1), date(year, month, last)),
+                )
+            case GroupBy.DAY:
+                day = date.fromisoformat(key)
+                return replace(resolved, window=AbsoluteRange(day, day))
+            case GroupBy.CATEGORY:
+                return replace(resolved, categories=(key,))
+            case GroupBy.MERCHANT:
+                return replace(resolved, merchants=(key,))
+            case GroupBy.COUNTERPARTY:
+                return replace(resolved, people=(key,))
+    except (ValueError, calendar.IllegalMonthError):
+        pass
+    raise _CannotApplyError(Missing.SUBJECT)
 
 
 def _patched_focus(state: DialogueState, op: Patch, today: date, grounds: Grounds) -> Applied:
