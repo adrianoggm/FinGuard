@@ -1,13 +1,13 @@
 """fence and expire abandoned turn-local checkpoints
 
-Revision ID: 0008_abandoned_checkpoint_retention
+Revision ID: 0008_abandoned_checkpoints
 Revises: 0007_replay_financial_read_count
 Create Date: 2026-10-11
 """
 
 from alembic import op
 
-revision = "0008_abandoned_checkpoint_retention"
+revision = "0008_abandoned_checkpoints"
 down_revision = "0007_replay_financial_read_count"
 branch_labels = None
 depends_on = None

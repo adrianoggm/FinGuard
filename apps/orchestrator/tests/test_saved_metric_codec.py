@@ -110,7 +110,7 @@ def test_a_sealed_context_verifies_for_its_holder_conversation_position_and_cont
         ),
         (
             # signature bit
-            lambda t, c, s: (t[:-2] + ("A" if t[-1] != "A" else "B") + t[-1], "holder-a", c, 0, s),
+            lambda t, c, s: (t[:-2] + ("A" if t[-2] != "A" else "B") + t[-1], "holder-a", c, 0, s),
             "format",
         ),
         (lambda t, c, s: ("m1." + t[3:], "holder-a", c, 0, s), "format"),  # wrong prefix
