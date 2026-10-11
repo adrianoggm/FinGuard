@@ -32,6 +32,17 @@ def test_across_holder_list_omits_only_the_account_filter() -> None:
     assert ACCOUNT not in compiled.parameters
 
 
+def test_a_statement_of_every_account_with_no_filter_is_still_valid_sql() -> None:
+    """Every movement, every account, transfers included: no condition is left, and an empty
+    WHERE was a syntax error the moment the orchestrator asked for one."""
+    compiled = compile_movement_list(
+        MovementListPlan(ACCOUNT, Direction.ALL, across_accounts=True, include_internal=True)
+    )
+
+    assert "WHERE TRUE" in " ".join(compiled.sql.split())
+    assert "is_internal" not in compiled.sql.split("WHERE")[1]
+
+
 def test_keyset_page_cursor_has_stable_tiebreak_and_all_values_are_parameters() -> None:
     timestamp = datetime(2026, 10, 10, 8, tzinfo=UTC)
     plan = MovementListPlan(

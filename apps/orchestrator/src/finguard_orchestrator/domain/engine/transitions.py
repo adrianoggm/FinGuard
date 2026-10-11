@@ -835,21 +835,22 @@ def _listed_movements(
         across_accounts=not bool(scoped.scope.account_ids),
         categories=fields.categories or (),
         merchant_terms=fields.merchant_terms or (),
-        include_internal=_lists_internal(direction),
+        include_internal=_lists_internal(direction, scoped.scope.account_ids),
     )
     listed = replace(scoped, focus=MovementListFocus(plan), pending=None)
     return listed, Work("MOVEMENT_LIST", plan, plan.account_ids)
 
 
-def _lists_internal(direction: Direction) -> bool:
+def _lists_internal(direction: Direction, account_ids: tuple[UUID, ...]) -> bool:
     """Whether a list shows transfers between the holder's own accounts (QUERY-003).
 
-    A list of every movement is a statement: money moved from Cuenta corriente into the Hucha is
-    on it, as the bank's own extract shows it. A list of expenses or of income is not, because a
-    transfer to oneself is neither, and counting it as one is the double count the analytical
-    queries exclude it to avoid.
+    A list of every movement of named accounts is a statement: money moved from Cuenta corriente
+    into the Hucha is on the Hucha's, as the bank's own extract shows it. A list of expenses or of
+    income is not, because a transfer to oneself is neither. Nor is a list across every account:
+    there a transfer moves none of the holder's money, and its two legs share one transaction, so
+    it would be listed twice and break the page cursor, which is keyed by transaction.
     """
-    return direction is Direction.ALL
+    return direction is Direction.ALL and bool(account_ids)
 
 
 def _patched_movement_list(
@@ -899,7 +900,7 @@ def _patched_movement_list(
     plan = replace(
         previous,
         direction=direction,
-        include_internal=_lists_internal(direction),
+        include_internal=_lists_internal(direction, account_ids),
         page_size=operation.page_size or previous.page_size,
         cursor=None,
         period=period,

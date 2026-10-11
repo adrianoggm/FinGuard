@@ -270,10 +270,8 @@ def test_new_movement_list_does_not_inherit_the_previous_account_filter() -> Non
 
     t = apply(state, [ListMovements()], today=TODAY, grounds=WITH_ACCOUNTS)
 
-    assert t.work == Work(
-        "MOVEMENT_LIST",
-        MovementListPlan(across_accounts=True, include_internal=True),
-    )
+    # Across every account a transfer to oneself moves nothing, and its two legs would repeat it.
+    assert t.work == Work("MOVEMENT_LIST", MovementListPlan(across_accounts=True))
     assert t.state.scope == Scope()
 
 

@@ -318,13 +318,15 @@ def compile_movement_list(plan: MovementListPlan) -> CompiledQuery:
             f"AND t.transaction_id > {transaction_id}))"
         )
     limit = parameters.bind(plan.page_size + 1)
+    # Every movement of every account, transfers included, names no condition at all: the view is
+    # what scopes it to the holder, and the clause must still be valid SQL.
     sql = f"""
         SELECT t.transaction_id, t.occurred_at, t.description, t.merchant_name,
                t.category, t.category_is_custom, t.category_source, t.is_internal,
                t.transaction_type, t.direction, t.amount_minor, b.currency
         FROM {VIEW} t
         JOIN assistant_read.account_balances_v1 b ON b.account_id = t.account_id
-        WHERE {" AND ".join(conditions)}
+        WHERE {" AND ".join(conditions) or "TRUE"}
         ORDER BY t.occurred_at DESC, t.transaction_id ASC
         LIMIT {limit}
     """
