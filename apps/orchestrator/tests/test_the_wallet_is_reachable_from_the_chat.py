@@ -23,11 +23,8 @@ which column the reader cares about.
 import uuid
 from datetime import date
 
-import pytest
-
 from finguard_orchestrator.domain.models.card import Card, Wallet
 from finguard_orchestrator.domain.services import answer_writer
-from finguard_orchestrator.domain.services.intent_router import Intent, route
 
 WALLET = Wallet(
     since=date(2026, 7, 7),
@@ -60,39 +57,6 @@ WALLET = Wallet(
         ),
     ),
 )
-
-
-# --- which sentences are about the wallet ------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "said",
-    [
-        "Que tarjetas tengo de credito ?",
-        "¿qué tarjetas tengo?",
-        "¿cuántas tarjetas tengo?",
-        "mis tarjetas",
-        "cuanto he gastado con cada tarjeta en el ultimo mes",
-        "el gasto por tarjeta",
-    ],
-)
-def test_these_are_about_the_wallet(said: str) -> None:
-    assert route(said, has_previous=False, at_rest=True) is Intent.LIST_CARDS
-
-
-@pytest.mark.parametrize(
-    "said",
-    [
-        # One purchase that happens to mention how it was paid. The wallet is not the subject, and
-        # a plan expresses this perfectly well.
-        "¿cuánto gasté con la tarjeta en Mercadona?",
-        "¿cuánto gasté el mes pasado?",
-        # The address book, which has its own intent and its own answer.
-        "¿qué contactos tengo?",
-    ],
-)
-def test_these_are_not(said: str) -> None:
-    assert route(said, has_previous=False, at_rest=True) is not Intent.LIST_CARDS
 
 
 # --- and what the answer says --------------------------------------------------------------

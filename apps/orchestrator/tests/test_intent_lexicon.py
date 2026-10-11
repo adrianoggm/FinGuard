@@ -40,10 +40,11 @@ EVERY_PHRASING = [
 ]
 UNMEASURED = Ceiling(58, "intent phrasings reached by no evaluation sentence")
 
-# The one slot the table uses, filled the way `intent_router` fills it. A row carrying it is not a
-# regex until it is filled, so every test that compiles a row has to fill it first.
+# The one slot the table uses. A row carrying it is not a regex until it is filled, so every test
+# that compiles a row has to fill it first.
+HOW_MUCH_SLOT = "<how_much>"
 HOW_MUCH = "|".join(spanish.transposed("cuanto"))
-SLOT_FILLINGS = {intent_lexicon.HOW_MUCH_SLOT: HOW_MUCH}
+SLOT_FILLINGS = {HOW_MUCH_SLOT: HOW_MUCH}
 
 
 def resolved(says: str) -> str:
@@ -59,7 +60,7 @@ def alternation_of(concept: str) -> str:
     Deliberately not `resolved(alternation(concept))`: `alternation` refuses to return a string with
     an unfilled slot in it, and going around that would test a path the router never takes.
     """
-    if intent_lexicon.HOW_MUCH_SLOT in "".join(p.says for p in PHRASINGS[concept]):
+    if HOW_MUCH_SLOT in "".join(p.says for p in PHRASINGS[concept]):
         return intent_lexicon.alternation(concept, how_much=HOW_MUCH)
     return intent_lexicon.alternation(concept)
 
@@ -72,29 +73,7 @@ def _ids(concept: str, phrasing: intent_lexicon.Phrasing) -> str:
 # so that the assertion below is a *comparison* and not a tautology: a frame that changed silently
 # would rebuild itself and prove nothing.
 FRAMES: dict[str, tuple[str, str, str, int]] = {
-    "_ABOUT_THE_BALANCE": ("about_the_balance", "", "", re.IGNORECASE),
-    "_ABOUT_ACCOUNTS": ("about_accounts", "", "", re.IGNORECASE),
-    "_NOT_THE_BALANCE": ("not_the_balance", "", "", re.IGNORECASE),
-    "_ABOUT_CARDS": ("about_cards", "", "", re.IGNORECASE),
-    "_ABOUT_CARDS_BY_EACH": ("about_cards_by_each", "", "", re.IGNORECASE),
-    "_ABOUT_CONTACTS": ("about_contacts", "", "", re.IGNORECASE),
-    "_ABOUT_AGENDA": ("about_agenda", "", "", re.IGNORECASE),
-    "_ABOUT_ITSELF": ("about_itself", r"\b(", ")", re.IGNORECASE),
-    "_ASSISTANT_NOUN": ("assistant_noun", "", "", re.IGNORECASE),
-    "_ASSISTANT_PURPOSE": ("assistant_purpose", "", "", re.IGNORECASE),
-    "_CATEGORY_CATALOGUE": ("category_catalogue", "", "", 0),
-    "_CORRECTING": ("correcting", r"\b(", r")\b", re.IGNORECASE),
-    "_ANSWER_NOUN": ("answer_noun", "", "", re.IGNORECASE),
-    "_ANSWER_REJECTION": ("answer_rejection", "", "", re.IGNORECASE),
-    "_BARE_CORRECTION": ("bare_correction", r"(?:perdona[\s,]+)?(", ")", 0),
-    "_ABOUT_THE_ANSWER": ("about_the_answer", r"\b(", r")\b", re.IGNORECASE),
-    "_FRUSTRATION": ("frustration", r"^(?:pero\s+)?(?:", ")$", 0),
-    "_MOVING": ("moving", r"\b(", r")\b", re.IGNORECASE),
     "_ASKING": ("asking", r"\b(", r")\b", re.IGNORECASE),
-    "_BETWEEN_ACCOUNTS": ("between_accounts", "", "", re.IGNORECASE),
-    "_OWN_ACCOUNT_RELATION": ("own_account_relation", "", "", re.IGNORECASE),
-    "_CORRECTION_REPLACEMENT": ("correction_replacement", r"\b(?:", r")\b", re.IGNORECASE),
-    "_ACTION_INTENT": ("action_intent", r"\b(?:", r")\b", re.IGNORECASE),
 }
 
 
@@ -257,34 +236,6 @@ def test_the_lexicon_is_enumerable_and_nothing_in_it_is_unread() -> None:
     ]
     assert not unread, f"defined in the lexicon and read by nobody: {unread}"
     assert all(phrasings for phrasings in PHRASINGS.values()), "a concept with no phrasings"
-
-
-def test_the_phrasings_two_concepts_share() -> None:
-    """The defect shape this table exists to expose, pinned so a new instance has to be argued.
-
-    All four are the correction family, and none of the four is a design. `correcting` and
-    `bare_correction` are two hand-maintained lists of the same idea and neither knew about the
-    other; `correction_replacement` is a third, and it overlaps both.
-
-    **The sharpest instance is not in this dict at all, which is why it is written down here.**
-    «me refería» is spelled three ways across the three concepts — `me\\s+refer[íi]a` in
-    `correcting`, folded into `me\\s+(referia|refiero)` in `bare_correction`, and `me\\s+referia` in
-    `correction_replacement` — so a string comparison sees three unrelated rows. Only the first
-    carries the accented alternative, and no folded sentence can reach it. They are left exactly as
-    they are, because merging them would move sentences and this table may not; the divergence is
-    now countable rather than buried in three regexes a hundred lines apart.
-    """
-    shared: dict[str, list[str]] = {}
-    for concept, phrasings in PHRASINGS.items():
-        for phrasing in phrasings:
-            shared.setdefault(phrasing.says, []).append(concept)
-    found = {says: tuple(sorted(cs)) for says, cs in shared.items() if len(cs) > 1}
-    assert found == {
-        r"me\s+refiero": ("correcting", "correction_replacement"),
-        r"no\s+me\s+has\s+entendido": ("bare_correction", "correcting"),
-        r"queria\s+decir": ("bare_correction", "correction_replacement"),
-        r"te\s+has\s+equivocado": ("bare_correction", "correcting"),
-    }
 
 
 def test_the_lexicon_holds_no_frame_it_cannot_explain() -> None:

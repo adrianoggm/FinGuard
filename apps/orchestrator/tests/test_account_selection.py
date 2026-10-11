@@ -7,6 +7,8 @@ from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.conversation import (
     AccountCandidate,
     AccountScopeClarification,
+)
+from finguard_orchestrator.domain.value_objects.account_selection import (
     AccountSelection,
     AccountSelectionMode,
 )

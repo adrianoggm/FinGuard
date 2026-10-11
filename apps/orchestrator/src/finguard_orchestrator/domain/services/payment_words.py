@@ -80,21 +80,6 @@ _CONCEPT_SUFFIXES: Final = (
 
 _RECIPIENT_BOUNDARY: Final = re.compile(r"\s+(?:a|para|al)\s+", re.IGNORECASE)
 
-# Changing a recipient while a preview is open must be explicit. A contact name alone may be a
-# question or part of a concept; cancelling a held intent on that guess would be destructive. These
-# forms name the relationship that changes and are narrow enough to act on deterministically.
-_RECIPIENT_CORRECTION: Final = re.compile(
-    r"\b(?:era|es)\s+(?:para|a)\s+\S"
-    r"|\bmejor\s+(?:para|a)\s+\S"
-    r"|\b(?:cambia|cambiar|corrige|corregir|rectifica|rectificar)"
-    r"\s+(?:el\s+|la\s+)?(?:destinatario|contacto|persona)\s+(?:a|por)\s+\S",
-    re.IGNORECASE,
-)
-
-# Natural replacement after a preview: "A Marta 500 euros". It is deliberately paired with an
-# explicit amount in `changes_recipient`; without that condition, the conversational filler
-# "a ver" would be mistaken for a recipient correction and discard a valid preview.
-_BARE_RECIPIENT_CORRECTION: Final = re.compile(r"^\s*a\s+\S", re.IGNORECASE)
 
 _CLEAR_CONCEPT: Final = re.compile(
     r"\b(?:quita|quitar|elimina|eliminar|borra|borrar)\s+(?:el\s+)?concepto\b"
@@ -105,21 +90,6 @@ _CLEAR_CONCEPT: Final = re.compile(
 # Words that appear inside Spanish names and inside every Spanish sentence. Matching a contact on
 # one of these would make "no sé qué hacer" name María del Carmen.
 _PARTICLES: Final = frozenset({"del", "las", "los", "san", "santa", "von", "van"})
-
-
-# Words a Spanish sentence ends with that are not part of anybody's name. Reported: "hazle un bixum
-# a aitor anda" was read as a payment to *"aitor anda"*, the question came back "¿de cuánto quieres
-# hacerle el bixum a aitor anda?", and the contact lookup then found nobody — two turns lost to a
-# word that means "go on".
-#
-# Stripped rather than tolerated in the lookup, because the name is echoed back at the holder. A
-# question naming somebody who does not exist reads as the assistant having misheard, which is
-# exactly what happened.
-_TRAILING_FILLER: Final = re.compile(
-    r"[\s,]+(?:anda|venga|va|vale|porfa|por\s+favor|ya|hombre|mujer|tio|tia"
-    r"|gracias|pues|eh|oye|please)\s*$",
-    re.IGNORECASE,
-)
 
 
 # The words that name a way of moving money. A closed set of three, and the only closed set in this
@@ -198,55 +168,6 @@ def names_a_rail(sentence: str) -> bool:
         for token in _WORD.findall(spanish.folded(sentence))
         for rail in _RAIL_LEXICON
     )
-
-
-# What a whole turn may consist of and still be an answer rather than an order: the rail noun, and
-# at most an article or a discourse particle around it.
-_ONLY_A_PARTICLE: Final = frozenset(
-    {"pues", "y", "o", "un", "una", "el", "la", "lo", "de", "vale", "ok", "eso", "si"}
-)
-
-
-def is_only_a_rail_word(sentence: str) -> bool:
-    """Whether the whole turn is the name of a rail and nothing else.
-
-    The inversion this rule needed. "Pues bizum", offered as the answer to "¿de qué comercio o
-    categoría?", must belong to that question — and the previous test for it was to enumerate the
-    ways of *instructing*, which is an open set: every form missed ("que le hagas", "hagamos")
-    became a turn the open question swallowed, and one holder spent seven of them shouting.
-
-    So this enumerates the other side, which is closed and tiny. A turn that is a rail noun with an
-    article or a particle around it is a reply; a turn with anything else in it is not. The set of
-    Spanish ways to say "do it" is unbounded; the set of ways to say only "bizum" is not.
-    """
-    tokens = _WORD.findall(spanish.folded(sentence))
-    if not tokens:
-        return False
-    named = [
-        token
-        for token in tokens
-        if any(spanish.one_edit_apart(token, rail) for rail in _RAIL_LEXICON)
-    ]
-    if not named:
-        return False
-    return all(token in _ONLY_A_PARTICLE for token in tokens if token not in named)
-
-
-def without_trailing_filler(name: str) -> str:
-    """A read name with the conversational tail taken off.
-
-    Repeated, because "a Aitor anda por favor" has two of them. Never down to nothing: if every word
-    is in the list then the whole thing was filler and no name was read, and returning the original
-    lets the layer above refuse it as the non-name it is rather than crash on an empty string.
-    """
-    trimmed = name.strip()
-    while True:
-        shorter = _TRAILING_FILLER.sub("", trimmed)
-        if shorter == trimmed:
-            return trimmed or name.strip()
-        if not shorter.strip():
-            return trimmed
-        trimmed = shorter.strip()
 
 
 def amount_in(sentence: str) -> int | None:
@@ -335,129 +256,6 @@ def clears_concept(sentence: str) -> bool:
     return _CLEAR_CONCEPT.search(spanish.folded(sentence)) is not None
 
 
-def changes_recipient(sentence: str, *, previewed: str) -> bool:
-    """Whether a reply to a preview explicitly replaces who receives the payment.
-
-    `previewed` is the recipient on the preview being answered. The correction forms above need no
-    name to compare with — they say outright that the person changes — but an order does:
-    «mándale 20 € a Marta» to Marta's preview revises the amount, and «mándale 20 € a Javi Nuñez»
-    is a payment to somebody else. Read as a revision, the second one became «Vas a enviar 20,00 €
-    a Marta Solis Vega», and a «sí» would have paid Marta for an order that named Javi.
-    """
-    folded = spanish.folded(sentence)
-    return (
-        _RECIPIENT_CORRECTION.search(folded) is not None
-        or (
-            _BARE_RECIPIENT_CORRECTION.search(folded) is not None
-            and amount_in(sentence) is not None
-        )
-        or _orders_somebody_else(sentence, previewed)
-    )
-
-
-# An order with somebody to give it to: the imperative («mándale», «envía», «hazle», «dale»), the
-# infinitive after a volitional verb («quiero mandarle») and the subjunctive («que le mandes»). The
-# person is the «a <name>» that follows; the verb alone names nobody, so «mándale 20 €» to an open
-# preview stays the revision it always was.
-_ORDER_TO_SOMEBODY: Final = re.compile(
-    r"\b(?:(?:manda|envia|paga|pasa|transfiere|ingresa|devuelve)(?:le|les)?"
-    r"|(?:da|haz)(?:le|les)"
-    r"|(?:mandar|enviar|pagar|pasar|dar|hacer|transferir|devolver)(?:le|les)"
-    r"|mandes|envies|pagues|pases|hagas|transfieras|devuelvas)\b"
-)
-_TO_SOMEBODY: Final = re.compile(r"\ba\s+(?P<name>[a-z]+(?:\s+[a-z]+)*)")
-
-# Where the words after «a» stop being a name: what an order says next («por la cena», «con
-# concepto…», «hoy»), the fillers `_TRAILING_FILLER` strips, and the pronouns that point back at
-# the preview's own person («a ella»). A first word nobody listed here — «mi madre» — counts as a
-# different person: the cost of that mistake is a question about who, and the cost of the other one
-# is money to the person the holder just named away from. What comes after the first word is not
-# decided here at all (ruling R18): see `_orders_somebody_else`.
-_AFTER_THE_NAME: Final = frozenset(
-    {
-        "por",
-        "con",
-        "de",
-        "para",
-        "que",
-        "y",
-        "el",
-        "la",
-        "los",
-        "las",
-        "un",
-        "una",
-        "al",
-        "en",
-        "hoy",
-        "manana",
-        "ahora",
-        "ya",
-        "concepto",
-        "anda",
-        "venga",
-        "va",
-        "vale",
-        "porfa",
-        "gracias",
-        "pues",
-        "eh",
-        "oye",
-        "ella",
-        "ellos",
-        "ellas",
-    }
-)
-
-
-def _orders_somebody_else(sentence: str, previewed: str) -> bool:
-    """Whether `sentence` orders a payment to a person whose name is not the preview's.
-
-    **The first word of the name decides** (ruling R18). «Javi» is not a word of Marta Solis Vega's
-    name, so «paga 20 € a Javi» is somebody else; «Marta» is, so «mándale 20 € a Marta esta noche»
-    is her — what follows a name is not part of it, and reading «esta noche» as a surname cancelled
-    Marta's own preview for being named. Deciding by rule rather than by listing every word that
-    can follow a name: that list is the open set, and it was already missing «cuando puedas».
-
-    One thing after the first word still counts, because it is written as a name: a capitalised
-    word the preview's name does not have. «Marta Ruiz» is the other Marta, and the first word alone
-    would read her as the preview's — a revision addressed to the wrong person, the failure R14
-    exists to stop. Lower case is read by the first word only, so «marta ruiz» is that failure
-    still; the cost is a preview naming Marta Solis Vega that the holder has to decline.
-
-    The words are compared folded, and the casing is read off the sentence as typed, at the same
-    positions: folding keeps one character per character for Spanish. When it does not, the
-    casing is not read and the first word decides alone.
-    """
-    folded = spanish.folded(sentence)
-    order = _ORDER_TO_SOMEBODY.search(folded)
-    if order is None:
-        return False
-    target = _TO_SOMEBODY.search(folded, order.end())
-    if target is None:
-        return False
-    name: list[re.Match[str]] = []
-    for word in _WORD.finditer(folded, target.start("name"), target.end("name")):
-        if word.group() in _AFTER_THE_NAME:
-            break
-        if word.group() not in _PARTICLES:
-            name.append(word)
-    if not name:
-        return False
-    previewed_name = set(spanish.folded(previewed).split())
-    first, *after = name
-    if first.group() not in previewed_name:
-        return True
-    aligned = len(folded) == len(sentence)
-    for word in after:
-        if not (aligned and sentence[word.start()].isupper()):
-            # Not written as a name, so not part of one: the rest of the sentence.
-            break
-        if word.group() not in previewed_name:
-            return True
-    return False
-
-
 def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact, ...]:
     """Everybody in the directory whose name this sentence names.
 
@@ -505,33 +303,6 @@ def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact,
     if best == 0:
         return ()
     return tuple(contact for points, contact in scored if points == best)
-
-
-def name_as_written(sentence: str, directory: tuple[Contact, ...]) -> str | None:
-    """How much of a matched contact's name this sentence spells, in the directory's own casing.
-
-    The ledger stores what the bank wrote on the movement, and the holder types a fraction of it.
-    Filtering by the full display name would find nothing for somebody who wrote "Marta", and
-    filtering by an invented choice between two contacts called Marta would find the wrong person —
-    so what comes back is exactly the part they wrote, which is the widest honest filter.
-
-    None when nothing in the directory is named, which is the answer that keeps a reader from
-    building a query about a person the sentence never mentioned.
-
-    Lives here rather than beside either reader that asks it. Both directions of the same question
-    need it — "¿me ha llegado un bizum de Marta?" and "le he mandado 20 € a Marta Solis Vega" — and
-    the second copy of a rule like this is the one that drifts.
-    """
-    folded = spanish.folded(sentence)
-    mentioned: list[str] = []
-    for contact in contacts_in(sentence, directory):
-        for original in contact.display_name.split():
-            word = spanish.folded(original)
-            named = re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", folded)
-            if len(word) > 2 and named:
-                if word not in {item.casefold() for item in mentioned}:
-                    mentioned.append(original)
-    return " ".join(mentioned) or None
 
 
 # Which rail a sentence names. A closed vocabulary of two, so it is read here rather than asked of

@@ -240,7 +240,6 @@ _GROUPED_BY: Final = {
     "meses": GroupBy.MONTH,
 }
 _BY: Final = r"por\s+(?P<dimension>categorias?|comercios?|meses)"
-_A_GROUPING: Final = re.compile(rf"\b{_BY}\b")
 
 # A breakdown asked as the whole turn: «mejor por categoría», «¿y por comercio?», «agrupado por
 # meses», a bare «por categoría». The whole turn on purpose — nothing but the grouping is said, so
@@ -326,96 +325,6 @@ _SHE_OR_HE: Final = frozenset({"ella", "el"})
 # A pause written inside a turn — «vale, mejor por categoría», «mejor, por categoría», «vale, ¿y
 # ella a mí?» — leaves it the whole turn it was (M-4), so the shapes are read over its words alone.
 _PAUSES: Final = re.compile(r"[,;:¿?¡!.]")
-
-
-# Money between the holder and a person, said anywhere in a sentence rather than as the whole turn:
-# «¿cuánto me mandó Javi este año?», «¿cuánto le mandé este año?». The verbs of `_TO_ME` and
-# `_TO_THEM`; who, when said, is right after the verb, with or without «a».
-_MONEY_TO_ME: Final = re.compile(rf"\b{_TO_ME}\b")
-_MONEY_TO_THEM: Final = re.compile(rf"\b{_TO_THEM}\b")
-
-
-def asks_about_another_person(sentence: str, base: FinancialPlan) -> bool:
-    """Whether a question about money between the holder and somebody is about someone other than
-    the base's person, or about the money the other way (validation fix 3, fix round 1, I-4).
-
-    For the follow-up reader's window patch, which must not take such a question as «este año»
-    said of the answer in view: after Marta, «¿cuánto me mandó Javi este año?» ran Marta's sending
-    (P-7). Read as the turn-round shapes read it: «me mandó» is money that came, «le mandé» money
-    that went, and the person named after the verb is matched against the base's (`_the_person`).
-    So it is another person's when the money goes the other way from the base's, when the base is
-    about nobody in particular, or when the name said is not the base's person. «¿Cuánto le mandé
-    este año?» after Marta, or «¿cuánto me mandó este año?» after Javi's money, is still the base's
-    person this year. False for any sentence that is not about money between people.
-    """
-    spoken = " ".join(_PAUSES.sub(" ", spanish.folded(sentence)).split())
-    to_me = _MONEY_TO_ME.search(spoken)
-    said = to_me or _MONEY_TO_THEM.search(spoken)
-    if said is None:
-        return False
-    direction = Direction.INCOME if to_me is not None else Direction.EXPENSE
-    if base.direction in {Direction.EXPENSE, Direction.INCOME} and direction is not base.direction:
-        return True
-    if not base.counterparties:
-        return True
-    after = spoken[said.end() :].split()
-    if after[:1] == ["a"]:
-        after = after[1:]
-    who: list[str] = []
-    for word in after[:3]:
-        if word in _WINDOW_PATCH_WORDS or word in {"mi", "yo"}:
-            break
-        who.append(word)
-    if not who:
-        return False
-    return not names_the_bases_person(" ".join(who), base.counterparties)
-
-
-def speaks_of_money_between_people(sentence: str) -> bool:
-    """Whether the sentence says money came from somebody or went to somebody — «me mandó», «le
-    pagué» — anywhere in it, whoever it names (fix round 2).
-
-    For the handler, which asks its contact directory who is named only when this says the turn is
-    about a person's money at all: the directory is a call to the bank.
-    """
-    spoken = " ".join(_PAUSES.sub(" ", spanish.folded(sentence)).split())
-    return _MONEY_TO_ME.search(spoken) is not None or _MONEY_TO_THEM.search(spoken) is not None
-
-
-def names_the_bases_person(who: str, counterparties: tuple[str, ...]) -> bool:
-    """Whether the name said is the base's person: as `_the_person` reads it (R33: every word
-    said is a word of theirs, and only one of them has it), or the whole of the name the base has,
-    said in full — «Javi Nuñez» after an answer about «Javi» (fix round 2).
-    """
-    said = spanish.folded(who)
-    if _the_person(said, counterparties, answered_last=True) is not None:
-        return True
-    words = set(said.split())
-    return any(set(spanish.folded(person).split()) <= words for person in counterparties)
-
-
-def grouping_in(sentence: str) -> GroupBy | None:
-    """The breakdown a sentence asks for in this module's grouping words, wherever it says it.
-
-    For a reply that also does something else — «este año por comercio» answering «¿De qué
-    periodo?» fills the window and asks for the breakdown — where `read` would only ever see a
-    whole turn. Same words as `_A_REGROUPING`, so a breakdown a follow-up asks for and one a reply
-    asks for are the same breakdown.
-    """
-    said = _A_GROUPING.search(spanish.folded(sentence))
-    return _GROUPED_BY[said.group("dimension")] if said is not None else None
-
-
-def names_the_one_before_without_its_unit(sentence: str) -> bool:
-    """Whether the whole turn is «¿y la anterior?» or «y el anterior» — the period before the one
-    in view, with no unit said (F6).
-
-    Public because the handler answers these from the patch at once: no reader below reads them,
-    and the shapes that do name their unit stay with the follow-up reader that answered them first.
-    """
-    spoken = " ".join(_PAUSES.sub(" ", spanish.folded(sentence)).split())
-    before = _THE_ONE_BEFORE.fullmatch(spoken)
-    return before is not None and before.group("unit") is None
 
 
 def _the_one_before(

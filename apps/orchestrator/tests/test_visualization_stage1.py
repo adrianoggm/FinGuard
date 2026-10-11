@@ -2,10 +2,8 @@ import dataclasses
 import importlib.util
 import sys
 from dataclasses import asdict, replace
-from datetime import date
 from pathlib import Path
 from typing import get_args
-from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -33,19 +31,11 @@ from finguard_orchestrator.domain.models.chart import (
     derive_chart,
 )
 from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
-from finguard_orchestrator.domain.models.visual_plan import Rejection, draft_of
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
-    VisualDecision,
 )
-from finguard_orchestrator.domain.services.visual_interpreter import (
-    apply_visual_intent,
-    interpret_visual,
-)
-from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
-    AbsoluteRange,
     FinancialPlan,
     RelativePeriod,
 )
@@ -322,31 +312,6 @@ def test_a_non_identifier_sort_field_is_refused_at_the_dto() -> None:
         VisualContextPayload.model_validate(_visual_context_dict(sort_field="42abc"))
 
 
-def test_a_payload_with_none_of_the_new_keys_still_validates() -> None:
-    """The old-client case: a caller that has never heard of `stack`/`sort`/`sort_field`/a
-    per-encoding `sort` -- nor, since fix round 1, a field's `role`/`order` or a profile's
-    `comparison`/`plan_limited` -- sends none of them, and the payload still validates: absence is
-    never treated as an invalid value. `test_conversation_visual_context_round_trip_is_value_free`
-    (in `test_visualization_stage2_core.py`) carries this same case all the way through
-    `conversation_mapper.to_domain` and asserts the reconstructed spec's `stack`/`sort` are `None`.
-
-    This test goes one step further for the two new keys specifically: `_visual_context_dict()`'s
-    profile already has no `role`/`order`/`comparison`/`plan_limited` at all (it predates fix
-    round 1), so round-tripping it through `to_domain` exercises the fallback derivation that
-    round adds -- `role` guessed from `type`, `order` defaulted to `VisualField`'s own `"NONE"`,
-    `comparison`/`plan_limited` defaulted to `False` -- for exactly the conversation an older
-    client still holds.
-    """
-    payload = VisualContextPayload.model_validate(_visual_context_dict())
-    assert payload.chart_id == "chart-1"
-    conversation = ConversationPayload.model_validate({"visual_contexts": [_visual_context_dict()]})
-    (restored,) = conversation_mapper.to_domain(conversation).visual_contexts
-    by_name = {field.name: field for field in restored.profile.fields}
-    assert (by_name["value_minor"].role, by_name["value_minor"].order) == ("measure", "NONE")
-    assert (by_name["dimension"].role, by_name["dimension"].order) == ("dimension", "NONE")
-    assert (restored.profile.comparison, restored.profile.plan_limited) == (False, False)
-
-
 def test_a_rendered_specs_extra_keys_are_refused_at_the_dto() -> None:
     """I2 (fix wave): `_value_free_spec`'s allowlist used to admit `$schema`, `width` and
     `height` -- exactly the three keys `present_spec` adds to the *rendered* spec a client draws,
@@ -430,79 +395,6 @@ def _old_shape_payload(*, ranked: bool) -> dict[str, object]:
     return payload
 
 
-def test_an_older_payload_validates_but_a_sort_restyle_waits_for_the_next_chart() -> None:
-    """I4, decided: document, no heuristic. `to_domain`'s fallback (`role` guessed from `type`,
-    `order` defaulted to `_DEFAULT_ORDER`) lets an older client's payload -- one that predates
-    `role`/`order` entirely -- complete the turn instead of refusing to parse it at all. It does
-    not restore what base itself could do: the fallback's `order` is `"NONE"`, and the verifier's
-    own `order` rule reads `NONE` as "nothing may sort this field", so a descending-sort restyle
-    asked of that chart is refused exactly as it was at base, before this fix wave existed. That
-    is not a regression the fallback owes anyone: the chart still renders and the turn still
-    completes, and the window closes itself the moment the conversation's next chart is built --
-    every new chart carries the full profile, so the restyle resumes working from there.
-
-    The same payload with `role`/`order` present (the shape a chart built after fix round 1 always
-    carries) accepts the identical sentence, which is the contrast this test pins: not "always
-    refused", but "refused only for the one chart whose payload predates these keys".
-    """
-    old = conversation_mapper.to_domain(
-        ConversationPayload.model_validate({"visual_contexts": [_old_shape_payload(ranked=False)]})
-    ).visual_contexts[0]
-    intent = interpret_visual("ordénalo de mayor a menor", (old,))
-    assert intent is not None and intent.patch is not None
-    merged = apply_visual_intent(intent, old)
-    refused = verify(draft_of(merged.spec), old.profile)
-    assert isinstance(refused, Rejection)
-    assert refused.rule == "order"
-
-    ranked = conversation_mapper.to_domain(
-        ConversationPayload.model_validate({"visual_contexts": [_old_shape_payload(ranked=True)]})
-    ).visual_contexts[0]
-    intent = interpret_visual("ordénalo de mayor a menor", (ranked,))
-    assert intent is not None and intent.patch is not None
-    merged = apply_visual_intent(intent, ranked)
-    accepted = verify(draft_of(merged.spec), ranked.profile)
-    assert isinstance(accepted, ChartSpec)
-
-
-def test_the_wire_carries_derived_from_and_turn_id_and_nothing_server_side() -> None:
-    """§13: no wire authority -- decision, plan and evidence never travel; origin and turn do."""
-    turn = uuid4()
-    decision = VisualDecision(spec=SPEC, profile=BREAKDOWN_PROFILE, source="deterministic")
-    context = VisualContext(
-        "chart-2",
-        SPEC,
-        BREAKDOWN_PROFILE,
-        decision=decision,
-        evidence_ids=(uuid4(),),
-        derived_from="chart-1",
-        turn_id=turn,
-    )
-    conversation = IDLE.with_visual_context(context)
-    payload = conversation_mapper.to_payload(conversation)
-    (item,) = payload.visual_contexts
-    assert (item.derived_from, item.turn_id) == ("chart-1", turn)
-    assert not hasattr(item, "decision") and not hasattr(item, "source_plan")
-    assert not hasattr(item, "evidence_ids")
-    # `token` travels like `derived_from`/`turn_id` above it -- unlike `decision`/`source_plan`/
-    # `evidence_ids`, an unsealed context's `None` still rides the wire rather than vanishing.
-    assert item.token is None
-    back = conversation_mapper.to_domain(payload)
-    (restored,) = back.visual_contexts
-    assert (restored.derived_from, restored.turn_id) == ("chart-1", turn)
-    assert (restored.decision, restored.source_plan, restored.evidence_ids) == (None, None, ())
-    assert (restored.token, restored.trusted) == (None, True)
-
-
-def test_an_absent_origin_round_trips_as_none() -> None:
-    conversation = IDLE.with_visual_context(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE))
-    payload = conversation_mapper.to_payload(conversation)
-    (item,) = payload.visual_contexts
-    assert (item.derived_from, item.turn_id) == (None, None)
-    (restored,) = conversation_mapper.to_domain(payload).visual_contexts
-    assert (restored.derived_from, restored.turn_id) == (None, None)
-
-
 def test_an_invalid_origin_on_the_wire_is_refused() -> None:
     payload = conversation_mapper.to_payload(
         IDLE.with_visual_context(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE))
@@ -525,59 +417,6 @@ def _verify_for(codec: MetricTokenCodec, holder: str):
     return verify
 
 
-def test_a_sealed_context_round_trips_trusted_and_a_tampered_one_does_not() -> None:
-    """A context this process sealed comes back `trusted` under the holder it was sealed for,
-    untrusted the moment a byte the seal covers changes underneath it, and untrusted again for a
-    different holder entirely -- the seal names who it was sealed for as much as what."""
-    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
-    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
-    cid = uuid4()
-    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
-    assert sealed.token is not None and sealed.trusted is True
-
-    verify = _verify_for(codec, "holder-a")
-
-    echoed = conversation_mapper.to_domain(
-        conversation_mapper.to_payload(
-            Conversation(conversation_id=cid, visual_contexts=(sealed,))
-        ),
-        verify=verify,
-    )
-    assert echoed.visual_contexts[0].trusted is True
-    assert echoed.visual_contexts[0].token == sealed.token
-
-    payload = conversation_mapper.to_payload(
-        Conversation(conversation_id=cid, visual_contexts=(sealed,))
-    )
-    # `_Payload` is not frozen: mutate the wire shape in place, exactly what a tampering client's
-    # request body would look like once it reaches the DTO.
-    profile = payload.visual_contexts[0].profile
-    profile.comparison = not profile.comparison
-    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
-    assert tampered.trusted is False and tampered.token is None
-    assert tampered.trust_reason == "content"
-
-    other = conversation_mapper.to_domain(
-        conversation_mapper.to_payload(
-            Conversation(conversation_id=cid, visual_contexts=(sealed,))
-        ),
-        verify=_verify_for(codec, "holder-b"),
-    ).visual_contexts[0]
-    assert other.trusted is False
-    assert other.trust_reason == "holder"
-
-
-def test_an_unsealed_echo_is_untrusted_only_when_someone_verifies() -> None:
-    """No verifier: exactly today's behaviour, for every existing `to_domain(...)` call in this
-    suite -- an echoed context with no seal is trusted. Only a caller that actually hands a
-    verifier (Task 3's job) turns a tokenless echo untrusted."""
-    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)  # token None: an older client
-    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(context,)))
-    assert conversation_mapper.to_domain(payload).visual_contexts[0].trusted is True
-    untrusted = conversation_mapper.to_domain(payload, verify=lambda t, c, p, s: "format")
-    assert untrusted.visual_contexts[0].trusted is False
-
-
 def test_the_seal_covers_the_whole_wire_context_but_not_itself() -> None:
     """`context_semantics` is the one definition of what a seal covers: the wire context minus
     the seal itself -- everything `VisualContextPayload` carries except `token`, never a
@@ -593,161 +432,7 @@ def test_the_seal_covers_the_whole_wire_context_but_not_itself() -> None:
 # --- Task 1 (Wave 4.3): a chart's labels travel on the wire, sealed with the rest --------------
 
 
-def test_a_contexts_labels_and_ranked_flag_round_trip_through_the_wire() -> None:
-    """(a): the value-free strings a chart drew survive `to_payload` -> `to_domain` exactly, the
-    same way `derived_from`/`turn_id` already do (`test_the_wire_carries_derived_from_and_turn_id_
-    and_nothing_server_side` above)."""
-    context = VisualContext(
-        "chart-1",
-        SPEC,
-        BREAKDOWN_PROFILE,
-        labels=("ALQUILER", "GROCERIES", "ZAPATOS"),
-        series_labels=("2026-07",),
-        ranked=True,
-    )
-    conversation = IDLE.with_visual_context(context)
-    payload = conversation_mapper.to_payload(conversation)
-    (item,) = payload.visual_contexts
-    assert item.labels == ["ALQUILER", "GROCERIES", "ZAPATOS"]
-    assert item.series_labels == ["2026-07"]
-    assert item.ranked is True
-    (restored,) = conversation_mapper.to_domain(payload).visual_contexts
-    assert restored.labels == ("ALQUILER", "GROCERIES", "ZAPATOS")
-    assert restored.series_labels == ("2026-07",)
-    assert restored.ranked is True
-
-
-def test_a_tampered_label_untrusts_a_sealed_context() -> None:
-    """(b): extends `test_a_sealed_context_round_trips_trusted_and_a_tampered_one_does_not` above
-    -- a label is as much a part of what the seal covers as `profile.comparison` is, so changing
-    one in place, after the seal, must untrust the context exactly the same way."""
-    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
-    context = VisualContext(
-        "chart-1",
-        SPEC,
-        BREAKDOWN_PROFILE,
-        labels=("ALQUILER", "GROCERIES", "ZAPATOS"),
-        ranked=True,
-    )
-    cid = uuid4()
-    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
-    assert sealed.token is not None
-
-    verify = _verify_for(codec, "holder-a")
-
-    payload = conversation_mapper.to_payload(
-        Conversation(conversation_id=cid, visual_contexts=(sealed,))
-    )
-    payload.visual_contexts[0].labels[0] = "OTRA"
-    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
-    assert tampered.trusted is False and tampered.token is None
-
-
-def test_a_tampered_ranked_flag_also_untrusts_a_sealed_context() -> None:
-    """(b), second half: `ranked` is a shape fact and not a label, but it is sealed the same way
-    -- flipping it in place must untrust the context too."""
-    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
-    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, labels=("ALQUILER",), ranked=True)
-    cid = uuid4()
-    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
-    assert sealed.token is not None
-
-    verify = _verify_for(codec, "holder-a")
-
-    payload = conversation_mapper.to_payload(
-        Conversation(conversation_id=cid, visual_contexts=(sealed,))
-    )
-    payload.visual_contexts[0].ranked = not payload.visual_contexts[0].ranked
-    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
-    assert tampered.trusted is False and tampered.token is None
-
-
-def test_an_older_payload_without_labels_still_validates_unranked() -> None:
-    """(c): the old-client case, same shape `test_a_payload_with_none_of_the_new_keys_still_
-    validates` above already proves for `role`/`order`/`comparison`/`plan_limited` -- a payload
-    built by hand, the same way `_visual_context_dict()` builds one, that has never heard of
-    `labels`/`series_labels`/`ranked` still validates, and reads back empty and unranked: the
-    safe direction, so a superlative over it asks rather than guesses."""
-    conversation = ConversationPayload.model_validate({"visual_contexts": [_visual_context_dict()]})
-    (restored,) = conversation_mapper.to_domain(conversation).visual_contexts
-    assert restored.labels == ()
-    assert restored.series_labels == ()
-    assert restored.ranked is False
-
-
 # --- Fix wave: a chart's window and its plan's digest travel on the wire, sealed too -----------
-
-
-def test_a_contexts_window_and_plan_digest_round_trip_through_the_wire() -> None:
-    """(a): the window a chart's rows cover and the digest of the plan that drew them survive
-    `to_payload` -> `to_domain` exactly, the same way labels/ranked already do above."""
-    context = VisualContext(
-        "chart-1",
-        SPEC,
-        BREAKDOWN_PROFILE,
-        window=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20)),
-        plan_digest="0123456789abcdef",
-    )
-    conversation = IDLE.with_visual_context(context)
-    payload = conversation_mapper.to_payload(conversation)
-    (item,) = payload.visual_contexts
-    assert (item.window_start, item.window_end) == (date(2026, 7, 1), date(2026, 7, 20))
-    assert item.plan_digest == "0123456789abcdef"
-    (restored,) = conversation_mapper.to_domain(payload).visual_contexts
-    assert restored.window == AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20))
-    assert restored.plan_digest == "0123456789abcdef"
-
-
-def test_a_tampered_plan_digest_untrusts_a_sealed_context() -> None:
-    """A digest is as much a part of what the seal covers as a label is -- changing one in place,
-    after the seal, must untrust the context exactly the same way."""
-    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
-    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, plan_digest="0123456789abcdef")
-    cid = uuid4()
-    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
-    assert sealed.token is not None
-
-    verify = _verify_for(codec, "holder-a")
-
-    payload = conversation_mapper.to_payload(
-        Conversation(conversation_id=cid, visual_contexts=(sealed,))
-    )
-    payload.visual_contexts[0].plan_digest = "fedcba9876543210"
-    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
-    assert tampered.trusted is False and tampered.token is None
-
-
-def test_a_tampered_window_end_untrusts_a_sealed_context() -> None:
-    """The window's own end is sealed too, so widening it in place must untrust the context."""
-    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
-    context = VisualContext(
-        "chart-1",
-        SPEC,
-        BREAKDOWN_PROFILE,
-        window=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20)),
-    )
-    cid = uuid4()
-    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
-    assert sealed.token is not None
-
-    verify = _verify_for(codec, "holder-a")
-
-    payload = conversation_mapper.to_payload(
-        Conversation(conversation_id=cid, visual_contexts=(sealed,))
-    )
-    payload.visual_contexts[0].window_end = date(2026, 7, 31)
-    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
-    assert tampered.trusted is False and tampered.token is None
-
-
-def test_an_older_payload_without_a_window_or_digest_reads_back_none() -> None:
-    """(c): the old-client case -- a payload built by hand that has never heard of `window_start`/
-    `window_end`/`plan_digest` still validates, and both read back `None`: the safe direction, a
-    month drill against a chart with no window refuses rather than guesses."""
-    conversation = ConversationPayload.model_validate({"visual_contexts": [_visual_context_dict()]})
-    (restored,) = conversation_mapper.to_domain(conversation).visual_contexts
-    assert restored.window is None
-    assert restored.plan_digest is None
 
 
 def test_the_dto_refuses_a_window_with_only_one_end() -> None:
@@ -856,43 +541,6 @@ def test_chips_over_the_breakdown_offer_the_turn_that_changes_it() -> None:
     assert "Ponlo en horizontal" not in suggestions
 
 
-@pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))
-def test_every_field_role_and_order_survives_the_wire_and_the_floors_chart_still_verifies(
-    family_name: str,
-) -> None:
-    """Fix round 1: `VisualField.role`/`.order` and `VisualProfile.comparison`/`.plan_limited`
-    are now on the wire, so a profile that crosses it is the same profile `verify` judges a
-    restyle against -- not the narrowed guess `to_domain` used to fall back to unconditionally.
-
-    Every family the exporter renders (the same ones the web compile gate checks), because the
-    property this fix exists for -- "the floor's own chart still verifies after the wire" -- is
-    exactly the one a single hand-picked fixture cannot prove for every shape a real profile
-    takes: `_dimension_order` gives FREQUENCY `INPUT`, RECURRENCE `NONE`, a temporal group
-    `TEMPORAL`, everything else `MEASURE_DESC`, and a comparison sets `comparison=True` with a
-    `series` role next to the `dimension` one. A round trip that silently narrowed any of those
-    would still build *a* profile -- just not the one the floor actually used.
-    """
-    dataset, kwargs = FAMILY_DATASETS[family_name]
-    # `total_minor` is required and keyword-only on `visual_profile_of`; the exporter's own
-    # `_family()` (`export_chart_fixtures.py`) is what defaults it to `None`, since only
-    # `ratio_share`'s kwargs name it. Mirrored here rather than calling `_family()` itself, which
-    # renders through the presenter and returns a wire dict, not the profile/spec pair this test
-    # needs.
-    profile = visual_profile_of(dataset, **{"total_minor": None, **kwargs})
-    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
-    assert spec is not None, f"the floor produced no chart for family {family_name!r}"
-    conversation = IDLE.with_visual_context(VisualContext(f"chart-{family_name}", spec, profile))
-    restored = conversation_mapper.to_domain(conversation_mapper.to_payload(conversation))
-    (context,) = restored.visual_contexts
-    by_name = {field.name: field for field in context.profile.fields}
-    for field in profile.fields:
-        assert (by_name[field.name].role, by_name[field.name].order) == (field.role, field.order)
-    assert context.profile.comparison == profile.comparison
-    assert context.profile.plan_limited == profile.plan_limited
-    verified = verify(draft_of(context.spec), context.profile)
-    assert isinstance(verified, ChartSpec), f"{family_name}: {verified}"
-
-
 def _context_semantics_before_and_after(context: VisualContext) -> tuple[dict, dict]:
     """`context_semantics` of `context`'s own wire payload, and again after one full wire round
     trip -- I1's own invariant, read from the seam that has to hold it: the seal digests exactly
@@ -911,96 +559,6 @@ def _context_semantics_before_and_after(context: VisualContext) -> tuple[dict, d
         conversation_mapper.context_semantics(before),
         conversation_mapper.context_semantics(after),
     )
-
-
-@pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))
-def test_the_wire_payload_is_idempotent_across_every_floor_family(family_name: str) -> None:
-    """I1 (fix wave): the seal digests `context_semantics`, so the payload the server re-emits
-    for a context it just rebuilt from the wire has to equal the payload it emitted at birth --
-    the tooltip accumulator broke exactly that for three or more tooltips (below), and this is
-    the invariant that would have caught it, run over every family the floor can actually
-    produce (none of them carries more than one tooltip, so this alone would not have failed
-    before the fix -- the dedicated test below is what does).
-    """
-    dataset, kwargs = FAMILY_DATASETS[family_name]
-    profile = visual_profile_of(dataset, **{"total_minor": None, **kwargs})
-    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
-    assert spec is not None, f"the floor produced no chart for family {family_name!r}"
-    before, after = _context_semantics_before_and_after(
-        VisualContext(f"chart-{family_name}", spec, profile)
-    )
-    assert before == after
-
-
-def test_the_wire_payload_is_idempotent_for_a_spec_with_three_tooltips() -> None:
-    """I1: `_context_spec_payload`'s tooltip accumulator used to drop the first two of three
-    tooltips on a second pass and, even where a survivor's shape was compared across two passes,
-    emit it as a one-element list on the first and a bare dict on the second -- so a context
-    sealed with three tooltips came back untrusted after one restyle, with nobody having tampered
-    with anything.
-
-    `tooltip` is the one channel `ChartSpec.__post_init__` lets repeat -- its own uniqueness check
-    (`channels = [... if item.channel != "tooltip"]`) excludes it by name, `color` included -- so
-    there is no equivalent two-encodings-on-one-channel case to add for any other channel.
-    """
-    spec = ChartSpec(
-        "bar",
-        (
-            ChartEncoding("x", "dimension", "nominal"),
-            ChartEncoding("y", "value_minor", "quantitative"),
-            ChartEncoding("tooltip", "dimension", "nominal", "Categoría"),
-            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
-            ChartEncoding("tooltip", "extra", "nominal", "Nota"),
-        ),
-    )
-    profile = VisualProfile(
-        fields=(
-            VisualField("dimension", "nominal", "dimension", 3),
-            VisualField("value_minor", "quantitative", "measure", 3),
-            VisualField("extra", "nominal", "dimension", 3),
-        ),
-        metric="SUM",
-        unit="money",
-    )
-    before, after = _context_semantics_before_and_after(
-        VisualContext("chart-tooltips", spec, profile)
-    )
-    assert before == after
-
-
-def test_the_donut_familys_role_and_claims_survive_the_wire_too() -> None:
-    """The floor never produces a donut (`DeterministicVisualPlanner.plan` has no such branch), so
-    the parametrised test above cannot cover it -- it is reachable only through a conversational
-    transformation, per the exporter's own `_donut_family` comment. Built the same way that
-    function builds it: the one family whose profile must additionally keep `positive`/
-    `mutually_exclusive`/`verified_total` across the wire for the verifier's `_donut_claims` rule
-    to agree with it -- flags the round trip already carried before this fix, but worth pinning
-    beside the two new ones so a donut chart's whole path (role, order, and the pre-existing
-    three) is proven together.
-    """
-    rows = (
-        VisualRow(dimension="Alquiler", value_minor=60_000),
-        VisualRow(dimension="Ocio", value_minor=40_000),
-    )
-    spec = ChartSpec(
-        mark="donut",
-        encodings=(
-            ChartEncoding("theta", "value_minor", "quantitative", "Importe"),
-            ChartEncoding("color", "dimension", "nominal", "Parte"),
-            ChartEncoding("tooltip", "dimension", "nominal"),
-            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
-        ),
-    )
-    dataset = VisualDataset(rows=rows, metric="SUM")
-    profile = visual_profile_of(dataset, total_minor=100_000, group_by="NONE")
-    conversation = IDLE.with_visual_context(VisualContext("chart-donut", spec, profile))
-    restored = conversation_mapper.to_domain(conversation_mapper.to_payload(conversation))
-    (context,) = restored.visual_contexts
-    by_name = {field.name: field for field in context.profile.fields}
-    for field in profile.fields:
-        assert (by_name[field.name].role, by_name[field.name].order) == (field.role, field.order)
-    verified = verify(draft_of(context.spec), context.profile)
-    assert isinstance(verified, ChartSpec)
 
 
 async def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.command_bus import Command
-from finguard_orchestrator.domain.enums import PaymentOutcome, PlanningOutcome, Rail
+from finguard_orchestrator.domain.enums import PaymentOutcome, Rail
 from finguard_orchestrator.domain.errors import (
     AmbiguousRecipientError,
     BankingUnavailableError,
@@ -458,44 +458,3 @@ def _refusal(reason: str) -> PaymentAnswer:
         else payment_writer.nothing_was_sent()
     )
     return PaymentAnswer(outcome=PaymentOutcome.REFUSED.value, text=text, reason=reason)
-
-
-def _declined(
-    outcome: PlanningOutcome,
-    question: str | None,
-    reason: str | None,
-    draft: PaymentDraft | None = None,
-) -> PaymentAnswer:
-    """The readings that are not a payment. Each gets its own sentence: collapsing them would leave
-    the user unable to tell whether to rephrase, wait, or give up."""
-    match outcome:
-        case PlanningOutcome.NEEDS_CLARIFICATION:
-            return PaymentAnswer(
-                outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
-                text=question or payment_writer.not_understood(),
-                reason=reason,
-                # Only a question carries one. A refusal that echoed a draft would invite the client
-                # to keep answering a question nobody asked.
-                draft=_drafted(draft) if draft else None,
-            )
-        case PlanningOutcome.UNSUPPORTED:
-            return PaymentAnswer(
-                outcome=PaymentOutcome.UNSUPPORTED.value,
-                text=payment_writer.unsupported(),
-                reason=reason,
-            )
-        case PlanningOutcome.PROVIDER_ERROR:
-            return PaymentAnswer(
-                outcome=PaymentOutcome.PROVIDER_ERROR.value,
-                text=payment_writer.provider_error(),
-                reason=reason,
-            )
-        case _:
-            # INVALID_STRUCTURE and INVALID_DOMAIN. `reason` carries which rule refused it, for the
-            # log and the evaluation; the user gets one sentence, because the difference between a
-            # malformed answer and an ungrounded one is ours, not theirs.
-            return PaymentAnswer(
-                outcome=PaymentOutcome.NOT_UNDERSTOOD.value,
-                text=payment_writer.not_understood(),
-                reason=reason,
-            )

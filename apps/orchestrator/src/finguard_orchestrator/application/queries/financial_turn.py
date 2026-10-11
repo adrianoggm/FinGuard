@@ -19,16 +19,11 @@ whole section exists to stop repeating.
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import date
-from typing import Final
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.query_bus import Query
-from finguard_orchestrator.domain.enums import (
-    Direction,
-)
 from finguard_orchestrator.domain.errors import (
     InvalidValueError,
 )
@@ -36,65 +31,24 @@ from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     PresentationContext,
     VisualDataset,
+    VisualDecision,
 )
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
     Conversation,
     PlannedQuery,
 )
-from finguard_orchestrator.domain.models.planning_context import (
-    BalanceFocus,
-    ComparisonFocus,
-    QueryFocus,
-    RatioFocus,
-    focus_of,
-)
 from finguard_orchestrator.domain.models.turn_analysis import (
     TurnAnalysis,
 )
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
-from finguard_orchestrator.domain.services import (
-    spanish,
-    turn_arbiter,
-)
-from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.turn_arbiter import Arbitration
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
 )
-from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
-
-
-def _clean_turn(sentence: str) -> str:
-    """Fold a short conversational turn and remove only punctuation at its edges."""
-    return re.sub(r"[^a-z0-9]+", " ", spanish.folded(sentence)).strip()
-
-
-def _across_every_account(plan: FinancialPlan) -> FinancialPlan:
-    """Widen to the whole holder, and drop the narrowing that is being given up.
-
-    Written once because it was written five times and four of them forgot the second half. A plan
-    reaching `_scoped` may already name an account — `merge` rebuilds a follow-up out of the earlier
-    plan and the scope survives that — so widening with `replace(plan, across_accounts=True)` alone
-    left the account in place. Banking reads that pair as a request for every account of the holder
-    while `scoped_to` goes on naming the one that was asked for: a real figure about a wider scope
-    than the question had. It is refused outright on that side now, so leaving it here only trades a
-    wrong answer for a 422. Widening means widening.
-    """
-    return replace(plan, across_accounts=True, only_account_id=None, only_account_ids=())
-
-
-def _starts_new_financial_scope(sentence: str, *, today: date) -> bool:
-    """Whether this turn states a complete new question rather than an ellipsis.
-
-    `turn_arbiter.states_a_question_of_its_own`, under the name every reader already imports. The
-    rule moved down a layer because the arbitration needs it too — a question of its own is not a
-    reply to the one left open — and a domain service cannot read the application; one rule in two
-    places is how a reader and the arbitration would come to disagree about the same sentence.
-    """
-    return turn_arbiter.states_a_question_of_its_own(sentence, today=today)
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
 
 
 @dataclass(frozen=True)
@@ -368,88 +322,8 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
             raise InvalidValueError("intent and turn analysis disagree")
 
 
-def _same_window(left: FinancialPlan, right: FinancialPlan) -> bool:
-    return (left.period, left.date_range) == (right.period, right.date_range)
-
-
-_READER_RETURN_FROM_BALANCE: Final = re.compile(
-    r"^(?:(?:vale|bueno|y)(?:\s+|\s*[,;:]\s*))?"
-    r"(?:(?:vuelve|volvamos)\s+(?:a\s+)?(?:la\s+consulta\s+anterior|lo\s+anterior)"
-    r"|volviendo\s+a\s+(?:la\s+consulta\s+anterior|lo\s+de\s+antes))"
-    r"\s*[,;:]\s*(?P<request>\S(?:.*\S)?)$"
-)
-
-
 @dataclass(frozen=True)
 class _QueryForReader:
     plan: PlannedQuery | None
     wording: str
     returned_from_balance: bool = False
-
-
-def _query_for_reader(query: AskFinancialQuestionQuery) -> _QueryForReader:
-    """Select query memory for readers, including an explicit return from a balance aside."""
-    focus = focus_of(query.conversation)
-    if isinstance(focus, QueryFocus):
-        return _QueryForReader(focus.current, query.sentence)
-    if isinstance(focus, BalanceFocus) and focus.suspended_query is not None:
-        returned = _READER_RETURN_FROM_BALANCE.fullmatch(spanish.folded(query.sentence))
-        if returned is not None:
-            return _QueryForReader(
-                focus.suspended_query,
-                returned.group("request"),
-                returned_from_balance=True,
-            )
-    return _QueryForReader(None, query.sentence)
-
-
-# Categories that are money coming in. Read from the sentence's category rather than guessed from
-# its verb: "¿qué intereses me ha dado la hucha?" has no verb of spending or earning that this
-# service reads, and interest is income by what it *is*.
-_INCOME_CATEGORIES: Final = frozenset({"SALARY", "INTEREST"})
-
-
-def _direction_of(categories: tuple[str, ...]) -> Direction:
-    if all(category in _INCOME_CATEGORIES for category in categories):
-        return Direction.INCOME
-    if any(category in _INCOME_CATEGORIES for category in categories):
-        # A salary and a supermarket in one question. ALL rather than picking, because a signed
-        # total over both is the only figure that is not wrong about one of them.
-        return Direction.ALL
-    return Direction.EXPENSE
-
-
-def _window_of(plan: PlannedQuery | None) -> str | None:
-    """A window as one short string, for a log line.
-
-    `None` when there is no plan to read one off, which is itself the interesting value: it is
-    what "nothing was inherited" looks like in the record.
-    """
-    if plan is None:
-        return None
-    if plan.period is not None:
-        named = plan.period.period.value
-        return f"{named}:{plan.period.n}" if plan.period.n else named
-    assert plan.date_range is not None  # the plan's own invariant guarantees one
-    return f"{plan.date_range.start}..{plan.date_range.end}"
-
-
-def _a_plan_is_in_view(query: AskFinancialQuestionQuery) -> bool:
-    return isinstance(query.conversation.last_plan, FinancialPlan)
-
-
-def _the_pair_in_view(conversation: Conversation) -> ComparisonPlan | None:
-    """The two periods on screen: a comparison's pair, or the pair a percentage change was taken
-    over (validation fix 3, G4).
-
-    A percentage change is the same two reads with arithmetic on top (`RatioPlan` checks its
-    operands as a `ComparisonPlan` does), so after «y eso en %?» the comparison is still what the
-    holder is looking at. Read as no comparison, «¿y de ocio?» after it asked the period and lost
-    June and July both (impro-comparar-meses 4). `whole` is the earlier side, `part` the later.
-    """
-    focus = focus_of(conversation)
-    if isinstance(focus, ComparisonFocus):
-        return focus.value
-    if isinstance(focus, RatioFocus) and focus.value.kind is RatioKind.PERCENT_CHANGE:
-        return ComparisonPlan.between(focus.value.whole, focus.value.part)
-    return None

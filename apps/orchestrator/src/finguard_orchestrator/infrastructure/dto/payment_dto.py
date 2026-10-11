@@ -11,7 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from finguard_orchestrator.domain.constants import MAX_PROMPT_LENGTH, MAX_RECIPIENT_NAME
+from finguard_orchestrator.domain.constants import MAX_RECIPIENT_NAME
 
 # A reply to a confirmation is a word or two. Bounded far below a prompt because it is read by an
 # allow-list of affirmations, and a paragraph is not one — nothing longer can be a yes.
@@ -20,16 +20,6 @@ MAX_REPLY_LENGTH = 200
 
 class _Payload(BaseModel):
     model_config = ConfigDict(protected_namespaces=(), extra="forbid")
-
-
-class PaymentRequestBody(_Payload):
-    """The sentence in which somebody asks to pay somebody else.
-
-    Free text, because that is what a sentence is: it can be delimited, never parsed. Everything
-    structured about the payment is extracted from it and then checked against it.
-    """
-
-    sentence: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
 
 
 class PreviewPayload(_Payload):

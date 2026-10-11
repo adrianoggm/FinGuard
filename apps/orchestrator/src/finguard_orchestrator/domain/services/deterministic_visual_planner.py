@@ -13,8 +13,8 @@ is reached and three of them never reach it at all; `derive_chart` itself stays 
 stays pure. All this adds is the profile as an input instead of loose arguments off a Result.
 """
 
-from dataclasses import dataclass, replace
-from typing import Final, Literal, get_args
+from dataclasses import replace
+from typing import Literal
 
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
@@ -25,7 +25,6 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     derive_chart,
 )
-from finguard_orchestrator.domain.models.visual_plan import FallbackReason, VisualSource
 
 
 def _sort_for(order: FieldOrder, measure_name: str) -> EncodingSort | None:
@@ -45,77 +44,6 @@ def _sort_for(order: FieldOrder, measure_name: str) -> EncodingSort | None:
     if order == "INPUT":
         return EncodingSort(mode="input")
     return None
-
-
-# `VisualDecision.__post_init__`'s `accepted` invariant, over the closed set rather than a
-# hand-typed copy of two of its three members (M6/D-4.2-1). Every source but the floor's own --
-# derived from `VisualSource` (Global Constraint 7: closed sets are `Literal`s read through
-# `get_args`) so a fourth source is admitted here the moment it is admitted there, rather than
-# silently inheriting "must not be accepted" from a literal nobody remembered to widen.
-_ACCEPTED_SOURCES: Final[frozenset[str]] = frozenset(get_args(VisualSource)) - {"deterministic"}
-
-
-@dataclass(frozen=True)
-class VisualDecision:
-    """Which chart was chosen, from what, by whom, and why the other one was not.
-
-    `source` is `llm | deterministic | patch` and not `llm | deterministic_fallback`: in the
-    deterministic and shadow modes the floor is the *intended* selection rather than a recovery.
-    `patch` is a verified edit to what is already shown, not a recovery either -- it carries no
-    `fallback_reason` for the same reason `llm` does not. `fallback_reason` is filled only when an
-    attempt was made and failed.
-
-    `profile` is the decision's own input, carried rather than rebuilt. There is exactly one
-    profile per turn because of it: `llm_mapper` used to build a second one from the same dataset
-    for the conversational context, and a second construction is a second set of arguments that
-    can be got wrong -- it was already omitting `plan_limited` and `plan_metric`, the two facts
-    whose absence re-cuts a top-25 to eight and labels an axis of movements "Importe". Wave 3
-    needs it here anyway: comparing a model's plan against the floor's needs the input both saw.
-    """
-
-    spec: ChartSpec
-    profile: VisualProfile
-    source: VisualSource
-    rationale: str | None = None
-    fallback_reason: FallbackReason | None = None
-    proposed: bool = False
-    """The provider was reached; a timeout never learns whether it was."""
-    valid: bool = False
-    """The draft passed the verifier."""
-    accepted: bool = False
-    """What the user sees is the model's or the patch's chart. Implies
-    `source in _ACCEPTED_SOURCES` -- every source but `"deterministic"`."""
-    changed_from_baseline: bool | None = None
-    """The verified proposal differs from the floor on `canonical()`. None when the floor was
-    not computed (promoted) or there was no verified proposal to compare."""
-    latency_ms: int | None = None
-    proposed_spec: ChartSpec | None = None
-    """The verified proposal, whatever was shown -- so suitability can be annotated afterwards
-    from the record rather than reconstructed from a `changed` flag."""
-    rejected_rule: str | None = None
-    error_detail: str | None = None
-    """U-8 (Wave 3 hardening): `"code_error:<ExcType>"` when the fallback was forced by a bug in
-    the model adapter itself (anything the planner raises beside its own two named failures,
-    `ProviderFailedError`/`TimeoutError`) rather than by the provider. `FallbackReason` stays the
-    closed four the wire seals (Task 1 of 4.5) -- this still records `provider_error` -- so a
-    later reader can tell "the provider was down" from "our own code broke" without a fifth
-    reason ever reaching the wire."""
-
-    def __post_init__(self) -> None:
-        # Constraint 7 ("closed sets are `Literal`s read through `get_args`") was true of this
-        # first check alone; M6 (fix wave) makes it true of the two below as well -- both now
-        # read a set derived from `VisualSource`, never a hand-typed copy of part of it.
-        if self.source not in get_args(VisualSource):
-            raise ValueError("unsupported visual decision source")
-        if self.fallback_reason is not None and self.source not in {"deterministic"}:
-            raise ValueError(
-                "only a deterministic chart fell back -- a chosen model or patch plan did not "
-                "fall back"
-            )
-        if self.accepted != (self.source in _ACCEPTED_SOURCES):
-            raise ValueError("accepted means the model's or the patch's chart is what is shown")
-        if self.error_detail is not None and self.fallback_reason != "provider_error":
-            raise ValueError("error_detail only accompanies a provider_error fallback")
 
 
 class DeterministicVisualPlanner:

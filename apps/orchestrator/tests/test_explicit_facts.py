@@ -19,14 +19,12 @@ from datetime import date, datetime
 
 import pytest
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, TransactionType
-from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
 from finguard_orchestrator.domain.services import explicit_facts
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
-    FinancialPlanDraft,
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -143,106 +141,12 @@ def test_a_shop_named_after_an_exclusion_verb_is_still_read() -> None:
     )
 
 
-def test_a_direct_debit_amount_keeps_sum_and_adds_the_banking_rail() -> None:
-    planned = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(Period.THIS_YEAR),
-        metric=Metric.SUM,
-    )
-
-    plan = enforced("¿Cuánto he pagado de recibos domiciliados este año?", planned)
-
-    assert plan.metric is Metric.SUM
-    assert plan.transaction_types == (TransactionType.DIRECT_DEBIT,)
-
-
 def test_showing_receipts_is_recurrence_but_asking_their_total_is_not() -> None:
     assert explicit_facts.asks_recurrence("Muéstrame mis recibos")
     assert not explicit_facts.asks_recurrence("¿Cuánto he pagado de recibos domiciliados este año?")
 
 
-def test_an_explicit_window_is_not_inherited_from_the_previous_turn() -> None:
-    """The reported failure, exactly. The model kept the previous window; the sentence says three
-    months, and three months is not a judgement call."""
-    inherited = FinancialPlan(
-        direction=Direction.EXPENSE, period=FIVE_MONTHS, categories=("HOUSING_RENT",)
-    )
-
-    plan = enforced("¿cuánto he gastado en total en los últimos 3 meses en alquiler?", inherited)
-
-    assert plan.period == THREE_MONTHS
-    assert plan.categories == ("HOUSING_RENT",)
-
-
-def test_an_explicit_year_replaces_an_inherited_relative_window() -> None:
-    """ "Durante todo el año 2025" is a range, and setting a range while leaving the inherited
-    period behind would build a plan the domain refuses — so the two move as a pair."""
-    inherited = FinancialPlan(
-        direction=Direction.EXPENSE, period=TWELVE_MONTHS, categories=("RESTAURANTS",)
-    )
-
-    plan = enforced("no los últimos 12 meses, sino durante todo el año 2025", inherited)
-
-    assert plan.period is None
-    assert plan.date_range == ALL_OF_2025
-
-
-def test_a_correction_about_the_window_keeps_the_filter_it_never_mentioned() -> None:
-    """The second half of the same turn. The model emitted `categories: []`, and an empty list from
-    a model cannot be told apart from a filter it simply did not copy — so a question about
-    restaurants in one year came back as every expense in another."""
-    previous = FinancialPlan(
-        direction=Direction.EXPENSE, period=TWELVE_MONTHS, categories=("RESTAURANTS",)
-    )
-    lost_the_filter = FinancialPlan(direction=Direction.EXPENSE, period=TWELVE_MONTHS)
-    facts = explicit_facts.read("no, durante todo el año 2025", today=TODAY)
-
-    plan = explicit_facts.restored_filters(
-        explicit_facts.enforce(lost_the_filter, facts), previous, facts
-    )
-
-    assert plan.categories == ("RESTAURANTS",)
-    assert plan.date_range == ALL_OF_2025
-
-
-def test_a_correction_that_asks_to_widen_still_clears_the_filter() -> None:
-    """ "¿Y en general?" is about the filter, so losing it is what was asked for. Restoring it here
-    would make a real instruction unsayable, which is the cost of a rule that only ever adds."""
-    previous = FinancialPlan(
-        direction=Direction.EXPENSE, period=TWELVE_MONTHS, categories=("RESTAURANTS",)
-    )
-    widened = FinancialPlan(direction=Direction.EXPENSE, period=TWELVE_MONTHS)
-    facts = explicit_facts.read("no, en general", today=TODAY)
-
-    plan = explicit_facts.restored_filters(widened, previous, facts)
-
-    assert plan.categories == ()
-
-
-def test_a_ranking_takes_the_explicit_window_too() -> None:
-    """A maximum over the wrong months is as wrong as a total over them."""
-    ranking = TopMovements(
-        direction=Direction.EXPENSE, period=FIVE_MONTHS, categories=("TRANSFER_BIZUM",)
-    )
-
-    plan = enforced("¿cuál fue el bizum más alto de los últimos 3 meses?", ranking)
-
-    assert plan.period == THREE_MONTHS
-
-
 # --- the shape the question asks for --------------------------------------------------
-
-
-def test_asking_who_produces_groups_and_not_a_total() -> None:
-    """ "¿A qué personas les he hecho Bizum?" does not ask for a total, and answering with one was
-    a correct number to a question nobody asked."""
-    total = FinancialPlan(
-        direction=Direction.EXPENSE, period=FIVE_MONTHS, categories=("TRANSFER_BIZUM",)
-    )
-
-    plan = enforced("¿a qué personas les he hecho bizum en los últimos 5 meses?", total)
-
-    assert plan.group_by is GroupBy.COUNTERPARTY
 
 
 # --- what the extractor deliberately does not claim -----------------------------------
@@ -297,25 +201,6 @@ def test_asking_where_payroll_landed_is_an_account_breakdown() -> None:
     assert facts.asks_account_breakdown
     assert facts.group_by is GroupBy.ACCOUNT
     assert facts.direction is Direction.INCOME
-
-
-def test_the_direction_is_left_to_the_verifier() -> None:
-    """Refusing a spending question planned as ALL is a control with a test of its own. Rewriting
-    it here would also be the pipeline quietly repairing a prompt injection instead of reporting
-    one, so this module states the window and stays out of that."""
-    facts = explicit_facts.read("¿cuánto gasté el mes pasado?", today=TODAY)
-    planned = FinancialPlan(direction=Direction.ALL, period=RelativePeriod(Period.LAST_MONTH))
-
-    assert explicit_facts.enforce(planned, facts).direction is Direction.ALL
-
-
-def test_an_explicit_average_overrides_a_sum_plan() -> None:
-    facts = explicit_facts.read(
-        "¿Cuál fue el importe medio de mis compras el mes pasado?", today=TODAY
-    )
-    planned = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH))
-
-    assert explicit_facts.enforce(planned, facts).metric is Metric.AVERAGE
 
 
 def test_a_monthly_average_is_not_confused_with_an_average_movement() -> None:
@@ -402,20 +287,6 @@ def test_asking_which_category_has_the_higher_average_requests_a_breakdown() -> 
     assert facts.metric is Metric.AVERAGE
     assert facts.group_by is GroupBy.CATEGORY
     assert facts.compared_categories == ("GROCERIES", "RESTAURANTS")
-
-
-def test_two_compared_categories_are_both_kept_and_grouped() -> None:
-    facts = explicit_facts.read("Compara gasolina frente a restaurantes el mes pasado", today=TODAY)
-    wrong = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(Period.LAST_MONTH),
-        categories=("TRANSPORT_FUEL",),
-    )
-
-    repaired = explicit_facts.enforce(wrong, facts)
-
-    assert repaired.categories == ("TRANSPORT_FUEL", "RESTAURANTS")
-    assert repaired.group_by is GroupBy.CATEGORY
 
 
 def test_a_coordinated_category_list_asks_for_one_total() -> None:
@@ -510,63 +381,6 @@ def test_one_category_is_not_a_coordinated_list() -> None:
     facts = explicit_facts.read("¿Cuánto he gastado en gasolina este mes?", today=TODAY)
 
     assert facts.group_by is None
-
-
-def test_the_coordinated_total_overrules_an_inherited_grouping() -> None:
-    """What the reading is for: a plan that arrived grouped, made to agree with the sentence."""
-    facts = explicit_facts.read("¿Cuánto llevo entre gasolina y transporte público este mes?")
-    grouped = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(Period.THIS_MONTH),
-        categories=("TRANSPORT_FUEL", "TRANSPORT_PUBLIC"),
-        group_by=GroupBy.CATEGORY,
-    )
-
-    repaired = explicit_facts.enforce(grouped, facts)
-
-    assert repaired.group_by is GroupBy.NONE
-    assert repaired.categories == ("TRANSPORT_FUEL", "TRANSPORT_PUBLIC")
-    assert repaired.metric is grouped.metric
-
-
-def test_salary_and_income_words_force_incoming_movements() -> None:
-    for sentence in (
-        "¿Qué nómina he recibido este año?",
-        "¿Qué ingresos he tenido este mes?",
-        "¿Cuánto he cobrado el mes pasado?",
-    ):
-        facts = explicit_facts.read(sentence, today=TODAY)
-        planned = FinancialPlan(direction=Direction.ALL, period=RelativePeriod(Period.THIS_MONTH))
-
-        assert explicit_facts.enforce(planned, facts).direction is Direction.INCOME
-
-
-def test_being_charged_reads_as_money_leaving_even_though_the_verb_is_cobrar() -> None:
-    """«me cobraron» matches `_INCOME` on `cobraron` and `_EXPENSE` on `me cobr`, so the reader
-    used to compute both and answer None — it saw the spending and had no way to say it. The
-    specific pattern is consulted first, so two characters of pronoun decide it."""
-    facts = explicit_facts.read("¿Cuánto me cobraron el mes pasado?", today=TODAY)
-    planned = FinancialPlan(direction=Direction.INCOME, period=RelativePeriod(Period.LAST_MONTH))
-
-    assert facts.direction is Direction.EXPENSE
-    assert explicit_facts.enforce(planned, facts).direction is Direction.EXPENSE
-
-
-def test_what_i_dropped_on_something_reads_as_money_leaving() -> None:
-    """«me he dejado» is ordinary Spanish for spending and the vocabulary simply lacked it, so
-    neither pattern fired and the model's INCOME stood. The category question is the same gap
-    read through a sentence that also names a category, and both were unsafe for one reason."""
-    for sentence in (
-        "¿Cuánto me he dejado este mes?",
-        "¿Cuánto me he dejado en salir a comer este mes?",
-    ):
-        facts = explicit_facts.read(sentence, today=TODAY)
-        planned = FinancialPlan(
-            direction=Direction.INCOME, period=RelativePeriod(Period.THIS_MONTH)
-        )
-
-        assert facts.direction is Direction.EXPENSE
-        assert explicit_facts.enforce(planned, facts).direction is Direction.EXPENSE
 
 
 def test_cobrar_without_the_pronoun_is_still_money_arriving() -> None:
@@ -732,54 +546,6 @@ HEALTH_LAST_QUARTER = FinancialPlan(
 )
 
 
-def test_a_category_from_five_turns_ago_does_not_empty_a_question_about_a_shop() -> None:
-    """The reported turn. `health` came from a question five turns earlier, survived a
-    clarification loop that answered nothing, and made a question about Mercadona come back empty
-    — with "buscar sin categoría" offered as a button the user then had to press."""
-    both = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=THREE_MONTHS,
-        categories=("HEALTH",),
-        merchants=("Mercadona",),
-    )
-    facts = explicit_facts.read("¿Qué gastos tengo históricamente en el Mercadona?", today=TODAY)
-
-    retried = explicit_facts.without_the_inherited_category(both, HEALTH_LAST_QUARTER, facts)
-
-    assert retried is not None
-    assert retried.categories == ()
-    assert retried.merchants == ("Mercadona",)
-
-
-def test_an_ordinary_follow_up_keeps_its_category_even_when_empty() -> None:
-    """The case that makes the rule narrow. "¿Y la semana pasada?" after a question about health
-    names no category either, and answering it about every expense would be a different question.
-    Only a shop the previous plan did not have makes the pair suspicious."""
-    narrower = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.LAST_WEEK),
-        categories=("HEALTH",),
-    )
-    facts = explicit_facts.read("¿y la semana pasada?", today=TODAY)
-
-    assert (
-        explicit_facts.without_the_inherited_category(narrower, HEALTH_LAST_QUARTER, facts) is None
-    )
-
-
-def test_a_category_the_sentence_names_is_never_dropped() -> None:
-    """Naming it is the whole difference between an inherited filter and a chosen one."""
-    named = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=THREE_MONTHS,
-        categories=("HEALTH",),
-        merchants=("Mercadona",),
-    )
-    facts = explicit_facts.read("¿cuánto he gastado en salud en el Mercadona?", today=TODAY)
-
-    assert explicit_facts.without_the_inherited_category(named, HEALTH_LAST_QUARTER, facts) is None
-
-
 # --- a sentence that states a pair the domain cannot hold ------------------------------
 #
 # «gasto medio mensual por comercio» is an ordinary Spanish sentence. It asks for a monthly
@@ -846,161 +612,3 @@ def test_an_accumulation_by_a_dimension_is_that_dimensions_total(
 
     assert facts.metric is None, "no time unit is named, so no running series is stated"
     assert facts.group_by is group_by
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    [
-        "gasto medio mensual por comercio",
-        "gasto medio mensual por cada cuenta",
-        "media semanal por comercio",
-        "media diaria por cada cuenta",
-        "gasto acumulado por comercio",
-        "gasto acumulado por cada cuenta",
-        "compara el gasto acumulado de restaurantes y supermercado",
-        "¿En qué categoría gasto más al mes de media?",
-    ],
-)
-def test_enforce_never_raises_on_a_sentence_a_person_can_type(sentence: str) -> None:
-    """The plan carries one half, the sentence states the other. This used to raise."""
-    plan = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        metric=Metric.PERIOD_AVERAGE,
-        group_by=GroupBy.MONTH,
-    )
-
-    checked = explicit_facts.enforce(plan, explicit_facts.read(sentence, today=TODAY))
-
-    # Whatever comes back is a plan the domain accepts, and never the forbidden pair.
-    assert not (
-        checked.metric in {Metric.PERIOD_AVERAGE, Metric.CUMULATIVE}
-        and checked.group_by not in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
-    )
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    ["¿y por comercio?", "¿y por cada cuenta?", "¿En qué categoría gasté más?"],
-)
-@pytest.mark.parametrize("inherited", [Metric.PERIOD_AVERAGE, Metric.CUMULATIVE])
-def test_a_grouping_the_sentence_states_meets_an_inherited_metric(
-    sentence: str, inherited: Metric
-) -> None:
-    """The sentence states only the grouping. The metric it cannot live beside was inherited."""
-    plan = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        metric=inherited,
-        group_by=GroupBy.MONTH,
-    )
-
-    explicit_facts.enforce(plan, explicit_facts.read(sentence, today=TODAY))
-
-
-def test_a_coherent_pair_is_not_refused_by_the_order_it_is_applied_in() -> None:
-    """The sentence states a valid pair and the plan carries a metric that pair replaces.
-
-    Nothing here is contradictory: the plan the sentence asks for is grouped by category and
-    counted, which the domain accepts. `enforce` raised anyway, because it applied the grouping
-    while the *old* metric was still in place and the plan passed through a state neither the
-    sentence nor the model ever asked for.
-    """
-    plan = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        metric=Metric.CUMULATIVE,
-        group_by=GroupBy.MONTH,
-    )
-    facts = explicit_facts.read(
-        "compara cuantos pagos hice en restaurantes y en supermercado", today=TODAY
-    )
-    assert (facts.group_by, facts.metric) == (GroupBy.CATEGORY, Metric.COUNT)
-
-    checked = explicit_facts.enforce(plan, facts)
-
-    assert checked.group_by is GroupBy.CATEGORY
-    assert checked.metric is Metric.COUNT
-
-
-def test_a_group_limit_travels_with_the_grouping_it_limits() -> None:
-    """ "¿Y por mes?" over a top-5 ranking. The limit belonged to the grouping being replaced.
-
-    `groupLimit` is a rider on `group_by` rather than a fact of its own — the domain refuses it
-    beside a temporal grouping — so replacing the grouping has to carry it, exactly as the
-    window's two fields already travel as a pair.
-    """
-    plan = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        group_by=GroupBy.MERCHANT,
-        group_limit=5,
-    )
-
-    checked = explicit_facts.enforce(plan, explicit_facts.read("¿y por mes?", today=TODAY))
-
-    assert checked.group_by is GroupBy.MONTH
-    assert checked.group_limit is None
-
-
-def test_a_draft_refuses_the_pair_here_rather_than_a_turn_later() -> None:
-    """A draft relaxes the window and nothing else, and PERIOD_AVERAGE was missing from its rules.
-
-    `enforce` built the pair without complaint, `_next_state` stored it on the conversation, and
-    the raise arrived on the *reply* to our own clarification, where `with_window` finally checked.
-    """
-    with pytest.raises(InvalidValueError):
-        FinancialPlanDraft(
-            direction=Direction.EXPENSE,
-            metric=Metric.PERIOD_AVERAGE,
-            group_by=GroupBy.COUNTERPARTY,
-        )
-
-    # And so `enforce` now has something to catch, instead of handing on a poisoned draft.
-    checked = explicit_facts.enforce(
-        FinancialPlanDraft(direction=Direction.EXPENSE),
-        explicit_facts.read("gasto medio mensual por comercio", today=TODAY),
-    )
-    checked.with_window(RelativePeriod(period=Period.THIS_YEAR))
-
-
-@pytest.mark.parametrize("sentence", ["esos cinco", "y esos", "de esa categoría", "en esa cuenta"])
-def test_a_pronoun_after_a_monthly_average_ungroups_safely(sentence: str) -> None:
-    """No contradictory sentence anywhere — the pair arrives one field at a time, two turns apart.
-
-    After "¿cuál es mi gasto medio mensual?" the plan is `PERIOD_AVERAGE` by `MONTH`. A pronoun
-    reference resets the grouping to `NONE` because the sentence names none, and the average is
-    inherited from the turn before. `reshaped` is what stops the reset landing on its own.
-    """
-    monthly_average = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        metric=Metric.PERIOD_AVERAGE,
-        group_by=GroupBy.MONTH,
-    )
-    facts = explicit_facts.read(sentence, today=TODAY)
-
-    reshaped = explicit_facts.reshaped(
-        monthly_average,
-        group_by=facts.group_by or GroupBy.NONE,
-        metric=facts.metric or monthly_average.metric,
-    )
-
-    # The average survives with the buckets it needs, rather than the reset producing a
-    # per-period average with no period to average over.
-    assert reshaped.metric is Metric.PERIOD_AVERAGE
-    assert reshaped.group_by is GroupBy.MONTH
-
-
-def test_an_exclusion_matches_a_merchant_the_plan_padded() -> None:
-    """The plan's merchant name was compared unstripped and the invariant compares it stripped."""
-    plan = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        merchants=(" Mercadona ",),
-    )
-
-    checked = explicit_facts.enforce(plan, explicit_facts.read("gastos sin Mercadona", today=TODAY))
-
-    assert checked.merchants == ()
-    assert checked.excluded_merchants == ("mercadona",)

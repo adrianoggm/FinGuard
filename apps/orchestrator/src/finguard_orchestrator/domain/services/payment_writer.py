@@ -76,20 +76,6 @@ def unclear(preview: PaymentPreview | None = None) -> str:
     return "No estoy seguro de haberte entendido. ¿Confirmas el pago? Responde sí o no."
 
 
-def unclear_pending(recipient: str, amount_minor: int, currency: str) -> str:
-    """Repeat the material facts when chat state has the intent but not banking's full preview.
-
-    The user may have answered with a question because they no longer remember what was on the
-    table. A generic "¿confirmas el pago?" makes the next yes unsafe and the conversation feel
-    stuck.
-    """
-    return (
-        "No estoy seguro de haberte entendido. "
-        f"El pago pendiente es de {money(amount_minor, currency)} a {recipient}. "
-        "¿Quieres enviarlo? Responde sí o no."
-    )
-
-
 def still_missing(draft: PaymentDraft) -> str:
     """The question a half-built payment needs answered.
 
@@ -104,14 +90,6 @@ def still_missing(draft: PaymentDraft) -> str:
     to = f" a {draft.recipient_name}" if draft.recipient_name else ""
     payment = "la transferencia" if draft.rail is Rail.TRANSFER else "el bizum"
     return f"¿De cuánto quieres hacerle {payment}{to}?"
-
-
-def unsure(draft: PaymentDraft) -> str:
-    """A useful answer when the user cannot fill the field the draft is waiting for."""
-    if PaymentField.RECIPIENT in draft.missing:
-        return f"No pasa nada. Puedo enseñarte tus contactos si quieres. {still_missing(draft)}"
-    payment = "la transferencia" if draft.rail is Rail.TRANSFER else "el bizum"
-    return f"No pasa nada. {still_missing(draft)} También puedes cancelar {payment}."
 
 
 def paused(draft: PaymentDraft) -> str:
@@ -191,16 +169,6 @@ def saved_contact_transfer_unavailable(name: str) -> str:
     )
 
 
-def not_a_contact_chosen() -> str:
-    """A picked contact that is not in the account's list.
-
-    No name in it, because there is nothing the user typed to quote back — they tapped something,
-    and either the list has changed underneath them or the identifier did not come from us. Asking
-    them to say who, rather than reporting on an identifier they never saw.
-    """
-    return "Ese contacto ya no está en tu lista. Dime a quién quieres enviarle el dinero."
-
-
 def insufficient_funds() -> str:
     return "No he enviado nada: tu saldo no cubre ese pago."
 
@@ -230,13 +198,6 @@ def no_longer_live() -> str:
     whoever is looking at the preview. Notably it does not say which: "ya lo has pagado" invites
     checking, and the honest instruction is the same either way."""
     return "Ese pago ya no está pendiente. Comprueba tus movimientos antes de volver a intentarlo."
-
-
-def unsupported() -> str:
-    return (
-        "Solo puedo enviar dinero a personas de tus contactos. "
-        "Dime a quién y cuánto, por ejemplo: hazle un bizum de 20 euros a Marta."
-    )
 
 
 def not_understood() -> str:

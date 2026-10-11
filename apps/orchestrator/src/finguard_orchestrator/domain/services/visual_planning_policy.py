@@ -14,7 +14,12 @@ from collections.abc import Callable
 from typing import get_args
 
 from finguard_orchestrator.domain.errors import ProviderFailedError
-from finguard_orchestrator.domain.models.chart import ChartSpec, PresentationContext, VisualProfile
+from finguard_orchestrator.domain.models.chart import (
+    ChartSpec,
+    PresentationContext,
+    VisualDecision,
+    VisualProfile,
+)
 from finguard_orchestrator.domain.models.visual_plan import (
     FallbackReason,
     Rejection,
@@ -25,7 +30,6 @@ from finguard_orchestrator.domain.models.visual_plan import (
 from finguard_orchestrator.domain.ports.visual_planner import VisualPlannerPort
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
-    VisualDecision,
 )
 
 Verifier = Callable[[VisualPlanDraft, VisualProfile], ChartSpec | Rejection]

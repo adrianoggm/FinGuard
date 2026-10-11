@@ -8,8 +8,12 @@ from pathlib import Path
 import pytest
 
 from finguard_orchestrator.bootstrap.config import get_settings
-from finguard_orchestrator.domain.models.chart import ChartEncoding, ChartSpec, EncodingSort
-from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
+from finguard_orchestrator.domain.models.chart import (
+    ChartEncoding,
+    ChartSpec,
+    EncodingSort,
+    VisualDecision,
+)
 
 _SPEC = importlib.util.spec_from_file_location(
     "evaluate_visual", Path(__file__).resolve().parents[1] / "scripts" / "evaluate_visual.py"

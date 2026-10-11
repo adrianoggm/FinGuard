@@ -269,29 +269,6 @@ def how_much_to_move(target: Holding) -> str:
     return f"¿Cuánto quieres mover a {_name_of(target)}?"
 
 
-def ready_to_move(target: Holding, amount_minor: int) -> str:
-    """What was understood, and where the confirmation lives.
-
-    It does not prepare the transfer. The chat route reads sentences and this one has an account
-    and an amount in it — but preparing is a `payments:prepare` scope on a different route, and a
-    read path that quietly acquired the ability to stage a payment would be the seam between asking
-    and paying disappearing. So it says what it heard and points at the screen that does it.
-    """
-    return (
-        f"Puedes mover {money(amount_minor, target.currency)} a {_name_of(target)} desde "
-        f"Cuentas › Mover dinero entre cuentas. Te pediré que lo confirmes antes de moverlo."
-    )
-
-
-def no_such_account_to_move_to(summary: AccountSummary) -> str:
-    have = ", ".join(_name_of(holding) for holding in summary.holdings)
-    return f"No tienes ninguna cuenta de ese tipo. Tienes: {have}."
-
-
-def unknown_named_account_to_move_to(candidates: list[Holding]) -> str:
-    return f"No encuentro una cuenta con ese nombre. {which_account(candidates)}"
-
-
 def _no_such_account(summary: AccountSummary) -> str:
     """A kind the holder does not have. Answering with the total instead would be answering a
     question they did not ask, and they would have no way to tell."""
@@ -623,69 +600,11 @@ def ranked(movement: Movement | None, ranking: TopMovements) -> str:
     return f"{_position(ranking.rank)} fue de {amount}: {what}, el {when}."
 
 
-def ranked_many(movements: tuple[Movement, ...], ranking: TopMovements, *, requested: int) -> str:
-    """Several concrete ranking rows, each already selected by banking."""
-    about = f"{filter_of(ranking)} {_conversational_window_of(ranking)}"
-    if not movements:
-        return f"No he encontrado movimientos{about} para construir ese ranking."
-    noun = "gasto" if ranking.direction is Direction.EXPENSE else "ingreso"
-    if len(movements) == requested:
-        head = f"Tus {requested} mayores {noun}s{about} fueron:"
-    else:
-        head = (
-            f"He encontrado {len(movements)} {noun}s{about}; "
-            f"no hay {requested} para completar el ranking:"
-        )
-    lines = []
-    for position, movement in enumerate(movements, start=1):
-        amount = money(movement.amount_minor, movement.currency)
-        what = movement.merchant_name or movement.description
-        lines.append(f"  {position}. {what}: {amount}, el {_spoken_date(movement.occurred_at)}")
-    return f"{head}\n" + "\n".join(lines) + _inert_note(ranking)
-
-
 def recent_movements(count: int) -> str:
     if count == 0:
         return "No he encontrado movimientos recientes en tus cuentas."
     noun = "movimiento" if count == 1 else "movimientos"
     return f"Estos son tus últimos {count} {noun}."
-
-
-def movement_example(movement: Movement | None, currency: str) -> str:
-    if movement is None:
-        return "No hay ningún movimiento que pueda mostrarte como ejemplo."
-    amount = abs(movement.amount_minor)
-    if movement.direction == Direction.EXPENSE.value:
-        amount = -amount
-    what = movement.merchant_name or movement.description
-    return (
-        f"Por ejemplo: {what}, {money(amount, currency)}, el {_spoken_date(movement.occurred_at)}."
-    )
-
-
-def movement_examples(movements: tuple[Movement, ...], currency: str) -> str:
-    """One or several concrete rows, respecting the number the user asked to see."""
-    if not movements:
-        return "No hay ningún movimiento que pueda mostrarte como ejemplo."
-    if len(movements) == 1:
-        return movement_example(movements[0], currency)
-    lines = []
-    for movement in movements:
-        amount = abs(movement.amount_minor)
-        if movement.direction == Direction.EXPENSE.value:
-            amount = -amount
-        what = movement.merchant_name or movement.description
-        lines.append(
-            f"  · {what}: {money(amount, currency)}, el {_spoken_date(movement.occurred_at)}"
-        )
-    return "Por ejemplo:\n" + "\n".join(lines)
-
-
-def movement_date(occurred_at: datetime | str) -> str:
-    """The date of the ranked movement a pronoun points at."""
-    if isinstance(occurred_at, str):
-        occurred_at = datetime.fromisoformat(occurred_at)
-    return f"Fue el {_spoken_date(occurred_at)}."
 
 
 def _position(rank: int) -> str:
@@ -942,43 +861,6 @@ def _one_line(plan: FinancialPlan | TopMovements, *, in_words: bool) -> str:
     return ", ".join(parts)
 
 
-def _listed(names: tuple[str, ...]) -> str:
-    """Names joined the way Spanish joins them: commas, and "y" before the last."""
-    if len(names) == 1:
-        return names[0]
-    return f"{', '.join(names[:-1])} y {names[-1]}"
-
-
-def how_many_payees(answer: QueryAnswer, plan: FinancialPlan) -> str:
-    """How many distinct payees, and who they are.
-
-    The number of groups rather than the number of movements, which is the whole point: thirty-six
-    charges from four shops is four subscriptions, and answering "36" to "¿cuántas suscripciones
-    tengo?" is a true figure for a question nobody asked.
-
-    It says "te han cobrado" and never "activas", however the question was phrased. What the ledger
-    knows is who charged this holder inside a window; whether a subscription is still live is not in
-    it, and a sentence claiming otherwise would be inventing the one fact the holder is asking for.
-    """
-    kind = category_words.name_of(plan.categories[0]) if plan.categories else "gastos"
-    window = window_of(plan)
-    payees = tuple(group.key for group in answer.groups if group.key)
-    if not payees:
-        return f"No te han cobrado nada en {kind} {window}."
-    count = len(payees)
-    noun = kind if count > 1 else _singular(kind)
-    # No adjective. "Distintas" would need to agree with a noun whose gender varies by category, and
-    # a gender table is more code than the names that follow already make unambiguous.
-    return f"Te han cobrado {count} {noun} {window}: {_listed(payees)}."
-
-
-def _singular(kind: str) -> str:
-    """Enough Spanish to not write "1 suscripciones". Only the plural this vocabulary produces."""
-    if kind.endswith("ones"):
-        return kind[:-4] + "ón"
-    return kind[:-1] if kind.endswith("s") else kind
-
-
 def ordered_groups(answer: QueryAnswer, plan: FinancialPlan) -> tuple[Group, ...]:
     """Rank requested month buckets while ordinary timelines stay chronological."""
     if plan.group_limit is None or plan.group_by is not GroupBy.MONTH:
@@ -1125,42 +1007,6 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     return f"{head}\n{lines}{tail}{inert_note}"
 
 
-def internal_transfers(answer: QueryAnswer, plan: FinancialPlan) -> str:
-    """Describe money that moved inside the holder's accounts without calling it spending."""
-    window = window_of(plan)
-    if answer.is_empty:
-        return f"No he encontrado traspasos entre tus cuentas {window}."
-    noun = "traspaso" if answer.movement_count == 1 else "traspasos"
-    if plan.metric is Metric.COUNT:
-        return f"Hiciste {answer.movement_count} {noun} {window}."
-    if plan.metric is Metric.AVERAGE:
-        average = money(_rounded_mean(answer.total_minor, answer.movement_count), answer.currency)
-        return f"El importe medio de tus {noun} {window} fue de {average}."
-    if plan.metric is Metric.PERIOD_AVERAGE:
-        average = money(
-            _rounded_mean(answer.total_minor, _period_count(answer, plan)), answer.currency
-        )
-        unit = {
-            GroupBy.DAY: "diario",
-            GroupBy.WEEK: "semanal",
-            GroupBy.MONTH: "mensual",
-        }[plan.group_by]
-        return f"El importe medio {unit} de tus traspasos {window} fue de {average}."
-    amount = money(answer.total_minor, answer.currency)
-    selected = plan.only_account_id is not None or bool(plan.only_account_ids)
-    if plan.direction is Direction.INCOME and selected:
-        return (
-            f"Moviste {amount} hacia la cuenta consultada {window}, "
-            f"en {answer.movement_count} {noun}."
-        )
-    if selected:
-        return (
-            f"Moviste {amount} desde la cuenta consultada {window}, "
-            f"en {answer.movement_count} {noun}."
-        )
-    return f"Moviste {amount} entre tus cuentas {window}, en {answer.movement_count} {noun}."
-
-
 def grouped_period_comparison(
     earlier_answer: QueryAnswer,
     latest_answer: QueryAnswer,
@@ -1232,30 +1078,6 @@ def _group_comparison_figure(group: Group, metric: Metric, currency: str) -> str
     if metric is Metric.AVERAGE and group.movement_count == 0:
         return "sin movimientos"
     return money(value, currency)
-
-
-def compare_averages(answer: QueryAnswer, plan: FinancialPlan) -> str:
-    """Answer a category comparison with category means, never their combined mean."""
-    usable = [group for group in answer.groups if group.movement_count > 0]
-    if answer.is_empty or len(usable) < 2:
-        return write(answer, plan)
-
-    figures = [(group, _rounded_mean(group.total_minor, group.movement_count)) for group in usable]
-    details = "; ".join(
-        f"{_group_name(group.key, plan)}: {money(average, answer.currency)} "
-        f"({group.movement_count} {'movimiento' if group.movement_count == 1 else 'movimientos'})"
-        for group, average in figures
-    )
-    highest = max(figures, key=lambda item: item[1])
-    lowest = min(figures, key=lambda item: item[1])
-    if highest[1] == lowest[1]:
-        conclusion = "Todas tuvieron la misma media."
-    else:
-        conclusion = (
-            f"La más alta fue la de {_group_name(highest[0].key, plan)} y la más baja, "
-            f"la de {_group_name(lowest[0].key, plan)}."
-        )
-    return f"Las medias por movimiento {window_of(plan)} fueron: {details}. {conclusion}"
 
 
 def top_category(answer: QueryAnswer, plan: FinancialPlan) -> str:
@@ -1583,17 +1405,3 @@ def _is_breakdown(answer: QueryAnswer) -> bool:
     if not answer.groups:
         return False
     return not (len(answer.groups) == 1 and answer.groups[0].key == "total")
-
-
-def cite(answer: QueryAnswer, *, limit: int = 3) -> list[str]:
-    """The movements behind the figure, as lines a caller can show.
-
-    An answer that states a total without them asks the user to take it on faith, and
-    faith is the one thing this pipeline should never ask for.
-    """
-    return [
-        f"{movement.occurred_at.date().isoformat()}  "
-        f"{movement.merchant_name or movement.description}  "
-        f"{money(movement.amount_minor, answer.currency)}"
-        for movement in answer.movements[:limit]
-    ]

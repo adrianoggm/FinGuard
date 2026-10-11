@@ -48,7 +48,6 @@ from finguard_orchestrator.domain.errors import (
 )
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.models.conversation import AccountScopeDefault
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -639,7 +638,7 @@ class Episode:
     scope: str = SETTLED
     # `ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT` for this episode's deployment, when it is not the stack's
     # own: an episode about the account question needs a deployment that asks it.
-    account_scope_default: AccountScopeDefault | None = None
+    account_scope_default: str | None = None
     # The gyms the A2A gateway lists, from `CANNED_GYMS`. None is a deployment with no gateway,
     # which is every episode written before the expert agents existed.
     agents: tuple[str, ...] = ()

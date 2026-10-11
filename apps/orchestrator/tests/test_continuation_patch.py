@@ -11,7 +11,6 @@ from finguard_orchestrator.domain.services.continuation_patch import (
     GroundedContinuation,
     PatchStatus,
     apply,
-    grouping_in,
     read,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -288,21 +287,6 @@ def test_without_a_base_nothing_new_is_read(sentence: str, status: PatchStatus) 
     """The statuses a caller without a base read before Task 7, unchanged: `readers/follow_up.py`
     gates its window patch on whether this says AMBIGUOUS."""
     assert read(sentence, today=TODAY).status is status
-
-
-@pytest.mark.parametrize(
-    ("sentence", "grouping"),
-    [
-        ("este año por comercio", GroupBy.COUNTERPARTY),
-        ("este año, mejor por categoría", GroupBy.CATEGORY),
-        ("este año agrupado por meses", GroupBy.MONTH),
-        # The singular is also an average's divisor, which only `explicit_facts` can tell apart.
-        ("este año, de media por mes", None),
-        ("este año", None),
-    ],
-)
-def test_the_breakdown_a_reply_asks_for(sentence: str, grouping: GroupBy | None) -> None:
-    assert grouping_in(sentence) is grouping
 
 
 def test_a_named_turn_round_over_two_people_narrows_to_the_one_named() -> None:

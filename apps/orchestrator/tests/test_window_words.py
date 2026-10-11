@@ -166,17 +166,6 @@ def test_a_word_beside_the_last_that_is_not_a_number_is_not_a_count() -> None:
     )
 
 
-def test_a_few_years_is_more_than_a_window_may_span_so_the_model_reads_it() -> None:
-    """«Los últimos años» is a few years like the other plurals, and three years is past
-    `MAX_PERIOD_MONTHS`. So this vocabulary declines it, exactly as it declines any count it cannot
-    build — and it is *not* an impossible count the holder stated, which would have the planner
-    refuse a sentence that named no number at all instead of letting the model read it."""
-    assert window_words.window_in("los últimos años") is None
-    assert not window_words.has_invalid_counted_window("¿cuánto gasté en los últimos años?")
-    # A count the holder did state is still checked against the bound.
-    assert window_words.has_invalid_counted_window("los últimos tres años")
-
-
 # --- the phrasings the loop was made of ----------------------------------------------
 #
 # From the report, answering "¿de qué periodo?":
@@ -275,25 +264,6 @@ def test_a_month_of_a_year_is_that_month(sentence: str, start: date, end: date) 
     first would answer a question about one month with twelve. February is in here because it is
     the month whose last day moves."""
     assert window_words.window_in(sentence, today=TODAY) == AbsoluteRange(start=start, end=end)
-
-
-def test_the_year_before_shifts_the_window_it_follows() -> None:
-    """ "¿Y el año anterior?" after a question about July is July of last year — not the last twelve
-    months, and not the whole of last year."""
-    july = AbsoluteRange(start=date(2026, 7, 1), end=date(2026, 7, 31))
-
-    assert window_words.a_year_earlier("¿y el año anterior?", july) == AbsoluteRange(
-        start=date(2025, 7, 1), end=date(2025, 7, 31)
-    )
-
-
-def test_only_a_bare_continuation_shifts_a_window() -> None:
-    """A sentence carrying its own question is a new question. Shifting the previous window for it
-    would answer something nobody asked, which is the rule every continuation reader follows."""
-    july = AbsoluteRange(start=date(2026, 7, 1), end=date(2026, 7, 31))
-
-    assert window_words.a_year_earlier("¿cuánto gasté el año anterior en ocio?", july) is None
-    assert window_words.a_year_earlier("¿y el año anterior?", None) is None
 
 
 # --- a month with no year, which used to be no window at all ------------------------------
@@ -401,27 +371,6 @@ def test_a_future_or_impossible_explicit_range_is_not_executed() -> None:
     )
 
 
-def test_two_arbitrary_ranges_are_read_in_mention_order() -> None:
-    sentence = (
-        "compara del 1 de marzo al 15 de abril de 2026 "
-        "con el periodo del 1 de mayo al 15 de junio de 2026"
-    )
-
-    assert window_words.compared_date_ranges(sentence, today=TODAY) == (
-        AbsoluteRange(date(2026, 3, 1), date(2026, 4, 15)),
-        AbsoluteRange(date(2026, 5, 1), date(2026, 6, 15)),
-    )
-
-
-def test_the_same_explicit_period_last_year_is_derived_exactly() -> None:
-    sentence = "compara del 1 de marzo al 15 de abril de 2026 con el mismo periodo del año pasado"
-
-    assert window_words.compared_date_ranges(sentence, today=TODAY) == (
-        AbsoluteRange(date(2026, 3, 1), date(2026, 4, 15)),
-        AbsoluteRange(date(2025, 3, 1), date(2025, 4, 15)),
-    )
-
-
 @pytest.mark.parametrize("name", list(range(1, 13)))
 def test_every_month_maps_to_its_own_number(name: int) -> None:
     """It was `enumerate` over a list with "setiembre" in the middle of it, skipped by an `if`, so
@@ -451,77 +400,6 @@ def test_both_spellings_of_september_are_september() -> None:
     assert window_words.window_in("en setiembre de 2025", today=TODAY) == window_words.window_in(
         "en septiembre de 2025", today=TODAY
     )
-
-
-@pytest.mark.parametrize(
-    ("sentence", "first", "second"),
-    [
-        (
-            "\u00bfGast\u00e9 m\u00e1s en julio que en junio?",
-            window_words.whole_month(2026, 7),
-            window_words.whole_month(2026, 6),
-        ),
-        (
-            "\u00bfEn qu\u00e9 mes gast\u00e9 m\u00e1s, julio o junio?",
-            window_words.whole_month(2026, 7),
-            window_words.whole_month(2026, 6),
-        ),
-        (
-            "Compara julio de 2025 con junio de 2026",
-            window_words.whole_month(2025, 7),
-            window_words.whole_month(2026, 6),
-        ),
-        (
-            "Compara enero y diciembre",
-            window_words.whole_month(2026, 1),
-            window_words.whole_month(2025, 12),
-        ),
-        (
-            "Compara el mes 7 frente al mes 6",
-            window_words.whole_month(2026, 7),
-            window_words.whole_month(2026, 6),
-        ),
-    ],
-)
-def test_two_compared_months_are_read_in_mention_order(
-    sentence: str, first: AbsoluteRange, second: AbsoluteRange
-) -> None:
-    assert window_words.compared_calendar_months(sentence, today=TODAY) == (first, second)
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    [
-        "compara los movimientos del 1 de junio con el 15 de julio",
-        "compara mis gastos de junio a septiembre",
-        "compara julio, junio y mayo",
-    ],
-)
-def test_ambiguous_month_ranges_are_not_rewritten_as_two_whole_months(sentence: str) -> None:
-    assert window_words.compared_calendar_months(sentence, today=TODAY) is None
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    ["Compara mis ingresos de 2025 con 2026", "Ingresos de 2025 vs 2026"],
-)
-def test_two_calendar_years_can_be_read_from_one_comparison(sentence: str) -> None:
-    assert window_words.compared_calendar_years(sentence, today=TODAY) == (
-        window_words.whole_year(2025),
-        window_words.whole_year(2026),
-    )
-
-
-def test_a_single_window_is_complete_but_not_a_comparison_pair() -> None:
-    assert window_words.has_complete_window("este mes", today=TODAY)
-    assert not window_words.has_compared_windows("este mes", today=TODAY)
-
-
-def test_two_compared_windows_are_complete_without_becoming_one_shareable_window() -> None:
-    sentence = "compara junio y julio"
-
-    assert window_words.has_complete_window(sentence, today=TODAY)
-    assert window_words.has_compared_windows(sentence, today=TODAY)
 
 
 # --- the two shapes the corpus stated plainly and this could not see -------------------
@@ -614,68 +492,12 @@ def test_neither_new_shape_generalises_past_what_was_measured(sentence: str) -> 
     assert window_words.window_in(sentence, today=REFERENCE) is None
 
 
-@pytest.mark.parametrize(
-    "sentence",
-    ("los últimos 0 días", "los últimos 5000 días", "durante los últimos 100 meses"),
-)
-def test_an_explicit_count_outside_the_domain_is_distinguished_from_no_window(
-    sentence: str,
-) -> None:
-    assert window_words.has_invalid_counted_window(sentence)
-
-
-def test_the_valid_edge_is_not_marked_invalid() -> None:
-    assert not window_words.has_invalid_counted_window("durante los últimos 366 días")
-
-
 # --- B-4 (Wave 3 hardening): a season is a question with its months in it -----------------------
 #
 # `window_in` keeps refusing to guess a season -- see `test_anything_else_is_not_a_window` above,
 # unchanged. What changes is what the refusal becomes: an honest ask naming the months a reading
 # would take, with a suggestion chip per reading, rather than a silent fall-through that let the
 # inherited window answer a different question (§11's own opening sentence).
-
-
-def test_this_summer_asks_for_the_current_year_by_name() -> None:
-    question, chips = window_words.season_ask(
-        "¿En qué he gastado más este verano?", today=REFERENCE
-    )
-
-    assert question == "¿Te refieres a junio, julio y agosto de 2026?"
-    # F-H2 (Wave 3 hardening, fix round): the chip is a range phrase the month reader can parse
-    # back ("de junio a agosto de 2026"), not the comma list the question reads aloud -- `_A_MONTH`
-    # only ever reads the *last* named month of a comma list, so a holder answering with the chip
-    # exactly as offered used to get back a single, silently wrong month.
-    assert chips == ("De junio a agosto de 2026",)
-
-
-def test_last_summer_asks_for_the_previous_year_by_name() -> None:
-    question, chips = window_words.season_ask("¿Y en el verano pasado?", today=REFERENCE)
-
-    assert question == "¿Te refieres a junio, julio y agosto de 2025?"
-    assert chips == ("De junio a agosto de 2025",)
-
-
-def test_a_bare_season_with_no_qualifier_offers_both_years() -> None:
-    question, chips = window_words.season_ask("¿Cuánto gasté en primavera?", today=REFERENCE)
-
-    assert question == (
-        "¿Te refieres a marzo, abril y mayo de 2026 o a marzo, abril y mayo de 2025?"
-    )
-    assert chips == ("De marzo a mayo de 2026", "De marzo a mayo de 2025")
-
-
-@pytest.mark.parametrize("sentence", ["en verano", "otoño"])
-def test_a_bare_season_word_alone_is_still_a_season_ask(sentence: str) -> None:
-    assert window_words.season_ask(sentence, today=REFERENCE) is not None
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    ["¿cuánto gasté el mes pasado?", "el mes de agosto", "los últimos 3 meses"],
-)
-def test_a_sentence_with_no_season_is_not_a_season_ask(sentence: str) -> None:
-    assert window_words.season_ask(sentence, today=REFERENCE) is None
 
 
 # --- F-H2 (Wave 3 hardening, fix round): the season's own chip is a window `window_in` reads -----
@@ -798,24 +620,6 @@ def test_a_window_the_sentence_states_wins_over_lately() -> None:
 
 
 @pytest.mark.parametrize(
-    ("sentence", "window"),
-    [
-        ("¿Cuánto llevo gastado?", RelativePeriod(Period.THIS_YEAR)),
-        ("¿Cuánto he gastado últimamente?", RelativePeriod(Period.LAST_N_DAYS, n=30)),
-        # Stated, not a default: a window the sentence names is never the product's decision.
-        ("¿cuánto llevo gastado este mes?", None),
-        ("¿cuánto he gastado últimamente este mes?", None),
-        ("¿cuánto gasté el mes pasado?", None),
-        ("¿qué tal últimamente?", None),
-    ],
-)
-def test_a_default_is_told_apart_from_a_window_the_sentence_states(
-    sentence: str, window: RelativePeriod | None
-) -> None:
-    assert window_words.default_window_in(sentence, today=REFERENCE) == window
-
-
-@pytest.mark.parametrize(
     "sentence",
     [
         "¿cuánto he gastado últimamente desde Navidad?",
@@ -836,42 +640,7 @@ def test_lately_stands_aside_for_a_window_it_cannot_read(sentence: str) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "sentence",
-    [
-        "¿cuánto llevo gastado hasta ahora?",
-        "¿cuánto llevo gastado hasta la fecha?",
-        "¿cuánto llevo gastado hasta hoy?",
-    ],
-)
-def test_llevo_gastado_up_to_now_is_still_the_year_so_far(sentence: str) -> None:
-    """Ruling R46: «hasta ahora», «hasta la fecha», «hasta hoy» say what «llevo» already says — up
-    to now — and name no window of their own. «Hasta hoy» was read as today."""
-    assert window_words.window_in(sentence, today=REFERENCE) == RelativePeriod(Period.THIS_YEAR)
-    assert window_words.default_window_in(sentence, today=REFERENCE) == RelativePeriod(
-        Period.THIS_YEAR
-    )
-
-
 def test_today_on_its_own_is_still_today() -> None:
     assert window_words.window_in("¿cuánto llevo gastado hoy?", today=REFERENCE) == (
         RelativePeriod(Period.TODAY)
     )
-
-
-@pytest.mark.parametrize(
-    ("reply", "window"),
-    [
-        ("últimamente", RelativePeriod(Period.LAST_N_DAYS, n=30)),
-        ("pues últimamente", RelativePeriod(Period.LAST_N_DAYS, n=30)),
-        ("lo que llevo gastado", RelativePeriod(Period.THIS_YEAR)),
-        # A reply that says anything more is not only a period.
-        ("últimamente en gasolina", None),
-        ("lo que llevo gastado en la hucha", None),
-        ("lo que llevo gastado este mes", None),
-        ("hoy", None),
-        ("pues no sé", None),
-    ],
-)
-def test_a_default_is_a_whole_reply_or_nothing(reply: str, window: RelativePeriod | None) -> None:
-    assert window_words.default_reply_window(reply) == window

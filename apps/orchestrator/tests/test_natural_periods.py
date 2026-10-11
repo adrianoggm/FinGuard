@@ -70,32 +70,3 @@ def test_this_weekend_is_not_guessed_before_it_starts() -> None:
     assert window_words.window_in("el fin de semana pasado", today=wednesday) == RelativePeriod(
         Period.LAST_WEEKEND
     )
-
-
-@pytest.mark.parametrize(
-    ("sentence", "expected"),
-    [
-        (
-            "compara este trimestre con el anterior",
-            (RelativePeriod(Period.THIS_QUARTER), RelativePeriod(Period.LAST_QUARTER)),
-        ),
-        (
-            "¿Gasté más el primer semestre de 2025 que el segundo semestre de 2025?",
-            (
-                AbsoluteRange(date(2025, 1, 1), date(2025, 6, 30)),
-                AbsoluteRange(date(2025, 7, 1), date(2025, 12, 31)),
-            ),
-        ),
-        (
-            "compara la primera quincena de julio con la segunda quincena de julio",
-            (
-                AbsoluteRange(date(2026, 7, 1), date(2026, 7, 15)),
-                AbsoluteRange(date(2026, 7, 16), date(2026, 7, 31)),
-            ),
-        ),
-    ],
-)
-def test_two_natural_periods_are_compared_in_mention_order(
-    sentence: str, expected: tuple[window_words.Window, window_words.Window]
-) -> None:
-    assert window_words.compared_natural_periods(sentence, today=TODAY) == expected

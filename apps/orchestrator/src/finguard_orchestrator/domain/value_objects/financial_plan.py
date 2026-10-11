@@ -12,7 +12,6 @@ that would be one too many.
 
 from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
@@ -37,10 +36,7 @@ from finguard_orchestrator.domain.enums import (
     TransactionType,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
-
-if TYPE_CHECKING:
-    # The conversation imports this module for its drafts, so the selection is a type here only.
-    from finguard_orchestrator.domain.models.conversation import AccountSelection
+from finguard_orchestrator.domain.value_objects.account_selection import AccountSelection
 
 
 @dataclass(frozen=True)

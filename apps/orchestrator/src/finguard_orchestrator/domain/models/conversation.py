@@ -29,7 +29,6 @@ the sentence is filling, so the reply no longer has to be a self-contained phras
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
@@ -42,15 +41,20 @@ from finguard_orchestrator.domain.constants import (
     MAX_OFFERS,
     MAX_REMEMBERED_TURNS,
     MAX_SELECTED_ACCOUNTS,
+    MAX_SELECTED_TRANSACTIONS,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
     MAX_VISUAL_CONTEXTS,
 )
-from finguard_orchestrator.domain.enums import CounterpartyType, Rail
+from finguard_orchestrator.domain.enums import CounterpartyType, GroupBy, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import CHART_ID_PATTERN, VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.expert_agents import AGENT_ID, ActivitySlot
+from finguard_orchestrator.domain.value_objects.account_selection import (
+    AccountSelection,
+    AccountSelectionMode,
+)
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -59,9 +63,6 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
-
-if TYPE_CHECKING:
-    from finguard_orchestrator.domain.models.result_reference import ResultReference
 
 # What a sentence can turn into and a follow-up can inherit from. Declared here as well as on
 # the planning result because both need the pair named, and importing one from the other would
@@ -147,36 +148,6 @@ class AccountAlias:
             raise InvalidValueError("account alias has an invalid length")
         if not self.display_name.strip() or len(self.display_name) > MAX_MERCHANT_LENGTH:
             raise InvalidValueError("aliased account name has an invalid length")
-
-
-class AccountSelectionMode(StrEnum):
-    ALL = "ALL"
-    SELECTED = "SELECTED"
-
-
-# What an analytics question means when it names no account and the conversation has chosen none:
-# `all` reads every account the holder has, `ask` asks «¿En qué cuenta quieres consultarlo?» first.
-# A deployment's choice (`ORCHESTRATOR_ACCOUNT_SCOPE_DEFAULT`), never the conversation's: a choice
-# the person made is an `AccountSelection`, and it wins under either value.
-AccountScopeDefault = Literal["all", "ask"]
-
-
-@dataclass(frozen=True)
-class AccountSelection:
-    """Persistent, holder-grounded account scope for subsequent questions."""
-
-    mode: AccountSelectionMode
-    account_ids: tuple[UUID, ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.mode is AccountSelectionMode.ALL and self.account_ids:
-            raise InvalidValueError("ALL account selection cannot contain account ids")
-        if self.mode is AccountSelectionMode.SELECTED and not self.account_ids:
-            raise InvalidValueError("SELECTED account selection needs account ids")
-        if len(set(self.account_ids)) != len(self.account_ids):
-            raise InvalidValueError("account selection cannot contain duplicates")
-        if len(self.account_ids) > MAX_SELECTED_ACCOUNTS:
-            raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
 
 
 @dataclass(frozen=True)
@@ -846,3 +817,57 @@ __all__ = [
     "slot_for",
     "workflow_of",
 ]
+
+
+_REFERENCEABLE_GROUPS = {
+    GroupBy.CATEGORY,
+    GroupBy.MERCHANT,
+    GroupBy.COUNTERPARTY,
+    GroupBy.ACCOUNT,
+}
+
+
+@dataclass(frozen=True)
+class ResultReference:
+    """The row and evidence selected from one immutable source query."""
+
+    source_query: PlannedQuery
+    category: str | None = None
+    group_by: GroupBy | None = None
+    group_key: str | None = None
+    transaction_ids: tuple[UUID, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (self.group_by is None) != (self.group_key is None):
+            raise InvalidValueError("a result reference needs both its dimension and key")
+        if self.group_by not in {None, *_REFERENCEABLE_GROUPS}:
+            raise InvalidValueError("the result reference dimension is not referenceable")
+        if self.category is not None:
+            if not self.category.strip():
+                raise InvalidValueError("a result reference category cannot be blank")
+            if len(self.category) > MAX_MERCHANT_LENGTH:
+                raise InvalidValueError("result reference category is too long")
+        if self.group_key is not None:
+            if not self.group_key.strip():
+                raise InvalidValueError("a result reference key cannot be blank")
+            if len(self.group_key) > MAX_MERCHANT_LENGTH:
+                raise InvalidValueError("result reference key is too long")
+        if len(set(self.transaction_ids)) != len(self.transaction_ids):
+            raise InvalidValueError("result reference transaction ids must be unique")
+        if len(self.transaction_ids) > MAX_SELECTED_TRANSACTIONS:
+            raise InvalidValueError("too many result reference transaction ids")
+        if (
+            self.group_by is GroupBy.CATEGORY
+            and self.category is not None
+            and self.category != self.group_key
+        ):
+            raise InvalidValueError("the selected category and category row disagree")
+        if (
+            self.category is not None
+            and self.group_by not in {None, GroupBy.CATEGORY}
+            and (
+                not isinstance(self.source_query, FinancialPlan)
+                or self.category not in self.source_query.categories
+            )
+        ):
+            raise InvalidValueError("the selected category is not grounded by its source query")

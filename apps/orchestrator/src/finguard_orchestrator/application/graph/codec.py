@@ -51,12 +51,12 @@ from finguard_orchestrator.domain.models import (
     expert_agents,
     payment_result,
     query_answer,
-    result_reference,
     visual_follow_up,
     visual_plan,
 )
 from finguard_orchestrator.domain.services import deterministic_visual_planner
 from finguard_orchestrator.domain.value_objects import (
+    account_selection,
     comparison_plan,
     financial_plan,
     movement_list_plan,
@@ -149,11 +149,11 @@ _SERIALIZATION_MODULES = (
     contact,
     expert_agents,
     query_answer,
-    result_reference,
     payment_result,
     visual_follow_up,
     visual_plan,
     deterministic_visual_planner,
+    account_selection,
     comparison_plan,
     financial_plan,
     payment_draft,

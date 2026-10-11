@@ -33,13 +33,13 @@ from finguard_orchestrator.domain.models.chart import (  # noqa: E402
     DEFAULT_PRESENTATION,
     ChartSpec,
     VisualDataset,
+    VisualDecision,
     VisualProfile,
     VisualRow,
 )
 from finguard_orchestrator.domain.models.visual_plan import canonical  # noqa: E402
-from finguard_orchestrator.domain.services.deterministic_visual_planner import (  # noqa: E402
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
-    VisualDecision,
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify  # noqa: E402
 from finguard_orchestrator.domain.services.visual_planning_policy import (  # noqa: E402

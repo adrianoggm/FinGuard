@@ -89,32 +89,6 @@ _CUSTOM_ACCOUNT: Final = re.compile(
     r"(?!corriente\b|nomina\b|de\s+ahorros?\b|de\s+inversion\b|"
     r"cuanto\b|que\b|como\b|cuando\b|donde\b)[a-z][a-z0-9 -]{1,60}",
 )
-_NOT_A_CHOICE: Final = re.compile(
-    r"\b(cuanto|que|como|cuando|donde|gaste|ingrese|movimientos|compras|saldo|"
-    r"bizum|pago|transferencia|no|cancel|gracias|vale)\b"
-)
-_OTHER_ACCOUNTS: Final = re.compile(
-    r"\b(?:las?|los?)\s+(?:otras?|demas)\s+cuentas?\b"
-    r"|\bcuentas?\s+(?:restantes?|que\s+faltan)\b"
-)
-_ALL_ACCOUNTS: Final = re.compile(
-    r"\b(?:todas?\s+(?:mis|las)?\s+cuentas?|en\s+todas\s+(?:mis|las)?\s+cuentas?)\b"
-)
-_ALIAS_DEFINITION: Final[tuple[re.Pattern[str], ...]] = (
-    re.compile(
-        r"\bcuando\s+diga\s+(?P<alias>[a-z0-9][a-z0-9 -]{0,47}?)\s*,?\s*"
-        r"(?:me\s+refiero\s+a|quiero\s+decir)\s+(?P<target>[a-z0-9][a-z0-9 -]{0,80})$"
-    ),
-    re.compile(
-        r"\b(?:llama|quiero\s+llamar)\s+(?P<alias>[a-z0-9][a-z0-9 -]{0,47}?)\s+"
-        r"a\s+(?P<target>[a-z0-9][a-z0-9 -]{0,80})$"
-    ),
-)
-_ALIAS_NOISE: Final = re.compile(r"^(?:(?:la|el|mi)\s+)?(?:cuenta\s+)?")
-_TARGET_NOISE: Final = re.compile(r"^(?:(?:la|el|mi)\s+)?")
-_UNSAFE_ALIAS: Final = re.compile(
-    r"\b(?:cuanto|saldo|gasto|ingreso|movimiento|bizum|transferencia|pago|cancelar|confirma)\b"
-)
 
 
 def _spelt(noun: str) -> str:
@@ -146,9 +120,6 @@ def _pattern(word: str) -> str:
 # carrying these words never reaches this function, because the router excludes interrogatives from
 # a transfer before anything is read.
 _TOWARDS: Final = r"(?:al|a|hacia|para|en)"
-_CUSTOM_DESTINATION: Final = re.compile(
-    rf"\b{_TOWARDS}\s+(?:{_DETERMINERS}\s+)?{_CUSTOM_ACCOUNT.pattern}"
-)
 
 
 def _noun_of(word: str) -> str:
@@ -187,99 +158,6 @@ def named_in(sentence: str) -> tuple[str, ...]:
                 found.setdefault(kind, match.start())
                 break
     return tuple(sorted(found, key=lambda kind: found[kind]))
-
-
-# What leaves an account out when it stands right before one: «menos la hucha», «sin contar el
-# fondo», «quitando la cuenta Viajes». One pattern for the kinds and for the names, so an account
-# cannot be left out by one reading and chosen by the other.
-_LEAVES_OUT: Final = re.compile(
-    r"\b(?:no|menos|excepto|salvo|sin(?:\s+(?:contar|incluir))?|quitando)\s*$"
-)
-# What may stand between the marker and a name: a determiner, the word «cuenta».
-_BEFORE_A_NAME: Final = re.compile(r"(?:(?:el|la|los|las|mi|mis|tu|tus)\s+)?(?:cuentas?\s+)?$")
-
-
-def excluded_in(sentence: str) -> tuple[str, ...]:
-    """Account kinds explicitly removed with «no», «menos», «excepto», «salvo», «sin (contar /
-    incluir)» or «quitando».
-
-    `named_in` deliberately reports every mention. Scope selection needs the second half too:
-    «corriente y hucha, no el fondo» names three accounts but selects two. Treating every noun as
-    positive silently widens the query to precisely the account the user excluded.
-
-    «Sin contar la hucha» was the other way round and worse: unrecognised as an exclusion, it was
-    read as naming the hucha, and the figure was the hucha's alone — the one account the person had
-    left out (ruling R46).
-    """
-    haystack = spanish.folded(sentence)
-    excluded: dict[str, int] = {}
-    for kind, words in _KINDS.items():
-        for word in sorted(words, key=len, reverse=True):
-            match = re.search(_pattern(word), haystack)
-            if match is None:
-                continue
-            prefix = haystack[max(0, match.start() - 24) : match.start()]
-            if _LEAVES_OUT.search(prefix):
-                excluded.setdefault(kind, match.start())
-                break
-    return tuple(sorted(excluded, key=lambda kind: excluded[kind]))
-
-
-def left_out_among(sentence: str, names: tuple[str, ...]) -> tuple[str, ...]:
-    """The names — the holder's own account names, learned aliases — the sentence leaves out.
-
-    «sin la cuenta Viajes», «menos viajes»: the same markers `excluded_in` reads before a kind,
-    read before a name (ruling R48). A name that is also chosen elsewhere in the sentence is still
-    left out where the marker stands before it, and the caller treats it as left out.
-    """
-    haystack = spanish.folded(sentence)
-    left_out: list[str] = []
-    for name in names:
-        folded = spanish.folded(name).strip()
-        if not folded:
-            continue
-        for match in re.finditer(rf"(?<![a-z0-9]){re.escape(folded)}(?![a-z0-9])", haystack):
-            prefix = haystack[max(0, match.start() - 40) : match.start()]
-            if _LEAVES_OUT.search(_BEFORE_A_NAME.sub("", prefix, count=1)):
-                left_out.append(name)
-                break
-    return tuple(left_out)
-
-
-def asks_for_other_accounts(sentence: str) -> bool:
-    """Whether a follow-up asks for the complement of the account scope already in view.
-
-    This says only that the complement was requested. Resolving it needs the holder's actual
-    account directory and the selected identifiers in the previous validated plan, so it remains
-    the application layer's job.
-    """
-    return _OTHER_ACCOUNTS.search(spanish.folded(sentence)) is not None
-
-
-def asks_for_all_accounts(sentence: str) -> bool:
-    """Whether the sentence explicitly selects the holder's complete account set."""
-    folded = spanish.folded(sentence)
-    if "entre mis cuentas" in folded or "entre nuestras cuentas" in folded:
-        return False
-    return _ALL_ACCOUNTS.search(folded) is not None
-
-
-# Every account, said the short way. Only a reply to «¿En qué cuenta…?» may say it like this: the
-# question supplies the noun, and anywhere else «todas» is about something the sentence never says.
-_EVERY_ONE_OF_THEM: Final = frozenset({"todas", "en todas", "todas ellas", "en todas ellas"})
-
-
-def all_accounts_as_a_reply(sentence: str) -> bool:
-    """Whether a reply to the account question chooses every account — «Todas mis cuentas», or only
-    «todas» / «en todas».
-
-    For the caller that knows the account question is the one being answered, which is the only
-    place the ellipsis can be resolved: the arbitration, deciding the turn fills that slot, and the
-    handler, resolving the choice against the accounts offered. One reading for both, so the two
-    cannot disagree about whether «en todas» chose anything.
-    """
-    folded = spanish.folded(sentence).strip(" \t\r\n¿?¡!.,;:")
-    return asks_for_all_accounts(sentence) or folded in _EVERY_ONE_OF_THEM
 
 
 def destination_in(sentence: str) -> tuple[str, ...]:
@@ -346,11 +224,6 @@ def explicitly_names_a_custom_account(sentence: str) -> bool:
     return _CUSTOM_ACCOUNT.search(spanish.folded(sentence)) is not None
 
 
-def names_a_custom_destination(sentence: str) -> bool:
-    """Whether an instruction explicitly points towards ``cuenta <nombre>``."""
-    return _CUSTOM_DESTINATION.search(spanish.folded(sentence)) is not None
-
-
 def _only_a_generic_name(name: str) -> bool:
     folded = spanish.folded(name).strip()
     for determiner in ("mi ", "la ", "el ", "los ", "las "):
@@ -384,41 +257,3 @@ def custom_destination_among(sentence: str, names: tuple[str, ...]) -> tuple[str
         )
     )
     return directed
-
-
-def looks_like_account_choice(sentence: str) -> bool:
-    """Whether a short reply could be one of the account names just offered.
-
-    This only gates an already-open account slot. The next layer still compares it exactly with
-    the holder's directory, so this predicate can make the assistant repeat a question but cannot
-    select an account by itself.
-    """
-    folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
-    return bool(folded) and len(folded.split()) <= 6 and _NOT_A_CHOICE.search(folded) is None
-
-
-def alias_definition_in(sentence: str) -> tuple[str, str] | None:
-    """A deliberately explicit request to teach one account name."""
-    folded = spanish.folded(sentence).strip(" ¿?¡!.,;:'\"")
-    for pattern in _ALIAS_DEFINITION:
-        found = pattern.search(folded)
-        if found is None:
-            continue
-        alias = _ALIAS_NOISE.sub("", found.group("alias")).strip(" -'\"")
-        target = _TARGET_NOISE.sub("", found.group("target")).strip(" -'\"")
-        if not alias or not target or len(alias.split()) > 5 or _UNSAFE_ALIAS.search(alias):
-            return None
-        return alias, target
-    return None
-
-
-def learned_aliases_in(sentence: str, aliases: tuple[str, ...]) -> tuple[str, ...]:
-    """User-defined account phrases present in this sentence, longest first."""
-    folded = spanish.folded(sentence)
-    found: list[tuple[int, str]] = []
-    for alias in sorted(aliases, key=len, reverse=True):
-        key = spanish.folded(alias)
-        match = re.search(rf"(?<![a-z0-9]){re.escape(key)}(?![a-z0-9])", folded)
-        if match is not None:
-            found.append((match.start(), alias))
-    return tuple(alias for _, alias in sorted(found))

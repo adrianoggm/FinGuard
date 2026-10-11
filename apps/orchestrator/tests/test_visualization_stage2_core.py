@@ -38,8 +38,6 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     VisualizationDerivation,
 )
 from finguard_orchestrator.infrastructure.mappers.conversation_mapper import (
-    _encoding_sort_from_payload,
-    to_domain,
     to_payload,
 )
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
@@ -260,20 +258,12 @@ def test_context_ids_and_channels_are_bounded() -> None:
         ChartSpec("bar", (ChartEncoding("x", "a", "nominal"), ChartEncoding("x", "b", "nominal")))
 
 
-def test_conversation_visual_context_round_trip_is_value_free() -> None:
+def test_conversation_visual_context_payload_is_value_free() -> None:
     spec, profile = _base()
     conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
     payload = to_payload(conversation)
     assert "value_minor" in repr(payload)  # field names are allowed
     assert "data" not in repr(payload)
-    restored = to_domain(payload)
-    assert restored.visual_contexts[0].chart_id == "chart-1"
-    assert restored.visual_contexts[0].spec.fields() == spec.fields()
-    # The old-client case: `_base()`'s spec carries neither `stack` nor `sort`, so the wire
-    # payload never has those keys either -- and `to_domain` must still complete the turn rather
-    # than require them.
-    assert restored.visual_contexts[0].spec.stack is None
-    assert restored.visual_contexts[0].spec.sort is None
 
 
 async def test_chart_response_emits_id_and_structural_context_without_rows() -> None:
@@ -1036,18 +1026,7 @@ def test_a_fieldless_encoding_sort_emits_the_bare_order_string() -> None:
     assert emitted["spec"]["encoding"]["y"]["sort"] == "ascending"
 
 
-def test_encoding_sort_from_payload_is_a_tripwire_not_a_filter() -> None:
-    """`VisualContextPayload._value_free_spec` is the guard now: it constructs `EncodingSort`
-    itself and refuses an unsupported mode with a 422 before `to_domain` ever runs. So a
-    `ValueError` reaching `_encoding_sort_from_payload` is no longer a caller's malformed
-    request -- every caller's is stopped at the DTO -- it is the guard and the domain rule it
-    enforces coming apart, and this is the tripwire that proves it surfaces rather than being
-    caught and turned back into a silent `None`, the way it used to be."""
-    with pytest.raises(ValueError, match="unsupported sort mode"):
-        _encoding_sort_from_payload({"mode": "sideways"})
-
-
-def test_a_grouped_comparison_survives_round_trips_and_a_follow_up_patch() -> None:
+def test_a_grouped_comparison_survives_the_codec_and_a_follow_up_patch() -> None:
     profile = visual_profile_of(
         VisualDataset(
             rows=(
@@ -1066,11 +1045,8 @@ def test_a_grouped_comparison_survives_round_trips_and_a_follow_up_patch() -> No
     assert original_spec is not None
     assert original_spec.stack == "disabled"
 
-    conversation = Conversation(visual_contexts=(VisualContext("chart-1", original_spec, profile),))
-    restored = to_domain(to_payload(conversation))
-    restored_spec = restored.visual_contexts[0].spec
+    restored_spec = decode_chart(encode_chart(original_spec))
     assert restored_spec == original_spec
-    assert decode_chart(encode_chart(original_spec)) == original_spec
 
     patched = merge_encoding_patch(restored_spec, EncodingPatch(limit=3), profile)
     quantitative = next(

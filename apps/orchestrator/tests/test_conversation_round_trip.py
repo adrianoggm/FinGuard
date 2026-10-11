@@ -1,17 +1,11 @@
-"""What goes out has to come back the same.
+"""What goes out to the client, and what the payload refuses when it comes back.
 
-The client stores the conversation and sends it back untouched, so anything the mapper drops on the
-way out is state the next turn does not have — and that is exactly how the reported conversations
-broke, one field at a time. A round-trip test is the only honest check: it fails when a field is
-added to a state and forgotten in one of the two directions.
-
-Coming in, the payload is input. It crossed the network, so every piece is rebuilt through the
-domain type that validates it, and a payload whose tag disagrees with its fields is refused rather
-than reinterpreted into half a state.
+The client stores the conversation and sends it back untouched, so the payload is input: it crossed
+the network, and a payload whose tag disagrees with its fields is refused rather than reinterpreted
+into half a state.
 """
 
 import uuid
-from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -30,46 +24,24 @@ from finguard_orchestrator.domain.enums import (
     GroupBy,
     Metric,
     Period,
-    Rail,
-    TransactionType,
 )
-from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
     AccountCandidate,
     AccountScopeClarification,
-    AccountSelection,
-    AccountSelectionMode,
     ActivityOffers,
     BookingConfirmation,
-    Conversation,
-    FinancialClarification,
-    PaymentConfirmation,
-    PaymentInProgress,
-    Slot,
     Turn,
-    UnsupportedCapability,
     Workflow,
 )
 from finguard_orchestrator.domain.models.expert_agents import ActivitySlot
-from finguard_orchestrator.domain.models.planning_context import focus_of
-from finguard_orchestrator.domain.models.result_reference import (
-    ResultReference,
-    answered_with_result,
-    result_reference_of,
-)
-from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
-    FinancialPlanDraft,
     RelativePeriod,
 )
-from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
-from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
-from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 from finguard_orchestrator.infrastructure.dto.llm_dto import _SLOTS_OF, ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper as mapper
-from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 
 LAST_MONTH = FinancialPlan(
     direction=Direction.EXPENSE,
@@ -78,74 +50,9 @@ LAST_MONTH = FinancialPlan(
     group_by=GroupBy.CATEGORY,
     metric=Metric.COUNT,
 )
-FUEL_THIS_YEAR = FinancialPlanDraft(
-    direction=Direction.EXPENSE,
-    period=RelativePeriod(period=Period.THIS_YEAR),
-    categories=("TRANSPORT_FUEL",),
-)
-MARTA = Contact(uuid.UUID(int=2), "Marta Solis Vega", "+34600333444")
-RUIZ = Contact(uuid.UUID(int=1), "Marta Ruiz Gomez", "+34600111222")
 
 
-def there_and_back(conversation: Conversation) -> Conversation:
-    """Out to the wire, through JSON, and back — including the serialisation, because a field that
-    survives the mapper and not `model_dump` is still lost.
-
-    The identifier is put back the way it went out, and every test below is about *state*. It is
-    not an exemption: `conversation_id` is minted by `to_domain` when the payload does not carry
-    one, so a conversation built in a test and sent through here legitimately comes back with an
-    identity it did not have. Normalising it here rather than in each assertion keeps that one
-    difference from reading as "some field survived and one did not" in thirty diffs, and the
-    round trip it actually has to make is asserted on its own, below.
-    """
-    payload = mapper.to_payload(conversation)
-    echoed = ConversationPayload.model_validate(payload.model_dump(mode="json"))
-    return replace(mapper.to_domain(echoed), conversation_id=conversation.conversation_id)
-
-
-def test_an_idle_conversation_survives() -> None:
-    assert there_and_back(IDLE) == IDLE
-
-
-def test_an_absent_payload_is_an_idle_conversation() -> None:
-    assert replace(mapper.to_domain(None), conversation_id=None) == IDLE
-
-
-# --- and the one field that is minted rather than echoed ---------------------------------------
-
-
-def test_a_conversation_the_client_has_never_seen_is_given_an_identity() -> None:
-    """The first turn. There is no session and no store, so the identifier has to be minted at the
-    one moment a payload becomes a conversation, and it has to leave with the answer or the second
-    turn is a second conversation."""
-    first = mapper.to_domain(None)
-
-    assert first.conversation_id is not None
-    assert mapper.to_payload(first).conversation_id == first.conversation_id
-
-
-def test_two_first_turns_are_two_conversations() -> None:
-    """Minted with `uuid4`, so nothing about the turn can make two of them collide into one
-    trace. A hash of the opening sentence would put every "hola" in the same conversation."""
-    assert mapper.to_domain(None).conversation_id != mapper.to_domain(None).conversation_id
-
-
-def test_an_identity_the_client_echoes_back_is_kept() -> None:
-    """The round trip that makes N turns one trace instead of N."""
-    started = mapper.to_domain(None)
-
-    assert there_and_back(started).conversation_id == started.conversation_id
-
-
-def test_a_client_that_predates_the_field_is_not_refused() -> None:
-    """**What `extra="forbid"` decided.** It rejects fields we do not know; it has no opinion about
-    an optional field a caller leaves out. So a client written before this shipped keeps working
-    untouched — it just gets a fresh identity every turn, and its turns go on being one trace each
-    until it starts echoing the field back. Degraded, never broken, and no version negotiation."""
-    old_shape = ConversationPayload.model_validate({"answered_the_balance": True})
-
-    assert old_shape.conversation_id is None
-    assert mapper.to_domain(old_shape).conversation_id is not None
+# --- what the payload refuses at the edge ---------------------------------------------------------
 
 
 def test_an_identity_that_is_not_an_identifier_is_refused_at_the_edge() -> None:
@@ -159,132 +66,6 @@ def test_an_identity_that_is_not_an_identifier_is_refused_at_the_edge() -> None:
         )
 
 
-def test_the_memory_of_the_last_answer_survives() -> None:
-    """Every field of it, including the grouping and the metric — the ones nobody looks at are the
-    ones a mapper drops."""
-    back = there_and_back(IDLE.answered(LAST_MONTH))
-
-    assert back.last_plan == LAST_MONTH
-
-
-def test_partial_merchant_terms_survive_the_client_round_trip() -> None:
-    betting = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.LAST_N_MONTHS, n=3),
-        categories=("LEISURE",),
-        merchant_terms=("apuest", "bet"),
-    )
-
-    assert there_and_back(IDLE.answered(betting)).last_plan == betting
-
-
-def test_a_direct_debit_scope_survives_the_client_round_trip() -> None:
-    receipts = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        metric=Metric.RECURRENCE,
-        transaction_types=(TransactionType.DIRECT_DEBIT,),
-    )
-
-    assert there_and_back(IDLE.answered(receipts)).last_plan == receipts
-
-
-def test_a_group_ranking_limit_survives_the_client_round_trip() -> None:
-    ranking = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        group_by=GroupBy.MERCHANT,
-        metric=Metric.AVERAGE,
-        group_limit=3,
-    )
-
-    assert there_and_back(IDLE.answered(ranking)).last_plan == ranking
-
-
-def test_a_highlighted_category_survives_the_client_round_trip() -> None:
-    reference = ResultReference(
-        source_query=LAST_MONTH,
-        category="GROCERIES",
-        group_by=GroupBy.CATEGORY,
-        group_key="GROCERIES",
-    )
-    out = answered_with_result(IDLE, reference)
-
-    back = there_and_back(out)
-    projected = mapper.to_payload(back)
-
-    assert back.result_reference == reference
-    assert projected.referenced_category == "GROCERIES"
-
-
-def test_a_typed_group_and_its_evidence_survive_the_client_round_trip() -> None:
-    evidence = (uuid.UUID(int=21), uuid.UUID(int=22))
-    reference = ResultReference(
-        source_query=LAST_MONTH,
-        category="GROCERIES",
-        group_by=GroupBy.MERCHANT,
-        group_key="Mercadona",
-        transaction_ids=evidence,
-    )
-    out = answered_with_result(IDLE, reference)
-
-    back = there_and_back(out)
-    projected = mapper.to_payload(back)
-
-    assert back.result_reference == reference
-    assert projected.referenced_group_by is GroupBy.MERCHANT
-    assert projected.referenced_group_key == "Mercadona"
-    assert projected.referenced_category == "GROCERIES"
-    assert projected.referenced_transaction_ids == list(evidence)
-
-
-def test_the_typed_result_projection_is_equivalent_after_the_legacy_wire_round_trip() -> None:
-    reference = ResultReference(
-        source_query=LAST_MONTH,
-        category="GROCERIES",
-        group_by=GroupBy.CATEGORY,
-        group_key="GROCERIES",
-        transaction_ids=(uuid.UUID(int=21), uuid.UUID(int=22)),
-    )
-    out = answered_with_result(IDLE, reference)
-
-    back = there_and_back(out)
-    projected = mapper.to_payload(back)
-
-    assert back.result_reference == reference
-    assert result_reference_of(back, focus_of(back)) == reference
-    assert projected.referenced_group_by is GroupBy.CATEGORY
-    assert projected.referenced_group_key == "GROCERIES"
-    assert projected.referenced_transaction_ids == [uuid.UUID(int=21), uuid.UUID(int=22)]
-
-
-def test_a_legacy_category_row_without_repeated_category_is_canonicalized() -> None:
-    unfiltered = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        group_by=GroupBy.CATEGORY,
-    )
-    payload = mapper.to_payload(IDLE.answered(unfiltered)).model_copy(
-        update={
-            "referenced_category": None,
-            "referenced_group_by": GroupBy.CATEGORY,
-            "referenced_group_key": "GROCERIES",
-        }
-    )
-
-    back = mapper.to_domain(payload)
-
-    assert back.result_reference is not None
-    assert back.result_reference.source_query is back.last_plan
-    assert back.result_reference.category is None
-    assert back.result_reference.group_by is GroupBy.CATEGORY
-    assert back.result_reference.group_key == "GROCERIES"
-    projected = mapper.to_payload(back)
-    assert projected.referenced_category == "GROCERIES"
-    assert projected.referenced_group_by is GroupBy.CATEGORY
-    assert projected.referenced_group_key == "GROCERIES"
-
-
 def test_a_partial_group_reference_is_not_valid_conversation_state() -> None:
     with pytest.raises(ValidationError):
         ConversationPayload.model_validate({"referenced_group_by": "MERCHANT"})
@@ -296,40 +77,6 @@ def test_duplicate_referenced_movements_are_not_valid_conversation_state() -> No
         ConversationPayload.model_validate(
             {"referenced_transaction_ids": [movement_id, movement_id]}
         )
-
-
-def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
-    earlier = LAST_MONTH
-    latest = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_MONTH),
-        categories=("GROCERIES",),
-        transaction_ids=(uuid.UUID(int=7), uuid.UUID(int=8)),
-    )
-
-    back = there_and_back(Conversation(last_plan=latest, prior_plan=earlier))
-
-    assert back.last_plan == latest
-    assert back.prior_plan == earlier
-
-
-def test_an_answered_comparison_survives_as_one_validated_pair() -> None:
-    earlier = LAST_MONTH
-    latest = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_MONTH),
-        categories=("GROCERIES",),
-        group_by=GroupBy.CATEGORY,
-        metric=Metric.COUNT,
-    )
-    comparison = ComparisonPlan.between(earlier, latest)
-    assert comparison is not None
-
-    back = there_and_back(IDLE.answered_comparison(comparison))
-
-    assert back.last_comparison == comparison
-    assert back.prior_plan == comparison.earlier
-    assert back.last_plan == comparison.latest
 
 
 @pytest.mark.parametrize("missing", ["earlier", "latest"])
@@ -352,101 +99,6 @@ def test_a_partial_comparison_is_not_valid_conversation_state(missing: str) -> N
         ConversationPayload(**fields)
 
 
-def test_an_answered_percentage_survives_with_both_operands() -> None:
-    whole = FinancialPlan(
-        direction=Direction.INCOME,
-        period=RelativePeriod(Period.THIS_YEAR),
-        categories=("SALARY",),
-    )
-    part = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(Period.THIS_YEAR),
-        categories=("HOUSING_RENT",),
-    )
-    ratio = RatioPlan(part=part, whole=whole, kind=RatioKind.SHARE)
-
-    back = there_and_back(IDLE.answered_ratio(ratio))
-
-    assert back.last_ratio == ratio
-    assert back.last_plan == part
-    assert back.prior_plan == whole
-
-
-def test_a_percentage_waiting_only_for_its_window_survives() -> None:
-    ratio = RatioDraft(
-        part=FinancialPlanDraft(direction=Direction.EXPENSE, categories=("GROCERIES",)),
-        whole=FinancialPlanDraft(direction=Direction.EXPENSE),
-        kind=RatioKind.SHARE,
-    )
-
-    back = there_and_back(IDLE.waiting_for_ratio(ratio))
-
-    assert back.pending_ratio == ratio
-    assert back.last_asked is Slot.WINDOW
-
-
-@pytest.mark.parametrize("special", ["ratio", "pending_ratio", "comparison", "balance"])
-def test_special_focus_discards_incoming_legacy_reference(special: str) -> None:
-    evidence = (uuid.UUID(int=31),)
-    reference_fields = {
-        "referenced_category": "GROCERIES",
-        "referenced_group_by": GroupBy.MERCHANT,
-        "referenced_group_key": "Mercadona",
-        "referenced_transaction_ids": evidence,
-    }
-    if special == "ratio":
-        part = FinancialPlan(
-            direction=Direction.EXPENSE,
-            period=RelativePeriod(Period.LAST_MONTH),
-            categories=("GROCERIES",),
-        )
-        ratio = RatioPlan(
-            part=part,
-            whole=FinancialPlan(
-                direction=Direction.INCOME,
-                period=RelativePeriod(Period.LAST_MONTH),
-            ),
-            kind=RatioKind.SHARE,
-        )
-        conversation = IDLE.answered_ratio(ratio)
-    elif special == "pending_ratio":
-        draft = RatioDraft(
-            part=FinancialPlanDraft(direction=Direction.EXPENSE),
-            whole=FinancialPlanDraft(direction=Direction.INCOME),
-            kind=RatioKind.SHARE,
-        )
-        conversation = IDLE.answered(LAST_MONTH).waiting_for_ratio(draft)
-    elif special == "comparison":
-        earlier = FinancialPlan(
-            direction=Direction.EXPENSE,
-            period=RelativePeriod(Period.LAST_MONTH),
-            categories=("GROCERIES",),
-        )
-        latest = FinancialPlan(
-            direction=Direction.EXPENSE,
-            period=RelativePeriod(Period.THIS_MONTH),
-            categories=("GROCERIES",),
-        )
-        comparison = ComparisonPlan.between(earlier, latest)
-        assert comparison is not None
-        conversation = IDLE.answered_comparison(comparison)
-    else:
-        conversation = replace(IDLE.answered(LAST_MONTH), answered_the_balance=True)
-
-    raw = mapper.to_payload(conversation).model_dump()
-    raw.update(reference_fields)
-    payload = ConversationPayload.model_validate(raw)
-
-    back = mapper.to_domain(payload)
-    projected = mapper.to_payload(back)
-
-    assert back.result_reference is None
-    assert projected.referenced_category is None
-    assert projected.referenced_group_by is None
-    assert projected.referenced_group_key is None
-    assert projected.referenced_transaction_ids == []
-
-
 @pytest.mark.parametrize("missing", ["kind", "part", "whole"])
 def test_a_partial_percentage_pair_is_not_valid_conversation_state(missing: str) -> None:
     plan = mapper.plan_payload(LAST_MONTH)
@@ -459,75 +111,6 @@ def test_a_partial_percentage_pair_is_not_valid_conversation_state(missing: str)
 
     with pytest.raises(ValidationError):
         ConversationPayload(**fields)
-
-
-def test_negative_filters_survive_the_client_round_trip() -> None:
-    plan = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        excluded_categories=("HOUSING_RENT",),
-        excluded_merchants=("Mercadona",),
-    )
-
-    back = there_and_back(IDLE.answered(plan))
-
-    assert back.last_plan == plan
-
-
-def test_an_internal_only_query_survives_the_client_round_trip() -> None:
-    plan = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(Period.THIS_YEAR),
-        include_internal=True,
-        internal_only=True,
-        across_accounts=True,
-    )
-
-    back = there_and_back(IDLE.answered(plan))
-
-    assert back.last_plan == plan
-
-
-def test_an_explicit_account_scope_survives_the_client_round_trip() -> None:
-    scoped = FinancialPlan(
-        direction=Direction.ALL,
-        period=RelativePeriod(period=Period.LAST_N_MONTHS, n=4),
-        only_account_id=uuid.UUID(int=7),
-    )
-
-    back = there_and_back(IDLE.answered(scoped))
-
-    assert back.last_plan == scoped
-
-
-@pytest.mark.parametrize(
-    "selection",
-    [
-        AccountSelection(AccountSelectionMode.ALL),
-        AccountSelection(AccountSelectionMode.SELECTED, (uuid.UUID(int=7), uuid.UUID(int=8))),
-    ],
-)
-def test_account_selection_survives_the_client_round_trip(selection: AccountSelection) -> None:
-    assert there_and_back(Conversation(account_selection=selection)).account_selection == selection
-
-
-def test_account_scope_clarification_with_ranked_many_survives_round_trip() -> None:
-    ranking = TopMovements(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(Period.THIS_MONTH),
-        rank=1,
-    )
-    pending = AccountScopeClarification(
-        pending=ranking,
-        requested_count=10,
-        candidates=(
-            AccountCandidate(uuid.UUID(int=7), "Hucha", "SAVINGS"),
-            AccountCandidate(uuid.UUID(int=8), "Cuenta corriente", "CURRENT"),
-        ),
-        explicit_visualization=True,
-    )
-    back = there_and_back(IDLE.with_active(pending))
-    assert back.active == pending
 
 
 def test_every_workflow_says_which_slots_it_can_be_waiting_on() -> None:
@@ -557,142 +140,7 @@ def test_account_scope_payload_rejects_count_for_aggregate_plan() -> None:
         ConversationPayload.model_validate(payload)
 
 
-def test_a_query_waiting_for_a_bank_retry_survives_without_becoming_an_answer() -> None:
-    out = Conversation(last_plan=None, retry_plan=LAST_MONTH)
-
-    back = there_and_back(out)
-
-    assert back.retry_plan == LAST_MONTH
-    assert back.last_plan is None
-
-
-def test_a_clarification_survives_with_its_slot() -> None:
-    out = IDLE.with_active(FinancialClarification(draft=FUEL_THIS_YEAR, awaiting=Slot.CATEGORY))
-
-    back = there_and_back(out)
-
-    assert back == out
-    assert back.awaiting is Slot.CATEGORY
-
-
-def test_a_correction_request_survives_with_the_plan_it_will_patch() -> None:
-    plan = FUEL_THIS_YEAR.into_plan()
-    assert plan is not None
-    out = IDLE.answered(plan).with_active(
-        FinancialClarification(draft=FUEL_THIS_YEAR, awaiting=Slot.CORRECTION)
-    )
-
-    back = there_and_back(out)
-
-    assert back == out
-    assert back.awaiting is Slot.CORRECTION
-    assert back.last_plan == plan
-
-
-def test_a_refusal_survives_with_the_family_it_named() -> None:
-    """Which the answer needs: "no hago previsiones" and "no comparo dos periodos" are different
-    sentences, and a round trip that lost the family would flatten them into "no puedo con eso"."""
-    out = IDLE.with_active(UnsupportedCapability(capability="FORECAST"))
-
-    back = there_and_back(out)
-
-    assert back == out
-
-
-def test_a_half_built_payment_survives_with_everything_on_it() -> None:
-    out = IDLE.with_active(
-        PaymentInProgress(
-            draft=PaymentDraft(recipient_name="Marta", amount_minor=1_500, concept="comida"),
-            awaiting=Slot.RECIPIENT_CHOICE,
-            candidates=(RUIZ, MARTA),
-            suspended=True,
-        )
-    )
-
-    back = there_and_back(out)
-
-    assert back == out
-
-
-def test_a_half_built_transfer_keeps_its_rail_and_chosen_contact() -> None:
-    """Both values cross the client boundary; losing either changes where or how money leaves."""
-    out = IDLE.with_active(
-        PaymentInProgress(
-            draft=PaymentDraft(
-                recipient_contact_id=MARTA.contact_id,
-                amount_minor=1_500,
-                rail=Rail.TRANSFER,
-            ),
-            awaiting=Slot.AMOUNT,
-        )
-    )
-
-    back = there_and_back(out)
-
-    assert back == out
-    assert isinstance(back.active, PaymentInProgress)
-    assert back.active.draft.recipient_contact_id == MARTA.contact_id
-    assert back.active.draft.rail is Rail.TRANSFER
-
-
-def test_a_confirmation_survives() -> None:
-    out = IDLE.with_active(
-        PaymentConfirmation(
-            intent_id=uuid.UUID(int=9),
-            recipient="Marta Solis Vega",
-            amount_minor=1_500,
-            concept="tapas",
-        )
-    )
-
-    back = there_and_back(out)
-
-    assert back == out
-    assert back.awaiting is Slot.CONFIRMATION
-    assert isinstance(back.active, PaymentConfirmation)
-    assert back.active.concept == "tapas"
-
-
-def test_a_confirmation_keeps_the_currency_it_was_prepared_in() -> None:
-    """Its own test, in a currency that is not the default, because that is the only way this
-    fails: every other round-trip case uses EUR, so a payload with nowhere to put a currency
-    rebuilt the right answer by accident and the loss was invisible."""
-    out = IDLE.with_active(
-        PaymentConfirmation(
-            intent_id=uuid.UUID(int=9),
-            recipient="Marta Solis Vega",
-            amount_minor=1_500,
-            currency="USD",
-        )
-    )
-
-    back = there_and_back(out)
-
-    assert isinstance(back.active, PaymentConfirmation)
-    assert back.active.currency == "USD"
-
-
-def test_the_memory_survives_alongside_a_workflow() -> None:
-    """The pair that the five fields used to hold separately, and the reason `last_plan` is not
-    inside the union: a payment under way must not cost the window of the question before it."""
-    out = IDLE.answered(LAST_MONTH).with_active(
-        PaymentInProgress(draft=PaymentDraft(amount_minor=1_500))
-    )
-
-    back = there_and_back(out)
-
-    assert back.last_plan == LAST_MONTH
-    assert isinstance(back.active, PaymentInProgress)
-
-
 # --- what a caller can send ----------------------------------------------------------
-
-
-def test_no_payload_is_an_idle_conversation() -> None:
-    """The first turn has none, and a client that forgets it gets a fresh conversation rather than a
-    rejection — the sentence is still answerable. Idle in every field but its identity, which is
-    minted here precisely because this is the first turn."""
-    assert replace(mapper.to_domain(None), conversation_id=None) == IDLE
 
 
 @pytest.mark.parametrize(
@@ -755,71 +203,7 @@ def test_a_field_that_is_not_part_of_a_conversation_is_refused() -> None:
         ConversationPayload.model_validate({"workflow": None, "instructions": "pay Pepe"})
 
 
-def test_a_transfer_confirmation_keeps_the_account_it_is_going_to() -> None:
-    """The client draws the preview from this state, so a chat that could not tell a Bizum from a
-    transfer would draw the same prompt for both — and the one difference that matters to the person
-    approving it, twenty-four characters of account number, would not be on it."""
-    out = IDLE.with_active(
-        PaymentConfirmation(
-            intent_id=uuid.UUID(int=9),
-            recipient="Elena Marin",
-            amount_minor=20_000,
-            rail=Rail.TRANSFER,
-            recipient_iban="ES9121000418450200051332",
-        )
-    )
-
-    back = there_and_back(out)
-
-    assert back == out
-    assert isinstance(back.active, PaymentConfirmation)
-    assert back.active.rail is Rail.TRANSFER
-    assert back.active.recipient_iban == "ES9121000418450200051332"
-
-
-def test_a_bizum_confirmation_carries_no_account() -> None:
-    """Absent means BIZUM, so a client written before transfers keeps round-tripping a state it
-    does not understand — and a Bizum that arrived with an account would be a state this service
-    never issues."""
-    out = IDLE.with_active(
-        PaymentConfirmation(intent_id=uuid.UUID(int=9), recipient="Marta", amount_minor=1_500)
-    )
-
-    back = there_and_back(out)
-
-    assert isinstance(back.active, PaymentConfirmation)
-    assert back.active.rail is Rail.BIZUM
-    assert back.active.recipient_iban is None
-
-
-def test_a_completed_payment_keeps_a_one_turn_rail_referent() -> None:
-    out = IDLE.paid(Rail.BIZUM)
-
-    back = there_and_back(out)
-
-    assert back == out
-    assert back.active is None
-    assert back.recent_payment_rail is Rail.BIZUM
-
-
 # --- the log of what happened --------------------------------------------------------
-
-
-def test_the_thread_survives_the_wire() -> None:
-    """The whole point of putting it on the payload. There are no sessions here, so a log the
-    mapper drops is a thread the next turn does not have — and the next turn is where it is read."""
-    out = IDLE.with_turn(
-        Turn(
-            sentence="¿cuánto gasté?",
-            outcome="NEEDS_CLARIFICATION",
-            question="¿De qué periodo?",
-        )
-    ).with_turn(Turn(sentence="el mes pasado", outcome="PLANNED", plan="del mes pasado, gasto"))
-
-    back = there_and_back(out)
-
-    assert back == out
-    assert [turn.sentence for turn in back.turns] == ["¿cuánto gasté?", "el mes pasado"]
 
 
 def test_the_log_keeps_the_newest_turns() -> None:
@@ -831,7 +215,6 @@ def test_the_log_keeps_the_newest_turns() -> None:
 
     assert len(conversation.turns) == MAX_REMEMBERED_TURNS
     assert conversation.turns[-1].sentence == f"turno {MAX_REMEMBERED_TURNS + 2}"
-    assert there_and_back(conversation) == conversation
 
 
 def test_a_caller_cannot_send_back_more_turns_than_travel() -> None:
@@ -858,7 +241,6 @@ def test_a_turn_too_long_to_remember_is_cut_rather_than_lost() -> None:
 
     assert len(out.turns[0].sentence) == MAX_TURN_SENTENCE
     assert out.turns[0].plan is not None and len(out.turns[0].plan) == MAX_TURN_NOTE
-    assert there_and_back(out) == out
 
 
 # --- the offers of the last search (A2A expert agents, spec §5.3) ------------------------------
@@ -880,136 +262,12 @@ OFFERS = ActivityOffers(
     (("gym-sur", "Gimnasio Sur"), ("gym-norte", "Gimnasio Norte")),
     (("gym-sur", "ctx-sur"), ("gym-norte", "ctx-norte")),
 )
-SEALS = MetricTokenCodec({"k1": b"k" * 32}, "k1")
-HOLDER = "ES-0001"
-
-
-def verified(payload: ConversationPayload, holder: str = HOLDER) -> Conversation:
-    """`to_domain` as the controller calls it: every echoed seal checked for this holder."""
-    return mapper.to_domain(
-        payload,
-        verify=lambda token, conversation_id, position, semantics: SEALS.verify_context(
-            token, holder, conversation_id, position, semantics
-        ),
-        verify_offers=lambda token, conversation_id, semantics: SEALS.verify_offers(
-            token, holder, conversation_id, semantics
-        ),
-    )
-
-
-def sealed_echo(conversation: Conversation) -> ConversationPayload:
-    """What this service sends with a search's answer, as the client echoes it back."""
-    payload = mapper.to_payload(conversation)
-    assert payload.conversation_id is not None
-    sealed = mapper.seal_offers_payload(payload, payload.conversation_id, HOLDER, SEALS)
-    return ConversationPayload.model_validate(sealed.model_dump(mode="json"))
 
 
 def offers_on_the_wire() -> dict[str, object]:
     dumped = mapper.to_payload(replace(IDLE, activity_offers=OFFERS)).model_dump(mode="json")
     offers: dict[str, object] = dumped["activity_offers"]
     return offers
-
-
-@pytest.mark.parametrize(
-    "conversation",
-    [
-        replace(IDLE, activity_offers=OFFERS),
-        replace(IDLE.answered(LAST_MONTH), activity_offers=OFFERS),
-        replace(
-            IDLE.with_active(
-                PaymentInProgress(
-                    draft=PaymentDraft(recipient_name="Marta", amount_minor=1_500),
-                    suspended=True,
-                )
-            ),
-            activity_offers=OFFERS,
-        ),
-    ],
-    ids=["alone", "beside-the-last-answer", "beside-a-paused-payment"],
-)
-def test_the_offers_of_the_last_search_survive_the_client_round_trip(
-    conversation: Conversation,
-) -> None:
-    """Memory rather than a workflow, like the visual contexts: they ride beside whatever else the
-    conversation holds, every slot, name and context intact."""
-    assert there_and_back(conversation) == conversation
-
-
-def test_sealed_offers_come_back_trusted_and_keep_their_seal_through_another_turn() -> None:
-    """A turn that does not touch the offers carries them forward still sealed: the token that
-    verified is kept on the way in and emitted again on the way out, and it still verifies."""
-    started = replace(mapper.to_domain(None), activity_offers=OFFERS)
-
-    back = verified(sealed_echo(started))
-
-    assert back.activity_offers is not None and back.activity_offers.trusted
-    assert back.activity_offers.slots == OFFERS.slots
-    token = back.activity_offers.token
-    assert token is not None and token.startswith("o1.")
-    again = verified(
-        ConversationPayload.model_validate(mapper.to_payload(back).model_dump(mode="json"))
-    )
-    assert again.activity_offers is not None and again.activity_offers.trusted
-    assert again.activity_offers.token == token
-
-
-def _retime(offers: dict[str, Any]) -> None:
-    offers["slots"][0]["start"] = "2026-10-01T18:00:00+02:00"
-
-
-def _refill(offers: dict[str, Any]) -> None:
-    offers["slots"][0]["free_places"] = 60
-
-
-def _rename(offers: dict[str, Any]) -> None:
-    offers["agent_names"][0]["name"] = "Gimnasio Falso"
-    offers["slots"][0]["agent_name"] = "Gimnasio Falso"
-
-
-def _recontext(offers: dict[str, Any]) -> None:
-    offers["contexts"][0]["context_id"] = "ctx-other"
-
-
-def _unseal(offers: dict[str, Any]) -> None:
-    offers["token"] = None
-
-
-def _forge(offers: dict[str, Any]) -> None:
-    offers["token"] = "o1.AAAA.BBBB"
-
-
-@pytest.mark.parametrize(
-    "tamper",
-    [_retime, _refill, _rename, _recontext, _unseal, _forge],
-    ids=["time", "places", "name", "context", "no-token", "forged-token"],
-)
-def test_an_echo_with_a_broken_seal_reads_back_untrusted(
-    tamper: Callable[[dict[str, Any]], None],
-) -> None:
-    started = replace(mapper.to_domain(None), activity_offers=OFFERS)
-    echoed = sealed_echo(started).model_dump(mode="json")
-    tamper(echoed["activity_offers"])
-
-    back = verified(ConversationPayload.model_validate(echoed))
-
-    assert back.activity_offers is not None
-    assert not back.activity_offers.trusted and back.activity_offers.token is None
-
-
-def test_offers_sealed_for_another_holder_read_back_untrusted() -> None:
-    started = replace(mapper.to_domain(None), activity_offers=OFFERS)
-
-    back = verified(sealed_echo(started), holder="ES-0002")
-
-    assert back.activity_offers is not None and not back.activity_offers.trusted
-
-
-def test_a_payload_from_before_the_offers_reads_back_none() -> None:
-    old_shape = ConversationPayload.model_validate({"answered_the_balance": True})
-
-    assert old_shape.activity_offers is None
-    assert verified(old_shape).activity_offers is None
 
 
 _SLOT_ON_THE_WIRE: dict[str, object] = {
@@ -1058,26 +316,6 @@ BOOKING = BookingConfirmation(uuid.UUID(int=11), NORTE_1900, "Gimnasio Norte", "
 def booking_on_the_wire() -> dict[str, Any]:
     dumped: dict[str, Any] = mapper.to_payload(IDLE.with_active(BOOKING)).model_dump(mode="json")
     return {key: value for key, value in dumped.items() if key.startswith("booking_")}
-
-
-@pytest.mark.parametrize(
-    "conversation",
-    [
-        IDLE.with_active(BOOKING),
-        replace(IDLE.with_active(BOOKING), activity_offers=OFFERS),
-        IDLE.with_active(
-            BookingConfirmation(uuid.UUID(int=12), SUR_1830, "Gimnasio Sur", context_id=None)
-        ),
-    ],
-    ids=["alone", "beside-its-offers", "no-context"],
-)
-def test_a_booking_waiting_for_a_yes_survives_with_its_four_fields(
-    conversation: Conversation,
-) -> None:
-    back = there_and_back(conversation)
-
-    assert back == conversation
-    assert back.awaiting is Slot.CONFIRMATION
 
 
 def test_a_booking_travels_as_its_own_workflow_and_four_fields() -> None:

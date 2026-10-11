@@ -50,32 +50,6 @@ def test_the_category_is_named_in_the_headline() -> None:
     assert said == "449,62 € en supermercado el mes pasado, en 8 movimientos."
 
 
-def test_a_natural_month_is_named_but_a_cross_year_range_stays_iso() -> None:
-    april = plan(period=None, date_range=AbsoluteRange(date(2026, 4, 1), date(2026, 4, 30)))
-    cross_year = plan(period=None, date_range=AbsoluteRange(date(2025, 4, 1), date(2026, 4, 30)))
-
-    movement = Movement(
-        occurred_at=datetime(2026, 4, 4, 10, 0),
-        description="Compra",
-        amount_minor=100,
-        direction="EXPENSE",
-        merchant_name="Tienda",
-    )
-    april_text = answer_writer.ranked_many(
-        (movement,),
-        TopMovements(direction=Direction.EXPENSE, date_range=april.date_range),
-        requested=1,
-    )
-    cross_year_text = answer_writer.ranked_many(
-        (movement,),
-        TopMovements(direction=Direction.EXPENSE, date_range=cross_year.date_range),
-        requested=1,
-    )
-
-    assert april_text.startswith("Tus 1 mayores gastos en abril de 2026")
-    assert cross_year_text.startswith("Tus 1 mayores gastos del 2025-04-01 al 2026-04-30")
-
-
 def test_two_categories_are_both_named() -> None:
     said = answer_writer.write(answer(), plan(categories=("GROCERIES", "TRANSPORT_FUEL")))
 
@@ -231,27 +205,6 @@ def test_a_category_comparison_shows_an_average_for_each_category() -> None:
     assert "restaurantes: media 5,00 € (1)" in said
 
 
-def test_an_average_comparison_does_not_lead_with_the_combined_average() -> None:
-    grouped = QueryAnswer(
-        currency="EUR",
-        total_minor=5_028,
-        movement_count=8,
-        groups=(Group("GROCERIES", 3_600, 6), Group("RESTAURANTS", 1_428, 2)),
-    )
-    compared = plan(
-        categories=("GROCERIES", "RESTAURANTS"),
-        group_by=GroupBy.CATEGORY,
-        metric=Metric.AVERAGE,
-    )
-
-    said = answer_writer.compare_averages(grouped, compared)
-
-    assert "supermercado: 6,00 € (6 movimientos)" in said
-    assert "restaurantes: 7,14 € (2 movimientos)" in said
-    assert "más alta fue la de restaurantes" in said
-    assert "6,29 €" not in said, "the combined mean does not compare either category"
-
-
 def test_an_empty_answer_says_what_it_looked_for() -> None:
     """ "No he encontrado movimientos el mes pasado" invites the user to believe there were none.
     Naming the filter is what lets them see the query was wrong instead."""
@@ -313,28 +266,6 @@ def test_one_movement_in_one_account_is_singular() -> None:
 
     assert said.startswith("El movimiento encontrado")
     assert "Todos los 1" not in said
-
-
-def test_the_movements_behind_it_are_still_the_evidence() -> None:
-    """Unrelated to the headline, and asserted here so a change to one is not read as licence to
-    change the other."""
-    with_movements = QueryAnswer(
-        currency="EUR",
-        total_minor=2_211,
-        movement_count=1,
-        movements=(
-            Movement(
-                occurred_at=datetime(2026, 7, 28, 10, 0),
-                description="Cafe Central",
-                amount_minor=2_211,
-                direction="EXPENSE",
-                merchant_name="Cafe Central",
-                category="RESTAURANTS",
-            ),
-        ),
-    )
-
-    assert answer_writer.cite(with_movements) != []
 
 
 def test_an_exclusion_outside_the_category_filter_says_the_figure_did_not_change() -> None:

@@ -59,9 +59,10 @@ from finguard_orchestrator.domain.models.chart import (
     Stack,
     VisualField,
 )
-from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
+from finguard_orchestrator.domain.models.conversation import Slot, Workflow
 from finguard_orchestrator.domain.models.expert_agents import AGENT_ID, REFERENCE
 from finguard_orchestrator.domain.services.visual_profile import MAX_DRAWN_LABELS
+from finguard_orchestrator.domain.value_objects.account_selection import AccountSelectionMode
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
 

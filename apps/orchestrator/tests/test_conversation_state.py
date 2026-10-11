@@ -37,13 +37,10 @@ from finguard_orchestrator.domain.models.conversation import (
     FinancialClarification,
     PaymentConfirmation,
     PaymentInProgress,
+    ResultReference,
     Slot,
     UnsupportedCapability,
     slot_for,
-)
-from finguard_orchestrator.domain.models.result_reference import (
-    ResultReference,
-    focused_on_result,
 )
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -291,13 +288,6 @@ _TRANSITIONS: tuple[tuple[str, Callable[[Conversation], Conversation], set[str]]
     ),
     ("awaiting_retry", lambda c: c.awaiting_retry(THIS_MONTH), {"retry_plan"}),
     ("without_retry", lambda c: c.without_retry(), {"retry_plan"}),
-    (
-        "focused_on_result",
-        lambda c: focused_on_result(
-            c, ResultReference(LAST_MONTH, group_by=GroupBy.MERCHANT, group_key="Mercadona")
-        ),
-        {"result_reference"},
-    ),
     (
         "waiting_for_ratio",
         lambda c: c.waiting_for_ratio(PENDING_SHARE),

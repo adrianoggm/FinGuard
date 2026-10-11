@@ -27,8 +27,7 @@ from datetime import date
 
 import pytest
 
-from finguard_orchestrator.domain.services import account_words, intent_router, window_words
-from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services import account_words, window_words
 
 TODAY = date(2026, 8, 5)  # a Wednesday, which one of the exceptions below turns on
 
@@ -105,24 +104,6 @@ def test_an_excused_unit_is_still_excused_for_the_reason_given() -> None:
 # The words for how much money there is. One class again: what can be asked with "tengo" can be
 # asked with "queda", and the balance intent has to hear all of them.
 STATES = ("cuanto tengo", "cuanto me queda", "cuanto hay", "de cuanto dispongo", "que saldo tengo")
-
-
-@pytest.mark.parametrize("said", STATES)
-def test_every_way_of_asking_for_the_balance_reaches_the_balance(said: str) -> None:
-    assert intent_router.route(said, has_previous=False) is Intent.ACCOUNT_BALANCE
-
-
-@pytest.mark.parametrize("said", STATES)
-def test_a_slip_in_the_question_word_costs_none_of_them_the_balance(said: str) -> None:
-    """The third defect, asked of the class rather than of the sentence that reported it.
-
-    "Cunato tengo" was a balance answered by the financial planner while the verb beside it already
-    tolerated three misspellings written out by hand. A rule that only fixes the reported spelling
-    leaves the same hole under the next one.
-    """
-    slipped = said.replace("cuanto", "cunato", 1)
-
-    assert intent_router.route(slipped, has_previous=False) is Intent.ACCOUNT_BALANCE
 
 
 # Every kind of account this service knows, by a word somebody would use for it.

@@ -40,7 +40,6 @@ from finguard_orchestrator.domain.services import (
     account_words,
     payment_words,
     spanish,
-    window_words,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 
@@ -112,26 +111,6 @@ _ALREADY: Final = re.compile(
     rf"|\b(?:{_MADE})\b"
 )
 
-# «Pasar» moves money only when it is pointed at somebody (validation fix 3, G1): «¿cuánto le he
-# pasado a Aitor?», «le pasé 20 a Javi», «lo que he pasado a Marta». Asked on 2026-10-08 it was
-# nobody's: Aitor became a shop, and the window the sentence said was asked for. So not in
-# `_PAYMENT_VERBS`, whose every form counts anywhere: «el mes pasado» is in every other sentence,
-# and «¿qué le ha pasado a Aitor?» is something that happened to him. The holder has to be the one
-# passing — a clitic and «pasé», or «he»/«hemos» and the participle — and nothing may come between
-# the verb and «a» but «ya» or an amount: «le he pasado el informe a Aitor» passed a report.
-# «Pasao» is how the participle is said aloud, in this verb only.
-#
-# Not in `_ALREADY` (fix round 1, I-1), which `is_payment` reads as "never an order": «he pasado a
-# ver a Javi, mándale 20 euros» is an order with a visit in front of it, and it stopped paying. Who
-# the money was passed to is read with the directory, right after the «a» (`the_person_paid`).
-_PASSED_TO: Final = re.compile(
-    r"\b(?:(?:le|les)\s+pase|(?:he|hemos)\s+(?:pasado|pasao))"
-    r"(?:\s+(?:ya|tambien|\d+(?:[.,]\d{1,2})?\s*(?:€|euros?|pavos)?))*"
-    r"\s+a\s+(?P<after>[a-z].*)$"
-)
-# What may follow the person and makes what was passed a thing, not money: «le he pasado ya a Aitor
-# lo del regalo». A window there is still the period of the money: «… a Aitor el mes pasado».
-_A_THING_AFTER_THE_PERSON: Final = frozenset("lo la las los el un una unos unas eso esto".split())
 _A_WORD: Final = re.compile(r"[a-z0-9]+")
 
 # Money arriving, which is never an order to send any.
@@ -266,13 +245,6 @@ _OWN_ACCOUNTS: Final = re.compile(
 # money. Without one, "manda un correo a Marta" would be read as a payment.
 _MONEY: Final = re.compile(r"(\d|€|\beuros?\b|\bbi[xz]um\b|\btransferencia\b)")
 
-# A whole reply that says the user cannot fill the slot yet. Narrow and anchored so "no sé a
-# quién tengo en contactos" remains a contact-list question, while a bare "no sé" does not fall
-# through to the financial planner and come back asking for a month.
-_UNCERTAIN: Final = re.compile(
-    r"\s*(no\s+(lo\s+)?se|ni\s+idea|no\s+estoy\s+segur[oa]|"
-    r"(aun|todavia)\s+no\s+(lo\s+)?se)\s*[.!?]*\s*"
-)
 
 # Resuming a payment after a change of subject has to name both the action and the payment. A bare
 # "sigamos" could refer to the financial question in between, while a bare amount is exactly the
@@ -284,10 +256,6 @@ _RESUMING: Final = re.compile(
 _CLASSIFYING_A_MOVEMENT: Final = re.compile(
     r"\b(?:eso|esto|este|ese|el\s+movimiento|el\s+ingreso)\b.{0,25}"
     r"\b(?:es|era|fue)\b.{0,35}\b(?:bizum|nomina|transferencia)\b"
-)
-_ANOTHER_PAYMENT: Final = re.compile(
-    r"^\s*(?:y\s+)?(?:ahora\s+)?(?:haz|manda|envia)?\s*(?:un\s+)?otr[oa]\b",
-    re.IGNORECASE,
 )
 
 
@@ -311,128 +279,9 @@ def continues(sentence: str, draft: PaymentDraft, directory: tuple[Contact, ...]
     )
 
 
-def describes_a_past_payment(sentence: str) -> bool:
-    """Whether the sentence says money already left, rather than ordering any to leave.
-
-    `is_payment` reads this to refuse, which is half of what the sentence means and the half that
-    matters most. The other half was falling through: "le he mandado 20 € a Marta Solis Vega" is
-    about a movement that exists, and it reached the financial planner with nothing recognised in
-    it — a model asked to build a query out of a sentence this vocabulary had already understood.
-
-    Both signals, because the tense alone does not say which way the money went. "Me ha llegado un
-    bizum" is equally past and is somebody else's payment.
-    """
-    folded = spanish.folded(sentence)
-    if _RECEIVED.search(folded) is not None:
-        return False
-    return bool(_ALREADY.search(folded)) or _passes_money(sentence, folded)
-
-
-def _passes_money(sentence: str, folded: str) -> bool:
-    """Whether the sentence says the holder passed money to somebody (`_PASSED_TO`) and orders
-    nothing beside it: «hazle un bizum a Javi como el que le pasé a Aitor» is an order."""
-    return _PASSED_TO.search(folded) is not None and not is_explicit_order(sentence)
-
-
-def the_person_paid(sentence: str, directory: tuple[Contact, ...]) -> str | None:
-    """Whom the holder says they paid, as much of the name as the sentence writes, in the
-    directory's casing; None when it names nobody the directory has.
-
-    With a payment verb in the past — «le mandé 20 a Marta» — anybody in the directory the sentence
-    names, as it has always been read (`payment_words.name_as_written`). With «pasar», only the
-    person right after its «a» (fix round 1, I-1): «hemos pasado a casa de Aitor» went somewhere,
-    and «hazle un bizum de 20 a Javi como el que le pasé a Aitor» was read as one person called
-    «Javi Aitor». A thing named after the person — «… a Aitor lo del regalo» — is what was passed,
-    and it is not money.
-    """
-    folded = spanish.folded(sentence)
-    if _ALREADY.search(folded) is not None:
-        return payment_words.name_as_written(sentence, directory)
-    passed = _PASSED_TO.search(folded)
-    if passed is None or not _passes_money(sentence, folded):
-        return None
-    after = passed.group("after")
-    person = payment_words.name_as_written(after, directory)
-    if person is None:
-        return None
-    words = _A_WORD.findall(after)
-    named = _A_WORD.findall(spanish.folded(person))
-    if words[: len(named)] != named:
-        return None
-    rest = words[len(named) :]
-    if (
-        rest
-        and rest[0] in _A_THING_AFTER_THE_PERSON
-        and window_words.window_in(" ".join(rest)) is None
-    ):
-        return None
-    return person
-
-
-def is_uncertain(sentence: str) -> bool:
-    """Whether a reply to a missing payment field says only that the user does not know yet."""
-    return _UNCERTAIN.fullmatch(spanish.folded(sentence)) is not None
-
-
 def resumes(sentence: str) -> bool:
     """Whether the user explicitly brings a suspended payment back into focus."""
     return _RESUMING.search(spanish.folded(sentence)) is not None
-
-
-def repeats(sentence: str, directory: tuple[Contact, ...]) -> bool:
-    """Whether an immediate ellipsis fully states the new amount and grounded recipient.
-
-    ``otro`` alone never starts a payment. The previous successful rail must be present in the
-    conversation, and this predicate additionally requires a fresh valid amount and a contact from
-    the authenticated holder's directory.
-    """
-    return bool(
-        _ANOTHER_PAYMENT.search(spanish.folded(sentence))
-        and payment_words.amount_in(sentence) is not None
-        and payment_words.contacts_in(sentence, directory)
-    )
-
-
-# The imperative, which is the third way to give the order: "hazle un bizum a Carmen". The order
-# forms of `hacer`, which is the verb that pairs with the rail noun: "hazle un bizum", "hagamos un
-# bizum". Every form that commands or proposes, and none that state or ask — "hago" and "hacemos"
-# are first person, "hacer" is the infinitive of "¿puedes hacer un bizum?", and those are questions
-# about a capability. Written as the stem plus the endings rather than as an alternation of whole
-# words, because the alternation is what kept missing one: "hagamos un bisum" was reported after
-# "que hagas" had already been added.
-_MAKING: Final = re.compile(r"\bh(?:az|aga|agas|agamos|agan|aced)(?:me|le|les|nos)?\b")
-
-# `devuelve` belongs here for the same reason the other five do, and it was missing: "devuélvele
-# los 20 euros a Marta" was a payment by `is_payment` and not an order by this predicate, so it
-# could not interrupt an open clarification — the exact defect the docstring below describes,
-# surviving in the one verb whose imperative nobody copied across.
-_IMPERATIVE_ORDER: Final = re.compile(
-    r"\b(?:manda(?:le|les|me)?|envia(?:le|les|me)?|paga(?:le|les)?"
-    r"|transfiere(?:le)?|ingresa(?:le)?|devuelve(?:le|les|me)?)\b"
-)
-
-
-def is_explicit_order(sentence: str) -> bool:
-    """Whether the words *instruct*, rather than merely naming a payment.
-
-    The distinction a bare noun cannot survive. "Pues bizum", offered as the answer to "¿de qué
-    comercio o categoría?", contains a payment word and no instruction — and reading it as an order
-    asked the user who to send money to, about a payment nobody had ordered. "Que le hagas el bizum"
-    and "hazle un bizum a Carmen" are instructions in every sense, and an open question about a
-    period has no claim on them.
-
-    Three forms because Spanish has three: volitional ("quiero hacer un bizum"), subjunctive ("que
-    le hagas un bizum") and imperative ("hazle un bizum"). Missing two of them is what let an open
-    clarification swallow seven consecutive attempts to send somebody twenty-five euros.
-    """
-    folded = spanish.folded(sentence)
-    return bool(
-        _EXPLICIT_ORDER.search(folded)
-        or _SUBJUNCTIVE_ORDER.search(folded)
-        or _IMPERATIVE_ORDER.search(folded)
-        or _MAKING.search(folded)
-        or _hands_over(folded)
-    )
 
 
 def is_payment(sentence: str) -> bool:

@@ -18,7 +18,6 @@ from finguard_orchestrator.application.queries.browse_account import (
 )
 from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionResult,
-    SpokenPlan,
 )
 from finguard_orchestrator.application.queries.get_account_summary import AccountSummaryResult
 from finguard_orchestrator.application.queries.get_llm_catalogue import (
@@ -72,7 +71,6 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     ModelResponse,
     MovementsResponse,
     PlanContextTraceResponse,
-    PlanPayload,
     PolicyResponse,
     QuestionResponse,
     SaveCandidate,
@@ -125,36 +123,6 @@ def answer_to_dto(result: AnswerMessageResult) -> MessageResponse:
             max_output_tokens=result.max_output_tokens,
         ),
         attempted=list(result.attempted),
-    )
-
-
-def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
-    return PlanPayload.model_validate(
-        {
-            "direction": plan.direction,
-            "period": plan.period,
-            "n": plan.n,
-            "start": plan.start,
-            "end": plan.end,
-            "categories": plan.categories,
-            "excluded_categories": plan.excluded_categories,
-            "merchants": plan.merchants,
-            "merchant_terms": plan.merchant_terms,
-            "excluded_merchants": plan.excluded_merchants,
-            "counterparties": plan.counterparties,
-            "excluded_counterparties": plan.excluded_counterparties,
-            "counterparty_types": plan.counterparty_types,
-            "group_by": plan.group_by,
-            "metric": plan.metric,
-            "group_limit": plan.group_limit,
-            "include_internal": plan.include_internal,
-            "internal_only": plan.internal_only,
-            "across_accounts": plan.across_accounts,
-            "only_account_id": plan.only_account_id,
-            "only_account_ids": plan.only_account_ids,
-            "transaction_ids": plan.transaction_ids,
-            "transaction_types": plan.transaction_types,
-        }
     )
 
 

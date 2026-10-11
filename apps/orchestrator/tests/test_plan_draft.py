@@ -24,7 +24,10 @@ import pytest
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.models.conversation import AccountSelection, AccountSelectionMode
+from finguard_orchestrator.domain.value_objects.account_selection import (
+    AccountSelection,
+    AccountSelectionMode,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlanDraft,

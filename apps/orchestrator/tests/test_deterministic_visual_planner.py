@@ -10,13 +10,13 @@ from finguard_orchestrator.domain.models.chart import (
     EncodingSort,
     PresentationContext,
     VisualDataset,
+    VisualDecision,
     Visualization,
     VisualProfile,
     VisualRow,
 )
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
-    VisualDecision,
     _sort_for,
 )
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
@@ -196,7 +196,7 @@ def test_the_accepted_invariant_reads_the_same_literal_too() -> None:
     fourth source would have silently inherited "must not be accepted" from that literal without
     either line here being read. `_ACCEPTED_SOURCES` is derived from `VisualSource` itself, so
     this asserts the derivation rather than a copy of it."""
-    from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    from finguard_orchestrator.domain.models.chart import (
         _ACCEPTED_SOURCES,
     )
 

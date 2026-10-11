@@ -97,48 +97,6 @@ def test_a_past_payment_is_a_question_not_an_order() -> None:
     assert not payment_router.is_payment("le envié 20 euros a Marta el martes")
 
 
-def test_a_past_payment_is_also_read_as_one_rather_than_only_refused() -> None:
-    """The half of the same sentence that used to be thrown away.
-
-    `is_payment` says what must not happen — no offer to send it again — and for a long time that
-    was all this module said about the past. So "le he mandado 20 € a Marta" left here as a
-    negative and reached the financial planner with nothing recognised in it, and a model was asked
-    to build a query out of a sentence whose tense and direction this vocabulary already knew.
-    """
-    assert payment_router.describes_a_past_payment("le he mandado 20 € a Marta")
-    assert payment_router.describes_a_past_payment("¿cuánto le mandé a Marta el mes pasado?")
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    [
-        # Equally past, and somebody else's payment. Reading it as money the holder sent would
-        # answer "¿he recibido algún bizum de Marta?" with what they spent.
-        "me ha llegado un bizum de Marta",
-        "Marta me hizo un bizum de 20 euros",
-        # Not the past at all. An order stays an order, and `is_payment` is what handles it.
-        "hazle un bizum de 20 euros a Marta",
-    ],
-)
-def test_what_is_not_a_payment_already_made(sentence: str) -> None:
-    assert payment_router.describes_a_past_payment(sentence) is False
-
-
-@pytest.mark.parametrize(
-    "reply", ["no sé", "No lo se.", "ni idea", "no estoy segura", "todavía no lo sé"]
-)
-def test_a_bare_uncertain_reply_is_recognised(reply: str) -> None:
-    assert payment_router.is_uncertain(reply)
-
-
-@pytest.mark.parametrize(
-    "reply",
-    ["no sé a quién tengo en contactos", "no sé, quizá Marta", "¿cuánto gasté?"],
-)
-def test_a_sentence_with_a_subject_is_not_reduced_to_uncertainty(reply: str) -> None:
-    assert not payment_router.is_uncertain(reply)
-
-
 @pytest.mark.parametrize(
     "sentence",
     [
@@ -166,29 +124,6 @@ def test_a_slot_value_or_an_unrelated_sentence_does_not_resume_a_payment(sentenc
 @pytest.mark.parametrize(
     "sentence",
     [
-        # Reported, seven turns of it. Every one read as a question, because they start with "que"
-        # and the interrogative test cannot tell that "que" from "¿qué?". The holder ended up
-        # shouting at the assistant.
-        "de hoy imbecil que le hagas el puto bizum",
-        "QUe quiero queh agas un bizum",
-        "quiero que hagas un bizum",
-        "quiero que le hagas un bizum de 20 euros a Marta",
-        "que le mandes 20 euros a Marta",
-        # The first of that chain, which is the volitional form in the first person plural.
-        "Oye y aitor vamos a darle el bixum que le debo del desayuno que son 25 euros",
-    ],
-)
-def test_an_order_in_the_subjunctive_is_an_order(sentence: str) -> None:
-    """The second person is what makes reading these safe. "Hagas" is addressed to the assistant,
-    and nobody asks a capability question with it — "¿cómo hago un bizum?" is first person and
-    "¿puedes hacer un bizum?" is an infinitive."""
-    assert payment_router.is_payment(sentence) is True
-    assert payment_router.is_explicit_order(sentence) is True
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    [
         "¿cómo hago un bizum?",
         "¿puedes hacer transferencias?",
         "¿cuánto le he mandado a Marta este año?",
@@ -203,36 +138,6 @@ def test_a_question_about_payments_is_still_a_question(sentence: str) -> None:
     desglose" is the subjunctive too and names no payment; the rest ask about the past, about a
     capability, or about the holder's own accounts."""
     assert payment_router.is_payment(sentence) is False
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    [
-        "hazle un bizum a Carmen",
-        "mándale 20 euros a Marta",
-        "envíale 20 euros a Marta",
-        "págale 20 euros a Marta",
-        "transfiérele 20 euros a Marta",
-        "ingrésale 20 euros a Marta",
-        # The one the imperative list did not have. It was a payment and not an order, so it could
-        # not interrupt an open clarification — which is the whole reason this predicate exists.
-        "devuélvele los 20 euros a Marta",
-    ],
-)
-def test_an_order_in_the_imperative_is_an_order(sentence: str) -> None:
-    """Every verb that moves money, in the form that commands it. A verb present in the payment
-    vocabulary and absent from this one is a payment nothing lets through a clarification."""
-    assert payment_router.is_explicit_order(sentence) is True
-
-
-@pytest.mark.parametrize("sentence", ["pues bizum", "bizum", "un bizum"])
-def test_a_bare_payment_word_is_not_an_instruction(sentence: str) -> None:
-    """The distinction the precedence rule rests on. A bare noun offered as the answer to "¿de qué
-    comercio o categoría?" belongs to that question; an instruction does not, and only the verb
-    tells them apart. `is_payment` is true for both — it is the narrower question — so the route
-    asks this
-    one before letting a payment interrupt an open clarification."""
-    assert payment_router.is_explicit_order(sentence) is False
 
 
 # --- the spellings and the morphology, closed as classes -------------------------------------

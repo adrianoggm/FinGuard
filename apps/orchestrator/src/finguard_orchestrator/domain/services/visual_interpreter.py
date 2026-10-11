@@ -350,18 +350,3 @@ def apply_visual_intent(intent: VisualIntent, context: VisualContext) -> VisualC
         merge_encoding_patch(context.spec, intent.patch, context.profile),
         context.profile,
     )
-
-
-# Item 2 (Wave 3 hardening, T8b): "guarda este gráfico"/"guárdamelo" -- a request about the chart
-# that is already on screen, not a financial one. Read here, beside the interpreter, rather than
-# folded into `interpret_visual`: the answer it gets (the save affordance the chart already
-# carries, or an honest refusal when metrics are off) is neither a restyle nor a refusal of one,
-# so it never produces a `VisualIntent` -- `llm_controller` reads this boolean directly, the same
-# shape `asks_why` already is for a different question about the same chart.
-_SAVE_CHART = re.compile(r"\bguarda(?:me|lo|la)?\b")
-_CHART_NOUN = re.compile(r"\bgrafic\w*\b")
-
-
-def wants_to_save_chart(sentence: str) -> bool:
-    folded = fold(sentence)
-    return _SAVE_CHART.search(folded) is not None and _CHART_NOUN.search(folded) is not None

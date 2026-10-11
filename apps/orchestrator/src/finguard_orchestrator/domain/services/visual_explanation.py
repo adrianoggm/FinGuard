@@ -27,7 +27,6 @@ same as before this task.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -49,7 +48,6 @@ from finguard_orchestrator.domain.services.answer_writer import _MONTHS
 # second copy of it -- `_FINANCIAL` (a sentence naming a period, a month or a category is a drill
 # or a financial question, never this) and `fold`/`TARGET` (the same casefold-and-strip-diacritics
 # normalisation, and the same ordinal-chart vocabulary `interpret_visual` resolves).
-from finguard_orchestrator.domain.services.visual_interpreter import _FINANCIAL, TARGET, fold
 from finguard_orchestrator.domain.services.visual_profile import MAX_DRAWN_LABELS
 
 # The generic fallback -- an empty label tuple, a mix of shapes, or labels that match none of the
@@ -380,52 +378,3 @@ class WhyAsked:
     into a real `chart_id` the same way `interpret_visual` does for a restyle."""
 
     target: str | None
-
-
-# R5/R6: the recogniser claims a turn, never a chart. It knows nothing about `contexts` -- whether
-# there is one to explain, and which, is the controller's question (`was.visual_contexts`,
-# `resolve_target`), asked only after this abstains or claims. Anchored to the whole sentence, the
-# same principle as `visual_interpreter._VISUAL_ALL`'s own comment: a longer sentence carries a
-# real financial question or a drill and is not this, however it starts.
-_WHY = re.compile(
-    r"por que\s+(?:"
-    r"(?:este|ese|el) grafico"
-    r"|(?:(?:el )?(?:ultimo|last|primer[oa]?|segund[oa]?) grafico)"
-    r"|(?:en |con )?(?:barras|lineas|linea|area|puntos|donut|anillo|circular)"
-    # A-9 (Wave 3 hardening): "¿Por qué has elegido/puesto/usado barras?" names the same mark
-    # words above, behind the verb a holder actually uses to ask why the chart looks that way
-    # rather than to change it -- `interpret_visual`'s own `_VISUAL` grammar reads the bare mark
-    # word alone and would otherwise restyle a question.
-    r"|(?:has |he |habeis )?(?:elegido|puesto|usado|escogido) "
-    r"(?:barras?|lineas?|areas?|puntos?|donut|anillo|circular)"
-    r"|(?:este|ese|el) orden"
-    r"|(?:asi|de esta forma) ordenado"
-    r"|(?:me )?lo has puesto asi"
-    r"|esta asi"
-    r")"
-    # B-6 (Wave 3 hardening): design §3.3/§7's own explanation wording -- "explícame el gráfico",
-    # "cuéntame el gráfico", "¿qué significa este gráfico?" -- none of it built on "por qué" at
-    # all, so it could not live inside the group above.
-    r"|explica(?:me)?(?: el grafico)?"
-    r"|cuentame(?: el grafico)?"
-    r"|que significa (?:este|el) grafico"
-    r"$"
-)
-
-
-def asks_why(sentence: str) -> WhyAsked | None:
-    """«¿Por qué este gráfico?», typed or spoken, read the same way `interpret_visual` reads a
-    restyle: fold, strip the leading/trailing punctuation a question mark leaves behind, then
-    match the closed grammar above. A sentence naming a `_FINANCIAL` word is a drill or a
-    financial question dressed as "por qué" -- «¿Por qué gasté tanto en junio?» -- and is never
-    this, checked first for the same reason `interpret_visual` checks it first. «¿Por qué?» alone,
-    with nothing named to explain, is not claimed either: it goes wherever it went before this
-    recogniser existed.
-    """
-    folded = fold(sentence).strip(" ¿?¡!.,")
-    if _FINANCIAL.search(folded):
-        return None
-    if not _WHY.fullmatch(folded):
-        return None
-    match = TARGET.search(folded)
-    return WhyAsked(target=match.group(0) if match else None)

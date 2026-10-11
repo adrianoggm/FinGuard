@@ -25,11 +25,9 @@ import re
 import pytest
 from support import lexicon_corpus
 
-from finguard_orchestrator.domain.enums import GroupBy
 from finguard_orchestrator.domain.services import (
     explicit_facts,
     explicit_lexicon,
-    plan_verifier,
     spanish,
 )
 
@@ -134,11 +132,7 @@ def test_the_phrasings_two_concepts_share() -> None:
     `recibos domiciliados` is both a recurrence phrase and a direct-debit phrase, and the reader
     separates them by whether an aggregate was also asked. «me cobr» is in both `expense` and
     `leaving`, which is the overlap `_direction` is written to resolve — the specific reading is
-    consulted first, so «me cobraron» is money leaving. The four amount words are in both
-    `asks_an_amount` and `aggregate_words`, and that one is not a design: they are two
-    hand-maintained lists of the same idea, one a strict subset of the other, and neither knew about
-    the other until this file put them side by side. It is left alone because merging them would
-    move sentences, which this change may not do.
+    consulted first, so «me cobraron» is money leaving.
     """
     shared: dict[str, list[str]] = {}
     for concept, phrasings in PHRASINGS.items():
@@ -151,71 +145,7 @@ def test_the_phrasings_two_concepts_share() -> None:
             "recurrence",
         ),
         r"\bme\s+cobr": ("expense", "leaving"),
-        "cuanto": ("aggregate_words", "asks_an_amount"),
-        "importe": ("aggregate_words", "asks_an_amount"),
-        "suma": ("aggregate_words", "asks_an_amount"),
-        "total": ("aggregate_words", "asks_an_amount"),
     }
-
-
-def test_the_spending_veto_and_the_spending_assertion_stay_disjoint() -> None:
-    """`explicit_facts`' docstring claims this, and it is checkable rather than hopeful.
-
-    `plan_verifier._spending_answered_as_everything` triggers on the stem `gast`. If anything in
-    `leaving` — the only vocabulary here that *asserts* EXPENSE — could match a `gast` sentence,
-    this module would repair that disagreement before the verifier saw it, and the one guard written
-    against the live prompt injection would be unreachable on the sentences it was written for.
-
-    Disjoint by construction, says the comment. Which means: by the spelling, so a test can say it.
-    """
-    for phrasing in PHRASINGS["leaving"]:
-        assert "gast" not in phrasing.says, (
-            f"{phrasing.says!r} asserts EXPENSE and can reach a `gast` sentence, which is the "
-            "verifier's refusal to make"
-        )
-
-
-def test_the_pin_never_repairs_a_division_the_verifier_would_report() -> None:
-    """`divides_up` duplicates `plan_verifier._DIVIDES_UP`'s vocabulary, so pin the *outcome*.
-
-    `_combined_total` is the one reading here that states a shape from an absence of instruction,
-    and the one place that could go wrong quietly is a sentence which *does* ask how something
-    divides
-    up. `BREAKDOWN_ANSWERED_AS_ONE_GROUP` refuses a plan that groups by a dimension it filtered to
-    one value, and its docstring names dropping the grouping as the repair it will not make: "a
-    total is served to somebody who asked for a distribution … a figure that does not change is
-    precisely how this class of defect reads as correct." A `GroupBy.NONE` reading is that repair.
-
-    Written against the corpus rather than against the two spellings, because the failure mode here
-    is the spellings drifting apart — which a test comparing them to each other would pass right up
-    until one of them stopped matching a real sentence.
-    """
-    divisions = [
-        sentence
-        for sentence in lexicon_corpus.folded_sentences()
-        if plan_verifier._DIVIDES_UP.search(sentence)
-    ]
-    assert divisions, "the corpus no longer exercises the verifier's division vocabulary"
-    repaired = [
-        sentence for sentence in divisions if explicit_facts.read(sentence).group_by is GroupBy.NONE
-    ]
-    assert not repaired, (
-        "these ask how something divides up and the reading answers NONE, settling a "
-        f"disagreement BREAKDOWN_ANSWERED_AS_ONE_GROUP exists to report: {repaired}"
-    )
-
-
-def test_charge_nouns_is_still_a_bare_alternation() -> None:
-    """`readers/follow_up.py` interpolates this export into a frame of its own.
-
-    So it must stay a list of alternatives with no anchor, no group and no boundary — anything else
-    changes the meaning of a pattern in a module this change is not allowed to touch.
-    """
-    assert explicit_facts.CHARGE_NOUNS == explicit_lexicon.alternation("charge_nouns")
-    assert not explicit_facts.CHARGE_NOUNS.startswith("^")
-    assert "(" not in explicit_facts.CHARGE_NOUNS
-    assert r"\b" not in explicit_facts.CHARGE_NOUNS
-    re.compile(rf"^(?:y\s+)?cuant[oa]s?\s+(?:{explicit_facts.CHARGE_NOUNS})\b")
 
 
 def test_the_lexicon_holds_no_frame_it_cannot_explain() -> None:

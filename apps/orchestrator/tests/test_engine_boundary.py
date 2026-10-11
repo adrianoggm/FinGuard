@@ -3,8 +3,7 @@
 Checked two ways (ruling R18), because each misses what the other sees:
 
 - **statically**, on the source: no engine or graph module imports any of the vocabularies the
-  spec lists, or `planning_context` (whose focus types share the engine's names, ruling R2). A
-  package `__init__` that loads one of them transitively is not consultation;
+  spec lists. A package `__init__` that loads one of them transitively is not consultation;
 - **at runtime**, over HTTP: every function and method those modules define is replaced by a wire
   that raises, references bound elsewhere by `from M import f` included, and a graph turn must
   still answer on both routes with nothing tripped. This is what "the new flow does not consult
@@ -42,8 +41,8 @@ from finguard_orchestrator.infrastructure.llm.counting_provider import calls_so_
 PKG = "finguard_orchestrator"
 SRC = Path(finguard_orchestrator.__file__).parent
 # The spec's list, word for word, as modules.
-# The rules handler, its readers and `query_recovery` were deleted with the rules route; what is
-# left of the list still exists and is still out of bounds.
+# The rules handler, its readers, `query_recovery`, `plan_verifier` and `planning_context` were
+# deleted with the rules route; what is left of the list still exists and is still out of bounds.
 LINGUISTIC = tuple(
     f"{PKG}.domain.services.{name}"
     for name in (
@@ -54,12 +53,11 @@ LINGUISTIC = tuple(
         "merchant_words",
         "explicit_facts",
         "continuation_patch",
-        "plan_verifier",
         "capability_guard",
         "intent_lexicon",
     )
 )
-NEVER_IMPORTED = frozenset({*LINGUISTIC, f"{PKG}.domain.models.planning_context"})
+NEVER_IMPORTED = frozenset(LINGUISTIC)
 # Every module of the engine, and the two this task added around it.
 ENGINE = (
     *sorted((SRC / "domain" / "engine").glob("*.py")),
@@ -119,10 +117,9 @@ def test_the_graph_imports_nothing_linguistic() -> None:
 
 
 def test_the_check_sees_an_import_when_there_is_one() -> None:
-    """The control: the financial turn imports two of the list, and the same check says so."""
+    """The control: the financial turn imports one of the list, and the same check says so."""
     seen = forbidden(SRC / "application" / "queries" / "financial_turn.py")
     assert f"{PKG}.domain.services.turn_arbiter" in seen
-    assert f"{PKG}.domain.models.planning_context" in seen
 
 
 def test_category_words_only_names_categories() -> None:
@@ -307,7 +304,7 @@ def arm(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         for name, value in list(vars(other).items()):
             if id(value) in wires:
                 monkeypatch.setattr(other, name, wires[id(value)])
-    assert len(wires) > 100, "the boundary modules define their readers as functions"
+    assert len(wires) > 50, "the boundary modules define their readers as functions"
     return tripped
 
 

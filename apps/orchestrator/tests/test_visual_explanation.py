@@ -26,7 +26,6 @@ from finguard_orchestrator.domain.models.chart import (
     VisualDataset,
     VisualRow,
 )
-from finguard_orchestrator.domain.models.conversation import IDLE
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
@@ -39,7 +38,6 @@ from finguard_orchestrator.domain.services.visual_explanation import (
     _line_reason,
     _nouns_of,
     _point_reason,
-    asks_why,
     explain_chart,
 )
 from finguard_orchestrator.domain.services.visual_profile import (
@@ -48,7 +46,6 @@ from finguard_orchestrator.domain.services.visual_profile import (
     visual_profile_of,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
-from finguard_orchestrator.infrastructure.mappers import conversation_mapper as mapper
 
 _EXPORTER_SPEC = importlib.util.spec_from_file_location(
     "export_chart_fixtures",
@@ -232,26 +229,6 @@ def test_a_single_row_uses_the_singular_noun() -> None:
     )
     explanation = explain_chart(context)
     assert explanation.scope_summary == "Datos: 1 grupo."
-
-
-def test_the_count_comes_from_the_labels_that_crossed_the_wire_not_row_count() -> None:
-    """Task 2 (Wave 3 hardening, U-4/C-5): `profile.row_count` now survives `to_domain` (it is a
-    real wire field), but `_scope_summary` must still count `context.labels` -- the one thing a
-    later turn can resolve a reference against -- rather than switch to reading the now-available
-    `row_count`, which is not authority and can legitimately differ (a plan-limited chart's rows
-    are capped while its labels are not, or vice versa)."""
-    context = _context("categorical_comparison")
-    conversation = IDLE.with_visual_context(context)
-    payload = mapper.to_payload(conversation)
-    echoed = mapper.to_domain(payload)
-    wired_context = echoed.visual_context()
-    assert wired_context is not None
-    assert wired_context.profile.row_count == context.profile.row_count
-    minted_text = explain_chart(context).scope_summary
-    wired_text = explain_chart(wired_context).scope_summary
-    assert minted_text == wired_text
-    assert not wired_text.startswith("Datos: 0 ")
-    assert wired_text.startswith(f"Datos: {len(context.labels)} ")
 
 
 def test_a_capped_label_list_omits_the_count() -> None:
@@ -518,28 +495,6 @@ def test_nouns_of_none_group_by_falls_back_to_labels() -> None:
     assert _nouns_of(None, ("2026-01", "2026-02")) == ("mes", "meses", "un mes")
 
 
-def test_a_week_chart_says_semanas_after_a_round_trip() -> None:
-    """`group_by` must survive `to_payload` -> `to_domain` for a later-turn explanation to read it
-    at all -- the same round trip `source`/`fallback_reason` already prove for themselves."""
-    spec, profile = _spec_and_profile("breakdown")
-    context = VisualContext(
-        chart_id="c1",
-        spec=spec,
-        profile=profile,
-        labels=("2026-01-05", "2026-01-12"),
-        source="deterministic",
-        group_by=GroupBy.WEEK,
-    )
-    conversation = IDLE.with_visual_context(context)
-    payload = mapper.to_payload(conversation)
-    echoed = mapper.to_domain(payload)
-    restored = echoed.visual_context()
-    assert restored is not None
-    assert restored.group_by == GroupBy.WEEK
-    explanation = explain_chart(restored)
-    assert "semana" in explanation.scope_summary
-
-
 @pytest.mark.parametrize(
     ("metric", "word"),
     [
@@ -577,70 +532,7 @@ def test_no_amount_survives_into_the_text(family_name: str) -> None:
     assert "%" not in text
 
 
-# --- Wave 4.5, Task 4: `asks_why` -- the recogniser for «¿Por qué este gráfico?» ----------------
-#
-# Grammar (over `fold(sentence)`, anchored to the whole sentence -- a longer sentence is a
-# question, not this, the same principle as `_VISUAL_ALL`'s comment): optional leading punctuation,
-# `por que`, then one of four shapes. Claimed sentences resolve to a `WhyAsked`; everything else,
-# including any sentence carrying a `_FINANCIAL` word, is `None` -- the recogniser abstains rather
-# than guesses.
-
-
-@pytest.mark.parametrize(
-    ("sentence", "target"),
-    [
-        ("¿Por qué este gráfico?", None),
-        ("¿Por qué ese gráfico?", None),
-        ("¿Por qué el gráfico?", None),
-        ("¿Por qué el primer gráfico?", "primer"),
-        ("¿Por qué el último gráfico?", "ultimo"),
-        ("¿Por qué el segundo gráfico?", "segund"),
-        ("¿Por qué en barras?", None),
-        ("¿Por qué barras?", None),
-        ("¿Por qué en líneas?", None),
-        ("¿Por qué circular?", None),
-        ("¿Por qué este orden?", None),
-        ("¿Por qué así ordenado?", None),
-        ("¿Por qué de esta forma ordenado?", None),
-        ("¿Por qué me lo has puesto así?", None),
-        ("¿Por qué está así?", None),
-        ("Por qué este gráfico", None),  # no leading ¿, no trailing ?
-        # A-9 + B-6 (Wave 3 hardening): the verb a holder actually uses to ask why the chart looks
-        # the way it does, and the design's own explanation wording, neither built on the mark
-        # word alone or on "por qué" at all.
-        ("¿Por qué has elegido barras?", None),
-        ("¿Por qué has puesto líneas?", None),
-        ("¿Por qué has usado circular?", None),
-        ("¿Por qué escogido áreas?", None),
-        ("Explícame el gráfico", None),
-        ("Explícame", None),
-        ("Cuéntame el gráfico", None),
-        ("¿Qué significa este gráfico?", None),
-        ("¿Qué significa el gráfico?", None),
-    ],
-)
-def test_asks_why_claims_every_phrasing_the_brief_lists(sentence: str, target: str | None) -> None:
-    why = asks_why(sentence)
-    assert why is not None, sentence
-    if target is None:
-        assert why.target is None, sentence
-    else:
-        assert why.target is not None and target in why.target, sentence
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    [
-        "¿Por qué gasté tanto en junio?",  # a drill: a _FINANCIAL word (a month)
-        "¿Por qué agosto es tan alto?",  # a drill: a _FINANCIAL word (a month)
-        "¿Por qué me has mostrado eso?",  # about_the_answer, not about the chart
-        "Ponlo en barras",  # a restyle instruction, not a question
-        "¿Por qué?",  # nothing to explain -- abstain
-        "¿Por qué gasto tanto en restaurantes?",  # a _FINANCIAL word
-    ],
-)
-def test_asks_why_does_not_claim_a_sentence_that_is_not_this(sentence: str) -> None:
-    assert asks_why(sentence) is None, sentence
+# --- Wave 4.5, Task 4: `WhyAsked` -- what «¿Por qué este gráfico?» resolves to ----------------
 
 
 def test_why_asked_is_a_frozen_dataclass_with_a_target_field() -> None:

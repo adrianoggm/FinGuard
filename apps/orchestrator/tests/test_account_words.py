@@ -67,27 +67,6 @@ def test_principal_is_a_natural_name_for_the_current_account(sentence: str) -> N
     assert account_words.named_in(sentence) == ("CURRENT",)
 
 
-@pytest.mark.parametrize(
-    ("sentence", "expected"),
-    [
-        ("Solo cuenta corriente y hucha, no el fondo", ("ASSET",)),
-        ("Todas menos la hucha", ("SAVINGS",)),
-        ("Cuenta corriente salvo el fondo", ("ASSET",)),
-    ],
-)
-def test_an_account_can_be_named_only_to_exclude_it(
-    sentence: str, expected: tuple[str, ...]
-) -> None:
-    assert account_words.excluded_in(sentence) == expected
-
-
-def test_an_explicit_custom_account_reference_is_recognised_without_knowing_its_name() -> None:
-    assert account_words.explicitly_names_a_custom_account("en mi cuenta Vacaciones")
-    assert account_words.names_a_custom_destination("mueve 20 a la cuenta Vacaciones")
-    assert not account_words.names_a_custom_destination("mueve mi cuenta Vacaciones")
-    assert not account_words.explicitly_names_a_custom_account("cuenta cuánto gasté")
-
-
 def test_a_custom_name_resolves_without_turning_a_generic_label_into_a_choice() -> None:
     names = ("Hucha", "Hucha viajes", "Vacaciones")
 
@@ -97,19 +76,6 @@ def test_a_custom_name_resolves_without_turning_a_generic_label_into_a_choice() 
     assert account_words.custom_destination_among(
         "mueve de la cuenta Vacaciones a Hucha viajes", names
     ) == ("Hucha viajes",)
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    ["Y las otras cuentas?", "Ahora las dem\u00e1s cuentas", "Las cuentas restantes"],
-)
-def test_other_accounts_are_recognised_as_a_contextual_complement(sentence: str) -> None:
-    assert account_words.asks_for_other_accounts(sentence)
-
-
-def test_a_short_custom_name_can_answer_an_open_account_slot() -> None:
-    assert account_words.looks_like_account_choice("Vacaciones")
-    assert not account_words.looks_like_account_choice("¿cuánto gasté este mes?")
 
 
 @pytest.mark.parametrize(
@@ -137,16 +103,3 @@ def test_a_substituted_letter_does_not_invent_an_account(sentence: str) -> None:
     """Why swaps and not any one edit. One substitution from "hucha" is "mucha", which is in every
     other Spanish sentence — and this vocabulary decides which accounts a figure is about."""
     assert account_words.named_in(sentence) == ()
-
-
-@pytest.mark.parametrize(
-    "sentence",
-    ["Todas mis cuentas", "en todas las cuentas", "todas las cuentas"],
-)
-def test_all_accounts_requires_an_explicit_account_phrase(sentence: str) -> None:
-    assert account_words.asks_for_all_accounts(sentence)
-
-
-@pytest.mark.parametrize("sentence", ["globalmente", "en conjunto", "entre mis cuentas"])
-def test_all_accounts_does_not_guess_from_ambiguous_or_internal_language(sentence: str) -> None:
-    assert not account_words.asks_for_all_accounts(sentence)
