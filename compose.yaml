@@ -123,7 +123,7 @@ services:
       # Operational numbers, each a measurement rather than a preference — see
       # apps/orchestrator/evaluation/planning/RESULTS.md. Stated here rather than left
       # to the defaults so the knobs are visible to whoever runs this.
-      ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS: "4096"
+      ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS: "8192"
       ORCHESTRATOR_OLLAMA_SEED: "0"
       ORCHESTRATOR_OLLAMA_KEEP_ALIVE: 30m
       ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS: "120"

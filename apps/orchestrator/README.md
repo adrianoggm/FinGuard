@@ -129,7 +129,7 @@ somebody changes.
 | `ORCHESTRATOR_PLANNER_MODEL` | `qwen2.5-coder:7b` | The model that turns a sentence into a plan |
 | `ORCHESTRATOR_PLANNER_TEMPERATURE` | `0.0` | Zero on purpose: a plan that varies between identical questions cannot be measured |
 | `ORCHESTRATOR_PLANNER_MAX_OUTPUT_TOKENS` | `384` | The plan is ~120 tokens; this is headroom, not a target |
-| `ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS` | `4096` | Raising it grows the KV cache, and a model that no longer fits is **silently** split with the CPU. This one took P50 from 5.28s to 2.58s |
+| `ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS` | `8192` | Raising it grows the KV cache, and a model that no longer fits is **silently** split with the CPU. This one took P50 from 5.28s to 2.58s |
 | `ORCHESTRATOR_OLLAMA_SEED` | `0` | Pinned. Unpinned, the same prompt against the same model moved a score by three points |
 | `ORCHESTRATOR_OLLAMA_KEEP_ALIVE` | `30m` | How long the model stays resident. A cold load is ~7s against ~0.1s warm |
 | `ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS` | `120` | A ceiling for "something is wrong", not a latency target. A model that does not fit the GPU needs it raised |

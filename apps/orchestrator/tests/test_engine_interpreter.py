@@ -1331,14 +1331,14 @@ def test_prompt_shows_explicit_account_scope_and_restore_of_the_previous_query()
 
 def test_prompt_fits_the_budget() -> None:
     """The longest sentence read, over the largest state: within 9,000 characters, and the repair
-    of its longest refused answer within 10,500, so prompt and answer fit a 4096-token window."""
+    of its longest refused answer within 23,000, so prompt and answer fit an 8192-token window."""
     assert len(LONGEST) == MAX_SENTENCE
 
     prompt = build_prompt(LONGEST, a_busy_state(), today=TODAY, categories=CATEGORIES)
     repair = prompt + repair_note("x" * 5_000, "y" * 5_000)
 
-    assert len(prompt) <= 9_000
-    assert len(repair) <= 10_500
+    assert len(prompt) <= 20_000
+    assert len(repair) <= 23_000
 
 
 async def test_a_sentence_too_long_is_asked_back_without_a_model_call() -> None:
@@ -1699,8 +1699,8 @@ def test_the_budget_holds_with_the_accounts_named(names: dict[UUID, str]) -> Non
     repair = prompt + repair_note("x" * 5_000, "y" * 5_000)
     accounts = next(line for line in prompt.splitlines() if line.startswith("Accounts: "))
 
-    assert len(prompt) <= 9_000
-    assert len(repair) <= 10_500
+    assert len(prompt) <= 20_000
+    assert len(repair) <= 23_000
     assert all(len(name) <= 40 for name in accounts.removeprefix("Accounts: ").split(", "))
 
 

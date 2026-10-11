@@ -364,7 +364,7 @@ class Settings(BaseSettings):
     # own model, so pointing the planner at a hosted provider moves the engine with it.
     engine_model: str | None = None
     # The interpreter's answer: one to four operations. 600 keeps prompt and answer inside the
-    # local model's 4096-token window (the prompt is held to ~2,800 tokens).
+    # local model's 8192-token window (the prompt is held to ~5,700 tokens).
     engine_max_output_tokens: int = Field(default=600, gt=0)
     # Zero for the planner's reason: an interpretation that varies between identical turns cannot
     # be measured.

@@ -64,12 +64,13 @@ def test_the_planner_sampling_is_configuration() -> None:
 
 
 def test_the_defaults_are_the_measured_ones() -> None:
-    """The numbers in the adapters were not arbitrary — `num_ctx: 4096` and a pinned seed
-    each came from an experiment written up in evaluation/planning/RESULTS.md. Making them
-    configurable must not quietly change them."""
+    """The numbers in the adapters were not arbitrary — `num_ctx` and a pinned seed each came
+    from an experiment written up in evaluation/planning/RESULTS.md (4096 there; 8192 since the
+    interpreter's prompt outgrew it, still 100% GPU). Making them configurable must not quietly
+    change them."""
     settings = Settings(ollama_think=False)
 
-    assert settings.ollama_context_tokens == 4096
+    assert settings.ollama_context_tokens == 8192
     assert settings.ollama_seed == 0
     assert settings.ollama_think is False
     assert settings.ollama_keep_alive == "30m"

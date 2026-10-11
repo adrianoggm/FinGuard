@@ -49,7 +49,6 @@ from finguard_orchestrator.application.engine.turn_commands import (
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.enums import PlanningOutcome
-from finguard_orchestrator.domain.errors import QueryRejectedError
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -80,9 +79,6 @@ PROVIDER_FAILURES_HEADER: Final = "X-FinGuard-Provider-Failures"
 PROVIDER_TERMINAL_FAILURE_HEADER: Final = "X-FinGuard-Provider-Terminal-Failure"
 _STREAM_ROUTE: Final = "/v1/questions/stream"
 _QUESTION_ROUTES: Final = frozenset({"/v1/questions", _STREAM_ROUTE})
-# The directory and the contacts are read before the sentence is: a refusal there means the turn
-# was never interpreted, so it must not say it was («He entendido la pregunta…»).
-_UNREAD: Final = "No he podido leer tus cuentas y tus contactos: el banco ha rechazado la consulta."
 
 
 @dataclass
@@ -162,19 +158,10 @@ async def _turn(
         request_id=request_id,
         caller_scopes=who.scopes,
     )
-    try:
-        with provider_request_budget(MAX_MODEL_CALLS):
-            turn = await commands.dispatch(command_for(turn_context))
-        if (answered := _answered.get()) is not None:
-            answered.financial_reads = turn.financial_reads
-    except QueryRejectedError:
-        # The graph catches a bank that is down, not one that refuses: answered here, and nothing
-        # was saved, so the client keeps the id and version it sent.
-        unread = AskFinancialQuestionResult(
-            outcome=PlanningOutcome.INVALID_DOMAIN.value, text=_UNREAD
-        )
-        held = Conversation(conversation_id=conversation_id, version=version)
-        return _on_the_wire(unread, held, who, metric_tokens)
+    with provider_request_budget(MAX_MODEL_CALLS):
+        turn = await commands.dispatch(command_for(turn_context))
+    if (answered := _answered.get()) is not None:
+        answered.financial_reads = turn.financial_reads
     held = Conversation(conversation_id=turn.state.conversation_id, version=turn.state.version)
     if turn.result is None:
         # Never sent back through a second natural-language planner: the boundary is visible to

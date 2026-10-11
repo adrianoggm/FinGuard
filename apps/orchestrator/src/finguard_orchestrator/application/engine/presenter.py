@@ -49,6 +49,7 @@ from finguard_orchestrator.domain.enums import (
 )
 from finguard_orchestrator.domain.errors import (
     BankingUnavailableError,
+    DirectoryUnreadError,
     DomainError,
     InvalidValueError,
 )
@@ -530,6 +531,13 @@ def failed(error: DomainError) -> AskFinancialQuestionResult:
     if isinstance(error, BankingUnavailableError):
         return AskFinancialQuestionResult(
             outcome="BANKING_UNAVAILABLE", text="El banco no ha respondido. Vuelve a intentarlo."
+        )
+    if isinstance(error, DirectoryUnreadError):
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.INVALID_DOMAIN.value,
+            text=(
+                "No he podido leer tus cuentas y tus contactos: el banco ha rechazado la consulta."
+            ),
         )
     if isinstance(error, InterpretationFailedError):
         return AskFinancialQuestionResult(

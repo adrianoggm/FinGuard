@@ -110,6 +110,13 @@ class QueryRejectedError(DomainError):
         super().__init__(f"banking rejected the plan: {detail}")
 
 
+class DirectoryUnreadError(QueryRejectedError):
+    """Banking refused the holder's accounts or contacts. They are read before the sentence is, so
+    a turn that stops here was never interpreted and must not be answered as if it had been."""
+
+    code = "directory_unread"
+
+
 class BankingUnavailableError(DomainError):
     """Banking could not be reached. Not the user's problem to solve, so it is kept
     apart from a rejected plan, which is ours and worth showing."""

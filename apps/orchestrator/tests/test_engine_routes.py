@@ -511,11 +511,6 @@ def test_a_rejected_directory_read_is_answered_honestly_and_saves_nothing(route:
     assert stack.ledger.plans == [ran("RESTAURANTS"), ran("LEISURE")]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the graph answers a refused directory read with the presenter's «He entendido la "
-    "pregunta…» before `engine_dispatch` can say the sentence was never read (`_UNREAD`)",
-)
 def test_a_rejected_directory_read_does_not_claim_the_sentence_was_understood() -> None:
     # The directory and the contacts are read before the sentence is: the interpreter is never
     # asked, so the answer must not say it understood anything.

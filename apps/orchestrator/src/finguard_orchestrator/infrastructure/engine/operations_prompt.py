@@ -531,9 +531,9 @@ _MARKERS: Final = (
 _WEEKDAYS: Final = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 # The longest sentence read (ruling R16). Longer is not a turn of a conversation but a document, and
-# the budget below is what keeps a prompt, its repair and the answer inside a 4096-token window: at
-# about 3.5 characters a token, 9,000 characters of prompt is some 2,600 tokens, a repair at most
-# 10,500 some 3,000, and the answer up to 600 more.
+# the budget below is what keeps a prompt, its repair and the answer inside an 8192-token window: at
+# about 3.5 characters a token (4.1 measured on qwen2.5-coder:7b), 20,000 characters of prompt is
+# some 5,700 tokens, a repair at most 23,000 some 6,600, and the answer up to 600 more.
 MAX_SENTENCE: Final = 1_200
 
 # How much of one past turn is quoted. Canonical focus, pending state and focus history carry the
