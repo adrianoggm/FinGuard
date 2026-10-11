@@ -9,9 +9,6 @@ from datetime import datetime
 from uuid import UUID
 
 from finguard_orchestrator.application.engine import presenter
-from finguard_orchestrator.application.graph import investigation
-from finguard_orchestrator.application.graph.graph_state import TurnGraphState
-from finguard_orchestrator.application.graph.investigation import Explanation, MerchantChange
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.engine.transitions import Work
 from finguard_orchestrator.domain.enums import PlanningOutcome
@@ -23,6 +20,9 @@ from finguard_orchestrator.domain.ports.investigation_assessor import (
 )
 from finguard_orchestrator.domain.services import answer_writer
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
+from finguard_orchestrator.infrastructure.graph import investigation
+from finguard_orchestrator.infrastructure.graph.graph_state import TurnGraphState
+from finguard_orchestrator.infrastructure.graph.investigation import Explanation, MerchantChange
 
 
 def changes(state: TurnGraphState) -> tuple[MerchantChange, ...]:

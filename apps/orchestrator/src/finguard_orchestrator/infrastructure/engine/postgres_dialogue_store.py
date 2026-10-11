@@ -4,13 +4,13 @@ from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
-from finguard_orchestrator.application.graph import codec
 from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.ports.dialogue_store import (
     DialogueStorePort,
     StaleDialogueError,
     TurnCompletion,
 )
+from finguard_orchestrator.infrastructure.graph import codec
 
 # Persisted rows start at schema 4. The codec migrates every schema from there through the
 # current version, including 10–12; the store must not reject versions the decoder can resume.

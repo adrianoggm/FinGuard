@@ -26,12 +26,12 @@ from support.episodes import (
 from support.memory_dialogue_store import MemoryDialogueStore
 from support.memory_turn_reservations import MemoryTurnReservations
 
-from finguard_orchestrator.application.graph.graph_state import GraphPorts
-from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import PaymentOutcome, Rail
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.graph.graph_state import GraphPorts
+from finguard_orchestrator.infrastructure.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.infrastructure.http.dependencies import authenticated_caller
 from finguard_orchestrator.infrastructure.llm.counting_provider import calls_so_far
 

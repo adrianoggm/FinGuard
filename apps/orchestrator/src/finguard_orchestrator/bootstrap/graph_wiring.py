@@ -5,8 +5,6 @@ from typing import Any
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from finguard_orchestrator.application.bus.command_bus import CommandBus
-from finguard_orchestrator.application.graph.graph_state import GraphPorts
-from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.bootstrap.config import Settings
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
@@ -17,6 +15,8 @@ from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_operations import TurnOperationsPort
 from finguard_orchestrator.domain.ports.turn_reservations import TurnReservationsPort
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
+from finguard_orchestrator.infrastructure.graph.graph_state import GraphPorts
+from finguard_orchestrator.infrastructure.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.infrastructure.graph.llm_assessor import LlmInvestigationAssessor
 from finguard_orchestrator.infrastructure.llm.counting_provider import budget_calls_so_far
 

@@ -20,6 +20,7 @@ from finguard_orchestrator.domain.errors import (
     CheckpointCleanupUnavailableError,
     DomainError,
     FeatureDisabledError,
+    GraphUnavailableError,
     NoModelAvailableError,
     NotAuthenticatedError,
     NotAuthorisedError,
@@ -29,6 +30,7 @@ from finguard_orchestrator.domain.errors import (
 
 _STATUS_BY_CODE = {
     FeatureDisabledError.code: 503,
+    GraphUnavailableError.code: 503,
     NotAuthenticatedError.code: 401,
     NotAuthorisedError.code: 403,
     "invalid_input": 422,

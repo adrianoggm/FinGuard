@@ -3,9 +3,6 @@
 from dataclasses import replace
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from finguard_orchestrator.application.graph import codec
-from finguard_orchestrator.application.graph.graph_state import Ctx, TurnGraphState
-from finguard_orchestrator.application.graph.graph_store import canonical_state, commit_state
 from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionResult,
     SpokenPlan,
@@ -35,6 +32,9 @@ from finguard_orchestrator.domain.services import answer_writer, category_words
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
+from finguard_orchestrator.infrastructure.graph import codec
+from finguard_orchestrator.infrastructure.graph.graph_state import Ctx, TurnGraphState
+from finguard_orchestrator.infrastructure.graph.graph_store import canonical_state, commit_state
 
 
 def _view_id(artifact_id: str, version: int) -> str:

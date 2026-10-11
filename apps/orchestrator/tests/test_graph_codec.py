@@ -4,7 +4,6 @@ from uuid import uuid4
 
 import pytest
 
-from finguard_orchestrator.application.graph import codec
 from finguard_orchestrator.domain.engine.operations import Ask, ListMovements, PrepareTransfer
 from finguard_orchestrator.domain.engine.state import (
     ArtifactSource,
@@ -32,6 +31,7 @@ from finguard_orchestrator.domain.value_objects.movement_list_plan import (
     MovementListPlan,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
+from finguard_orchestrator.infrastructure.graph import codec
 
 
 def test_dialogue_checkpoint_round_trips_typed_state_and_tuple_values() -> None:

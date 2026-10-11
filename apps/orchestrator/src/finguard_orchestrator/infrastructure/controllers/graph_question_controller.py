@@ -1,21 +1,25 @@
-"""Question HTTP routes owned exclusively by the LangGraph runtime.
+"""The conversation's HTTP routes: a question, its stream, and a screen's typed action.
 
-LangGraph is the only conversational runtime; a missing graph is a 503, never a fallback.
+Each dispatches a turn command on the bus; the LangGraph runtime behind it is the only
+conversational runtime, and a missing graph is a 503 (`GraphUnavailableError`), never a fallback.
 """
 
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
+from finguard_orchestrator.application.bus.command_bus import CommandBus
+from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.controllers import engine_dispatch
 from finguard_orchestrator.infrastructure.dto.action_dto import ActionRequest, AnswerPreviewAction
 from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest, QuestionResponse
 from finguard_orchestrator.infrastructure.http.dependencies import (
+    get_command_bus,
+    get_query_bus,
     payments_enabled,
     questions_enabled,
     reporting_today,
@@ -39,14 +43,8 @@ def _metric_token_codec(request: Request) -> MetricTokenCodec:
     return codec
 
 
-def _the_graph(request: Request) -> ConversationTurnHandler:
-    engine: ConversationTurnHandler | None = getattr(request.app.state, "engine", None)
-    if engine is None:
-        raise HTTPException(status_code=503, detail="The conversation graph is not available.")
-    return engine
-
-
-Graph = Annotated[ConversationTurnHandler, Depends(_the_graph)]
+Commands = Annotated[CommandBus, Depends(get_command_bus)]
+Queries = Annotated[QueryBus, Depends(get_query_bus)]
 MetricTokens = Annotated[MetricTokenCodec, Depends(_metric_token_codec)]
 
 
@@ -61,10 +59,11 @@ async def ask(
     today: Today,
     attempt: Attempt,
     metric_tokens: MetricTokens,
-    engine: Graph,
+    commands: Commands,
+    queries: Queries,
 ) -> QuestionResponse:
     return await engine_dispatch.try_engine(
-        engine, body, who, today, metric_tokens, request_id=attempt
+        commands, queries, body, who, today, metric_tokens, request_id=attempt
     )
 
 
@@ -79,10 +78,11 @@ async def ask_streaming(
     today: Today,
     attempt: Attempt,
     metric_tokens: MetricTokens,
-    engine: Graph,
+    commands: Commands,
+    queries: Queries,
 ) -> StreamingResponse:
     return await engine_dispatch.try_engine_streaming(
-        engine, body, who, today, metric_tokens, request_id=attempt
+        commands, queries, body, who, today, metric_tokens, request_id=attempt
     )
 
 
@@ -97,14 +97,16 @@ async def act(
     today: Today,
     attempt: Attempt,
     metric_tokens: MetricTokens,
-    engine: Graph,
+    commands: Commands,
+    queries: Queries,
 ) -> QuestionResponse:
     """A form's payment and a preview's decision run as turns of the same graph as the chat: the
     same bank preview, canonical state and deterministic confirmation, with no model call."""
     if isinstance(body, AnswerPreviewAction):
         who.assert_may(Scope.PAYMENTS_CONFIRM)
     return await engine_dispatch.try_action(
-        engine,
+        commands,
+        queries,
         action_mapper.to_application(body),
         body.conversation,
         who,

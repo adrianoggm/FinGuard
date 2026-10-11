@@ -2,8 +2,8 @@
 
 from uuid import UUID
 
-from finguard_orchestrator.application.graph.graph_state import GraphContext, TurnGraphState
 from finguard_orchestrator.domain.engine.grounding import Grounds
+from finguard_orchestrator.infrastructure.graph.graph_state import GraphContext, TurnGraphState
 
 
 async def grounds_for_state(state: TurnGraphState, ctx: GraphContext) -> Grounds:

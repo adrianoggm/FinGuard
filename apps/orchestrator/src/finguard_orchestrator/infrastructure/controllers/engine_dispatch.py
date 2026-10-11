@@ -27,7 +27,7 @@ absent, never reported as zero.
 
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -38,10 +38,17 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import MutableHeaders
 
-from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
+from finguard_orchestrator.application.bus.command_bus import Command, CommandBus
+from finguard_orchestrator.application.bus.query_bus import QueryBus
+from finguard_orchestrator.application.engine.budgets import MAX_MODEL_CALLS
+from finguard_orchestrator.application.engine.form_actions import FormAction
+from finguard_orchestrator.application.engine.turn_commands import (
+    AnswerTurnCommand,
+    OwnsWorkflowQuery,
+    RunFormActionCommand,
+    Turn,
+)
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
-from finguard_orchestrator.application.graph.budgets import MAX_MODEL_CALLS
-from finguard_orchestrator.application.graph.form_actions import FormAction
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import QueryRejectedError
@@ -102,7 +109,8 @@ _RETIRED_WORKFLOW: Final = (
 
 
 async def try_engine(
-    engine: ConversationTurnHandler,
+    commands: CommandBus,
+    queries: QueryBus,
     question: QuestionRequest,
     who: Caller,
     today: date,
@@ -114,11 +122,12 @@ async def try_engine(
     A version other than the held one raises `StaleDialogueError` out of here, before anything
     ran; `register` writes the 409."""
     return await _turn(
-        engine,
+        commands,
+        queries,
         question.conversation,
         who,
         metric_tokens,
-        lambda **turn: engine.answer(question.question, **turn),
+        lambda turn: AnswerTurnCommand(question.question, turn),
         today=today,
         request_id=request_id,
         refuse_retired_workflows=True,
@@ -126,7 +135,8 @@ async def try_engine(
 
 
 async def try_action(
-    engine: ConversationTurnHandler,
+    commands: CommandBus,
+    queries: QueryBus,
     action: FormAction,
     echoed: ConversationPayload | None,
     who: Caller,
@@ -136,11 +146,12 @@ async def try_action(
 ) -> QuestionResponse:
     """A form's typed action, answered by the same graph and in the same shape as a question."""
     return await _turn(
-        engine,
+        commands,
+        queries,
         echoed,
         who,
         metric_tokens,
-        lambda **turn: engine.act(action, **turn),
+        lambda turn: RunFormActionCommand(action, turn),
         today=today,
         request_id=request_id,
         # An action names its own target: a preview's decision is checked against the preview the
@@ -150,11 +161,12 @@ async def try_action(
 
 
 async def _turn(
-    engine: ConversationTurnHandler,
+    commands: CommandBus,
+    queries: QueryBus,
     echoed: ConversationPayload | None,
     who: Caller,
     metric_tokens: MetricTokenCodec,
-    run: Callable[..., Awaitable[EngineAnswer]],
+    command_for: Callable[[Turn], Command[EngineAnswer]],
     *,
     today: date,
     request_id: str | None,
@@ -163,8 +175,8 @@ async def _turn(
     conversation_id = echoed.conversation_id if echoed is not None else None
     version = echoed.version if echoed is not None else None
     if refuse_retired_workflows and echoed is not None and echoed.workflow is not None:
-        owns_workflow = conversation_id is not None and await engine.owns_workflow(
-            conversation_id, account_id=who.account_id, workflow=echoed.workflow
+        owns_workflow = conversation_id is not None and await queries.ask(
+            OwnsWorkflowQuery(conversation_id, who.account_id, echoed.workflow)
         )
         if not owns_workflow:
             refused = AskFinancialQuestionResult(
@@ -172,17 +184,18 @@ async def _turn(
             )
             held = Conversation(conversation_id=conversation_id, version=version)
             return _on_the_wire(refused, held, who, metric_tokens)
+    turn_context = Turn(
+        conversation_id=conversation_id,
+        version=version,
+        account_id=who.account_id,
+        today=today,
+        reporting_timezone=who.reporting_timezone,
+        request_id=request_id,
+        caller_scopes=who.scopes,
+    )
     try:
         with provider_request_budget(MAX_MODEL_CALLS):
-            turn = await run(
-                conversation_id=conversation_id,
-                version=version,
-                account_id=who.account_id,
-                today=today,
-                reporting_timezone=who.reporting_timezone,
-                request_id=request_id,
-                caller_scopes=who.scopes,
-            )
+            turn = await commands.dispatch(command_for(turn_context))
         if (answered := _answered.get()) is not None:
             answered.financial_reads = turn.financial_reads
     except QueryRejectedError:
@@ -207,7 +220,8 @@ async def _turn(
 
 
 async def try_engine_streaming(
-    engine: ConversationTurnHandler,
+    commands: CommandBus,
+    queries: QueryBus,
     question: QuestionRequest,
     who: Caller,
     today: date,
@@ -216,7 +230,7 @@ async def try_engine_streaming(
 ) -> StreamingResponse:
     """`try_engine` for the streaming route: one stage, then the answer, in the route's frames.
     The graph answers before the stream starts, so the headers carry exact counts."""
-    answer = await try_engine(engine, question, who, today, metric_tokens, request_id)
+    answer = await try_engine(commands, queries, question, who, today, metric_tokens, request_id)
 
     async def frames() -> AsyncIterator[str]:
         yield _sse({"type": "stage", "name": "interpreting", "detail": None})

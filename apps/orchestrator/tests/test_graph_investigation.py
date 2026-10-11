@@ -6,12 +6,6 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from finguard_orchestrator.application.graph import codec, investigation
-from finguard_orchestrator.application.graph.investigation import (
-    Explanation,
-    Finding,
-    MerchantChange,
-)
 from finguard_orchestrator.domain.engine.operations import (
     Ask,
     Balance,
@@ -34,7 +28,12 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
-from finguard_orchestrator.infrastructure.graph import llm_assessor
+from finguard_orchestrator.infrastructure.graph import codec, investigation, llm_assessor
+from finguard_orchestrator.infrastructure.graph.investigation import (
+    Explanation,
+    Finding,
+    MerchantChange,
+)
 
 JUNE = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
 JULY = AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31))

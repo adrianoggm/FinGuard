@@ -71,7 +71,6 @@ ENGINE = (
 # The LangGraph experiment (Task 8) is held to the same boundary: every module of it, and the
 # ports and wiring it added.
 GRAPH = (
-    *sorted((SRC / "application" / "graph").glob("*.py")),
     *sorted((SRC / "infrastructure" / "graph").glob("*.py")),
     SRC / "domain" / "ports" / "investigation_assessor.py",
     SRC / "domain" / "ports" / "turn_reservations.py",
@@ -159,8 +158,8 @@ def _where(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:
 def test_the_graph_limits_sentence_uses_and_normalizes_confirmation_before_checkpoint() -> None:
     """Ordinary text reaches interpretation and remembered state; payment slots are grounded and
     free-form confirmation text is normalized before it is sent as a LangGraph resume value."""
-    handler = _tree(SRC / "application" / "graph" / "graph_turn.py")
-    nodes = _tree(SRC / "application" / "graph" / "graph.py")
+    handler = _tree(SRC / "infrastructure" / "graph" / "graph_turn.py")
+    nodes = _tree(SRC / "infrastructure" / "graph" / "graph.py")
     handler_parents, node_parents = _parents(handler), _parents(nodes)
 
     in_handler = sorted(
@@ -226,7 +225,9 @@ def test_no_other_engine_step_takes_a_sentence() -> None:
         for path in ENGINE
         if path.parent.name == "engine"
         and path.parent.parent.name in ("domain", "application")
-        and path.name != "turn_handler.py"
+        # The turn contract and the bus command that carries a sentence to the graph; neither
+        # reads it.
+        and path.name not in ("turn_handler.py", "turn_commands.py")
     ]
     named = {
         path.name
@@ -248,7 +249,7 @@ def test_the_dispatch_hands_the_sentence_to_the_engine_alone() -> None:
         if isinstance(node, ast.Attribute) and node.attr == "question"
     ]
 
-    assert uses == ["engine.answer(...)"]
+    assert uses == ["AnswerTurnCommand(...)"]
 
 
 # --- at runtime ---------------------------------------------------------------------------------
@@ -404,10 +405,10 @@ def test_a_graph_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, route:
     from langgraph.checkpoint.memory import InMemorySaver
     from support.memory_turn_reservations import MemoryTurnReservations
 
-    from finguard_orchestrator.application.graph.graph_state import GraphPorts
-    from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
     from finguard_orchestrator.domain.engine.operations import Compare
     from finguard_orchestrator.domain.enums import GroupBy
+    from finguard_orchestrator.infrastructure.graph.graph_state import GraphPorts
+    from finguard_orchestrator.infrastructure.graph.graph_turn import GraphTurnHandler
 
     june = AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))
     by_merchant = (

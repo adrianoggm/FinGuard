@@ -4,7 +4,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
-from finguard_orchestrator.application.graph import codec
 from finguard_orchestrator.domain.ports.turn_reservations import (
     AbandonedTurn,
     CommittedTurnResult,
@@ -13,6 +12,7 @@ from finguard_orchestrator.domain.ports.turn_reservations import (
     TurnKey,
     TurnReservationsPort,
 )
+from finguard_orchestrator.infrastructure.graph import codec
 
 
 class PostgresTurnReservations(TurnReservationsPort):

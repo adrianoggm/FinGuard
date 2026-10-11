@@ -18,10 +18,6 @@ from finguard_orchestrator.application.commands.pay import (
     PrepareChosenPaymentCommand,
     PrepareOwnTransferCommand,
 )
-from finguard_orchestrator.application.graph import codec
-from finguard_orchestrator.application.graph.graph_grounding import grounds_for_state
-from finguard_orchestrator.application.graph.graph_state import Ctx, GraphContext, TurnGraphState
-from finguard_orchestrator.application.graph.graph_store import commit_state
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.engine.grounding import ground
 from finguard_orchestrator.domain.engine.operations import (
@@ -48,6 +44,10 @@ from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.services import answer_writer, payment_writer
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.graph import codec
+from finguard_orchestrator.infrastructure.graph.graph_grounding import grounds_for_state
+from finguard_orchestrator.infrastructure.graph.graph_state import Ctx, GraphContext, TurnGraphState
+from finguard_orchestrator.infrastructure.graph.graph_store import commit_state
 
 
 async def prepare_payment(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:

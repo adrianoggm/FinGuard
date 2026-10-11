@@ -1,6 +1,6 @@
 """A screen's typed action as the application's form action: fields only, nothing decided here."""
 
-from finguard_orchestrator.application.graph.form_actions import (
+from finguard_orchestrator.application.engine.form_actions import (
     AnswerPreview,
     FormAction,
     MoveBetweenAccounts,

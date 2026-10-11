@@ -4,12 +4,11 @@ from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
-from finguard_orchestrator.application.engine.executor import Executed, QueryRun, execute
-from finguard_orchestrator.application.graph.budgets import (
+from finguard_orchestrator.application.engine.budgets import (
     MAX_BANK_EXECUTIONS,
     ReadBudgetExhaustedError,
 )
-from finguard_orchestrator.application.graph.graph_state import GraphContext, TurnGraphState
+from finguard_orchestrator.application.engine.executor import Executed, QueryRun, execute
 from finguard_orchestrator.domain.engine.transitions import Work
 from finguard_orchestrator.domain.enums import GroupBy, Metric
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
@@ -23,6 +22,7 @@ from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPor
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.movement_list_plan import MovementListPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.graph.graph_state import GraphContext, TurnGraphState
 
 
 def record_bank_calls(state: TurnGraphState, ctx: GraphContext) -> int:

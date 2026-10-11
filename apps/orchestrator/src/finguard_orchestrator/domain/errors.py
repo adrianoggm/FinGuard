@@ -144,6 +144,12 @@ class NotAuthorisedError(DomainError):
         super().__init__(reason)
 
 
+class GraphUnavailableError(DomainError):
+    """The conversation graph is not running: it is built at startup, once PostgreSQL is open."""
+
+    code = "graph_unavailable"
+
+
 class FeatureDisabledError(DomainError):
     """The deployment has not turned this on. A 503 rather than a 404: the endpoint
     exists, it is simply not being served here."""

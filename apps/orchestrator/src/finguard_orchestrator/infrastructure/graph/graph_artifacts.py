@@ -10,7 +10,6 @@ from finguard_orchestrator.application.engine.executor import (
     QueryRun,
     RankingRun,
 )
-from finguard_orchestrator.application.graph.graph_state import TurnGraphState
 from finguard_orchestrator.application.queries.financial_turn import SpokenPlan
 from finguard_orchestrator.domain.engine.state import MovementListArtifact
 from finguard_orchestrator.domain.enums import GroupBy, ResultKind
@@ -20,6 +19,7 @@ from finguard_orchestrator.domain.services import answer_writer, category_words
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.graph.graph_state import TurnGraphState
 
 
 def pair_run_from_state(state: TurnGraphState, pair: ComparisonPlan) -> PairRun:

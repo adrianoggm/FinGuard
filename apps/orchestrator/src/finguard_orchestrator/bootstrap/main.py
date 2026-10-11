@@ -30,6 +30,14 @@ from finguard_orchestrator.application.commands.replace_llm_policy import (
     ResetLlmPolicyCommand,
     ResetLlmPolicyHandler,
 )
+from finguard_orchestrator.application.engine.turn_commands import (
+    AnswerTurnCommand,
+    AnswerTurnHandler,
+    OwnsWorkflowHandler,
+    OwnsWorkflowQuery,
+    RunFormActionCommand,
+    RunFormActionHandler,
+)
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
 from finguard_orchestrator.application.policy_store import PolicyStore
@@ -453,6 +461,16 @@ def create_app() -> FastAPI:
         ),
     )
 
+    # Conversational turns go through the buses like every other use case. The graph is built in
+    # the lifespan, after this, so its handlers reach it through the application state and answer
+    # 503 until it is there.
+    def the_graph() -> ConversationTurnHandler | None:
+        graph: ConversationTurnHandler | None = app.state.engine
+        return graph
+
+    command_bus.register(AnswerTurnCommand, AnswerTurnHandler(the_graph))
+    command_bus.register(RunFormActionCommand, RunFormActionHandler(the_graph))
+    query_bus.register(OwnsWorkflowQuery, OwnsWorkflowHandler(the_graph))
     app.state.query_bus = query_bus
     app.state.command_bus = command_bus
     app.state.metrics_executor = financial_metric_executor(banking, present)

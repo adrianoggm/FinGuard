@@ -7,8 +7,8 @@ too. The layers, innermost first: `domain` (models, value objects, ports, servic
 write to; it imports no layer of its own.
 
 Each rule here was broken in this codebase until October 2026, and two of the breaks stopped the
-service from starting. An exception is a line in `ALLOWED` with the reason beside it, never a
-silent edit of a rule.
+service from starting. An exception is written beside the rule it relaxes, with its reason,
+never a silent edit of the rule.
 """
 
 import ast
@@ -30,14 +30,6 @@ FRAMEWORKS = (
     "langgraph",
     "opentelemetry",
 )
-
-# (importing module prefix, imported top-level name) -> why it is tolerated.
-ALLOWED = {
-    # The graph is the application's turn orchestration and is written against LangGraph's state
-    # graph and checkpointer. Moving the framework behind a port is open work (see
-    # docs/architecture/langgraph-legacy-runtime-audit.md); until then it is confined here.
-    ("application.graph", "langgraph"): "the conversation graph is built on LangGraph",
-}
 
 
 def _modules() -> dict[str, Path]:
@@ -68,10 +60,6 @@ def _layer(module: str) -> str:
     return module.split(".")[0]
 
 
-def _allowed(module: str, target: str) -> bool:
-    return any(module.startswith(prefix) and target == name for prefix, name in ALLOWED)
-
-
 def test_layers_only_import_inwards() -> None:
     broken = []
     for module, path in MODULES.items():
@@ -94,7 +82,7 @@ def test_the_inner_layers_import_no_framework() -> None:
             continue
         for line, name in _imports(path):
             top = name.split(".")[0]
-            if top in FRAMEWORKS and not _allowed(module, top):
+            if top in FRAMEWORKS:
                 broken.append(f"{module}:{line} imports {name}")
     assert broken == []
 
@@ -159,6 +147,20 @@ def test_the_inner_layers_raise_domain_errors_not_bare_ones() -> None:
             ):
                 bare.append(f"{module}:{node.lineno}")
     assert bare == []
+
+
+def test_controllers_reach_use_cases_only_through_the_buses() -> None:
+    """A conversational turn is a command like any other: no controller holds the graph."""
+    reaching = [
+        f"{module}:{node.lineno}"
+        for module, path in MODULES.items()
+        if module.startswith("infrastructure.controllers")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Attribute)
+        and node.attr == "engine"
+        and getattr(node.value, "attr", None) == "state"
+    ]
+    assert reaching == []
 
 
 def test_packages_re_export_nothing() -> None:

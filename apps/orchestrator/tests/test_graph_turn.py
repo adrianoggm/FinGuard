@@ -32,10 +32,6 @@ from finguard_orchestrator.application.commands.pay import (
 )
 from finguard_orchestrator.application.engine.executor import QueryRun
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
-from finguard_orchestrator.application.graph import codec, graph_turn, investigation
-from finguard_orchestrator.application.graph import graph as investigation_graph
-from finguard_orchestrator.application.graph.graph_state import GraphPorts
-from finguard_orchestrator.application.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.domain.constants import MAX_SUPPORTING_MOVEMENTS
 from finguard_orchestrator.domain.engine.grounding import Grounds
 from finguard_orchestrator.domain.engine.operations import (
@@ -119,6 +115,10 @@ from finguard_orchestrator.domain.value_objects.movement_list_plan import (
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import ChartVisualizationResponse
+from finguard_orchestrator.infrastructure.graph import codec, graph_turn, investigation
+from finguard_orchestrator.infrastructure.graph import graph as investigation_graph
+from finguard_orchestrator.infrastructure.graph.graph_state import GraphPorts
+from finguard_orchestrator.infrastructure.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.infrastructure.graph.llm_assessor import LlmInvestigationAssessor
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
 

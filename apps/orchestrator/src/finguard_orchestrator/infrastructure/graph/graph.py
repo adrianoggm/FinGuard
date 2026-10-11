@@ -41,6 +41,11 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Checkpointer
 
 from finguard_orchestrator.application.engine import presenter
+from finguard_orchestrator.application.engine.budgets import (
+    MAX_BANK_EXECUTIONS,
+    MAX_MODEL_CALLS,
+    ReadBudgetExhaustedError,
+)
 from finguard_orchestrator.application.engine.executor import (
     MixedCurrenciesError,
     MovementListRun,
@@ -49,40 +54,6 @@ from finguard_orchestrator.application.engine.executor import (
     RankingRun,
 )
 from finguard_orchestrator.application.engine.transition_guard import apply_guarded
-from finguard_orchestrator.application.graph import (
-    codec,
-    graph_analysis,
-    graph_artifacts,
-    graph_execution,
-    investigation,
-)
-from finguard_orchestrator.application.graph.budgets import (
-    MAX_BANK_EXECUTIONS,
-    MAX_MODEL_CALLS,
-    ReadBudgetExhaustedError,
-)
-from finguard_orchestrator.application.graph.graph_grounding import (
-    grounds_for_state as _grounds,
-)
-from finguard_orchestrator.application.graph.graph_payments import (
-    _after_payment_reply,
-    _remember_result,
-    confirm_payment,
-    prepare_payment,
-    wait_for_payment_reply,
-)
-from finguard_orchestrator.application.graph.graph_state import (
-    Ctx,
-    GraphContext,
-    TurnGraphState,
-)
-from finguard_orchestrator.application.graph.graph_store import (
-    canonical_state as _canonical,
-)
-from finguard_orchestrator.application.graph.graph_store import (
-    commit_state,
-)
-from finguard_orchestrator.application.graph.graph_visualization import visualize_and_commit
 from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionResult,
     SpokenContact,
@@ -151,6 +122,35 @@ from finguard_orchestrator.domain.services import (
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.graph import (
+    codec,
+    graph_analysis,
+    graph_artifacts,
+    graph_execution,
+    investigation,
+)
+from finguard_orchestrator.infrastructure.graph.graph_grounding import (
+    grounds_for_state as _grounds,
+)
+from finguard_orchestrator.infrastructure.graph.graph_payments import (
+    _after_payment_reply,
+    _remember_result,
+    confirm_payment,
+    prepare_payment,
+    wait_for_payment_reply,
+)
+from finguard_orchestrator.infrastructure.graph.graph_state import (
+    Ctx,
+    GraphContext,
+    TurnGraphState,
+)
+from finguard_orchestrator.infrastructure.graph.graph_store import (
+    canonical_state as _canonical,
+)
+from finguard_orchestrator.infrastructure.graph.graph_store import (
+    commit_state,
+)
+from finguard_orchestrator.infrastructure.graph.graph_visualization import visualize_and_commit
 
 logger = logging.getLogger(__name__)
 

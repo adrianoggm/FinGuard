@@ -29,6 +29,14 @@ from finguard_orchestrator.application.commands.pay import (
     PrepareOwnTransferCommand,
     PrepareOwnTransferHandler,
 )
+from finguard_orchestrator.application.engine.turn_commands import (
+    AnswerTurnCommand,
+    AnswerTurnHandler,
+    OwnsWorkflowHandler,
+    OwnsWorkflowQuery,
+    RunFormActionCommand,
+    RunFormActionHandler,
+)
 from finguard_orchestrator.application.queries.list_contacts import (
     ContactRow,
     ListContactsQuery,
@@ -711,8 +719,17 @@ def a_stack() -> Stack:
     commands.register(ConfirmPaymentCommand, ConfirmPaymentHandler(bank))  # type: ignore[arg-type]
     commands.register(PrepareChosenPaymentCommand, PrepareChosenPaymentHandler(bank))  # type: ignore[arg-type]
     commands.register(PrepareOwnTransferCommand, PrepareOwnTransferHandler(bank))  # type: ignore[arg-type]
+
+    # The conversation's turns, through the same buses the routes use, on whatever graph the test
+    # installs in `app.state.engine`.
+    def the_graph() -> Any:
+        return app.state.engine
+
+    commands.register(AnswerTurnCommand, AnswerTurnHandler(the_graph))
+    commands.register(RunFormActionCommand, RunFormActionHandler(the_graph))
     queries = QueryBus()
     queries.register(ListContactsQuery, ContactDirectory())
+    queries.register(OwnsWorkflowQuery, OwnsWorkflowHandler(the_graph))
     app.dependency_overrides[get_query_bus] = lambda: queries
     app.dependency_overrides[get_command_bus] = lambda: commands
     app.dependency_overrides[reporting_today] = lambda: TODAY

@@ -2,10 +2,10 @@
 
 from uuid import UUID
 
-from finguard_orchestrator.application.graph import codec
-from finguard_orchestrator.application.graph.graph_state import GraphContext, TurnGraphState
 from finguard_orchestrator.domain.engine.state import DialogueState
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError, TurnCompletion
+from finguard_orchestrator.infrastructure.graph import codec
+from finguard_orchestrator.infrastructure.graph.graph_state import GraphContext, TurnGraphState
 
 
 async def canonical_state(state: TurnGraphState, ctx: GraphContext) -> DialogueState:
