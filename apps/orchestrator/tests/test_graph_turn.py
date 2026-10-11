@@ -1810,11 +1810,11 @@ async def test_a_cancellation_while_persisting_the_calls_still_releases_the_turn
     conversation = await failed_on_the_second_read(world)
     persisting, never = asyncio.Event(), asyncio.Event()
 
-    async def stuck(config: Any, calls: int) -> None:
+    async def stuck(config: Any, context: Any) -> None:
         persisting.set()
         await never.wait()
 
-    world.handler._persist_calls = stuck  # type: ignore[method-assign]  # noqa: SLF001
+    world.handler._persist_progress = stuck  # type: ignore[method-assign]  # noqa: SLF001
     turn = asyncio.create_task(world.ask(conversation_id=conversation, version=1, request_id="r1"))
     await persisting.wait()
     turn.cancel()
@@ -1829,10 +1829,10 @@ async def test_a_persist_that_raises_neither_holds_the_turn_nor_masks_the_answer
     world = World(GROCERIES_IN_JULY, BY_MERCHANT, BY_MERCHANT, steps=(Stop(), Stop()))
     conversation = await failed_on_the_second_read(world)
 
-    async def broken(config: Any, calls: int) -> None:
+    async def broken(config: Any, context: Any) -> None:
         raise RuntimeError("the checkpointer is down")
 
-    world.handler._persist_calls = broken  # type: ignore[method-assign]  # noqa: SLF001
+    world.handler._persist_progress = broken  # type: ignore[method-assign]  # noqa: SLF001
     failed = await world.ask(conversation_id=conversation, version=1, request_id="r1")
 
     assert failed.result is not None and failed.result.outcome == "BANKING_UNAVAILABLE"

@@ -495,6 +495,9 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
             for c in changes
         ],
         "totals": [state["earlier_total"], abs(now.total_minor)],
+        # Both periods' movement counts, like the plain comparison above: the committed artifact
+        # rebuilds the pair from these and reads them for its counts and empty status.
+        "comparison_counts": [then.movement_count, now.movement_count],
         "currency": now.currency,
         "inspected": [],
     }

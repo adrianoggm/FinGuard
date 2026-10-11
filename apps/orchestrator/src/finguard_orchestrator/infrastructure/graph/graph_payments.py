@@ -40,6 +40,7 @@ from finguard_orchestrator.domain.engine.transitions import (
 from finguard_orchestrator.domain.enums import PaymentOutcome, PlanningOutcome, Rail
 from finguard_orchestrator.domain.errors import NotAuthorisedError
 from finguard_orchestrator.domain.models.conversation import Conversation, PaymentConfirmation
+from finguard_orchestrator.domain.models.payment_result import PaymentPreview
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.services import answer_writer, payment_writer
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
@@ -681,11 +682,8 @@ async def _finish_payment_correction_without_changes(
     }
 
 
-async def wait_for_payment_reply(state: TurnGraphState) -> TurnGraphState:
-    answer = codec.loads_typed(state["payment_answer"])
-    if not isinstance(answer, PaymentAnswer) or answer.preview is None:
-        raise RuntimeError("payment confirmation checkpoint has no bank preview")
-    preview = answer.preview
+async def wait_for_payment_reply(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
+    preview = await _waiting_preview(state, runtime.context)
     reply = interrupt(
         {
             "intent_id": str(preview.intent_id),
@@ -704,6 +702,29 @@ async def wait_for_payment_reply(state: TurnGraphState) -> TurnGraphState:
         # this invocation's runtime context and are interpreted by the normal typed planner.
         return {"status": "payment_interpretation"}
     return {"payment_reply": reply, "status": "payment_waiting"}
+
+
+async def _waiting_preview(state: TurnGraphState, ctx: GraphContext) -> PaymentPreview:
+    """The bank preview this turn waits on.
+
+    A turn that prepared it carries it in `payment_answer`. A turn that answered something else
+    while a preview stayed open (a question, a chart, the category list) re-arms the wait without
+    one, so the preview is read from canonical state, and only if it is still the same workflow.
+    """
+    if state.get("payment_answer"):
+        answer = codec.loads_typed(state["payment_answer"])
+        if not isinstance(answer, PaymentAnswer) or answer.preview is None:
+            raise RuntimeError("payment confirmation checkpoint has no bank preview")
+        return answer.preview
+    held = await ctx.ports.store.load(
+        UUID(state["conversation_id"]), account_id=UUID(state["account_id"])
+    )
+    pending = held.payment if held is not None else None
+    if not isinstance(pending, PaymentConfirmationPending) or pending.workflow_id != state.get(
+        "payment_workflow_id"
+    ):
+        raise RuntimeError("a re-armed payment wait has no matching preview in canonical state")
+    return pending.preview
 
 
 def _after_payment_reply(state: TurnGraphState) -> str:
