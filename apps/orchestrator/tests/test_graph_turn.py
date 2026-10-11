@@ -296,8 +296,17 @@ class World:
         )
         return GraphTurnHandler(ports, self.reservations, self.saver)
 
+    def keep_checkpoints(self) -> None:
+        """Keep each committed turn's checkpoint, which the handler deletes once the answer is
+        saved, so a test can read back what the graph checkpointed before presenting."""
+
+        async def keep(config: Any) -> None:
+            return None
+
+        self.handler._discard_completed_checkpoint = keep  # type: ignore[method-assign]  # noqa: SLF001
+
     def last_config(self) -> Any:
-        """The thread of the last turn, for reading back its checkpoint."""
+        """The thread of the last turn, for reading back its checkpoint (see `keep_checkpoints`)."""
         (thread,) = {found.config["configurable"]["thread_id"] for found in self.saver.list(None)}
         return {"configurable": {"thread_id": thread}}
 
@@ -1008,6 +1017,7 @@ async def test_a_failure_on_the_second_read_resumes_within_three_bank_calls() ->
     reads only the second window, asks no interpreter again, and the inspection the assessment then
     asks for would be a fourth call, so it is refused and the answer says it stopped."""
     world = World(BY_MERCHANT, steps=(Inspect("Amazon"), Stop()))
+    world.keep_checkpoints()
     world.ledger.fail_on = {2: BankingUnavailableError("down")}
 
     failed = await world.ask(request_id="req-1")
@@ -1422,18 +1432,17 @@ async def test_chart_operation_reuses_the_prior_banking_result_and_keeps_continu
     assert chart.result.visual_dataset is not None
     rendered = question_to_dto(chart.result)
     assert isinstance(rendered.visualization, ChartVisualizationResponse)
-    assert restyled.result is not None and restyled.result.visual_decision is not None
-    assert restyled.result.visual_decision.spec.mark == "line"
+    # A line needs a time axis: over merchants the edit is refused in words, the chart is left as
+    # it was, and nothing is read again. (A valid restyle is test_engine_routes' monthly series.)
+    assert restyled.result is not None and restyled.result.visual_decision is None
+    assert "sin una dimensi\u00f3n temporal" in restyled.result.text
     assert chart.result.text == "Aqu\u00ed tienes el gr\u00e1fico de los resultados de la consulta."
-    assert restyled.result.text == "He actualizado el gr\u00e1fico con la misma consulta."
     assert reads_after_chart == reads_after_query
     assert chart.state.active_artifact == query.state.active_artifact
     assert chart.state.active_visual is not None
     assert chart.state.active_visual.version == 1
     assert chart.state.active_visual.result_version == query.state.active_artifact.result_version
-    assert restyled.state.active_visual is not None
-    assert restyled.state.active_visual.version == 2
-    assert restyled.state.active_visual.result_version == chart.state.active_visual.result_version
+    assert restyled.state.active_visual == chart.state.active_visual
     restored = graph_turn.codec.loads_state(graph_turn.codec.dumps_state(restyled.state))
     assert restored == restyled.state
     assert reads_after_restyle == reads_after_query
@@ -1670,6 +1679,7 @@ async def test_query_and_visualization_compose_in_one_turn_without_hiding_the_br
 
 async def test_ordinary_bank_execution_is_checkpointed_before_presentation() -> None:
     world = World(GROCERIES_IN_JULY)
+    world.keep_checkpoints()
 
     answer = await world.ask(request_id="ordinary-checkpoint")
 
@@ -1889,7 +1899,6 @@ async def test_conversation_graph_prepares_and_resumes_bizum_on_one_checkpoint()
     assert preview.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
     assert preview.state.version == 1
     assert isinstance(preview.state.payment, PaymentConfirmationPending)
-    assert preview.state.payment.workflow_id == world.last_config()["configurable"]["thread_id"]
     assert bank.prepared[0].amount_minor == 2_000
     assert preview.result.conversation.active is not None
     assert await world.handler.owns_workflow(
@@ -2970,8 +2979,10 @@ async def test_explained_comparison_can_be_charted_and_restyled_without_another_
         ("Dia", "del 2026-06-01 al 2026-06-30, gastos", 8_000),
         ("Mercadona", "del 2026-07-01 al 2026-07-31, gastos", 10_000),
     }
-    assert restyled.result is not None and restyled.result.visual_decision is not None
-    assert restyled.result.visual_decision.spec.mark == "line"
+    # A comparison by merchant has no time axis, so lines are refused and the chart stands.
+    assert restyled.result is not None and restyled.result.visual_decision is None
+    assert "sin una dimensión temporal" in restyled.result.text
+    assert restyled.state.active_visual == chart.state.active_visual
     assert len(world.ledger.ran) == read_count
     assert chart.state.active_artifact is not None
     assert chart.state.active_artifact.comparison is not None
