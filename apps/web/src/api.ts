@@ -230,6 +230,9 @@ export type ConversationState = {
   // Dropping it is not a visible failure — every answer still works — it just quietly makes each
   // turn its own trace again, which is exactly the state it was added to end.
   conversation_id?: string | null;
+  // The graph's version of this conversation: a turn sent against an older one is refused with
+  // the current state, so two screens cannot both answer the same preview.
+  version?: number | null;
   workflow: Workflow | null;
   awaiting: Slot | null;
   // What the last turn asked for even when it left no workflow behind. Round-tripped like the
@@ -763,45 +766,6 @@ export async function* ask(
   }
 }
 
-/**
- * Answers a payment preview with the user's own words.
- *
- * `reply` is text and deliberately not a boolean: sending `true` would be this app deciding that
- * somebody agreed, and that decision belongs to the service, which reads the words against an
- * allow-list. "Sí pero mándale 30" is not a yes, and it has to reach the place that knows that.
- */
-export async function confirm(
-  intentId: string,
-  reply: string,
-  workflowId?: string | null,
-): Promise<Answer> {
-  const response = await fetch(`${BASE}/v1/payments/${intentId}/confirm`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({ reply, ...(workflowId ? { workflow_id: workflowId } : {}) }),
-  });
-  if (!response.ok) await readError(response);
-  const body = await response.json();
-  // The payment endpoints answer with their own shape; the chat only needs these fields.
-  return {
-    outcome: body.outcome,
-    text: body.text,
-    question: null,
-    intent_id: body.intent_id ?? null,
-    workflow_id: body.workflow_id ?? null,
-    plan: null,
-    // The confirmation endpoints answer about a payment, not about a conversation: by this point
-    // it is complete and either done or refused, so nothing is left open. The chat's own state is
-    // whatever it was, which the caller still holds.
-    conversation: null,
-    currency: body.currency ?? null,
-    total_minor: null,
-    movement_count: null,
-    groups: [],
-    movements: [],
-    suggestions: [],
-  };
-}
 
 
 export type Contact = { contact_id: string; display_name: string; phone: string };
@@ -918,89 +882,63 @@ export async function breakdown(by: GroupBy, days: number): Promise<Breakdown> {
   return read<Breakdown>(`/v1/account/breakdown?by=${by}&days=${days}`);
 }
 
+
+
 /**
- * Prepares a payment built in a form.
- *
- * The recipient travels as the name that was *chosen from the list*, not as an identifier: banking
- * resolves it against this account's own contacts, so two Martas still produce a question instead of
- * a guess, and a forged id is useless because there is no id to forge.
+ * A screen's typed action, run by the conversation graph: the same preview, state and confirmation
+ * as a payment asked for in the chat, answered in the chat's shape.
  */
+async function act(body: Record<string, unknown>, attempt: string): Promise<Answer> {
+  const response = await fetch(`${BASE}/v1/conversation/actions`, {
+    method: "POST",
+    headers: headers(attempt),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) await readError(response);
+  return validateVoiceAnswer(await response.json());
+}
+
 /**
- * Money into another of the holder's own accounts.
- *
- * No recipient, because there is nobody to name. The account is an identifier the service listed,
- * so nothing here turns a word into a destination.
+ * A payment built in a form: a contact picked from the list, an amount typed in a field. By name,
+ * because banking verifies it against this holder's contacts; an identifier would have to be trusted.
  */
-export async function transferBetweenAccounts(
+export function payChosen(recipientName: string, amountMinor: number, attempt: string): Promise<Answer> {
+  return act({ action: "pay_contact", recipient_name: recipientName, amount_minor: amountMinor }, attempt);
+}
+
+/**
+ * Money into another of the holder's own accounts, by the id the account list showed. The service
+ * accepts only an account its own directory lists for this holder.
+ */
+export function transferBetweenAccounts(
   toAccountId: string,
   amountMinor: number,
-  currency = "EUR",
-  attempt?: string,
+  attempt: string,
 ): Promise<Answer> {
-  const response = await fetch(`${BASE}/v1/payments/between-accounts`, {
-    method: "POST",
-    headers: headers(attempt),
-    body: JSON.stringify({
-      to_account_id: toAccountId,
-      amount_minor: amountMinor,
-      currency,
-    }),
-  });
-  if (!response.ok) await readError(response);
-  const body = await response.json();
-  return {
-    outcome: body.outcome,
-    text: body.text,
-    question: null,
-    intent_id: body.intent_id ?? null,
-    workflow_id: body.workflow_id ?? null,
-    plan: null,
-    conversation: null,
-    currency: body.currency ?? null,
-    total_minor: null,
-    movement_count: null,
-    groups: [],
-    movements: [],
-    suggestions: [],
-  };
+  return act(
+    { action: "move_between_accounts", to_account_id: toAccountId, amount_minor: amountMinor },
+    attempt,
+  );
 }
 
-export async function payChosen(
-  recipientName: string,
-  amountMinor: number,
-  attempt?: string,
-): Promise<Answer> {
-  const response = await fetch(`${BASE}/v1/payments/chosen`, {
-    method: "POST",
-    headers: headers(attempt),
-    body: JSON.stringify({
-      recipient_name: recipientName,
-      amount_minor: amountMinor,
-      currency: "EUR",
-    }),
-  });
-  if (!response.ok) await readError(response);
-  const body = await response.json();
-  return {
-    outcome: body.outcome,
-    text: body.text,
-    question: null,
-    intent_id: body.intent_id ?? null,
-    workflow_id: body.workflow_id ?? null,
-    plan: null,
-    // The confirmation endpoints answer about a payment, not about a conversation: by this point
-    // it is complete and either done or refused, so nothing is left open. The chat's own state is
-    // whatever it was, which the caller still holds.
-    conversation: null,
-    currency: body.currency ?? null,
-    total_minor: null,
-    movement_count: null,
-    groups: [],
-    movements: [],
-    suggestions: [],
-  };
+/**
+ * Answers the preview the conversation holds, with one of the screen's two buttons.
+ *
+ * A decision, not words: the service reads it with the same allow-list a typed «sí» goes through,
+ * against the preview it holds for this conversation, and refuses a preview that is no longer
+ * open. The key is the conversation, its version and the decision, so pressing again after a
+ * timeout replays the first answer instead of paying twice.
+ */
+export async function confirm(conversation: ConversationState, reply: "sí" | "no"): Promise<Answer> {
+  return act(
+    {
+      action: "answer_preview",
+      decision: reply === "sí" ? "confirm" : "cancel",
+      conversation,
+    },
+    `answer:${conversation.conversation_id}:${conversation.version}:${reply}`,
+  );
 }
-
 
 export type Card = {
   card_id: string;

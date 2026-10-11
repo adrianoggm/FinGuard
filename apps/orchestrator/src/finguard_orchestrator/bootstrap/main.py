@@ -87,7 +87,6 @@ from finguard_orchestrator.infrastructure.controllers.account_controller import 
 from finguard_orchestrator.infrastructure.controllers.graph_question_controller import (
     router as graph_question_router,
 )
-from finguard_orchestrator.infrastructure.controllers.payment_controller import payments_router
 from finguard_orchestrator.infrastructure.controllers.runtime_controller import (
     admin_router,
     assistant_router,
@@ -589,7 +588,6 @@ def create_app() -> FastAPI:
     app.include_router(assistant_router)
     app.include_router(account_router)
     app.include_router(graph_question_router)
-    app.include_router(payments_router)
     app.include_router(admin_router)
     app.include_router(metrics_router)
     register_error_handlers(app)

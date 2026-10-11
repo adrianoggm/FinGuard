@@ -63,7 +63,7 @@ export function Transfer({ summary, onPaid }: Props) {
     setBusy(true);
     try {
       setHeld({
-        answer: await transferBetweenAccounts(target.account_id, amount, target.currency, attempt),
+        answer: await transferBetweenAccounts(target.account_id, amount, attempt),
         failure: null,
         again: null,
       });
@@ -76,12 +76,13 @@ export function Transfer({ summary, onPaid }: Props) {
   }
 
   async function reply(said: Reply) {
-    const intent = held?.answer.intent_id;
-    if (!intent || busy) return;
+    const standing = held?.answer;
+    const conversation = standing?.conversation;
+    if (!standing || !conversation?.intent_id || busy) return;
     setBusy(true);
-    const next = await replied(() => confirm(intent, said, held.answer.workflow_id), {
+    const next = await replied(() => confirm(conversation, said), {
       reply: said,
-      standing: held.answer,
+      standing,
       noun: "traspaso",
     });
     setHeld(next);

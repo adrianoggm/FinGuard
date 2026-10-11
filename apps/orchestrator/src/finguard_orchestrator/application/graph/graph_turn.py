@@ -44,7 +44,7 @@ from langgraph.types import Command
 from finguard_orchestrator.application.engine import presenter
 from finguard_orchestrator.application.engine.executor import MixedCurrenciesError
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
-from finguard_orchestrator.application.graph import codec
+from finguard_orchestrator.application.graph import codec, form_actions
 from finguard_orchestrator.application.graph import graph as investigation_graph
 from finguard_orchestrator.application.graph.budgets import ReadBudgetExhaustedError
 from finguard_orchestrator.application.graph.graph import (
@@ -59,7 +59,7 @@ from finguard_orchestrator.application.graph.graph_state import (
 )
 from finguard_orchestrator.application.graph.graph_store import commit_state
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
-from finguard_orchestrator.domain.engine.operations import Delegate
+from finguard_orchestrator.domain.engine.operations import Delegate, Operation
 from finguard_orchestrator.domain.engine.state import (
     DialogueState,
     DialogueTurn,
@@ -155,6 +155,73 @@ class GraphTurnHandler:
             case _:
                 return False
 
+    async def act(
+        self,
+        action: form_actions.FormAction,
+        *,
+        conversation_id: UUID | None,
+        version: int | None,
+        account_id: UUID,
+        today: date,
+        reporting_timezone: str,
+        request_id: str | None = None,
+        caller_scopes: frozenset[str] = frozenset(),
+    ) -> EngineAnswer:
+        """A form's action as a turn of this conversation: the same preview, state and confirmation
+        a chat payment gets, without a model call."""
+        turn: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "version": version,
+            "account_id": account_id,
+            "today": today,
+            "reporting_timezone": reporting_timezone,
+            "request_id": request_id,
+            "caller_scopes": caller_scopes,
+        }
+        if isinstance(action, form_actions.AnswerPreview):
+            # Only a preview this conversation holds can be answered; anything else is stale, and
+            # a yes must never reach the interpreter as a new sentence. A resend of an answer that
+            # already ran is replayed by `answer`, which is why it is looked up first.
+            reply = form_actions.reply_to(action)
+            held = (
+                await self._ports.store.load(conversation_id, account_id=account_id)
+                if conversation_id is not None
+                else None
+            )
+            answered = (
+                held is not None
+                and version is not None
+                and request_id is not None
+                and await self._reservations.replayed(
+                    TurnKey(account_id, held.conversation_id, version),
+                    request_id,
+                    _fingerprint(reply),
+                )
+                is not None
+            )
+            if not answered and (
+                held is None or not isinstance(held.payment, PaymentConfirmationPending)
+            ):
+                raise StaleDialogueError(held or DialogueState(conversation_id or uuid4()))
+            return await self.answer(reply, **turn)
+        if isinstance(action, form_actions.MoveBetweenAccounts):
+            # Named as the holder's own directory names it, so the graph grounds it the way it
+            # grounds «a la Hucha»; an id that is not one of theirs never becomes a name.
+            destination = next(
+                (
+                    holding.display_name
+                    for holding in await self._ports.accounts.all_of(account_id)
+                    if holding.account_id == action.to_account_id
+                ),
+                None,
+            )
+            if destination is None:
+                raise InvalidValueError("the destination is not one of your accounts")
+            sentence, operations = form_actions.own_transfer_turn(destination, action.amount_minor)
+        else:
+            sentence, operations = form_actions.as_turn(action)
+        return await self.answer(sentence, operations=operations, **turn)
+
     async def answer(
         self,
         sentence: str,
@@ -166,8 +233,10 @@ class GraphTurnHandler:
         reporting_timezone: str,
         request_id: str | None = None,
         caller_scopes: frozenset[str] = frozenset(),
+        operations: tuple[Operation, ...] | None = None,
     ) -> EngineAnswer:
-        """`request_id` is the turn's idempotency key; without one every call is a new request."""
+        """`request_id` is the turn's idempotency key; without one every call is a new request.
+        `operations`, when given, replace the interpreter's reading of `sentence` (a form)."""
         calls_before = self._ports.count_calls()
         started = time.perf_counter()
         turn = await self._reserve(
@@ -189,6 +258,7 @@ class GraphTurnHandler:
             reporting_timezone,
             self._ports,
             caller_scopes=caller_scopes,
+            operations=operations,
             thread_id=config["configurable"]["thread_id"],
             request_id=turn.request_id,
             lease_token=turn.lease_token,

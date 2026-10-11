@@ -699,6 +699,8 @@ class Stack:
     client: TestClient
     ledger: Ledger
     bank: Bank
+    # The payment commands over `bank`, for a graph that prepares and confirms payments.
+    commands: CommandBus
 
 
 def a_stack() -> Stack:
@@ -721,4 +723,4 @@ def a_stack() -> Stack:
     )
     app.state.questions_enabled = True
     app.state.payments_enabled = True
-    return Stack(TestClient(app), ledger, bank)
+    return Stack(TestClient(app), ledger, bank, commands)

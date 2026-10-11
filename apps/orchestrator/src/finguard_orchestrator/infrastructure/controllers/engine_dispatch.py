@@ -27,7 +27,7 @@ absent, never reported as zero.
 
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -39,7 +39,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import MutableHeaders
 
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
+from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.application.graph.budgets import MAX_MODEL_CALLS
+from finguard_orchestrator.application.graph.form_actions import FormAction
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import QueryRejectedError
@@ -47,6 +49,7 @@ from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
+    ConversationPayload,
     QuestionRequest,
     QuestionResponse,
 )
@@ -71,7 +74,8 @@ FINANCIAL_READS_HEADER: Final = "X-FinGuard-Financial-Reads"
 PROVIDER_FAILURES_HEADER: Final = "X-FinGuard-Provider-Failures"
 PROVIDER_TERMINAL_FAILURE_HEADER: Final = "X-FinGuard-Provider-Terminal-Failure"
 _STREAM_ROUTE: Final = "/v1/questions/stream"
-_QUESTION_ROUTES: Final = frozenset({"/v1/questions", _STREAM_ROUTE})
+_ACTION_ROUTE: Final = "/v1/conversation/actions"
+_QUESTION_ROUTES: Final = frozenset({"/v1/questions", _STREAM_ROUTE, _ACTION_ROUTE})
 # The directory and the contacts are read before the sentence is: a refusal there means the turn
 # was never interpreted, so it must not say it was («He entendido la pregunta…»).
 _UNREAD: Final = "No he podido leer tus cuentas y tus contactos: el banco ha rechazado la consulta."
@@ -109,10 +113,56 @@ async def try_engine(
 
     A version other than the held one raises `StaleDialogueError` out of here, before anything
     ran; `register` writes the 409."""
-    echoed = question.conversation
+    return await _turn(
+        engine,
+        question.conversation,
+        who,
+        metric_tokens,
+        lambda **turn: engine.answer(question.question, **turn),
+        today=today,
+        request_id=request_id,
+        refuse_retired_workflows=True,
+    )
+
+
+async def try_action(
+    engine: ConversationTurnHandler,
+    action: FormAction,
+    echoed: ConversationPayload | None,
+    who: Caller,
+    today: date,
+    metric_tokens: MetricTokenCodec,
+    request_id: str,
+) -> QuestionResponse:
+    """A form's typed action, answered by the same graph and in the same shape as a question."""
+    return await _turn(
+        engine,
+        echoed,
+        who,
+        metric_tokens,
+        lambda **turn: engine.act(action, **turn),
+        today=today,
+        request_id=request_id,
+        # An action names its own target: a preview's decision is checked against the preview the
+        # graph holds, and a form starts a new payment, so no echoed workflow is trusted here.
+        refuse_retired_workflows=False,
+    )
+
+
+async def _turn(
+    engine: ConversationTurnHandler,
+    echoed: ConversationPayload | None,
+    who: Caller,
+    metric_tokens: MetricTokenCodec,
+    run: Callable[..., Awaitable[EngineAnswer]],
+    *,
+    today: date,
+    request_id: str | None,
+    refuse_retired_workflows: bool,
+) -> QuestionResponse:
     conversation_id = echoed.conversation_id if echoed is not None else None
     version = echoed.version if echoed is not None else None
-    if echoed is not None and echoed.workflow is not None:
+    if refuse_retired_workflows and echoed is not None and echoed.workflow is not None:
         owns_workflow = conversation_id is not None and await engine.owns_workflow(
             conversation_id, account_id=who.account_id, workflow=echoed.workflow
         )
@@ -124,8 +174,7 @@ async def try_engine(
             return _on_the_wire(refused, held, who, metric_tokens)
     try:
         with provider_request_budget(MAX_MODEL_CALLS):
-            turn = await engine.answer(
-                question.question,
+            turn = await run(
                 conversation_id=conversation_id,
                 version=version,
                 account_id=who.account_id,

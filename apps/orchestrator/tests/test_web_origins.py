@@ -71,7 +71,9 @@ def test_the_credential_header_is_allowed_through() -> None:
     assert "authorization" in response.headers["access-control-allow-headers"].lower()
 
 
-@pytest.mark.parametrize("route", ["/v1/questions", "/v1/questions/stream", "/v1/payments"])
+@pytest.mark.parametrize(
+    "route", ["/v1/questions", "/v1/questions/stream", "/v1/conversation/actions"]
+)
 def test_every_header_the_client_sends_survives_a_preflight(route: str) -> None:
     """The failure this catches took the whole chat down while every route answered `curl` fine.
 

@@ -60,9 +60,6 @@ def payments_enabled(request: Request) -> None:
     """
     if not request.app.state.payments_enabled:
         raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
-    # LangGraph owns every payment workflow, so the direct form routes stay closed: a preview
-    # built outside the conversation would be one the graph's confirmation never saw.
-    raise FeatureDisabledError("direct payment routes are disabled; use the unified conversation")
 
 
 def metrics_enabled(request: Request) -> None:

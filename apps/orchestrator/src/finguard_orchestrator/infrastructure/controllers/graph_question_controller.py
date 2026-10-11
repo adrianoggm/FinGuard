@@ -6,20 +6,23 @@ LangGraph is the only conversational runtime; a missing graph is a 503, never a 
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from finguard_orchestrator.application.engine.turn_handler import ConversationTurnHandler
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.controllers import engine_dispatch
+from finguard_orchestrator.infrastructure.dto.action_dto import ActionRequest, AnswerPreviewAction
 from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest, QuestionResponse
 from finguard_orchestrator.infrastructure.http.dependencies import (
+    payments_enabled,
     questions_enabled,
     reporting_today,
     required_attempt_key,
     requires,
 )
+from finguard_orchestrator.infrastructure.mappers import action_mapper
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 
 router = APIRouter(tags=["assistant"])
@@ -80,4 +83,32 @@ async def ask_streaming(
 ) -> StreamingResponse:
     return await engine_dispatch.try_engine_streaming(
         engine, body, who, today, metric_tokens, request_id=attempt
+    )
+
+
+@router.post(
+    "/v1/conversation/actions",
+    summary="Run a screen's typed action (a payment form, a preview's decision)",
+    dependencies=[Depends(payments_enabled)],
+)
+async def act(
+    body: Annotated[ActionRequest, Body()],
+    who: Annotated[Caller, Depends(requires(Scope.PAYMENTS_PREPARE))],
+    today: Today,
+    attempt: Attempt,
+    metric_tokens: MetricTokens,
+    engine: Graph,
+) -> QuestionResponse:
+    """A form's payment and a preview's decision run as turns of the same graph as the chat: the
+    same bank preview, canonical state and deterministic confirmation, with no model call."""
+    if isinstance(body, AnswerPreviewAction):
+        who.assert_may(Scope.PAYMENTS_CONFIRM)
+    return await engine_dispatch.try_action(
+        engine,
+        action_mapper.to_application(body),
+        body.conversation,
+        who,
+        today,
+        metric_tokens,
+        request_id=attempt,
     )

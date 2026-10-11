@@ -737,26 +737,19 @@ def test_graph_payment_confirmation_state_survives_the_http_mapping() -> None:
     assert answer.conversation.version == 4
 
 
-def test_the_direct_payment_routes_are_closed() -> None:
-    """Payments go through the unified conversation alone: a second, parallel way to prepare one
-    would be a workflow the graph never sees."""
+def test_there_is_no_parallel_payment_route() -> None:
+    """Payments go through the conversation alone, from the chat or from a form's typed action: a
+    second way to prepare one would be a workflow the graph never sees."""
     stack = a_stack()
 
     response = stack.client.post(
         "/v1/payments/chosen",
-        headers={"Idempotency-Key": "parallel-workflow-is-disabled"},
-        json={
-            "recipient_name": "Marta Solis Vega",
-            "amount_minor": 2_000,
-            "currency": "EUR",
-        },
+        headers={"Idempotency-Key": "parallel-workflow-is-gone"},
+        json={"recipient_name": "Marta Solis Vega", "amount_minor": 2_000, "currency": "EUR"},
     )
 
-    assert response.status_code == 503
-    assert response.json()["code"] == "feature_disabled"
-    assert "unified conversation" in response.json()["detail"]
+    assert response.status_code == 404
     assert stack.bank.prepared == []
-    assert stack.bank.confirmed == []
 
 
 @pytest.mark.parametrize("field", ["engine_temperature", "engine_max_output_tokens"])
