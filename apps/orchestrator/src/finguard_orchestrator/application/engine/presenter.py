@@ -33,7 +33,7 @@ from finguard_orchestrator.application.queries.financial_turn import (
     SpokenGroup,
     SpokenMovement,
 )
-from finguard_orchestrator.domain.engine.operations import Clarify, Smalltalk
+from finguard_orchestrator.domain.engine.operations import Clarify, PlanFields, Smalltalk
 from finguard_orchestrator.domain.engine.state import (
     ComparisonFocus,
     DialogueState,
@@ -476,7 +476,7 @@ def _question(
         case Missing.SUBJECT:
             if about:
                 return f"No tengo ninguna categoría «{about}». ¿Sobre qué quieres preguntar?"
-            return "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo."
+            return _subject_question(reply.draft)
         case Missing.CORRECTION:
             return "¿Qué parte de la consulta anterior querías corregir?"
         case Missing.TASK_LIMIT:
@@ -489,6 +489,26 @@ def _question(
 # Stands in for the window a period question asks for, only so the subject can be named in the
 # answers' own words (`window_question`). Nothing is ever run with it.
 _NAMING_WINDOW: Final = RelativePeriod(Period.THIS_MONTH)
+
+
+def _subject_question(draft: PlanFields) -> str:
+    """Ask only for the subject, naming what was already understood: «¿De qué categoría, comercio
+    o persona quieres ver tus gastos el mes pasado?». Asked from nothing only when nothing was."""
+    if draft.direction is None or draft.window is None:
+        return "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo."
+    try:
+        named = FinancialPlan(
+            direction=draft.direction,
+            period=draft.window if isinstance(draft.window, RelativePeriod) else None,
+            date_range=draft.window if isinstance(draft.window, AbsoluteRange) else None,
+        )
+    except InvalidValueError:
+        return "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo."
+    noun = _DIRECTION_WORDS[draft.direction]
+    return (
+        f"¿De qué categoría, comercio o persona quieres ver tus {noun} "
+        f"{answer_writer.compared_window(named)}?"
+    )
 
 
 def _window_question(pending: Pending | None, today: date) -> str:

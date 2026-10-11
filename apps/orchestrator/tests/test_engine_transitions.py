@@ -1485,6 +1485,25 @@ def test_a_question_from_the_model_keeps_only_what_it_asks_for() -> None:
     assert_transition_matches(t, Transition(EMPTY, None, Clarify(Missing.SUBJECT)))
 
 
+def test_a_subject_question_offers_catalogue_categories_and_keeps_the_draft() -> None:
+    # Catalogue keys are a closed set, named by category_words, never the model's words (R21).
+    draft = PlanFields(direction=Direction.EXPENSE, window=RelativePeriod(Period.LAST_MONTH))
+    said = Clarify(Missing.SUBJECT, candidates=("RESTAURANTS", "LEISURE"), draft=draft)
+
+    t = apply(EMPTY, [said], today=TODAY, grounds=G)
+
+    assert t.reply == said
+    assert t.state.pending == Pending(Missing.SUBJECT, draft)
+
+
+def test_subject_candidates_outside_the_catalogue_are_not_offered() -> None:
+    said = Clarify(Missing.SUBJECT, candidates=("RESTAURANTS", "999,99 €"))
+
+    t = apply(EMPTY, [said], today=TODAY, grounds=G)
+
+    assert t.reply == Clarify(Missing.SUBJECT)
+
+
 # --- Historical counterparties versus saved payment contacts -------------------------------
 
 

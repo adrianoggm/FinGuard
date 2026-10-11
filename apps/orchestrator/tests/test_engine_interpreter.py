@@ -374,7 +374,9 @@ async def test_a_filter_the_sentence_never_names_is_reviewed_once() -> None:
     assert len(provider.prompts) == 2
 
 
-async def test_a_review_that_keeps_the_unstated_filter_is_asked_back() -> None:
+async def test_a_review_that_keeps_the_unstated_filter_asks_without_losing_the_rest() -> None:
+    """Only the unanchored filter goes; the direction, the window and the shape stay in the
+    question's draft, so the reply completes the same query instead of starting it again."""
     ops, provider = await interpreted(
         answer(
             {
@@ -389,8 +391,47 @@ async def test_a_review_that_keeps_the_unstated_filter_is_asked_back() -> None:
         sentence="¿cuánto gasté el mes pasado?",
     )
 
-    assert ops == (Clarify(Missing.SUBJECT),)
+    assert ops == (
+        Clarify(
+            Missing.SUBJECT,
+            draft=PlanFields(
+                direction=Direction.EXPENSE,
+                window=RelativePeriod(Period.LAST_MONTH),
+                result_kind=ResultKind.SCALAR,
+            ),
+        ),
+    )
     assert len(provider.prompts) == 2
+
+
+async def test_unanchored_categories_are_offered_back_as_the_choice() -> None:
+    """«Los gastos en comida el mes pasado»: «comida» names no category, the model reads two,
+    and the review keeps both. The question offers those two and keeps the rest of the query."""
+    ops, _ = await interpreted(
+        answer(
+            {
+                "ask": items(
+                    direction="EXPENSE",
+                    window=LAST_MONTH,
+                    result_kind="SCALAR",
+                    categories=["RESTAURANTS", "GROCERIES"],
+                )
+            }
+        ),
+        sentence="Los gastos en comida el mes pasado",
+    )
+
+    assert ops == (
+        Clarify(
+            Missing.SUBJECT,
+            candidates=("RESTAURANTS", "GROCERIES"),
+            draft=PlanFields(
+                direction=Direction.EXPENSE,
+                window=RelativePeriod(Period.LAST_MONTH),
+                result_kind=ResultKind.SCALAR,
+            ),
+        ),
+    )
 
 
 # --- an answer that cannot be read: one repair, then a question back ---------------------------

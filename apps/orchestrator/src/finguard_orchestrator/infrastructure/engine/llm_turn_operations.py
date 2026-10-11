@@ -20,7 +20,7 @@ exhausted with no content) is still `InterpretationFailedError`, with no repair 
 import logging
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from datetime import date
 from typing import Any
 from uuid import UUID
@@ -248,7 +248,12 @@ class LlmTurnOperations(TurnOperationsPort):
                     type(failed).__name__,
                 )
                 if unanchored_filters or complete_question_patch or category_merchant_collision:
-                    operations = (Clarify(Missing.SUBJECT),)
+                    operations = _held_back(
+                        operations,
+                        sentence,
+                        categories=self._categories,
+                        account_names=account_names,
+                    )
             else:
                 try:
                     operations = self._read(reviewed)
@@ -282,14 +287,24 @@ class LlmTurnOperations(TurnOperationsPort):
                             still_complete_question_patch,
                             still_colliding,
                         )
-                        operations = (Clarify(Missing.SUBJECT),)
+                        operations = _held_back(
+                            operations,
+                            sentence,
+                            categories=self._categories,
+                            account_names=account_names,
+                        )
                 except UnreadableError as refused_review:
                     logger.warning(
                         "engine.operations_semantic_review_unreadable problem=%s",
                         refused_review.logged,
                     )
                     if unanchored_filters or complete_question_patch or category_merchant_collision:
-                        operations = (Clarify(Missing.SUBJECT),)
+                        operations = _held_back(
+                            operations,
+                            sentence,
+                            categories=self._categories,
+                            account_names=account_names,
+                        )
             repair_used = True
         elif repair_used and (
             unanchored_filters or complete_question_patch or category_merchant_collision
@@ -305,7 +320,9 @@ class LlmTurnOperations(TurnOperationsPort):
                 complete_question_patch,
                 category_merchant_collision,
             )
-            operations = (Clarify(Missing.SUBJECT),)
+            operations = _held_back(
+                operations, sentence, categories=self._categories, account_names=account_names
+            )
         clarifications = tuple(op for op in operations if isinstance(op, Clarify))
         patches = tuple(op for op in operations if isinstance(op, Patch))
         logger.info(
@@ -374,6 +391,70 @@ class LlmTurnOperations(TurnOperationsPort):
             raise InterpretationFailedError(
                 f"the interpreter's model failed: {type(failed).__name__}"
             ) from None
+
+
+def _held_back(
+    operations: tuple[Operation, ...],
+    sentence: str,
+    *,
+    categories: Mapping[str, str],
+    account_names: Mapping[UUID, str],
+) -> tuple[Operation, ...]:
+    """A reading that could not be verified is not run, and what it did understand is not lost.
+
+    The question keeps every field of a new ask that is not a filter, and every filter value the
+    sentence states; it drops only the values nothing in the sentence anchors. Unanchored
+    categories are catalogue keys, a closed set, so two or more are offered back as the choice.
+    Only a new ask is held back this way; anything else asks for its subject from scratch.
+    """
+    ask = next((operation for operation in operations if isinstance(operation, Ask)), None)
+    if ask is None:
+        return (Clarify(Missing.SUBJECT),)
+    words = spanish.folded(sentence)
+    mentioned = set(category_words.named_in(sentence))
+    known = {field.name for field in fields(ask.fields)}
+    kept: dict[str, Any] = {}
+    doubtful: tuple[str, ...] = ()
+    for field_name in _FILTER_FIELDS:
+        values = getattr(ask.fields, field_name, None)
+        if field_name not in known or not values:
+            continue
+        stated = tuple(
+            value
+            for value in values
+            if isinstance(value, str)
+            and _stated(field_name, value, words, mentioned, categories, account_names)
+        )
+        if field_name == "categories":
+            doubtful = tuple(
+                value for value in values if value not in stated and value in categories
+            )
+        kept[field_name] = stated or None
+    draft = replace(ask.fields, **kept)
+    return (
+        Clarify(Missing.SUBJECT, candidates=doubtful if len(doubtful) > 1 else (), draft=draft),
+    )
+
+
+def _stated(
+    field_name: str,
+    value: str,
+    words: str,
+    mentioned: set[str],
+    categories: Mapping[str, str],
+    account_names: Mapping[UUID, str],
+) -> bool:
+    """Whether the sentence itself says this filter value, as the review trigger decides it."""
+    surfaces = [value]
+    if field_name in {"categories", "excluded_categories"}:
+        if mentioned.intersection(_category_ids((value,), categories)):
+            return True
+        label = categories.get(value)
+        if label:
+            surfaces.append(label)
+    if field_name == "accounts" and _account_name_is_anchored(value, words, account_names):
+        return True
+    return any(_surface_in_words(surface, words) for surface in surfaces)
 
 
 def _past_payment_was_misread(sentence: str, operations: tuple[Operation, ...]) -> bool:

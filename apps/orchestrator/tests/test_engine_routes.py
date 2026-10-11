@@ -44,7 +44,14 @@ from finguard_orchestrator.domain.engine.operations import (
     Visualize,
 )
 from finguard_orchestrator.domain.engine.state import DialogueState, QueryFocus
-from finguard_orchestrator.domain.enums import Direction, GroupBy, PaymentOutcome, Rail
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    PaymentOutcome,
+    Period,
+    Rail,
+    ResultKind,
+)
 from finguard_orchestrator.domain.errors import QueryRejectedError
 from finguard_orchestrator.domain.models.account_summary import Holding
 from finguard_orchestrator.domain.models.conversation import (
@@ -64,6 +71,7 @@ from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.controllers import engine_dispatch
@@ -154,14 +162,20 @@ class NoInvestigation:
 
 
 def engine_on(
-    stack: Stack, interpreter: object, *, directory: Directory | None = None
+    stack: Stack,
+    interpreter: object,
+    *,
+    directory: Directory | None = None,
+    store: MemoryDialogueStore | None = None,
 ) -> GraphTurnHandler:
-    """The graph as the composition root builds it, on the stack's own fakes and in memory."""
+    """The graph as the composition root builds it, on the stack's own fakes and in memory. Given a
+    `store`, it is a new process over the same database: nothing of the old graph survives but
+    the canonical conversation."""
     engine = GraphTurnHandler(
         GraphPorts(
             interpreter,  # type: ignore[arg-type]
             NoInvestigation(),  # type: ignore[arg-type]
-            MemoryDialogueStore(),
+            store or MemoryDialogueStore(),
             stack.ledger,  # type: ignore[arg-type]
             Accounts(),  # type: ignore[arg-type]
             directory or Directory(),  # type: ignore[arg-type]
@@ -752,3 +766,56 @@ def test_the_engines_sampling_refuses_a_negative(field: str) -> None:
     """M-7: refused when the settings load, by name, rather than by the provider mid-turn."""
     with pytest.raises(ValidationError, match=field):
         Settings(**{field: -1})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_clarification_completes_the_query_it_asked_about_across_a_restart(route: str) -> None:
+    """«Los gastos en comida el mes pasado»: the model reads two categories the sentence does not
+    name, and its review keeps them, so the turn asks which. The question keeps what was
+    understood, and after a restart «de restaurantes» runs last month's restaurant spending
+    without asking for the period again."""
+    stack = a_stack()
+    store = MemoryDialogueStore()
+    food = {
+        "operations": [
+            {
+                "ask": [
+                    {"direction": "EXPENSE"},
+                    {"window": {"named": "LAST_MONTH"}},
+                    {"result_kind": "SCALAR"},
+                    {"categories": ["RESTAURANTS", "GROCERIES"]},
+                ]
+            }
+        ]
+    }
+    engine_on(stack, an_adapter(Canned(food, food)), store=store)
+    asked = post(stack, route, "Los gastos en comida el mes pasado")
+
+    assert asked.status == 200
+    assert asked.body["outcome"] == "NEEDS_CLARIFICATION"
+    assert "restaurantes" in asked.body["text"] and "supermercado" in asked.body["text"]
+    assert "periodo" not in asked.body["text"]
+    assert stack.ledger.ran == []
+
+    restaurants = {
+        "operations": [
+            {
+                "patch": {
+                    "target": "pending",
+                    "changes": [{"categories": ["RESTAURANTS"]}],
+                    "task_id": None,
+                }
+            }
+        ]
+    }
+    engine_on(stack, an_adapter(Canned(restaurants)), store=store)  # a new process
+    answered = post(stack, route, "De restaurantes", asked.conversation)
+
+    assert answered.status == 200
+    assert answered.body["outcome"] != "NEEDS_CLARIFICATION", answered.body["text"]
+    assert len(stack.ledger.plans) == 1
+    ran = stack.ledger.plans[0]
+    assert ran.direction is Direction.EXPENSE
+    assert ran.period == RelativePeriod(Period.LAST_MONTH)
+    assert ran.categories == ("RESTAURANTS",)
+    assert ran.result_kind in (None, ResultKind.SCALAR)
