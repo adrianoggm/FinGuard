@@ -143,8 +143,11 @@ Balances use balance without a period.
 Incomplete asks include understood fields; an empty ask asks for the subject. When the user answers
 an open query clarification (WINDOW, SUBJECT, ACCOUNT or PERSON), emit `patch` with target `pending`
 and every field supplied; the transition merges those named fields into the saved draft and asks
-only for anything still missing. CORRECTION uses a focus patch; OPERAND uses `select_operand` or a
-new `compare`, according to the answer. `TASK_LIMIT` is system-owned; never emit it. A semantically
+only for anything still missing. Target `pending` only when STATE shows an open question; without
+an open question, patch focus. A reply to a payment draft in progress repeats its prepare_bizum or
+prepare_transfer with the slots it supplies. CORRECTION uses a focus patch; OPERAND uses
+`select_operand` or a new `compare`, according to the answer. `TASK_LIMIT` is system-owned;
+never emit it. A semantically
 complete new request emits `ask`, even while
 a clarification is open; this starts a fresh task and suspends the old draft rather than forcing
 the new words into it. If the user later explicitly returns to a suspended clarification, emit

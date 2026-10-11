@@ -209,12 +209,7 @@ def apply(
                 # A malformed/empty model answer is a recovery question, not authority to erase
                 # the unfinished task's fields or change which answer it is waiting for.
                 open_question = active_pending
-                clarification = Clarify(
-                    active_pending.missing,
-                    op.about,
-                    op.candidates,
-                    active_pending.draft,
-                )
+                clarification = Clarify(active_pending.missing, draft=active_pending.draft)
             elif active_pending is not None:
                 # A further clarification is still the same task. Keep its captured account
                 # scope and stable identity, and merge only the fields this operation supplied.
@@ -224,10 +219,10 @@ def apply(
                     active_pending.scope,
                     active_pending.task_id,
                 )
-                clarification = Clarify(op.missing, op.about, op.candidates, open_question.draft)
+                clarification = Clarify(op.missing, draft=open_question.draft)
             else:
                 open_question = Pending(op.missing, op.draft, resting.scope)
-                clarification = Clarify(op.missing, op.about, op.candidates, op.draft)
+                clarification = Clarify(op.missing, draft=op.draft)
             return Transition(replace(resting, pending=open_question), None, clarification)
         if isinstance(op, (Smalltalk, Delegate, Visualize, Clarify)):
             raise InvariantViolationError("non-domain operation escaped transition dispatch")

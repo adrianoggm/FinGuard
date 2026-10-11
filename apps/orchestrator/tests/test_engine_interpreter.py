@@ -1415,6 +1415,9 @@ def test_pending_is_only_for_a_question_the_state_shows_open() -> None:
     assert "answers an open query clarification" in normalized
     assert "emit `patch` with target `pending`" in normalized
     assert "without an open question, patch focus" in normalized
+    # The same misreading lost a Bizum: «A Marta Solis», answering «¿A quién…?», was patched into
+    # a pending query that did not exist, and the payment draft was dropped.
+    assert "A reply to a payment draft in progress repeats its prepare_bizum" in normalized
 
 
 def test_pending_window_shows_a_period_only_patch_example() -> None:
