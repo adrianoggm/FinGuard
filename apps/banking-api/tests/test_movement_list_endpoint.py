@@ -4,6 +4,8 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 from finguard_banking.application import ListMovementsQuery
+from finguard_banking.application.bus.query_bus import QueryBus
+from finguard_banking.bootstrap.dependencies import get_query_bus
 from finguard_banking.bootstrap.main import app
 from finguard_banking.domain.enums import Direction
 from finguard_banking.domain.models.financial_query_result import Movement
@@ -40,19 +42,18 @@ class FakeList:
 
 def test_periodless_movement_list_route_uses_path_account_and_returns_cursor(monkeypatch) -> None:
     handler = FakeList()
-    bus = app.state.query_bus
-    original = bus._handlers.get(ListMovementsQuery)  # noqa: SLF001
-    bus._handlers[ListMovementsQuery] = handler  # noqa: SLF001
+    # A bus of its own, through the route's dependency: the app's bus is shared by every test, and
+    # one that rebuilt it (a lifespan run) made a handler poked into it disappear mid-suite.
+    bus = QueryBus()
+    bus.register(ListMovementsQuery, handler)
+    app.dependency_overrides[get_query_bus] = lambda: bus
     try:
         response = TestClient(app).post(
             f"/v1/accounts/{ACCOUNT}/movements/list",
             json={"direction": Direction.EXPENSE.value, "pageSize": 1},
         )
     finally:
-        if original is None:
-            bus._handlers.pop(ListMovementsQuery, None)  # noqa: SLF001
-        else:
-            bus._handlers[ListMovementsQuery] = original  # noqa: SLF001
+        app.dependency_overrides.pop(get_query_bus, None)
 
     assert response.status_code == 200
     assert response.json()["movements"][0]["amountMinor"] == 1299

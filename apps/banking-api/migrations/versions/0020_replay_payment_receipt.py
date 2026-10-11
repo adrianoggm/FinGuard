@@ -1,6 +1,6 @@
 """persist exact receipts so confirmed intents can be safely replayed
 
-Revision ID: 0020_replay_confirmed_payment_receipt
+Revision ID: 0020_replay_payment_receipt
 Revises: 0019_intent_immutability
 Create Date: 2026-10-10
 """
@@ -9,7 +9,7 @@ from pathlib import Path
 
 from alembic import op
 
-revision = "0020_replay_confirmed_payment_receipt"
+revision = "0020_replay_payment_receipt"
 down_revision = "0019_intent_immutability"
 branch_labels = None
 depends_on = None

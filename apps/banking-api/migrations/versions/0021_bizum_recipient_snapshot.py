@@ -1,14 +1,14 @@
 """snapshot the exact Bizum recipient approved in the preview
 
 Revision ID: 0021_bizum_recipient_snapshot
-Revises: 0020_replay_confirmed_payment_receipt
+Revises: 0020_replay_payment_receipt
 Create Date: 2026-10-11
 """
 
 from alembic import op
 
 revision = "0021_bizum_recipient_snapshot"
-down_revision = "0020_replay_confirmed_payment_receipt"
+down_revision = "0020_replay_payment_receipt"
 branch_labels = None
 depends_on = None
 
