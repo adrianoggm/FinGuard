@@ -76,6 +76,9 @@ GRAPH = (
     SRC / "domain" / "ports" / "turn_reservations.py",
     SRC / "bootstrap" / "graph_wiring.py",
 )
+# The graph's nodes, split by workflow: together they hold every use of the sentence past the
+# handler.
+NODE_MODULES = ("graph.py", "graph_payments.py", "graph_visualization.py")
 # What `category_words` may be asked by the engine: the name of a category, for an answer or the
 # model's glossary. Never what a sentence names.
 NAMING = frozenset({"name_of", "names", "keys", "words_for"})
@@ -159,8 +162,7 @@ def test_the_graph_limits_sentence_uses_and_normalizes_confirmation_before_check
     """Ordinary text reaches interpretation and remembered state; payment slots are grounded and
     free-form confirmation text is normalized before it is sent as a LangGraph resume value."""
     handler = _tree(SRC / "infrastructure" / "graph" / "graph_turn.py")
-    nodes = _tree(SRC / "infrastructure" / "graph" / "graph.py")
-    handler_parents, node_parents = _parents(handler), _parents(nodes)
+    handler_parents = _parents(handler)
 
     in_handler = sorted(
         _where(node, handler_parents)
@@ -168,8 +170,12 @@ def test_the_graph_limits_sentence_uses_and_normalizes_confirmation_before_check
         if isinstance(node, ast.Name) and node.id == "sentence"
     )
     in_nodes = sorted(
-        _where(node, node_parents)
-        for node in ast.walk(nodes)
+        _where(node, parents)
+        for tree, parents in (
+            (tree, _parents(tree))
+            for tree in (_tree(SRC / "infrastructure" / "graph" / name) for name in NODE_MODULES)
+        )
+        for node in ast.walk(tree)
         if isinstance(node, ast.Attribute) and node.attr == "sentence"
     )
 
@@ -187,14 +193,23 @@ def test_the_graph_limits_sentence_uses_and_normalizes_confirmation_before_check
         "DialogueTurn(...)",
         "DialogueTurn(...)",
         "DialogueTurn(...)",
+        "DialogueTurn(...)",
+        "DialogueTurn(...)",
+        "DialogueTurn(...)",
         "DialogueTurn(said=)",
         "_remember_result(...)",
         "_remember_result(...)",
         "_remember_result(...)",
         "_remember_result(...)",
+        "_remember_result(...)",
+        "_remember_result(...)",
+        "_remember_result(...)",
         "candidate.turns[-1].said == ctx.sentence",
         "candidate.turns[-1].said == ctx.sentence",
+        # A refusal closes an unconfirmed payment draft through the same allow-list as a resume.
+        "confirmation.is_refusal(...)",
         "ctx.ports.interpreter.interpret(...)",
+        "ctx.ports.visual_policy.decide(...)",
         "ctx.ports.visual_policy.decide(...)",
         "payment_input.amount(...)",
         "payment_input.destination_candidates(...)",
@@ -210,7 +225,9 @@ def test_no_other_graph_module_takes_a_sentence() -> None:
     named = {
         path.name
         for path in GRAPH
-        if path.name not in ("graph.py", "graph_turn.py")
+        # The handler, the node modules checked above, and graph_state, which only declares the
+        # runtime context that carries the sentence to them.
+        if path.name not in ("graph_turn.py", "graph_state.py", *NODE_MODULES)
         for node in ast.walk(_tree(path))
         if (isinstance(node, ast.Name) and node.id == "sentence")
         or (isinstance(node, ast.arg) and node.arg == "sentence")

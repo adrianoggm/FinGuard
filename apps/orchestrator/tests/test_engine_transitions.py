@@ -380,6 +380,9 @@ def test_patch_on_a_query_replaces_only_the_fields_given(
     t = apply(s, [Patch("focus", changes)], today=TODAY, grounds=G)
 
     patched = replace(base, **moved)
+    if "group_by" in moved:
+        # A regrouping reconciles the result shape; the retained top 3 makes it a ranking.
+        patched = replace(patched, result_kind=ResultKind.RANKING)
     assert_transition_matches(
         t,
         Transition(
@@ -719,12 +722,9 @@ def test_patch_on_pending_merges_into_the_draft_and_runs_as_an_ask_once_complete
 
 
 def test_pending_task_keeps_its_account_scope_when_the_period_arrives() -> None:
+    # The scope is the task's own (Pending.scope), not whatever the screen shows.
     draft = PlanFields(direction=Direction.EXPENSE, categories=("RESTAURANTS",))
-    s = replace(
-        EMPTY,
-        pending=Pending(Missing.WINDOW, draft),
-        scope=Scope((HUCHA.account_id,)),
-    )
+    s = replace(EMPTY, pending=Pending(Missing.WINDOW, draft, Scope((HUCHA.account_id,))))
 
     t = apply(s, [Patch("pending", PlanFields(window=JULY))], today=TODAY, grounds=G)
 
@@ -1309,9 +1309,10 @@ def test_a_grouping_a_comparison_keeps_is_applied() -> None:
         grounds=G,
     )
 
+    # A regrouping reconciles the result shape: by account is a breakdown.
     by_account = ComparisonPlan.between(
-        plan(JUNE, ["RESTAURANTS"], group_by=GroupBy.ACCOUNT),
-        plan(JULY, ["RESTAURANTS"], group_by=GroupBy.ACCOUNT),
+        plan(JUNE, ["RESTAURANTS"], group_by=GroupBy.ACCOUNT, result_kind=ResultKind.BREAKDOWN),
+        plan(JULY, ["RESTAURANTS"], group_by=GroupBy.ACCOUNT, result_kind=ResultKind.BREAKDOWN),
     )
     assert by_account is not None and by_account.latest.group_by is GroupBy.ACCOUNT
     assert t.work == Work("COMPARE", by_account)
@@ -1531,12 +1532,13 @@ def test_an_ambiguous_contact_name_is_still_a_counterparty_filter(op: Operation)
 # --- The state itself ------------------------------------------------------------------------
 
 
-def test_the_state_remembers_only_the_last_eight_turns() -> None:
+def test_the_state_remembers_only_its_last_turns() -> None:
+    kept = DialogueState.MAX_TURNS
     s = EMPTY
-    for n in range(10):
+    for n in range(kept + 2):
         s = s.remembered(DialogueTurn(f"q{n}", f"a{n}"))
 
-    assert [turn.said for turn in s.turns] == [f"q{n}" for n in range(2, 10)]
+    assert [turn.said for turn in s.turns] == [f"q{n}" for n in range(2, kept + 2)]
     assert s.version == EMPTY.version
 
 
