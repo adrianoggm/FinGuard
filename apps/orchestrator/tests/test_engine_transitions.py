@@ -26,6 +26,7 @@ from finguard_orchestrator.domain.engine.operations import (
     ListMovements,
     Operation,
     Patch,
+    PatchMovementList,
     PlanFields,
     Reset,
     RestorePrevious,
@@ -227,7 +228,10 @@ def test_movement_list_uses_its_own_periodless_plan_and_account_scope() -> None:
         grounds=WITH_ACCOUNTS,
     )
 
-    expected = MovementListPlan(account_ids=(HUCHA.account_id,), page_size=20)
+    # Every movement of the Hucha, the transfers into it from Cuenta corriente included (QUERY-003).
+    expected = MovementListPlan(
+        account_ids=(HUCHA.account_id,), page_size=20, include_internal=True
+    )
     assert t.work == Work("MOVEMENT_LIST", expected, (HUCHA.account_id,))
     assert t.state.focus == MovementListFocus(expected)
     assert t.state.pending is None
@@ -268,9 +272,37 @@ def test_new_movement_list_does_not_inherit_the_previous_account_filter() -> Non
 
     assert t.work == Work(
         "MOVEMENT_LIST",
-        MovementListPlan(across_accounts=True),
+        MovementListPlan(across_accounts=True, include_internal=True),
     )
     assert t.state.scope == Scope()
+
+
+def test_a_list_of_expenses_leaves_transfers_between_own_accounts_out() -> None:
+    t = apply(
+        EMPTY,
+        [ListMovements(direction=Direction.EXPENSE, accounts=("Hucha",))],
+        today=TODAY,
+        grounds=WITH_ACCOUNTS,
+    )
+
+    assert isinstance(t.work.plan, MovementListPlan)
+    assert t.work.plan.include_internal is False
+
+
+def test_narrowing_a_statement_to_expenses_drops_its_internal_transfers() -> None:
+    statement = MovementListPlan(account_ids=(HUCHA.account_id,), include_internal=True)
+    state = replace(EMPTY, focus=MovementListFocus(statement), scope=Scope((HUCHA.account_id,)))
+
+    t = apply(
+        state,
+        [PatchMovementList(direction=Direction.EXPENSE)],
+        today=TODAY,
+        grounds=WITH_ACCOUNTS,
+    )
+
+    assert isinstance(t.work.plan, MovementListPlan)
+    assert t.work.plan.direction is Direction.EXPENSE
+    assert t.work.plan.include_internal is False
 
 
 def test_a_window_that_has_not_begun_is_asked_for_again() -> None:

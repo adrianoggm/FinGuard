@@ -258,13 +258,14 @@ class LlmTurnOperations(TurnOperationsPort):
                 try:
                     operations = self._read(reviewed)
                     semantic_reviewed = True
-                    still_unanchored = _has_unanchored_filter_values(
+                    unanchored_after_review = _unanchored_filter_values(
                         operations,
                         sentence,
                         state,
                         categories=self._categories,
                         account_names=account_names,
                     )
+                    still_unanchored = bool(unanchored_after_review)
                     still_complete_question_patch = _has_complete_question_patch(
                         operations,
                         sentence,
@@ -276,7 +277,19 @@ class LlmTurnOperations(TurnOperationsPort):
                     still_colliding = _has_category_alias_merchant_collision(
                         operations, state, categories=self._categories
                     )
-                    if still_unanchored or still_complete_question_patch or still_colliding:
+                    if (
+                        still_unanchored
+                        and not still_complete_question_patch
+                        and not still_colliding
+                        and _review_confirms(unanchored_after_review, state, self._categories)
+                    ):
+                        # The model kept, on review, catalogue categories no other task holds:
+                        # its inference runs, and the answer names the categories it used.
+                        logger.info(
+                            "engine.operations_semantic_review_confirmed categories=%s",
+                            ",".join(sorted(value for _, value in unanchored_after_review)),
+                        )
+                    elif still_unanchored or still_complete_question_patch or still_colliding:
                         # The review is bounded. Do not let a second valid-looking but still
                         # contradictory interpretation reach Banking; ask instead of guessing.
                         logger.warning(
@@ -408,6 +421,13 @@ def _held_back(
     Only a new ask is held back this way; anything else asks for its subject from scratch.
     """
     ask = next((operation for operation in operations if isinstance(operation, Ask)), None)
+    # One line per reading held back, so how many turns end in a question instead of a query can
+    # be counted from the logs.
+    logger.info(
+        "engine.operations_held_back operation_types=%s kept_draft=%s",
+        ",".join(type(operation).__name__ for operation in operations),
+        ask is not None,
+    )
     if ask is None:
         return (Clarify(Missing.SUBJECT),)
     words = spanish.folded(sentence)
@@ -505,7 +525,27 @@ def _has_unanchored_filter_values(
     categories: Mapping[str, str],
     account_names: Mapping[UUID, str],
 ) -> bool:
-    """Whether an operation adds a filter absent from the turn and its owning task.
+    """Whether an operation adds a filter absent from the turn and its owning task."""
+    return bool(
+        _unanchored_filter_values(
+            operations, sentence, state, categories=categories, account_names=account_names
+        )
+    )
+
+
+# A newly named category kept beside an old one: each value is valid, together they widen the task.
+_CARRIED_CATEGORIES = ("categories", "")
+
+
+def _unanchored_filter_values(
+    operations: tuple[Operation, ...],
+    sentence: str,
+    state: DialogueState,
+    *,
+    categories: Mapping[str, str],
+    account_names: Mapping[UUID, str],
+) -> list[tuple[str, str]]:
+    """Every (field, value) an operation adds that is absent from the turn and its owning task.
 
     This is a trigger for a model review, not a phrase parser: the planner still decides what an
     ambiguous phrase means. It catches cross-task filter leakage before a valid but broader query
@@ -513,6 +553,7 @@ def _has_unanchored_filter_values(
     """
     words = spanish.folded(sentence)
     mentioned_categories = set(category_words.named_in(sentence))
+    found: list[tuple[str, str]] = []
     for operation in operations:
         bundles: tuple[object, ...]
         inherits_task = isinstance(operation, (Patch, PatchMovementList)) or (
@@ -552,7 +593,7 @@ def _has_unanchored_filter_values(
                     if carried_unstated and added_stated:
                         # A newly named category replaces an old category filter. Keeping both
                         # would widen the query even though each value is individually valid.
-                        return True
+                        found.append(_CARRIED_CATEGORIES)
                 for value in values:
                     if not isinstance(value, str) or not value.strip():
                         continue
@@ -574,8 +615,30 @@ def _has_unanchored_filter_values(
                     ):
                         continue
                     if not any(_surface_in_words(surface, words) for surface in surfaces):
-                        return True
-    return False
+                        found.append((field_name, value))
+    return found
+
+
+def _review_confirms(
+    unanchored: list[tuple[str, str]], state: DialogueState, categories: Mapping[str, str]
+) -> bool:
+    """Whether a reviewed reading may run although the sentence does not name all its filters.
+
+    The model is the semantic authority: «comida» names no category, and reading it as GROCERIES
+    is an inference, not an error. After a review that keeps it, a category is trusted when it is a
+    catalogue key and no task already on the table holds it, so it cannot have been copied from
+    another task. Any other unanchored value (an account, a shop, a person) or a kept old category
+    is the cross-task leak the review exists for, and still does not run.
+    """
+    if not unanchored or _CARRIED_CATEGORIES in unanchored:
+        return False
+    if any(field_name != "categories" for field_name, _ in unanchored):
+        return False
+    held = _active_category_ids(state, categories)
+    for pending in (state.pending, *state.suspended_pending):
+        if pending is not None:
+            held |= _category_ids(pending.draft.categories or (), categories)
+    return all(value in categories and value not in held for _, value in unanchored)
 
 
 def _has_category_alias_merchant_collision(

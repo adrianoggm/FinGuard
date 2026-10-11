@@ -55,12 +55,18 @@ from finguard_orchestrator.domain.errors import (
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
-from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.query_answer import (
+    Group,
+    Movement,
+    MovementListAnswer,
+    QueryAnswer,
+)
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.movement_list_plan import MovementListPlan
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -209,6 +215,12 @@ class Ledger:
         # right after. How many synthetic movements `run()` hands back -- but only on a call that
         # actually asked for them; see `_synthetic_movements`.
         self.movements_for_next_turn: int | None = None
+        # Movement lists, apart: a page of rows is not a query a follow-up's figures come from.
+        self.listed: list[MovementListPlan] = []
+
+    async def list_movements(self, plan: MovementListPlan, **_: object) -> MovementListAnswer:
+        self.listed.append(plan)
+        return MovementListAnswer(ACCOUNT, (), has_more=False)
 
     async def run(
         self, plan: FinancialPlan, *, movements: int | None = None, **_: object

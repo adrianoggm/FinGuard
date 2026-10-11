@@ -50,7 +50,6 @@ from finguard_orchestrator.domain.enums import (
     PaymentOutcome,
     Period,
     Rail,
-    ResultKind,
 )
 from finguard_orchestrator.domain.errors import QueryRejectedError
 from finguard_orchestrator.domain.models.account_summary import Holding
@@ -768,27 +767,43 @@ def test_the_engines_sampling_refuses_a_negative(field: str) -> None:
         Settings(**{field: -1})  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("route", ROUTES)
-def test_a_clarification_completes_the_query_it_asked_about_across_a_restart(route: str) -> None:
-    """«Los gastos en comida el mes pasado»: the model reads two categories the sentence does not
-    name, and its review keeps them, so the turn asks which. The question keeps what was
-    understood, and after a restart «de restaurantes» runs last month's restaurant spending
-    without asking for the period again."""
-    stack = a_stack()
-    store = MemoryDialogueStore()
-    food = {
+FOOD_LAST_MONTH = {
+    "operations": [
+        {
+            "ask": [
+                {"direction": "EXPENSE"},
+                {"window": {"named": "LAST_MONTH"}},
+                {"result_kind": "SCALAR"},
+                {"categories": ["RESTAURANTS", "GROCERIES"]},
+            ]
+        }
+    ]
+}
+
+
+def patched(target: str, **changes: object) -> dict[str, Any]:
+    return {
         "operations": [
             {
-                "ask": [
-                    {"direction": "EXPENSE"},
-                    {"window": {"named": "LAST_MONTH"}},
-                    {"result_kind": "SCALAR"},
-                    {"categories": ["RESTAURANTS", "GROCERIES"]},
-                ]
+                "patch": {
+                    "target": target,
+                    "changes": [{name: value} for name, value in changes.items()],
+                    "task_id": None,
+                }
             }
         ]
     }
-    engine_on(stack, an_adapter(Canned(food, food)), store=store)
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_clarification_completes_the_query_it_asked_about_across_a_restart(route: str) -> None:
+    """«Los gastos en comida el mes pasado», and the review of the model's two categories cannot be
+    read: nothing unverified runs, so the turn asks which, keeping what it understood. After a
+    restart «de restaurantes» runs last month's restaurant spending without asking for the period
+    again."""
+    stack = a_stack()
+    store = MemoryDialogueStore()
+    engine_on(stack, an_adapter(Canned(FOOD_LAST_MONTH, "esto no es JSON")), store=store)
     asked = post(stack, route, "Los gastos en comida el mes pasado")
 
     assert asked.status == 200
@@ -797,17 +812,7 @@ def test_a_clarification_completes_the_query_it_asked_about_across_a_restart(rou
     assert "periodo" not in asked.body["text"]
     assert stack.ledger.ran == []
 
-    restaurants = {
-        "operations": [
-            {
-                "patch": {
-                    "target": "pending",
-                    "changes": [{"categories": ["RESTAURANTS"]}],
-                    "task_id": None,
-                }
-            }
-        ]
-    }
+    restaurants = patched("pending", categories=["RESTAURANTS"])
     engine_on(stack, an_adapter(Canned(restaurants)), store=store)  # a new process
     answered = post(stack, route, "De restaurantes", asked.conversation)
 
@@ -818,4 +823,80 @@ def test_a_clarification_completes_the_query_it_asked_about_across_a_restart(rou
     assert ran.direction is Direction.EXPENSE
     assert ran.period == RelativePeriod(Period.LAST_MONTH)
     assert ran.categories == ("RESTAURANTS",)
-    assert ran.result_kind in (None, ResultKind.SCALAR)
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_complete_question_after_a_piggy_bank_list_runs_on_every_account(route: str) -> None:
+    """CONV-004: after the Hucha's latest movements, «¿Cuánto me gasté en comida y restaurantes el
+    mes pasado?» is a new question. The model infers groceries from «comida» and keeps it on
+    review; it runs, across every account, and the answer names both categories."""
+    stack = a_stack()
+    hucha = {"operations": [{"list_movements": {"accounts": ["Hucha"], "page_size": 20}}]}
+    engine_on(stack, an_adapter(Canned(hucha, FOOD_LAST_MONTH, FOOD_LAST_MONTH)))
+    listed = post(stack, route, "¿Me puedes enseñar los últimos movimientos en la Hucha?")
+    asked = post(
+        stack,
+        route,
+        "¿Cuánto me gasté en comida y restaurantes el mes pasado?",
+        listed.conversation,
+    )
+
+    assert asked.status == 200
+    assert asked.body["outcome"] != "NEEDS_CLARIFICATION", asked.body["text"]
+    (ran,) = stack.ledger.plans
+    assert ran.direction is Direction.EXPENSE
+    assert ran.period == RelativePeriod(Period.LAST_MONTH)
+    assert set(ran.categories) == {"RESTAURANTS", "GROCERIES"}
+    assert ran.across_accounts
+    assert "restaurantes" in asked.body["text"] and "supermercado" in asked.body["text"]
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_one_conversation_completes_a_clarification_and_keeps_each_field_it_was_told(
+    route: str,
+) -> None:
+    """The review's five turns, in one conversation and never reset: the clarification completes
+    the query it asked about, a category change and an account change each move one field, and a
+    request for the latest movements starts a list that inherits none of those filters."""
+    stack = a_stack()
+    engine_on(
+        stack,
+        an_adapter(
+            Canned(
+                FOOD_LAST_MONTH,
+                "esto no es JSON",
+                patched("pending", categories=["RESTAURANTS"]),
+                patched("focus", categories=["GROCERIES"]),
+                patched("focus", accounts=["Cuenta corriente"]),
+                {"operations": [{"list_movements": {"page_size": 20}}]},
+            )
+        ),
+    )
+    conversation = None
+    answers = []
+    for said in (
+        "Los gastos en comida el mes pasado",
+        "De restaurantes",
+        "¿Y en supermercados?",
+        "Ahora en mi cuenta corriente",
+        "¿Y los últimos movimientos?",
+    ):
+        turn = post(stack, route, said, conversation)
+        assert turn.status == 200, turn.body
+        conversation = turn.conversation
+        answers.append(turn.body)
+
+    assert answers[0]["outcome"] == "NEEDS_CLARIFICATION"
+    restaurants, groceries, current = stack.ledger.plans
+    for plan in (restaurants, groceries, current):
+        assert plan.direction is Direction.EXPENSE
+        assert plan.period == RelativePeriod(Period.LAST_MONTH)
+    assert restaurants.categories == ("RESTAURANTS",)
+    assert groceries.categories == current.categories == ("GROCERIES",)
+    assert restaurants.across_accounts and groceries.across_accounts
+    assert not current.across_accounts
+    assert "Cuenta corriente" in answers[3]["text"]
+    (latest,) = stack.ledger.listed
+    assert latest.categories == () and latest.merchant_terms == ()
+    assert latest.period is None and latest.date_from is None
+    assert latest.direction is Direction.ALL

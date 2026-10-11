@@ -823,8 +823,9 @@ def _listed_movements(
     if fields.accounts is None:
         # A new list starts a new task; a prior account filter is not silently inherited.
         scoped = replace(scoped, scope=Scope())
+    direction = fields.direction or Direction.ALL
     plan = MovementListPlan(
-        direction=fields.direction or Direction.ALL,
+        direction=direction,
         page_size=operation.page_size or 20,
         period=window if isinstance(window, RelativePeriod) else None,
         period_reference=today if isinstance(window, RelativePeriod) else None,
@@ -834,9 +835,21 @@ def _listed_movements(
         across_accounts=not bool(scoped.scope.account_ids),
         categories=fields.categories or (),
         merchant_terms=fields.merchant_terms or (),
+        include_internal=_lists_internal(direction),
     )
     listed = replace(scoped, focus=MovementListFocus(plan), pending=None)
     return listed, Work("MOVEMENT_LIST", plan, plan.account_ids)
+
+
+def _lists_internal(direction: Direction) -> bool:
+    """Whether a list shows transfers between the holder's own accounts (QUERY-003).
+
+    A list of every movement is a statement: money moved from Cuenta corriente into the Hucha is
+    on it, as the bank's own extract shows it. A list of expenses or of income is not, because a
+    transfer to oneself is neither, and counting it as one is the double count the analytical
+    queries exclude it to avoid.
+    """
+    return direction is Direction.ALL
 
 
 def _patched_movement_list(
@@ -882,9 +895,11 @@ def _patched_movement_list(
     account_ids = (
         previous.account_ids if fields.accounts is None else _account_ids(fields.accounts, grounds)
     )
+    direction = fields.direction or previous.direction
     plan = replace(
         previous,
-        direction=fields.direction or previous.direction,
+        direction=direction,
+        include_internal=_lists_internal(direction),
         page_size=operation.page_size or previous.page_size,
         cursor=None,
         period=period,

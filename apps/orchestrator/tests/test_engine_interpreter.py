@@ -374,9 +374,20 @@ async def test_a_filter_the_sentence_never_names_is_reviewed_once() -> None:
     assert len(provider.prompts) == 2
 
 
-async def test_a_review_that_keeps_the_unstated_filter_asks_without_losing_the_rest() -> None:
-    """Only the unanchored filter goes; the direction, the window and the shape stay in the
-    question's draft, so the reply completes the same query instead of starting it again."""
+async def test_a_category_carried_from_the_task_on_screen_is_held_back_keeping_the_rest() -> None:
+    """The leak the review exists for: restaurants on screen, a new question that names none, and
+    the model keeps the old category even on review. It does not run; the question keeps the
+    direction, the window and the shape, so the reply completes the same query."""
+    on_screen = dataclasses.replace(
+        EMPTY,
+        focus=QueryFocus(
+            FinancialPlan(
+                Direction.EXPENSE,
+                period=RelativePeriod(Period.LAST_MONTH),
+                categories=("RESTAURANTS",),
+            )
+        ),
+    )
     ops, provider = await interpreted(
         answer(
             {
@@ -388,6 +399,7 @@ async def test_a_review_that_keeps_the_unstated_filter_asks_without_losing_the_r
                 )
             }
         ),
+        state=on_screen,
         sentence="¿cuánto gasté el mes pasado?",
     )
 
@@ -404,20 +416,44 @@ async def test_a_review_that_keeps_the_unstated_filter_asks_without_losing_the_r
     assert len(provider.prompts) == 2
 
 
-async def test_unanchored_categories_are_offered_back_as_the_choice() -> None:
-    """«Los gastos en comida el mes pasado»: «comida» names no category, the model reads two,
-    and the review keeps both. The question offers those two and keeps the rest of the query."""
-    ops, _ = await interpreted(
-        answer(
-            {
-                "ask": items(
-                    direction="EXPENSE",
-                    window=LAST_MONTH,
-                    result_kind="SCALAR",
-                    categories=["RESTAURANTS", "GROCERIES"],
-                )
-            }
+FOOD_LAST_MONTH = {
+    "ask": items(
+        direction="EXPENSE",
+        window=LAST_MONTH,
+        result_kind="SCALAR",
+        categories=["RESTAURANTS", "GROCERIES"],
+    )
+}
+
+
+async def test_categories_the_model_infers_and_keeps_on_review_run() -> None:
+    """«¿Cuánto me gasté en comida y restaurantes el mes pasado?»: «comida» names no category and
+    the model reads groceries. That is an inference, not a leak: no task on the table holds it,
+    it is a catalogue key, and the review keeps it, so the query runs with both."""
+    ops, provider = await interpreted(
+        answer(FOOD_LAST_MONTH),
+        sentence="¿Cuánto me gasté en comida y restaurantes el mes pasado?",
+    )
+
+    assert ops == (
+        Ask(
+            PlanFields(
+                direction=Direction.EXPENSE,
+                window=RelativePeriod(Period.LAST_MONTH),
+                result_kind=ResultKind.SCALAR,
+                categories=("RESTAURANTS", "GROCERIES"),
+            )
         ),
+    )
+    assert len(provider.prompts) == 2
+
+
+async def test_unverified_categories_are_offered_back_as_the_choice() -> None:
+    """When the review cannot be read, nothing unanchored runs: the two categories are offered
+    back, and the rest of the query stays in the question's draft."""
+    ops, _ = await interpreted(
+        answer(FOOD_LAST_MONTH),
+        "esto no es JSON",
         sentence="Los gastos en comida el mes pasado",
     )
 
