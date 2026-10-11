@@ -79,7 +79,10 @@ ISO range; category keys, exact merchant names, merchant_terms fragments; people
 ([] means all); metric SUM/COUNT/AVERAGE/PERIOD_AVERAGE/CUMULATIVE/FREQUENCY/RECURRENCE; group_by
 dimensions. Each analytical ask names result_kind (SCALAR/RANKING/BREAKDOWN/TIME_SERIES), separate
 from metric. Only RANKING takes a limit; other groups are complete unless top N is explicit.
-clear_limit removes a limit. Transaction lists use the separate, periodless list_movements
+clear_limit removes a limit. own_transfers=true limits a query to money moved between the
+holder's own accounts. When the destination is named, query that receiving account with INCOME;
+query the sending account with EXPENSE only for everything moved out of it. Transaction lists
+use the separate, periodless list_movements
 operation; never encode ledger rows as an analytical result kind.
 PERIOD_AVERAGE/CUMULATIVE require DAY/WEEK/MONTH grouping.
 

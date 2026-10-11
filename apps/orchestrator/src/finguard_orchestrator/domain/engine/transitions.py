@@ -1052,6 +1052,7 @@ _MOVES: Final[dict[str, frozenset[str]]] = {
     "group_by": frozenset({"group_by"}),
     "limit": frozenset({"group_limit", "rank"}),
     "clear_limit": frozenset({"group_limit", "rank", "result_kind"}),
+    "own_transfers": frozenset({"include_internal", "internal_only"}),
 }
 
 
@@ -1074,6 +1075,7 @@ def _fields_of(plan: Plan) -> PlanFields:
         merchant_terms=plan.merchant_terms,
         excluded_categories=plan.excluded_categories,
         excluded_merchants=plan.excluded_merchants,
+        own_transfers=True if getattr(plan, "internal_only", False) else None,
     )
     if isinstance(plan, TopMovements):
         return replace(fields, people=(), limit=plan.rank, result_kind=ResultKind.RANKING)
@@ -1122,8 +1124,8 @@ def _built(said: PlanFields, today: date) -> Plan:
     period = window if isinstance(window, RelativePeriod) else None
     date_range = window if isinstance(window, AbsoluteRange) else None
     if said.limit is not None and group_by is GroupBy.NONE:
-        if said.people or said.metric not in (None, Metric.SUM):
-            # A ranking carries neither, and building one would drop them without a word.
+        if said.people or said.own_transfers or said.metric not in (None, Metric.SUM):
+            # A ranking carries none of them, and building one would drop them without a word.
             raise _CannotApplyError(Missing.SUBJECT)
         return TopMovements(
             direction=direction,
@@ -1150,6 +1152,8 @@ def _built(said: PlanFields, today: date) -> Plan:
         group_by=said.group_by or GroupBy.NONE,
         group_limit=said.limit,
         result_kind=result_kind,
+        include_internal=bool(said.own_transfers),
+        internal_only=bool(said.own_transfers),
     )
 
 

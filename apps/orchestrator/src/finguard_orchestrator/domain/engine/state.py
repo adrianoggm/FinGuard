@@ -118,6 +118,9 @@ class PlanFields:
     group_by: GroupBy | None = None
     limit: int | None = None
     clear_limit: bool | None = None
+    # Only money moved between the holder's own accounts («¿cuánto transferí a la hucha?»). Such
+    # transfers are left out of every other query, where they would count the same money twice.
+    own_transfers: bool | None = None
 
     def named(self) -> frozenset[str]:
         """The fields that were said."""

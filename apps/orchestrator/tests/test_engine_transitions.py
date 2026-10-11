@@ -740,6 +740,55 @@ def test_an_accounts_patch_on_a_share_rescopes_it_and_keeps_both_plans() -> None
     assert t.state.scope == Scope((HUCHA.account_id,))
 
 
+THIS_YEAR = RelativePeriod(Period.THIS_YEAR)
+TO_THE_HUCHA = PlanFields(
+    direction=Direction.INCOME,
+    window=THIS_YEAR,
+    accounts=("Hucha",),
+    result_kind=ResultKind.SCALAR,
+    own_transfers=True,
+)
+
+
+def test_own_transfers_are_a_query_of_only_transfers_between_own_accounts() -> None:
+    """«¿Cuánto transferí a la hucha este año?»: the Hucha's incoming transfers from the holder's
+    other accounts, which every other query leaves out so as not to count them twice."""
+    t = apply(EMPTY, [Ask(TO_THE_HUCHA)], today=TODAY, grounds=WITH_ACCOUNTS)
+
+    assert t.work is not None and isinstance(t.work.plan, FinancialPlan)
+    plan = t.work.plan
+    assert plan.internal_only and plan.include_internal
+    assert plan.direction is Direction.INCOME and plan.period == THIS_YEAR
+    assert t.work.account_ids == (HUCHA.account_id,)
+
+
+def test_a_new_window_keeps_a_query_of_own_transfers() -> None:
+    asked = apply(EMPTY, [Ask(TO_THE_HUCHA)], today=TODAY, grounds=WITH_ACCOUNTS)
+
+    t = apply(
+        asked.state,
+        [Patch("focus", PlanFields(window=RelativePeriod(Period.LAST_MONTH)))],
+        today=TODAY,
+        grounds=WITH_ACCOUNTS,
+    )
+
+    assert t.work is not None and isinstance(t.work.plan, FinancialPlan)
+    assert t.work.plan.internal_only and t.work.plan.include_internal
+    assert t.work.plan.period == RelativePeriod(Period.LAST_MONTH)
+
+
+def test_a_ranking_of_own_transfers_is_asked_rather_than_run_without_them() -> None:
+    t = apply(
+        EMPTY,
+        [Ask(replace(TO_THE_HUCHA, limit=1, result_kind=ResultKind.RANKING))],
+        today=TODAY,
+        grounds=WITH_ACCOUNTS,
+    )
+
+    assert t.work is None
+    assert isinstance(t.reply, Clarify)
+
+
 def test_patch_on_pending_merges_into_the_draft_and_runs_as_an_ask_once_complete() -> None:
     draft = PlanFields(direction=Direction.EXPENSE, categories=("RESTAURANTS",))
     s = replace(EMPTY, pending=Pending(Missing.WINDOW, draft))

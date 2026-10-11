@@ -277,6 +277,10 @@ class ClearLimitItem(_Closed):
     clear_limit: Literal[True]
 
 
+class OwnTransfersItem(_Closed):
+    own_transfers: Literal[True]
+
+
 FieldItem = Annotated[
     Annotated[DirectionItem, Tag("direction")]
     | Annotated[WindowItem, Tag("window")]
@@ -291,7 +295,8 @@ FieldItem = Annotated[
     | Annotated[ResultKindItem, Tag("result_kind")]
     | Annotated[GroupByItem, Tag("group_by")]
     | Annotated[LimitItem, Tag("limit")]
-    | Annotated[ClearLimitItem, Tag("clear_limit")],
+    | Annotated[ClearLimitItem, Tag("clear_limit")]
+    | Annotated[OwnTransfersItem, Tag("own_transfers")],
     Discriminator(_only_key),
 ]
 

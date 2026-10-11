@@ -797,29 +797,37 @@ def patched(target: str, **changes: object) -> dict[str, Any]:
 
 @pytest.mark.parametrize("route", ROUTES)
 def test_a_clarification_completes_the_query_it_asked_about_across_a_restart(route: str) -> None:
-    """«Los gastos en comida el mes pasado», and the review of the model's two categories cannot be
-    read: nothing unverified runs, so the turn asks which, keeping what it understood. After a
-    restart «de restaurantes» runs last month's restaurant spending without asking for the period
-    again."""
+    """«Los gastos en restaurantes» names no period, so the turn asks for one and keeps what it
+    understood. After a restart «el mes pasado» completes that same query: last month's
+    restaurant spending, with nothing asked again."""
     stack = a_stack()
     store = MemoryDialogueStore()
-    engine_on(stack, an_adapter(Canned(FOOD_LAST_MONTH, "esto no es JSON")), store=store)
-    asked = post(stack, route, "Los gastos en comida el mes pasado")
+    restaurants = {
+        "operations": [
+            {
+                "ask": [
+                    {"direction": "EXPENSE"},
+                    {"result_kind": "SCALAR"},
+                    {"categories": ["RESTAURANTS"]},
+                ]
+            }
+        ]
+    }
+    engine_on(stack, an_adapter(Canned(restaurants)), store=store)
+    asked = post(stack, route, "Los gastos en restaurantes")
 
     assert asked.status == 200
     assert asked.body["outcome"] == "NEEDS_CLARIFICATION"
-    assert "restaurantes" in asked.body["text"] and "supermercado" in asked.body["text"]
-    assert "periodo" not in asked.body["text"]
+    assert "restaurantes" in asked.body["text"]
     assert stack.ledger.ran == []
 
-    restaurants = patched("pending", categories=["RESTAURANTS"])
-    engine_on(stack, an_adapter(Canned(restaurants)), store=store)  # a new process
-    answered = post(stack, route, "De restaurantes", asked.conversation)
+    last_month = patched("pending", window={"named": "LAST_MONTH"})
+    engine_on(stack, an_adapter(Canned(last_month)), store=store)  # a new process
+    answered = post(stack, route, "El mes pasado", asked.conversation)
 
     assert answered.status == 200
     assert answered.body["outcome"] != "NEEDS_CLARIFICATION", answered.body["text"]
-    assert len(stack.ledger.plans) == 1
-    ran = stack.ledger.plans[0]
+    (ran,) = stack.ledger.plans
     assert ran.direction is Direction.EXPENSE
     assert ran.period == RelativePeriod(Period.LAST_MONTH)
     assert ran.categories == ("RESTAURANTS",)
@@ -828,11 +836,11 @@ def test_a_clarification_completes_the_query_it_asked_about_across_a_restart(rou
 @pytest.mark.parametrize("route", ROUTES)
 def test_a_complete_question_after_a_piggy_bank_list_runs_on_every_account(route: str) -> None:
     """CONV-004: after the Hucha's latest movements, «¿Cuánto me gasté en comida y restaurantes el
-    mes pasado?» is a new question. The model infers groceries from «comida» and keeps it on
-    review; it runs, across every account, and the answer names both categories."""
+    mes pasado?» is a new question. The model infers groceries from «comida»; no task on the
+    table holds it, so nothing is suspect and it runs, across every account, naming both."""
     stack = a_stack()
     hucha = {"operations": [{"list_movements": {"accounts": ["Hucha"], "page_size": 20}}]}
-    engine_on(stack, an_adapter(Canned(hucha, FOOD_LAST_MONTH, FOOD_LAST_MONTH)))
+    engine_on(stack, an_adapter(Canned(hucha, FOOD_LAST_MONTH)))
     listed = post(stack, route, "¿Me puedes enseñar los últimos movimientos en la Hucha?")
     asked = post(
         stack,
@@ -852,20 +860,18 @@ def test_a_complete_question_after_a_piggy_bank_list_runs_on_every_account(route
 
 
 @pytest.mark.parametrize("route", ROUTES)
-def test_one_conversation_completes_a_clarification_and_keeps_each_field_it_was_told(
-    route: str,
-) -> None:
-    """The review's five turns, in one conversation and never reset: the clarification completes
-    the query it asked about, a category change and an account change each move one field, and a
-    request for the latest movements starts a list that inherits none of those filters."""
+def test_one_conversation_keeps_each_field_it_was_told(route: str) -> None:
+    """The review's five turns, in one conversation and never reset. «comida» runs as the model
+    reads it; «de restaurantes», «¿y en supermercados?» and «ahora en mi cuenta corriente» each
+    move one field and keep last month; «¿y los últimos movimientos?» starts a list that inherits
+    none of those filters."""
     stack = a_stack()
     engine_on(
         stack,
         an_adapter(
             Canned(
                 FOOD_LAST_MONTH,
-                "esto no es JSON",
-                patched("pending", categories=["RESTAURANTS"]),
+                patched("focus", categories=["RESTAURANTS"]),
                 patched("focus", categories=["GROCERIES"]),
                 patched("focus", accounts=["Cuenta corriente"]),
                 {"operations": [{"list_movements": {"page_size": 20}}]},
@@ -883,20 +889,52 @@ def test_one_conversation_completes_a_clarification_and_keeps_each_field_it_was_
     ):
         turn = post(stack, route, said, conversation)
         assert turn.status == 200, turn.body
+        assert turn.body["outcome"] != "NEEDS_CLARIFICATION", (said, turn.body["text"])
         conversation = turn.conversation
         answers.append(turn.body)
 
-    assert answers[0]["outcome"] == "NEEDS_CLARIFICATION"
-    restaurants, groceries, current = stack.ledger.plans
-    for plan in (restaurants, groceries, current):
+    food, restaurants, groceries, current = stack.ledger.plans
+    for plan in (food, restaurants, groceries, current):
         assert plan.direction is Direction.EXPENSE
         assert plan.period == RelativePeriod(Period.LAST_MONTH)
+    assert set(food.categories) == {"RESTAURANTS", "GROCERIES"}
     assert restaurants.categories == ("RESTAURANTS",)
     assert groceries.categories == current.categories == ("GROCERIES",)
-    assert restaurants.across_accounts and groceries.across_accounts
+    assert food.across_accounts and restaurants.across_accounts and groceries.across_accounts
     assert not current.across_accounts
     assert "Cuenta corriente" in answers[3]["text"]
     (latest,) = stack.ledger.listed
     assert latest.categories == () and latest.merchant_terms == ()
     assert latest.period is None and latest.date_from is None
     assert latest.direction is Direction.ALL
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_money_moved_to_the_hucha_is_a_query_of_own_transfers(route: str) -> None:
+    """«¿Cuánto transferí a la hucha este año?» answered «no movements» while 300 € went to the
+    Hucha every month: no query could ask for transfers between the holder's own accounts. The
+    model can now say so, and banking is asked for exactly those."""
+    stack = a_stack()
+    to_the_hucha = {
+        "operations": [
+            {
+                "ask": [
+                    {"direction": "INCOME"},
+                    {"window": {"named": "THIS_YEAR"}},
+                    {"accounts": ["Hucha"]},
+                    {"result_kind": "SCALAR"},
+                    {"own_transfers": True},
+                ]
+            }
+        ]
+    }
+    engine_on(stack, an_adapter(Canned(to_the_hucha)))
+
+    asked = post(stack, route, "¿Cuánto transferí a la hucha este año?")
+
+    assert asked.status == 200
+    assert asked.body["outcome"] != "NEEDS_CLARIFICATION", asked.body["text"]
+    (ran,) = stack.ledger.plans
+    assert ran.internal_only and ran.include_internal
+    assert ran.direction is Direction.INCOME
+    assert ran.period == RelativePeriod(Period.THIS_YEAR)

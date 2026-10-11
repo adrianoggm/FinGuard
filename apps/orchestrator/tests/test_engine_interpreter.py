@@ -277,7 +277,9 @@ async def test_each_op_parses_to_its_dataclass(said: dict[str, Any], expected: O
     ops, provider = await interpreted(answer(said), sentence=STATES_EVERY_FILTER)
 
     assert ops == (expected,)
-    assert len(provider.prompts) == 1
+    # A delegation into a payment opens one with nothing open: it is reviewed once, and stands.
+    reviewed = isinstance(expected, Delegate) and expected.to in {"PAYMENT", "TRANSFER"}
+    assert len(provider.prompts) == (2 if reviewed else 1)
 
 
 async def test_all_direction_requires_the_model_to_choose_a_metric() -> None:
@@ -341,133 +343,153 @@ async def test_several_operations_keep_their_order() -> None:
     )
 
 
-# --- a filter the sentence never names: one review, then a question back -----------------------
+# --- review triggers: the shape of the reading against the state, never the sentence ----------
 
 LAST_MONTH = {"named": "LAST_MONTH"}
+RESTAURANTS_ON_SCREEN = dataclasses.replace(
+    EMPTY,
+    focus=QueryFocus(
+        FinancialPlan(
+            Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            categories=("RESTAURANTS",),
+        )
+    ),
+)
+SCALAR_LAST_MONTH = PlanFields(
+    direction=Direction.EXPENSE,
+    window=RelativePeriod(Period.LAST_MONTH),
+    result_kind=ResultKind.SCALAR,
+)
 
 
-async def test_a_filter_the_sentence_never_names_is_reviewed_once() -> None:
+def an_ask(**fields: Any) -> dict[str, Any]:
+    return {"ask": items(direction="EXPENSE", window=LAST_MONTH, result_kind="SCALAR", **fields)}
+
+
+def a_focus_patch(**changes: Any) -> dict[str, Any]:
+    return {"patch": {"target": "focus", "changes": items(**changes)}}
+
+
+async def test_a_filter_the_sentence_does_not_name_is_not_second_guessed() -> None:
+    """R18: nothing here reads the sentence. «comida» names no category, the model reads two, and
+    with no other task holding them nothing is suspect: the reading runs with no review."""
     ops, provider = await interpreted(
-        answer(
-            {
-                "ask": items(
-                    direction="EXPENSE",
-                    window=LAST_MONTH,
-                    result_kind="SCALAR",
-                    categories=["RESTAURANTS"],
-                )
-            }
-        ),
-        answer({"ask": items(direction="EXPENSE", window=LAST_MONTH, result_kind="SCALAR")}),
-        sentence="¿cuánto gasté el mes pasado?",
+        answer(an_ask(categories=["RESTAURANTS", "GROCERIES"])),
+        sentence="¿Cuánto me gasté en comida y restaurantes el mes pasado?",
     )
 
     assert ops == (
-        Ask(
-            PlanFields(
-                direction=Direction.EXPENSE,
-                window=RelativePeriod(Period.LAST_MONTH),
-                result_kind=ResultKind.SCALAR,
-            )
-        ),
+        Ask(dataclasses.replace(SCALAR_LAST_MONTH, categories=("RESTAURANTS", "GROCERIES"))),
     )
+    assert len(provider.prompts) == 1
+
+
+async def test_a_new_task_repeating_the_screens_filter_is_reviewed_and_the_review_stands() -> None:
+    """Restaurants on screen and a new ask with restaurants: the shape of a carried filter. One
+    review, and what the model answers then is the reading."""
+    ops, provider = await interpreted(
+        answer(an_ask(categories=["RESTAURANTS"])),
+        answer(an_ask()),
+        state=RESTAURANTS_ON_SCREEN,
+        sentence="¿cuánto gasté el mes pasado?",
+    )
+
+    assert ops == (Ask(SCALAR_LAST_MONTH),)
+    assert len(provider.prompts) == 2
+    assert "another task in the conversation state already holds" in provider.prompts[1]
+
+
+async def test_a_new_task_that_does_ask_for_the_same_filter_keeps_it_on_review() -> None:
+    ops, provider = await interpreted(
+        answer(an_ask(categories=["RESTAURANTS"])),
+        state=RESTAURANTS_ON_SCREEN,
+        sentence="¿y cuánto gasté en restaurantes el mes pasado en total?",
+    )
+
+    assert ops == (Ask(dataclasses.replace(SCALAR_LAST_MONTH, categories=("RESTAURANTS",))),)
     assert len(provider.prompts) == 2
 
 
-async def test_a_category_carried_from_the_task_on_screen_is_held_back_keeping_the_rest() -> None:
-    """The leak the review exists for: restaurants on screen, a new question that names none, and
-    the model keeps the old category even on review. It does not run; the question keeps the
+async def test_an_unreviewed_carried_filter_is_asked_back_keeping_the_rest() -> None:
+    """The review cannot be read: the suspect filter does not run, and the question keeps the
     direction, the window and the shape, so the reply completes the same query."""
-    on_screen = dataclasses.replace(
+    ops, _ = await interpreted(
+        answer(an_ask(categories=["RESTAURANTS"])),
+        "esto no es JSON",
+        state=RESTAURANTS_ON_SCREEN,
+        sentence="¿cuánto gasté el mes pasado?",
+    )
+
+    assert ops == (Clarify(Missing.SUBJECT, draft=SCALAR_LAST_MONTH),)
+
+
+async def test_two_unreviewed_carried_categories_are_offered_back_as_the_choice() -> None:
+    both_on_screen = dataclasses.replace(
         EMPTY,
         focus=QueryFocus(
             FinancialPlan(
                 Direction.EXPENSE,
                 period=RelativePeriod(Period.LAST_MONTH),
-                categories=("RESTAURANTS",),
+                categories=("RESTAURANTS", "GROCERIES"),
             )
         ),
     )
-    ops, provider = await interpreted(
-        answer(
-            {
-                "ask": items(
-                    direction="EXPENSE",
-                    window=LAST_MONTH,
-                    result_kind="SCALAR",
-                    categories=["RESTAURANTS"],
-                )
-            }
-        ),
-        state=on_screen,
+    ops, _ = await interpreted(
+        answer(an_ask(categories=["RESTAURANTS", "GROCERIES"])),
+        "esto no es JSON",
+        state=both_on_screen,
         sentence="¿cuánto gasté el mes pasado?",
     )
 
     assert ops == (
-        Clarify(
-            Missing.SUBJECT,
-            draft=PlanFields(
-                direction=Direction.EXPENSE,
-                window=RelativePeriod(Period.LAST_MONTH),
-                result_kind=ResultKind.SCALAR,
-            ),
-        ),
+        Clarify(Missing.SUBJECT, candidates=("RESTAURANTS", "GROCERIES"), draft=SCALAR_LAST_MONTH),
     )
-    assert len(provider.prompts) == 2
 
 
-FOOD_LAST_MONTH = {
-    "ask": items(
-        direction="EXPENSE",
-        window=LAST_MONTH,
-        result_kind="SCALAR",
-        categories=["RESTAURANTS", "GROCERIES"],
-    )
-}
-
-
-async def test_categories_the_model_infers_and_keeps_on_review_run() -> None:
-    """«¿Cuánto me gasté en comida y restaurantes el mes pasado?»: «comida» names no category and
-    the model reads groceries. That is an inference, not a leak: no task on the table holds it,
-    it is a catalogue key, and the review keeps it, so the query runs with both."""
+async def test_a_patch_keeping_the_old_category_beside_a_new_one_is_reviewed() -> None:
     ops, provider = await interpreted(
-        answer(FOOD_LAST_MONTH),
-        sentence="¿Cuánto me gasté en comida y restaurantes el mes pasado?",
+        answer(a_focus_patch(categories=["RESTAURANTS", "LEISURE"])),
+        answer(a_focus_patch(categories=["LEISURE"])),
+        state=RESTAURANTS_ON_SCREEN,
+        sentence="¿y en ocio?",
+    )
+
+    assert ops == (Patch("focus", PlanFields(categories=("LEISURE",))),)
+    assert "keeps the active task's category and adds another" in provider.prompts[1]
+
+
+async def test_a_patch_restating_direction_and_window_over_a_filtered_task_is_reviewed() -> None:
+    this_month = {"named": "THIS_MONTH"}
+    ops, provider = await interpreted(
+        answer(a_focus_patch(direction="EXPENSE", window=this_month)),
+        answer({"ask": items(direction="EXPENSE", window=this_month, result_kind="SCALAR")}),
+        state=RESTAURANTS_ON_SCREEN,
+        sentence="¿cuánto gasté en la cuenta principal este mes?",
     )
 
     assert ops == (
         Ask(
             PlanFields(
                 direction=Direction.EXPENSE,
-                window=RelativePeriod(Period.LAST_MONTH),
+                window=RelativePeriod(Period.THIS_MONTH),
                 result_kind=ResultKind.SCALAR,
-                categories=("RESTAURANTS", "GROCERIES"),
             )
         ),
     )
-    assert len(provider.prompts) == 2
+    assert "restates a direction and a window" in provider.prompts[1]
 
 
-async def test_unverified_categories_are_offered_back_as_the_choice() -> None:
-    """When the review cannot be read, nothing unanchored runs: the two categories are offered
-    back, and the rest of the query stays in the question's draft."""
-    ops, _ = await interpreted(
-        answer(FOOD_LAST_MONTH),
-        "esto no es JSON",
-        sentence="Los gastos en comida el mes pasado",
+async def test_a_merchant_term_that_names_the_selected_category_is_reviewed() -> None:
+    """«super» beside GROCERIES, compared against the catalogue's own names for GROCERIES."""
+    ops, provider = await interpreted(
+        answer(an_ask(categories=["GROCERIES"], merchant_terms=["super"])),
+        answer(an_ask(categories=["GROCERIES"])),
+        sentence="¿cuánto gasté en el super el mes pasado?",
     )
 
-    assert ops == (
-        Clarify(
-            Missing.SUBJECT,
-            candidates=("RESTAURANTS", "GROCERIES"),
-            draft=PlanFields(
-                direction=Direction.EXPENSE,
-                window=RelativePeriod(Period.LAST_MONTH),
-                result_kind=ResultKind.SCALAR,
-            ),
-        ),
-    )
+    assert ops == (Ask(dataclasses.replace(SCALAR_LAST_MONTH, categories=("GROCERIES",))),)
+    assert "generic category alias" in provider.prompts[1]
 
 
 # --- an answer that cannot be read: one repair, then a question back ---------------------------
@@ -494,7 +516,9 @@ async def test_one_repair_then_success() -> None:
     assert "operations.0" in repair[len(first) :]
 
 
-async def test_a_past_payment_question_gets_one_consistency_repair_before_payment() -> None:
+async def test_a_past_payment_question_read_as_a_payment_is_reviewed_into_a_query() -> None:
+    """«¿Cuánto le envié a mi hermana…?» read as a new Bizum. A new payment, with none open, is
+    always asked once more, whatever the words: the review reads it as the query it is."""
     provider = Provider(
         answer({"prepare_bizum": {"recipient": "mi hermana", "amount_minor": None}}),
         answer(
@@ -524,19 +548,7 @@ async def test_a_past_payment_question_gets_one_consistency_repair_before_paymen
         ),
     )
     assert len(provider.prompts) == 2
-    assert "asks about a past transaction" in provider.prompts[1]
-
-
-async def test_a_past_payment_question_is_clarified_if_the_model_repeats_the_misread() -> None:
-    payment = answer({"prepare_bizum": {"recipient": "mi hermana", "amount_minor": None}})
-    provider = Provider(payment, payment)
-
-    operations = await interpreter(provider).interpret(
-        "Cuanto le envie a mi hermana este mes?", EMPTY, today=TODAY
-    )
-
-    assert operations == (Clarify(Missing.SUBJECT),)
-    assert len(provider.prompts) == 2
+    assert "payments already made" in provider.prompts[1]
 
 
 async def test_a_past_payment_question_cannot_delegate_into_the_payment_flow() -> None:
@@ -558,10 +570,12 @@ async def test_a_past_payment_question_cannot_delegate_into_the_payment_flow() -
             )
         ),
     )
-    assert "asks about a past transaction" in provider.prompts[1]
+    assert "payments already made" in provider.prompts[1]
 
 
-async def test_an_explicit_new_payment_in_a_mixed_past_and_future_sentence_is_not_retried() -> None:
+async def test_a_new_payment_the_review_keeps_is_prepared() -> None:
+    """The model decides what the person asked. A payment it keeps on review goes on to a bank
+    preview; moving money still takes an explicit yes to that preview."""
     provider = Provider(answer({"prepare_bizum": {"recipient": "Marta", "amount_minor": 1200}}))
 
     operations = await interpreter(provider).interpret(
@@ -569,7 +583,74 @@ async def test_an_explicit_new_payment_in_a_mixed_past_and_future_sentence_is_no
     )
 
     assert operations == (PrepareBizum("Marta", 1200),)
+    assert len(provider.prompts) == 2
+
+
+async def test_a_new_payment_that_cannot_be_reviewed_is_never_prepared() -> None:
+    provider = Provider(
+        answer({"prepare_bizum": {"recipient": "mi hermana", "amount_minor": None}}),
+        "esto no es JSON",
+    )
+
+    operations = await interpreter(provider).interpret(
+        "Cuanto le envie a mi hermana este mes?", EMPTY, today=TODAY
+    )
+
+    assert operations == (Clarify(Missing.SUBJECT),)
+
+
+async def test_a_reply_to_an_open_payment_is_not_reviewed_as_a_new_one() -> None:
+    draft = dataclasses.replace(
+        EMPTY,
+        payment=PaymentDraftPending(PaymentDraft(recipient_name="Marta Solis")),
+    )
+    provider = Provider(
+        answer({"prepare_bizum": {"recipient": "Marta Solis", "amount_minor": 2000}})
+    )
+
+    operations = await interpreter(provider).interpret("20 euros", draft, today=TODAY)
+
+    assert operations == (PrepareBizum("Marta Solis", 2000),)
     assert len(provider.prompts) == 1
+
+
+def test_own_transfers_read_as_a_plan_field() -> None:
+    parsed = read(
+        answer(
+            {
+                "ask": items(
+                    direction="INCOME",
+                    window={"named": "THIS_YEAR"},
+                    accounts=["Hucha"],
+                    result_kind="SCALAR",
+                    own_transfers=True,
+                )
+            }
+        ),
+        CATALOGUE,
+    )
+
+    assert parsed == (
+        Ask(
+            PlanFields(
+                direction=Direction.INCOME,
+                window=RelativePeriod(Period.THIS_YEAR),
+                accounts=("Hucha",),
+                result_kind=ResultKind.SCALAR,
+                own_transfers=True,
+            )
+        ),
+    )
+
+
+def test_the_prompt_teaches_own_transfers() -> None:
+    prompt = build_prompt("hola", EMPTY, today=TODAY, categories=CATEGORIES)
+
+    compact = " ".join(prompt.split())
+    assert "own_transfers=true limits a query to money moved between the" in compact
+    # Money sent to a named account is that account's income: the sending account's expense would
+    # also count what went to every other own account (450 € for 300 € to the Hucha).
+    assert "When the destination is named, query that receiving account with INCOME" in compact
 
 
 UNEXPRESSIBLE = [
