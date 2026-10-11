@@ -939,7 +939,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
             Metric.AVERAGE: "mayor importe medio por movimiento",
         }.get(plan.metric, "mayor importe total")
         if count == 1:
-            article = "El" if plan.group_by is GroupBy.MERCHANT else "La"
+            article = "El" if plan.group_by in {GroupBy.MERCHANT, GroupBy.MONTH} else "La"
             head = f"{article} {dimension} con {criterion}{about} {window} es:"
         else:
             head = f"Tus {count} {dimension} con {criterion}{about} {window} son:"
@@ -1400,11 +1400,14 @@ def _group_name(key: str, plan: FinancialPlan) -> str:
     their own answer. The translation existed and `filter_of` was already using it two hundred
     lines up — this was the one place that printed the key instead.
 
-    Only for categories. A merchant key is already a name and a month key is already a date; both
-    are the ledger writing something a person reads, and putting either through a category glossary
-    would be looking up a word that is not in it.
+    A merchant key is already a name. A month key is banking's YYYY-MM, which a person reads as
+    «abril de 2026», not «2026-04».
     """
-    return category_words.name_of(key) if plan.group_by is GroupBy.CATEGORY else key
+    if plan.group_by is GroupBy.CATEGORY:
+        return category_words.name_of(key)
+    if plan.group_by is GroupBy.MONTH:
+        return month_group_name(key)
+    return key
 
 
 def _is_breakdown(answer: QueryAnswer) -> bool:

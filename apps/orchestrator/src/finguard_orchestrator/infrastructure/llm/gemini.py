@@ -38,6 +38,7 @@ class GeminiProvider(OpenAiCompatibleProvider):
         base_url: str = _DEFAULT_BASE_URL,
         timeout_seconds: float = 60.0,
         min_request_interval_seconds: float = 12.0,
+        reasoning_headroom: int = 4096,
         shared_request_pacer: Any | None = None,
         fallback_models: tuple[str, ...] = (
             "gemini-3.6-flash",
@@ -50,7 +51,7 @@ class GeminiProvider(OpenAiCompatibleProvider):
             api_key=api_key,
             base_url=base_url,
             timeout_seconds=timeout_seconds,
-            reasoning_headroom=0,
+            reasoning_headroom=reasoning_headroom,
             min_request_interval_seconds=min_request_interval_seconds,
             shared_request_pacer=shared_request_pacer,
         )

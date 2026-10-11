@@ -305,6 +305,7 @@ def create_app() -> FastAPI:
             base_url=settings.gemini_base_url,
             timeout_seconds=settings.gemini_timeout_seconds,
             min_request_interval_seconds=settings.gemini_min_request_interval_seconds,
+            reasoning_headroom=settings.gemini_reasoning_headroom,
             fallback_models=settings.gemini_fallback_models,
             shared_request_pacer=gemini_pacer,
         )

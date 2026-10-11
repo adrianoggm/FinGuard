@@ -190,6 +190,12 @@ class Settings(BaseSettings):
     # and failovers. When DATABASE_URL is configured, Postgres shares the schedule across replicas;
     # otherwise the provider uses its per-process pacer. Do not allow runtime config to disable it.
     gemini_min_request_interval_seconds: float = Field(default=12.0, ge=12.0)
+    # Gemini's Flash models think, and on the OpenAI-compatible endpoint the thinking counts
+    # against max_tokens. Measured on the interpreter's prompt with gemini-3.5-flash: at 600 the
+    # model spent ~550 tokens thinking and returned truncated JSON (finish_reason `length`); at
+    # 4096 it finished the same operation. Flash-Lite does not think and is billed only for what
+    # it writes, so the floor costs it nothing.
+    gemini_reasoning_headroom: int = Field(default=4096, ge=0)
     # All candidates support this service's text + strict JSON-schema request path. Live/audio
     # models are intentionally excluded: they do not support Structured Outputs.
     gemini_fallback_models: tuple[str, ...] = (

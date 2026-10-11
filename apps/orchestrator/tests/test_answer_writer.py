@@ -7,7 +7,10 @@ properties its docstring already claims, asserted on the function itself.
 
 import pytest
 
-from finguard_orchestrator.domain.services.answer_writer import money
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Period, ResultKind
+from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
+from finguard_orchestrator.domain.services.answer_writer import money, write
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
 
 @pytest.mark.parametrize(
@@ -52,3 +55,27 @@ def test_a_negative_amount_keeps_its_minus(amount_minor: int) -> None:
     """
     assert money(amount_minor, "EUR").startswith("-")
     assert money(amount_minor, "EUR") == f"-{money(-amount_minor, 'EUR')}"
+
+
+def test_the_month_of_largest_spending_is_named_as_a_month_with_its_article() -> None:
+    """It read «La mes con mayor importe total … · 2026-04»: mes takes «El», and banking's
+    YYYY-MM key is a month a person says."""
+    plan = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        group_by=GroupBy.MONTH,
+        group_limit=1,
+        result_kind=ResultKind.RANKING,
+    )
+    answer = QueryAnswer(
+        "EUR",
+        329_413,
+        52,
+        groups=(Group("2026-01", 100_000, 20), Group("2026-04", 229_413, 32)),
+    )
+
+    text = write(answer, plan)
+
+    assert text.startswith("El mes con mayor importe total")
+    assert "abril de 2026" in text
+    assert "2026-04" not in text and "enero" not in text

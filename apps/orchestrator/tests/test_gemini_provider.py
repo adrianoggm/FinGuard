@@ -291,6 +291,9 @@ async def test_complete_sends_gemini_schema_and_bearer_key(
     assert endpoint.request is not None
     assert endpoint.request["url"].endswith("/chat/completions")
     assert endpoint.request["headers"]["Authorization"] == f"Bearer {KEY}"
+    # Flash models think, and the thinking counts against max_tokens: a budget sized for the
+    # answer (128 here, 600 for the interpreter) truncated their JSON.
+    assert endpoint.request["json"]["max_tokens"] == 4096
     sent_schema = endpoint.request["json"]["response_format"]["json_schema"]["schema"]
     assert "$defs" not in sent_schema
     operations = sent_schema["properties"]["operations"]["items"]["anyOf"]
