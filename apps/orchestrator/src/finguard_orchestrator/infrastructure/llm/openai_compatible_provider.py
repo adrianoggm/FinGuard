@@ -55,6 +55,7 @@ from typing import Any, Final
 import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import AnswerRefusedError, ProviderFailedError
+from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 
 # What the schema is called on the wire. The API wants a name beside the schema; nothing reads it
 # back, so it says what the object is rather than carrying an identifier.
@@ -67,7 +68,7 @@ _LONGEST_RATE_WAIT_SECONDS: Final = 20.0
 _TRANSIENT_RETRY_DELAY_SECONDS: Final = 0.5
 
 
-class OpenAiCompatibleProvider:
+class OpenAiCompatibleProvider(LlmProviderPort):
     """Hosted inference over the OpenAI chat-completions protocol. Needs a key and egress."""
 
     reports_provider_requests = True

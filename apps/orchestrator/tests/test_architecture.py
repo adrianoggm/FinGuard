@@ -120,6 +120,47 @@ def test_ports_live_in_the_domain() -> None:
     assert misplaced == []
 
 
+def test_every_port_has_an_adapter_that_says_so() -> None:
+    """An adapter names the port it implements as its base, so mypy checks it against the port
+    where it is written rather than only where the composition root happens to pass it."""
+    implemented_by_a_function = {"ChartRenderer"}  # `vega_lite.present` is the renderer
+    ports = {
+        node.name
+        for module, path in MODULES.items()
+        if module.startswith("domain.ports")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.ClassDef)
+        and any(getattr(base, "id", None) == "Protocol" for base in node.bases)
+    }
+    declared = {
+        getattr(base, "id", None)
+        for module, path in MODULES.items()
+        if module.startswith("infrastructure")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.ClassDef)
+        for base in node.bases
+    }
+    assert sorted(ports - declared - implemented_by_a_function) == []
+
+
+def test_the_inner_layers_raise_domain_errors_not_bare_ones() -> None:
+    """A broken rule is a `DomainError` with a code, so the HTTP adapter maps it to a status
+    instead of a 500 and nobody matches on message text. Internal invariants (`TypeError`,
+    `RuntimeError`: "this cannot happen") are not business rules and stay what they are."""
+    bare = []
+    for module, path in MODULES.items():
+        if _layer(module) not in ("domain", "application"):
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Raise)
+                and isinstance(node.exc, ast.Call)
+                and getattr(node.exc.func, "id", None) in {"ValueError", "Exception"}
+            ):
+                bare.append(f"{module}:{node.lineno}")
+    assert bare == []
+
+
 def test_packages_re_export_nothing() -> None:
     """A re-exporting `__init__` runs on every import of its subpackages and hides what loads:
     that is how two import cycles of 20 and 13 modules formed."""

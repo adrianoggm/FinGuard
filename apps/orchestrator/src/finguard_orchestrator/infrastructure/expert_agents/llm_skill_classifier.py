@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from finguard_orchestrator.domain.models.expert_agents import Capability, ExpertAgent
+from finguard_orchestrator.domain.ports.agent_reading import SkillClassifierPort
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.infrastructure.expert_agents.agent_answer import (
     Classified,
@@ -35,7 +36,7 @@ from finguard_orchestrator.infrastructure.llm.structure_repair import STRUCTURE_
 logger = logging.getLogger(__name__)
 
 
-class LlmSkillClassifier:
+class LlmSkillClassifier(SkillClassifierPort):
     def __init__(
         self, provider: LlmProviderPort, *, model: str, temperature: float, max_output_tokens: int
     ) -> None:

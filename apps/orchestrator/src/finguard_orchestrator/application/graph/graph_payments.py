@@ -697,7 +697,8 @@ async def wait_for_payment_reply(state: TurnGraphState) -> TurnGraphState:
         }
     )
     if not isinstance(reply, str):
-        raise ValueError("payment confirmation reply must be text")
+        # The interrupt is resumed only with the canonical reply string: anything else is a bug.
+        raise TypeError("payment confirmation reply must be text")
     if reply == "respuesta ambigua":
         # The checkpoint contains only the classifier's marker. The user's original words live in
         # this invocation's runtime context and are interpreted by the normal typed planner.

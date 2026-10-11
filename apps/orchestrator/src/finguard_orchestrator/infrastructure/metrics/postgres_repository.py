@@ -16,6 +16,7 @@ import asyncpg
 from finguard_orchestrator.domain.models.saved_metric import SavedMetric, SavedMetricDefinition
 from finguard_orchestrator.domain.ports.saved_metric_repository import (
     IdempotencyConflictError,
+    SavedMetricRepository,
     VersionConflictError,
 )
 from finguard_orchestrator.infrastructure.metrics.codec import (
@@ -42,7 +43,7 @@ def _columns(definition: SavedMetricDefinition) -> tuple[str, str]:
     )
 
 
-class PostgresSavedMetricRepository:
+class PostgresSavedMetricRepository(SavedMetricRepository):
     def __init__(self, pool: asyncpg.Pool, maximum: int = 50) -> None:
         self.pool = pool
         self.maximum = maximum

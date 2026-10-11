@@ -9,10 +9,11 @@ from uuid import UUID
 import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
+from finguard_orchestrator.domain.ports.movement_categories import MovementCategoryPort
 from finguard_orchestrator.infrastructure.banking.client import banking_client
 
 
-class HttpMovementCategories:
+class HttpMovementCategories(MovementCategoryPort):
     """Implements MovementCategoryPort over banking's HTTP API."""
 
     def __init__(self, *, base_url: str, timeout_seconds: float) -> None:

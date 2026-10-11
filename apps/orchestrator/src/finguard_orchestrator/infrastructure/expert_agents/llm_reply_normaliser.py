@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.models.expert_agents import (
     BookingDraft,
     ReplyState,
 )
+from finguard_orchestrator.domain.ports.agent_reading import ReplyNormaliserPort
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.infrastructure.expert_agents.agent_answer import (
     parse_availability,
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 _READ: Final[frozenset[ReplyState]] = frozenset({"COMPLETED", "INPUT_REQUIRED"})
 
 
-class LlmReplyNormaliser:
+class LlmReplyNormaliser(ReplyNormaliserPort):
     def __init__(
         self, provider: LlmProviderPort, *, model: str, temperature: float, max_output_tokens: int
     ) -> None:

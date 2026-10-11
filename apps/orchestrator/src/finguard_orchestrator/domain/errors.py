@@ -8,11 +8,14 @@ class DomainError(Exception):
     code = "domain_error"
 
 
-class InvalidValueError(DomainError):
+class InvalidValueError(DomainError, ValueError):
     """A value object rejected its own input.
 
     The domain never raises bare ValueError: an invariant that fails is a domain
     error with a code, so the adapter can map it without matching on message text.
+    It is a ValueError as well, so every caller that guards a construction with
+    `except ValueError` (and pydantic, which turns one into a validation error) keeps
+    catching it.
     """
 
     code = "invalid_input"

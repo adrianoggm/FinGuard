@@ -31,13 +31,14 @@ from pathlib import Path
 from finguard_orchestrator.domain.constants import DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_TEMPERATURE
 from finguard_orchestrator.domain.enums import FallbackPolicy
 from finguard_orchestrator.domain.errors import InvalidValueError, UnknownModelError
+from finguard_orchestrator.domain.ports.model_catalogue import ModelCataloguePort
 from finguard_orchestrator.domain.value_objects.llm_model import LlmModel
 from finguard_orchestrator.domain.value_objects.llm_policy import LlmPolicy
 
 BUILT_IN = LlmModel(alias="echo-1", provider="echo", model="echo-1")
 
 
-class TomlModelCatalogue:
+class TomlModelCatalogue(ModelCataloguePort):
     """The catalogue this deployment may use, in fallback order."""
 
     def __init__(

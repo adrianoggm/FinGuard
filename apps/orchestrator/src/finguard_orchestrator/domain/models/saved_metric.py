@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import ChartSpec
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 
@@ -41,13 +42,13 @@ class SavedMetric:
 
     def __post_init__(self) -> None:
         if not self.holder_id or len(self.holder_id) > 255:
-            raise ValueError("holder_id is required")
+            raise InvalidValueError("holder_id is required")
         if not self.title.strip() or len(self.title) > 80:
-            raise ValueError("metric title must contain 1..80 characters")
+            raise InvalidValueError("metric title must contain 1..80 characters")
         if self.position < 0:
-            raise ValueError("metric position cannot be negative")
+            raise InvalidValueError("metric position cannot be negative")
         if self.version < 1:
-            raise ValueError("metric version must be positive")
+            raise InvalidValueError("metric version must be positive")
 
     @classmethod
     def new(

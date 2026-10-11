@@ -11,10 +11,11 @@ from finguard_orchestrator.domain.ports.turn_reservations import (
     Reservation,
     Reserved,
     TurnKey,
+    TurnReservationsPort,
 )
 
 
-class PostgresTurnReservations:
+class PostgresTurnReservations(TurnReservationsPort):
     """Implements `TurnReservationsPort` using transaction-scoped PostgreSQL locks."""
 
     def __init__(self, pool: Any) -> None:

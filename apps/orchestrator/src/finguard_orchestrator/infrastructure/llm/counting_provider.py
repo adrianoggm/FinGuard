@@ -150,7 +150,7 @@ def budget_calls_so_far() -> int:
     return calls.count - calls.provider_logical_calls + calls.provider_requests
 
 
-class CountingProvider:
+class CountingProvider(LlmProviderPort):
     """Implements LlmProviderPort around another provider, counting every call made through it."""
 
     def __init__(self, inner: LlmProviderPort) -> None:

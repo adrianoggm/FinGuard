@@ -22,13 +22,14 @@ import httpx2 as httpx
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
+from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.infrastructure.banking.client import banking_client
 from finguard_orchestrator.infrastructure.banking.http_accounts import HttpAccounts
 from finguard_orchestrator.infrastructure.banking.http_financial_query import HttpFinancialQuery
 
 
-class HttpAccountSummary:
+class HttpAccountSummary(AccountSummaryPort):
     """Implements AccountSummaryPort over banking's HTTP API."""
 
     def __init__(

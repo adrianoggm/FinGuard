@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import Visualization
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.ports.chart_renderer import ChartRenderer
@@ -18,7 +19,7 @@ def financial_metric_executor(
 ) -> Callable[[SavedMetricDefinition, Caller], Awaitable[dict[str, Any]]]:
     async def execute(definition: SavedMetricDefinition, caller: Caller) -> dict[str, Any]:
         if not isinstance(definition.plan, FinancialPlan):
-            raise ValueError("only financial plans are enabled for saved metrics")
+            raise InvalidValueError("only financial plans are enabled for saved metrics")
         plan = definition.plan
         # A stored plan is untrusted input (ADR-011 §5): written when the metric was saved,
         # replayed now by whichever credential opens it. This is the one call site of
@@ -69,7 +70,7 @@ def financial_metric_executor(
         else:
             available_fields = {"dimension", "key", "value_minor", "total_minor", "movement_count"}
             if not definition.chart.fields() <= available_fields:
-                raise ValueError("saved chart references unavailable banking fields")
+                raise InvalidValueError("saved chart references unavailable banking fields")
             rows = []
             for group in answer.groups:
                 source = {

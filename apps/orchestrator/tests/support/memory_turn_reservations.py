@@ -14,6 +14,7 @@ from finguard_orchestrator.domain.ports.turn_reservations import (
     Reservation,
     Reserved,
     TurnKey,
+    TurnReservationsPort,
 )
 
 
@@ -26,7 +27,7 @@ class _Held:
     lease_token: UUID | None = None
 
 
-class MemoryTurnReservations:
+class MemoryTurnReservations(TurnReservationsPort):
     """Implements TurnReservationsPort."""
 
     def __init__(self) -> None:

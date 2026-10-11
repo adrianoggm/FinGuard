@@ -14,12 +14,16 @@ from dataclasses import replace
 from uuid import UUID
 
 from finguard_orchestrator.domain.engine.state import DialogueState
-from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError, TurnCompletion
+from finguard_orchestrator.domain.ports.dialogue_store import (
+    DialogueStorePort,
+    StaleDialogueError,
+    TurnCompletion,
+)
 
 type _Key = tuple[UUID, UUID]
 
 
-class MemoryDialogueStore:
+class MemoryDialogueStore(DialogueStorePort):
     """Implements DialogueStorePort."""
 
     def __init__(self) -> None:

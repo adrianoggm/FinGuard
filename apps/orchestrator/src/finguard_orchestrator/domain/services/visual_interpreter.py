@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Literal, cast
 
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import (
     EncodingPatch,
     Orientation,
@@ -340,7 +341,7 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
 
 def apply_visual_intent(intent: VisualIntent, context: VisualContext) -> VisualContext:
     if intent.patch is None:
-        raise ValueError(intent.explanation or "No se pudo interpretar el cambio visual")
+        raise InvalidValueError(intent.explanation or "No se pudo interpretar el cambio visual")
     # `source`/`fallback_reason` stay `None` here (Task 1, Wave 4.5): this context is a scratch
     # merge, read only for its `.spec` by `_visual_only_response` before `_derived_context` builds
     # the one actually sealed and returned -- an echoed chart is not re-provenanced here, the same

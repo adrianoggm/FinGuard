@@ -9,6 +9,7 @@ refusal back into the adapter, and a model error would become an exception where
 from dataclasses import dataclass
 from typing import Literal, get_args
 
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import ChartSpec
 from finguard_orchestrator.domain.models.chart import FallbackReason as FallbackReason
 from finguard_orchestrator.domain.models.chart import VisualSource as VisualSource
@@ -90,7 +91,7 @@ class Rejection:
 
     def __post_init__(self) -> None:
         if self.rule not in get_args(RejectionRule):
-            raise ValueError(f"unknown rejection rule: {self.rule!r}")
+            raise InvalidValueError(f"unknown rejection rule: {self.rule!r}")
 
 
 def canonical(spec: ChartSpec) -> tuple[object, ...]:

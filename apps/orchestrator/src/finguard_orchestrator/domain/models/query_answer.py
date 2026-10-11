@@ -17,6 +17,7 @@ from finguard_orchestrator.domain.enums import (
     ReceiptCategory,
     TransactionType,
 )
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.movement_list_plan import MovementCursor
 
 
@@ -94,11 +95,11 @@ class MovementListAnswer:
 
     def __post_init__(self) -> None:
         if self.has_more != (self.next_cursor is not None):
-            raise ValueError("a continuing movement page must include exactly one cursor")
+            raise InvalidValueError("a continuing movement page must include exactly one cursor")
         if self.next_cursor is not None and self.movements:
             last = self.movements[-1]
             if (
                 last.transaction_id != str(self.next_cursor.transaction_id)
                 or last.occurred_at != self.next_cursor.occurred_at
             ):
-                raise ValueError("movement cursor must identify the final returned row")
+                raise InvalidValueError("movement cursor must identify the final returned row")

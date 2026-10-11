@@ -20,6 +20,7 @@ from finguard_orchestrator.domain.models.visual_plan import (
     VisualPlanDraft,
 )
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
+from finguard_orchestrator.domain.ports.visual_planner import VisualPlannerPort
 from finguard_orchestrator.infrastructure.llm.structure_repair import STRUCTURE_REPAIR
 from finguard_orchestrator.infrastructure.planning.visual_answer import (
     VisualAnswer,
@@ -33,7 +34,7 @@ from finguard_orchestrator.infrastructure.planning.visual_prompt import (
 logger = logging.getLogger(__name__)
 
 
-class LlmVisualPlanner:
+class LlmVisualPlanner(VisualPlannerPort):
     def __init__(
         self, provider: LlmProviderPort, *, model: str, temperature: float, max_output_tokens: int
     ) -> None:

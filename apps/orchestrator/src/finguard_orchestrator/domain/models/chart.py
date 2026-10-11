@@ -10,6 +10,7 @@ from uuid import UUID
 # below are both typed with this at runtime (Wave 4.3), so a chart's own module can intersect a
 # drilled month against it without importing anything from `application/` or `infrastructure/`.
 from finguard_orchestrator.domain.enums import GroupBy
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
 
 if TYPE_CHECKING:  # the decision and the plans import this module; only the annotation needs them
@@ -65,11 +66,11 @@ class EncodingSort:
 
     def __post_init__(self) -> None:
         if self.mode not in get_args(SortMode):
-            raise ValueError("unsupported sort mode")
+            raise InvalidValueError("unsupported sort mode")
         if self.mode == "input" and self.field is not None:
-            raise ValueError("input order names no field to sort by")
+            raise InvalidValueError("input order names no field to sort by")
         if self.field is not None and not FIELD_NAME_PATTERN.fullmatch(self.field):
-            raise ValueError("sort fields must be identifiers")
+            raise InvalidValueError("sort fields must be identifiers")
 
 
 @dataclass(frozen=True)
@@ -82,11 +83,11 @@ class ChartEncoding:
 
     def __post_init__(self) -> None:
         if self.channel not in get_args(Channel):
-            raise ValueError("unsupported chart channel")
+            raise InvalidValueError("unsupported chart channel")
         if self.type not in get_args(FieldType):
-            raise ValueError("unsupported chart field type")
+            raise InvalidValueError("unsupported chart field type")
         if not FIELD_NAME_PATTERN.fullmatch(self.field):
-            raise ValueError("chart fields must be identifiers")
+            raise InvalidValueError("chart fields must be identifiers")
 
 
 @dataclass(frozen=True)
@@ -102,23 +103,23 @@ class ChartSpec:
 
     def __post_init__(self) -> None:
         if self.mark not in get_args(Mark):
-            raise ValueError("unsupported chart mark")
+            raise InvalidValueError("unsupported chart mark")
         # `mark` above was checked against its own closed set; `stack` and `sort` below were not
         # -- an unrecognised value passed `_structure` (`visual_plan_verifier.py`) and reached
         # the wire verbatim, the one path the DTO's own `stack in get_args(Stack)` /
         # `sort in get_args(SortMode)` guard does not cover, because nothing here checked
         # membership at all.
         if self.stack is not None and self.stack not in get_args(Stack):
-            raise ValueError("unsupported chart stack")
+            raise InvalidValueError("unsupported chart stack")
         if self.mark == "donut" and self.stack is not None:
-            raise ValueError("donut cannot be stacked")
+            raise InvalidValueError("donut cannot be stacked")
         if self.stack is not None and not any(
             item.type == "quantitative" and item.channel in {"x", "y"} for item in self.encodings
         ):
             # The presenter looks up the stacked channel with a bare `next(...)` and no default,
             # relying on this invariant to make that lookup safe -- so a spec that carries a stack
             # with nothing to hang it on is refused here instead of raising `StopIteration` later.
-            raise ValueError("a stacked chart needs a quantitative x or y encoding")
+            raise InvalidValueError("a stacked chart needs a quantitative x or y encoding")
         if self.sort is not None and not any(
             item.type in {"nominal", "temporal"} and item.channel in {"x", "y"}
             for item in self.encodings
@@ -130,22 +131,24 @@ class ChartSpec:
             # donut (no axes at all) can each carry a chart-wide `sort` -- because nothing
             # upstream of the presenter enforced this. Refused here instead, so `_structure`
             # turns it into a `Rejection` rather than an unhandled exception at the presenter.
-            raise ValueError("a sorted chart needs a categorical or temporal x or y encoding")
+            raise InvalidValueError(
+                "a sorted chart needs a categorical or temporal x or y encoding"
+            )
         channels = [item.channel for item in self.encodings if item.channel != "tooltip"]
         if len(channels) != len(set(channels)):
-            raise ValueError("chart channels must be unique")
+            raise InvalidValueError("chart channels must be unique")
         if self.limit is not None and not 1 <= self.limit <= 100:
-            raise ValueError("chart limit must be between 1 and 100")
+            raise InvalidValueError("chart limit must be between 1 and 100")
         if self.sort is not None and self.sort not in get_args(SortMode):
-            raise ValueError("unsupported chart sort")
+            raise InvalidValueError("unsupported chart sort")
         if self.sort_field is not None and self.sort is None:
-            raise ValueError("sort_field requires sort")
+            raise InvalidValueError("sort_field requires sort")
         # `EncodingSort.field` and `ChartEncoding.field` both run this pattern; `sort_field` was
         # the one field-name slot left unchecked. Not exploitable today -- the verifier's
         # `_fields` refuses a `sort_field` outside the profile and `_value_free_spec` enforces the
         # pattern on the wire -- but it is the same class of name and belongs to the same check.
         if self.sort_field is not None and not FIELD_NAME_PATTERN.fullmatch(self.sort_field):
-            raise ValueError("sort fields must be identifiers")
+            raise InvalidValueError("sort fields must be identifiers")
 
     def fields(self) -> frozenset[str]:
         return frozenset(item.field for item in self.encodings)
@@ -228,17 +231,17 @@ class VisualField:
 
     def __post_init__(self) -> None:
         if not FIELD_NAME_PATTERN.fullmatch(self.name):
-            raise ValueError("visual fields must be identifiers")
+            raise InvalidValueError("visual fields must be identifiers")
         if self.type not in {"nominal", "quantitative", "temporal"}:
-            raise ValueError("unsupported visual field type")
+            raise InvalidValueError("unsupported visual field type")
         if self.role not in _ROLE_TYPES:
-            raise ValueError("unsupported visual field role")
+            raise InvalidValueError("unsupported visual field role")
         if self.type not in _ROLE_TYPES[self.role]:
-            raise ValueError(f"a {self.role} cannot be {self.type}")
+            raise InvalidValueError(f"a {self.role} cannot be {self.type}")
         if self.cardinality < 0:
-            raise ValueError("cardinality cannot be negative")
+            raise InvalidValueError("cardinality cannot be negative")
         if self.order not in {"MEASURE_DESC", "INPUT", "TEMPORAL", "NONE"}:
-            raise ValueError("unsupported visual field order")
+            raise InvalidValueError("unsupported visual field order")
 
 
 # Rows a chart draws when nobody said a number. A discrete dimension is one band per row, and at
@@ -297,13 +300,13 @@ class VisualProfile:
     def __post_init__(self) -> None:
         names = [item.name for item in self.fields]
         if len(set(names)) != len(names):
-            raise ValueError("duplicate field name in visual profile")
+            raise InvalidValueError("duplicate field name in visual profile")
         if self.row_count < 0:
-            raise ValueError("row_count cannot be negative")
+            raise InvalidValueError("row_count cannot be negative")
         if not re.fullmatch(r"[A-Z][A-Z0-9_]*", self.metric):
-            raise ValueError("visual profile metric must be uppercase")
+            raise InvalidValueError("visual profile metric must be uppercase")
         if self.unit not in {"money", "count", "ratio", "unknown"}:
-            raise ValueError("unsupported visual profile unit")
+            raise InvalidValueError("unsupported visual profile unit")
 
     def field_names(self) -> frozenset[str]:
         return frozenset(item.name for item in self.fields)
@@ -388,16 +391,18 @@ class VisualDecision:
         # first check alone; M6 (fix wave) makes it true of the two below as well -- both now
         # read a set derived from `VisualSource`, never a hand-typed copy of part of it.
         if self.source not in get_args(VisualSource):
-            raise ValueError("unsupported visual decision source")
+            raise InvalidValueError("unsupported visual decision source")
         if self.fallback_reason is not None and self.source not in {"deterministic"}:
-            raise ValueError(
+            raise InvalidValueError(
                 "only a deterministic chart fell back -- a chosen model or patch plan did not "
                 "fall back"
             )
         if self.accepted != (self.source in _ACCEPTED_SOURCES):
-            raise ValueError("accepted means the model's or the patch's chart is what is shown")
+            raise InvalidValueError(
+                "accepted means the model's or the patch's chart is what is shown"
+            )
         if self.error_detail is not None and self.fallback_reason != "provider_error":
-            raise ValueError("error_detail only accompanies a provider_error fallback")
+            raise InvalidValueError("error_detail only accompanies a provider_error fallback")
 
 
 @dataclass(frozen=True)
@@ -414,11 +419,11 @@ class PresentationContext:
 
     def __post_init__(self) -> None:
         if self.channel not in {"TEXT", "VOICE"}:
-            raise ValueError("unsupported presentation channel")
+            raise InvalidValueError("unsupported presentation channel")
         if self.viewport not in {"MOBILE", "DESKTOP"}:
-            raise ValueError("unsupported viewport")
+            raise InvalidValueError("unsupported viewport")
         if not 1 <= self.max_visible_rows <= 100:
-            raise ValueError("max_visible_rows must be between 1 and 100")
+            raise InvalidValueError("max_visible_rows must be between 1 and 100")
 
 
 # What a client that says nothing gets. `channel` already exists on the request DTO; `viewport`
@@ -513,14 +518,14 @@ class VisualContext:
 
     def __post_init__(self) -> None:
         if not CHART_ID_PATTERN.fullmatch(self.chart_id):
-            raise ValueError("invalid chart id")
+            raise InvalidValueError("invalid chart id")
         if self.trusted != (self.trust_reason == "ok"):
-            raise ValueError("trusted must agree with trust_reason")
+            raise InvalidValueError("trusted must agree with trust_reason")
         if self.derived_from is not None:
             if not CHART_ID_PATTERN.fullmatch(self.derived_from):
-                raise ValueError("derived_from must be a chart id")
+                raise InvalidValueError("derived_from must be a chart id")
             if self.derived_from == self.chart_id:
-                raise ValueError("derived_from cannot name the chart itself")
+                raise InvalidValueError("derived_from cannot name the chart itself")
         if any(not isinstance(item, UUID) for item in self.evidence_ids):
             raise TypeError("evidence ids are UUIDs")
 
@@ -563,7 +568,7 @@ class EncodingPatch:
     def clear(cls, *names: str) -> "EncodingPatch":
         allowed = {"stack", "sort", "sort_field", "limit", "title"}
         if not names or not set(names) <= allowed:
-            raise ValueError("only optional chart properties may be cleared")
+            raise InvalidValueError("only optional chart properties may be cleared")
         return cls(changed=frozenset(names))
 
 
@@ -618,13 +623,13 @@ def merge_encoding_patch(
         if name == "orientation":
             continue  # structural -- applied after mark/donut below, never a `values` scalar
         if name not in values:
-            raise ValueError(f"unsupported chart patch property: {name}")
+            raise InvalidValueError(f"unsupported chart patch property: {name}")
         values[name] = getattr(patch, name)
     limit = values["limit"]
     if limit is not None and (not isinstance(limit, int) or not 1 <= limit <= 100):
-        raise ValueError("chart limit must be between 1 and 100")
+        raise InvalidValueError("chart limit must be between 1 and 100")
     if values["sort_field"] is not None and values["sort_field"] not in profile.field_names():
-        raise ValueError("sort field is not present in the chart data")
+        raise InvalidValueError("sort field is not present in the chart data")
     mark = cast(Mark, values["mark"])
     title = values["title"] if isinstance(values["title"], str) else None
     stack = cast(Stack | None, values["stack"])
@@ -635,17 +640,17 @@ def merge_encoding_patch(
         sort = None
     sort_field = values["sort_field"] if isinstance(values["sort_field"], str) else None
     if values["stack"] is not None and not any(item.channel == "color" for item in spec.encodings):
-        raise ValueError("stacking requires a series/color dimension")
+        raise InvalidValueError("stacking requires a series/color dimension")
     if mark == "donut":
         if not (profile.positive and profile.mutually_exclusive and profile.verified_total):
-            raise ValueError("donut requires positive, exclusive parts and a verified total")
+            raise InvalidValueError("donut requires positive, exclusive parts and a verified total")
         # A donut's parts are the nominal dimension's distinct labels -- the field that lands in
         # `color`. `profile.cardinality` used to be this number directly; now it is per field.
         nominal_dimension_count = next(
             (item.cardinality for item in profile.role("dimension") if item.type == "nominal"), 0
         )
         if not 2 <= nominal_dimension_count <= 5:
-            raise ValueError("donut requires between 2 and 5 parts")
+            raise InvalidValueError("donut requires between 2 and 5 parts")
     encodings = spec.encodings
     if mark == "donut":
         nominal = next(
@@ -665,7 +670,7 @@ def merge_encoding_patch(
             None,
         )
         if nominal is None or quantitative is None:
-            raise ValueError("donut needs a categorical field and a quantitative measure")
+            raise InvalidValueError("donut needs a categorical field and a quantitative measure")
         # U-6 (Wave 3 hardening): `sort` rides along with the rebuild -- `EncodingSort` is the
         # dimension's own order (the `order` rule below reads it off the merged spec), and a bar
         # that turned into a donut and back used to lose it here, on the one channel-renaming
@@ -703,7 +708,7 @@ def merge_encoding_patch(
     # the request named, it would draw a different one nobody asked for.
     if "orientation" in patch.changed:
         if mark != "bar":
-            raise ValueError("orientation applies to bars")
+            raise InvalidValueError("orientation applies to bars")
         axis = _dimension_axis(encodings, profile)
         # `axis is None` is real, not hypothetical: the floor's own RATIO_SHARE bar (a normalised
         # share of a verified total) puts its dimension in `color` and leaves the measure alone on
@@ -760,7 +765,7 @@ def merge_encoding_patch(
         limit=limit if isinstance(limit, int) else None,
     )
     if not result.valid_for(profile.field_names()):
-        raise ValueError("chart patch is incompatible with visual profile")
+        raise InvalidValueError("chart patch is incompatible with visual profile")
     return result
 
 
@@ -782,7 +787,7 @@ def derive_chart(
     max_visible_rows: int = ROWS_THAT_FIT,
 ) -> ChartSpec | None:
     if not 1 <= max_visible_rows <= 100:
-        raise ValueError("max_visible_rows must be between 1 and 100")
+        raise InvalidValueError("max_visible_rows must be between 1 and 100")
     value_field = value_field or ("movement_count" if metric == "COUNT" else "total_minor")
     if rows < 2 or dimension_field not in fields or value_field not in fields:
         return None

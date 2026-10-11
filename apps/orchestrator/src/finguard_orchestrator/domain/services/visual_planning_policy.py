@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable
 from typing import get_args
 
-from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.errors import InvalidValueError, ProviderFailedError
 from finguard_orchestrator.domain.models.chart import (
     ChartSpec,
     PresentationContext,
@@ -48,9 +48,9 @@ class VisualPlanningPolicy:
         budget_seconds: float,
     ) -> None:
         if mode not in get_args(VisualMode):
-            raise ValueError("unsupported visual planning mode")
+            raise InvalidValueError("unsupported visual planning mode")
         if budget_seconds <= 0:
-            raise ValueError("the visual budget must be positive")
+            raise InvalidValueError("the visual budget must be positive")
         if mode != "deterministic" and model is None:
             # Unreachable through `main.py` today -- it always builds the adapter off
             # `deterministic` -- but a `hybrid`/`promoted` deployment whose model failed to wire

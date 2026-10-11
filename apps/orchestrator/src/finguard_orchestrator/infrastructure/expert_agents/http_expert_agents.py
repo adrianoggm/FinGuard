@@ -35,6 +35,7 @@ from finguard_orchestrator.domain.models.expert_agents import (
     ReplyState,
     TextReplyPart,
 )
+from finguard_orchestrator.domain.ports.expert_agents import ExpertAgentsPort
 
 _CODES: Final = frozenset(get_args(AgentErrorCode))
 
@@ -86,7 +87,7 @@ class _ReplyWire(_Wire):
     latency_ms: int
 
 
-class HttpExpertAgents:
+class HttpExpertAgents(ExpertAgentsPort):
     """Implements ExpertAgentsPort over the gateway's HTTP contract."""
 
     def __init__(self, *, base_url: str, token: str, timeout_seconds: float) -> None:

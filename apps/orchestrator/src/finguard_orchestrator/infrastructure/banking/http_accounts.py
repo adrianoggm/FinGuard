@@ -17,10 +17,11 @@ import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.account_summary import Holding
+from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.infrastructure.banking.client import banking_client
 
 
-class HttpAccounts:
+class HttpAccounts(AccountDirectoryPort):
     """Implements the account directory over banking's HTTP API."""
 
     def __init__(self, *, base_url: str, timeout_seconds: float) -> None:

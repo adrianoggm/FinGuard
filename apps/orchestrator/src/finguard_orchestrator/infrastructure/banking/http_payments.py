@@ -37,6 +37,7 @@ from finguard_orchestrator.domain.errors import (
     RecipientNotFoundError,
 )
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
+from finguard_orchestrator.domain.ports.payment_gateway import PaymentGatewayPort
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 from finguard_orchestrator.infrastructure.banking.client import banking_client
 
@@ -53,7 +54,7 @@ INTENT_NOT_FOUND = "intent_not_found"
 INTENT_RECIPIENT_SNAPSHOT_MISSING = "intent_recipient_snapshot_missing"
 
 
-class HttpPayments:
+class HttpPayments(PaymentGatewayPort):
     """Implements PaymentGatewayPort over banking's HTTP API."""
 
     def __init__(self, *, base_url: str, timeout_seconds: float) -> None:

@@ -249,20 +249,20 @@ class FinancialArtifact:
 
     def __post_init__(self) -> None:
         if (self.result_kind is ResultKind.COMPARISON) != (self.comparison is not None):
-            raise ValueError("comparison artifact kind and operands must agree")
+            raise InvalidValueError("comparison artifact kind and operands must agree")
         if self.status is ArtifactStatus.EMPTY and self.movement_count != 0:
-            raise ValueError("empty financial artifact cannot contain movements")
+            raise InvalidValueError("empty financial artifact cannot contain movements")
         if len(self.groups) > 100 or any(len(group.key) > 256 for group in self.groups):
-            raise ValueError("financial artifact exceeds its bounded result size")
+            raise InvalidValueError("financial artifact exceeds its bounded result size")
         if self.comparison_groups is not None and any(
             len(side) > 100 or any(len(group.key) > 256 for group in side)
             for side in self.comparison_groups
         ):
-            raise ValueError("financial comparison artifact exceeds its bounded result size")
+            raise InvalidValueError("financial comparison artifact exceeds its bounded result size")
         if (self.comparison is None) != (self.comparison_groups is None):
-            raise ValueError("comparison plan and aggregates must be stored together")
+            raise InvalidValueError("comparison plan and aggregates must be stored together")
         if self.comparison_values is not None and self.comparison is None:
-            raise ValueError("comparison values need a comparison plan")
+            raise InvalidValueError("comparison values need a comparison plan")
         if self.comparison_values is not None and (
             len(self.comparison_values) != 2
             or any(
@@ -270,7 +270,7 @@ class FinancialArtifact:
                 for value in self.comparison_values
             )
         ):
-            raise ValueError("comparison values must contain two integer sides")
+            raise InvalidValueError("comparison values must contain two integer sides")
 
 
 @dataclass(frozen=True)
@@ -292,7 +292,7 @@ class MovementListArtifact:
 
     def __post_init__(self) -> None:
         if not 1 <= self.movement_count <= MAX_SUPPORTING_MOVEMENTS or self.result_version < 1:
-            raise ValueError("movement visual artifact has invalid count or version")
+            raise InvalidValueError("movement visual artifact has invalid count or version")
         if len(self.dataset.rows) > MAX_SUPPORTING_MOVEMENTS or any(
             not row.dimension.strip()
             or len(row.dimension) > 256
@@ -300,13 +300,13 @@ class MovementListArtifact:
             or not isinstance(row.value_minor, int)
             for row in self.dataset.rows
         ):
-            raise ValueError("movement visual artifact exceeds its bounded result size")
+            raise InvalidValueError("movement visual artifact exceeds its bounded result size")
         if not self.dataset.rows or self.dataset.metric != "SUM":
-            raise ValueError("movement visual artifact requires summarized amount rows")
+            raise InvalidValueError("movement visual artifact requires summarized amount rows")
         if not self.currency.strip():
-            raise ValueError("movement visual artifact requires a currency")
+            raise InvalidValueError("movement visual artifact requires a currency")
         if self.group_by not in {GroupBy.CATEGORY, GroupBy.MERCHANT}:
-            raise ValueError("movement visual artifact needs a supported ledger dimension")
+            raise InvalidValueError("movement visual artifact needs a supported ledger dimension")
 
 
 @dataclass(frozen=True)
@@ -324,7 +324,7 @@ class ActiveVisual:
 
     def __post_init__(self) -> None:
         if self.result_version < 1 or self.version < 1:
-            raise ValueError("active visual versions must be positive")
+            raise InvalidValueError("active visual versions must be positive")
 
 
 @dataclass(frozen=True)
@@ -435,9 +435,9 @@ class DialogueState:
         if history != self.focus_history:
             object.__setattr__(self, "focus_history", history)
         if len(self.focus_history) > self.MAX_FOCUS_HISTORY:
-            raise ValueError("focus history exceeds its bounded size")
+            raise InvalidValueError("focus history exceeds its bounded size")
         if len(self.suspended_pending) > self.MAX_SUSPENDED_PENDING:
-            raise ValueError("suspended clarification history exceeds its bounded size")
+            raise InvalidValueError("suspended clarification history exceeds its bounded size")
         task_ids = [task.task_id for task in self.suspended_pending]
         task_ids.extend(task.task_id for task in self.focus_history)
         if self.pending is not None:

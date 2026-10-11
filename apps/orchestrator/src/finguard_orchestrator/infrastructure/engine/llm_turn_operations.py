@@ -45,6 +45,7 @@ from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_operations import (
     NO_ACCOUNT_NAMES,
     InterpretationFailedError,
+    TurnOperationsPort,
 )
 from finguard_orchestrator.domain.services import category_words, spanish, turn_arbiter
 from finguard_orchestrator.infrastructure.engine.operations_prompt import (
@@ -133,7 +134,7 @@ class _Refused:
     generation: str | None
 
 
-class LlmTurnOperations:
+class LlmTurnOperations(TurnOperationsPort):
     """Implements TurnOperationsPort against one model."""
 
     def __init__(

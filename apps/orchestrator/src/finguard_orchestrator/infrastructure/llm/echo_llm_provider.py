@@ -1,8 +1,10 @@
 import json
 from typing import Any
 
+from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 
-class EchoLlmProvider:
+
+class EchoLlmProvider(LlmProviderPort):
     """A deterministic provider for development and tests: it calls no API.
 
     It is an outbound adapter — it implements a domain port and talks to the outside —

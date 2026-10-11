@@ -22,13 +22,14 @@ import hmac
 from typing import Final
 
 from finguard_orchestrator.domain.errors import NotAuthenticatedError
+from finguard_orchestrator.domain.ports.caller_identity import CallerIdentityPort
 from finguard_orchestrator.domain.value_objects.caller import Caller
 
 # A token this short is only defensible because it never leaves 127.0.0.1 (rule 13).
 MIN_TOKEN_LENGTH: Final = 16
 
 
-class StaticTokenIdentity:
+class StaticTokenIdentity(CallerIdentityPort):
     """Implements CallerIdentityPort against a table given at startup."""
 
     def __init__(self, callers: dict[str, Caller]) -> None:

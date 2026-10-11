@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.models.query_answer import (
     MovementListAnswer,
     QueryAnswer,
 )
+from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.movement_list_plan import (
     MovementCursor,
@@ -34,7 +35,7 @@ from finguard_orchestrator.domain.value_objects.top_movements import TopMovement
 from finguard_orchestrator.infrastructure.banking.client import banking_client
 
 
-class HttpFinancialQuery:
+class HttpFinancialQuery(FinancialQueryPort):
     """Implements FinancialQueryPort over the banking HTTP API."""
 
     def __init__(

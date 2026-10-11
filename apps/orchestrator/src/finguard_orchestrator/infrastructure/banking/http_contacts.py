@@ -12,10 +12,11 @@ import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.infrastructure.banking.client import banking_client
 
 
-class HttpContacts:
+class HttpContacts(ContactDirectoryPort):
     """Implements ContactDirectoryPort over banking's HTTP API."""
 
     def __init__(self, *, base_url: str, timeout_seconds: float) -> None:

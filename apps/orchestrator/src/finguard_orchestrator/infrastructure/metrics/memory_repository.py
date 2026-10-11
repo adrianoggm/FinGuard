@@ -11,11 +11,12 @@ from uuid import UUID
 from finguard_orchestrator.domain.models.saved_metric import SavedMetric
 from finguard_orchestrator.domain.ports.saved_metric_repository import (
     IdempotencyConflictError,
+    SavedMetricRepository,
     VersionConflictError,
 )
 
 
-class MemorySavedMetricRepository:
+class MemorySavedMetricRepository(SavedMetricRepository):
     def __init__(self, maximum: int = 50) -> None:
         self._rows: dict[UUID, SavedMetric] = {}
         self._keys: dict[tuple[str, str], tuple[str, UUID]] = {}

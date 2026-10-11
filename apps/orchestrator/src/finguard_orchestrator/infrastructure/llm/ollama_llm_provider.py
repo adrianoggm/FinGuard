@@ -45,9 +45,10 @@ from typing import Any, Literal
 import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 
 
-class OllamaLlmProvider:
+class OllamaLlmProvider(LlmProviderPort):
     """Local inference. No API key, no network egress, no request leaves the machine."""
 
     name = "ollama"

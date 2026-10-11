@@ -20,6 +20,7 @@ from finguard_orchestrator.domain.errors import AnswerRefusedError
 from finguard_orchestrator.domain.ports.investigation_assessor import (
     AssessmentFailedError,
     Inspect,
+    InvestigationAssessorPort,
     InvestigationSummary,
     Stop,
 )
@@ -44,7 +45,7 @@ Summary:
 """
 
 
-class LlmInvestigationAssessor:
+class LlmInvestigationAssessor(InvestigationAssessorPort):
     """Implements InvestigationAssessorPort against one model."""
 
     def __init__(
