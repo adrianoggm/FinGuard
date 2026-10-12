@@ -18,6 +18,11 @@ from uuid import UUID
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import ValidationError
 from support.episodes import (
     ACCOUNT,
@@ -30,6 +35,7 @@ from support.episodes import (
 )
 from support.memory_dialogue_store import MemoryDialogueStore
 from support.memory_turn_reservations import MemoryTurnReservations
+from support.visual_planners import VERTICAL_DRAFT, ScriptedVisualPlanner
 
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
@@ -88,6 +94,7 @@ from finguard_orchestrator.infrastructure.llm.counting_provider import (
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
+from finguard_orchestrator.infrastructure.telemetry import otel
 
 JSON_ROUTE = "/v1/questions"
 STREAM_ROUTE = "/v1/questions/stream"
@@ -166,6 +173,7 @@ def engine_on(
     *,
     directory: Directory | None = None,
     store: MemoryDialogueStore | None = None,
+    visual_policy: VisualPlanningPolicy | None = None,
 ) -> GraphTurnHandler:
     """The graph as the composition root builds it, on the stack's own fakes and in memory. Given a
     `store`, it is a new process over the same database: nothing of the old graph survives but
@@ -180,7 +188,8 @@ def engine_on(
             directory or Directory(),  # type: ignore[arg-type]
             Contacts(),  # type: ignore[arg-type]
             CATEGORIES,
-            visual_policy=VisualPlanningPolicy(
+            visual_policy=visual_policy
+            or VisualPlanningPolicy(
                 model=None,
                 fallback=DeterministicVisualPlanner(),
                 verifier=verify,
@@ -1085,6 +1094,128 @@ ASKS_YEARLY_BY_CATEGORY = {
         }
     ]
 }
+
+
+class Exported:
+    """A tracer and a meter that keep everything, installed as the app's exporter."""
+
+    def __init__(self) -> None:
+        self.spans = InMemorySpanExporter()
+        tracer = TracerProvider()
+        tracer.add_span_processor(SimpleSpanProcessor(self.spans))
+        self.reader = InMemoryMetricReader()
+        meter = MeterProvider(metric_readers=[self.reader]).get_meter("test")
+        self.telemetry = otel.TurnTelemetry.build(tracer.get_tracer("test"), meter)
+
+    def counted(self, metric: str) -> dict[tuple[tuple[str, Any], ...], int]:
+        found: dict[tuple[tuple[str, Any], ...], int] = {}
+        for resource in self.reader.get_metrics_data().resource_metrics:
+            for scope in resource.scope_metrics:
+                for measured in scope.metrics:
+                    if measured.name == metric:
+                        for point in measured.data.data_points:
+                            found[tuple(sorted(point.attributes.items()))] = point.value
+        return found
+
+
+def a_charting_conversation(monkeypatch: pytest.MonkeyPatch) -> tuple[Stack, list[Turn]]:
+    """A query, a chart the model proposes and the rules accept, an edit to it, and the query sent
+    again under its own key: four requests, three turns."""
+    stack = a_stack()
+    stack.ledger.groups_for_next_turn = YEARLY_BY_CATEGORY
+    engine_on(
+        stack,
+        an_adapter(
+            Canned(
+                ASKS_YEARLY_BY_CATEGORY,
+                {"operations": [{"create_visualization": "AUTO"}]},
+                *edits({"sort": "ascending"}),
+            )
+        ),
+        visual_policy=VisualPlanningPolicy(
+            model=ScriptedVisualPlanner(VERTICAL_DRAFT),
+            fallback=DeterministicVisualPlanner(),
+            verifier=verify,
+            mode="hybrid",
+            budget_seconds=5,
+        ),
+    )
+    key = str(uuid.uuid4())
+    body = {"question": "Muéstrame mis gastos anuales por categoría", "conversation": None}
+    first = stack.client.post(JSON_ROUTE, json=body, headers={"Idempotency-Key": key})
+    queried = Turn(first.status_code, first.headers, first.json(), [])
+    drawn = post(stack, JSON_ROUTE, "Ponlo en un gráfico", queried.conversation)
+    edited = post(stack, JSON_ROUTE, "De menor a mayor", drawn.conversation)
+    # The query again, under the key it was answered with: the same turn handed back.
+    again = stack.client.post(JSON_ROUTE, json=body, headers={"Idempotency-Key": key})
+    assert again.status_code == 200 and again.json()["text"] == queried.body["text"]
+    return stack, [queried, drawn, edited]
+
+
+def test_a_charting_conversation_is_counted_once_per_turn_and_traced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exported = Exported()
+    monkeypatch.setattr(otel, "_telemetry", exported.telemetry)
+
+    _, turns = a_charting_conversation(monkeypatch)
+
+    assert [turn.body["outcome"] for turn in turns] == ["PLANNED"] * 3
+    assert turns[1].body["explanation"]["provenance"].startswith("Propuesto por el asistente")
+    # Three turns, not four: the replay is the first turn handed back, and it is not counted again.
+    assert exported.counted("turns_total") == {(("outcome", "PLANNED"),): 3}
+    decisions = exported.counted("decisions_total")
+
+    def count(step: str, verdict: str, changed: bool = False) -> int:
+        return decisions.get((("changed", changed), ("step", step), ("verdict", verdict)), 0)
+
+    assert count("planner", "agreed") == 3, "one reading per turn, the replay read nothing"
+    assert count("ledger", "agreed") == 1, "one bank read: the chart and the edit read nothing"
+    assert count("visual_planner", "agreed") == 1, "the model's chart, verified and shown"
+    assert count("visual_follow_up", "agreed") == 1, "an order changes the chart, not its mark"
+    assert not any(dict(key)["verdict"] == "overrode" for key in decisions), (
+        "nothing replaced anything in this conversation"
+    )
+    turn_spans = [span for span in exported.spans.get_finished_spans() if span.name == "turn"]
+    assert len(turn_spans) == 3
+    conversation = turns[0].conversation["conversation_id"]
+    assert {span.attributes["conversation.id"] for span in turn_spans} == {conversation}
+    # Nothing the holder wrote leaves: not the sentence, not a word of it.
+    exported_text = repr(
+        [
+            (span.name, dict(span.attributes), [dict(e.attributes) for e in span.events])
+            for span in exported.spans.get_finished_spans()
+        ]
+    )
+    for word in ("Muéstrame", "anuales", "gráfico", "menor"):
+        assert word not in exported_text
+
+
+def test_with_nothing_exporting_the_turns_are_still_recorded_and_nothing_is_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off is the default: no exporter, the same decisions recorded, and the turns unchanged."""
+    monkeypatch.setattr(otel, "_telemetry", None)
+    sealed: list[Any] = []
+    real = otel.export_turn
+
+    def spy(record: Any, **times: Any) -> None:
+        sealed.append(record)
+        real(record, **times)
+
+    monkeypatch.setattr(otel, "export_turn", spy)
+
+    _, turns = a_charting_conversation(monkeypatch)
+
+    assert [turn.body["outcome"] for turn in turns] == ["PLANNED"] * 3
+    settled = [record for record in sealed if record.outcome is not None]
+    assert [record.outcome for record in settled] == ["PLANNED"] * 3
+    assert [[decision.step.value for decision in record.decisions] for record in settled] == [
+        ["planner", "ledger"],
+        ["planner", "visual_planner"],
+        ["planner", "visual_follow_up"],
+    ]
+    assert otel._telemetry is None
 
 
 def edits(*changes: dict[str, Any]) -> list[dict[str, Any]]:

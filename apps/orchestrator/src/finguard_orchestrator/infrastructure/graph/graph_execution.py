@@ -23,6 +23,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import FinancialP
 from finguard_orchestrator.domain.value_objects.movement_list_plan import MovementListPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.graph.graph_state import GraphContext, TurnGraphState
+from finguard_orchestrator.observability.decisions import Step, Verdict, record
 
 
 def record_bank_calls(state: TurnGraphState, ctx: GraphContext) -> int:
@@ -35,14 +36,35 @@ def record_bank_calls(state: TurnGraphState, ctx: GraphContext) -> int:
 async def execute_work(work: Work, state: TurnGraphState, ctx: GraphContext) -> Executed:
     """Run a validated work item through adapters that count every banking attempt."""
     ctx.financial_reads = max(ctx.financial_reads, state.get("bank_calls", 0))
-    return await execute(
-        work,
-        queries=_CountedQueries(ctx.ports.queries, ctx),
-        summary=_CountedSummary(ctx.ports.summary, ctx),
-        account_id=UUID(state["account_id"]),
-        today=ctx.today,
-        reporting_timezone=ctx.reporting_timezone,
+    reads_before = ctx.financial_reads
+    scope = "one_account" if len(work.account_ids) == 1 else "across_accounts"
+    try:
+        executed = await execute(
+            work,
+            queries=_CountedQueries(ctx.ports.queries, ctx),
+            summary=_CountedSummary(ctx.ports.summary, ctx),
+            account_id=UUID(state["account_id"]),
+            today=ctx.today,
+            reporting_timezone=ctx.reporting_timezone,
+        )
+    except Exception as failed:
+        record(
+            Step.LEDGER,
+            Verdict.FAILED,
+            changed=False,
+            field=work.kind,
+            detail=type(failed).__name__,
+        )
+        raise
+    # What was read and how wide, never what came back: the figures are the holder's.
+    record(
+        Step.LEDGER,
+        Verdict.AGREED,
+        changed=False,
+        field=work.kind,
+        detail=f"{scope}:{ctx.financial_reads - reads_before}",
     )
+    return executed
 
 
 async def read_by_merchant(

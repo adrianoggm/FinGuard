@@ -242,11 +242,14 @@ def test_the_step_and_the_verdict_cannot_carry_anything() -> None:
     Fourteen since the A2A expert agents added `EXPERT_AGENT`: a third party's reply is read by a
     model and accepted or rejected by a verifier rule, and a rejection nobody counts is an agent
     that quietly stopped answering.
+
+    Fifteen since voice added `PAYMENT_CONFIRMATION`: a transcript is a guess, a yes is the one
+    word that moves money, and a spoken yes held back nobody counts is a guard nobody can show ran.
     """
-    assert len(Step) == 14, (
-        "the design argues fourteen seams; a fifteenth should be a diff to justify"
+    assert len(Step) == 15, (
+        "the design argues fifteen seams; a sixteenth should be a diff to justify"
     )
-    assert len({step.value for step in Step}) == 14, "two seams sharing a label share a time series"
+    assert len({step.value for step in Step}) == 15, "two seams sharing a label share a time series"
     assert set(Verdict) == {
         Verdict.AGREED,
         Verdict.OVERRODE,
@@ -591,12 +594,22 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
             now="accepted",
             detail="gym-norte",
         )
+        # The fifteenth: a spoken yes to a payment preview, held back as neither yes nor no.
+        record(
+            Step.PAYMENT_CONFIRMATION,
+            Verdict.OVERRODE,
+            changed=True,
+            field="reply",
+            was="yes",
+            now="ambiguous",
+            detail="spoken",
+        )
         turn.outcome = PlanningOutcome.PLANNED.value
 
     sealed = turn.sealed()
-    assert {decision.step for decision in sealed.decisions} == set(Step), "all fourteen fit"
+    assert {decision.step for decision in sealed.decisions} == set(Step), "all fifteen fit"
     assert all(REDACTED not in everything_in(TurnRecord((d,))) for d in sealed.decisions)
-    assert len(sealed.changed) == 9, "nine of the fourteen altered the answer in this example"
+    assert len(sealed.changed) == 10, "ten of the fifteen altered the answer in this example"
 
 
 # --- the package move -------------------------------------------------------------------------

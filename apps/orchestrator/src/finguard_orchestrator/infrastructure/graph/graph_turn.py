@@ -86,6 +86,13 @@ from finguard_orchestrator.infrastructure.graph.graph_state import (
     TurnGraphState,
 )
 from finguard_orchestrator.infrastructure.graph.graph_store import commit_state
+from finguard_orchestrator.observability.decisions import (
+    Step,
+    Verdict,
+    name_the_conversation,
+    record,
+    settle_turn,
+)
 
 logger = logging.getLogger(__name__)
 _RESERVATION_HEARTBEAT_SECONDS = 30
@@ -179,7 +186,8 @@ class GraphTurnHandler:
             _fingerprint(sentence),
         )
         if isinstance(turn, EngineAnswer):
-            return turn  # replayed
+            return turn  # replayed: the same turn handed back, settled when it first ran
+        name_the_conversation(str(turn.key.conversation_id))
         config: Any = {
             "configurable": {"thread_id": _thread(turn)},
             "recursion_limit": RECURSION_LIMIT,
@@ -251,7 +259,9 @@ class GraphTurnHandler:
                     context.financial_reads,
                     checkpoint_reads + context.unsaved_calls,
                 )
-                return unsaved(_failed(unanswered), financial_reads=financial_reads)
+                failed = _failed(unanswered)
+                settle_turn(failed.outcome)
+                return unsaved(failed, financial_reads=financial_reads)
             heartbeat.cancel()
             try:
                 await heartbeat
@@ -283,6 +293,7 @@ class GraphTurnHandler:
                 )
                 await self._reservations.done(turn.key, turn.request_id, turn.lease_token, answer)
                 closed = True
+                settle_turn(result.outcome)
                 await self._discard_completed_checkpoint(config)
                 return answer
             answer = EngineAnswer(
@@ -295,6 +306,7 @@ class GraphTurnHandler:
             )
             await self._reservations.done(turn.key, turn.request_id, turn.lease_token, answer)
             closed = True
+            settle_turn(answer.result.outcome if answer.result is not None else "DELEGATED")
             await self._discard_completed_checkpoint(config)
             return answer
         finally:
@@ -573,7 +585,18 @@ def _reply(sentence: str, spoken: bool) -> str:
     it is ambiguous: the preview stays open and the button on screen confirms it. A spoken no
     still cancels, because cancelling a payment by mistake costs nothing."""
     reply = confirmation.canonical_reply(sentence)
-    return "respuesta ambigua" if spoken and reply == "s\u00ed" else reply
+    if spoken and reply == "s\u00ed":
+        record(
+            Step.PAYMENT_CONFIRMATION,
+            Verdict.OVERRODE,
+            changed=True,
+            field="reply",
+            was="yes",
+            now="ambiguous",
+            detail="spoken",
+        )
+        return "respuesta ambigua"
+    return reply
 
 
 def _with_open_preview(

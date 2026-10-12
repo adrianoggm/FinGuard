@@ -121,6 +121,7 @@ from finguard_orchestrator.infrastructure.graph.graph_state import GraphPorts
 from finguard_orchestrator.infrastructure.graph.graph_turn import GraphTurnHandler
 from finguard_orchestrator.infrastructure.graph.llm_assessor import LlmInvestigationAssessor
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+from finguard_orchestrator.observability.decisions import Step, Verdict, recording_turn
 
 TODAY = date(2026, 8, 5)
 MAY = AbsoluteRange(date(2026, 5, 1), date(2026, 5, 31))
@@ -2783,13 +2784,20 @@ async def test_a_spoken_yes_keeps_the_preview_and_a_spoken_no_cancels_it() -> No
     # Ambiguous, like any reply that is not a closed yes or no, so the interpreter reads it.
     world.interpreter._turns.append((PrepareBizum(None, None),))  # noqa: SLF001
 
-    said_yes = await world.ask(
-        conversation_id=prepared.state.conversation_id,
-        version=prepared.state.version,
-        sentence="sí",
-        request_id="spoken-yes",
-        caller_scopes=scopes,
-        spoken=True,
+    with recording_turn() as turn:
+        said_yes = await world.ask(
+            conversation_id=prepared.state.conversation_id,
+            version=prepared.state.version,
+            sentence="sí",
+            request_id="spoken-yes",
+            caller_scopes=scopes,
+            spoken=True,
+        )
+    (held_back,) = turn.sealed().where(Step.PAYMENT_CONFIRMATION)
+    assert (held_back.verdict, held_back.changed, held_back.now) == (
+        Verdict.OVERRODE,
+        True,
+        "ambiguous",
     )
 
     assert said_yes.result is not None

@@ -100,6 +100,10 @@ class Step(StrEnum):
     (Task 1, Wave 3 hardening: A-1) -- a replay from another conversation and a tampered payload
     are two different failure populations, and this is the seam that tells them apart."""
 
+    PAYMENT_CONFIRMATION = "payment_confirmation"
+    """A reply to a payment preview, reduced to yes, no or neither -- and, on the voice channel, a
+    yes held back as neither, because a transcript must not move money (ADR-010 section 5)."""
+
     EXPERT_AGENT = "expert_agent"
     """Whether an external agent's normalised reply was accepted, and if not, which verifier rule
     rejected it (A2A expert agents, spec §6.3) -- a third party's text read by a model is the new
@@ -610,6 +614,17 @@ def consulting(reader: str) -> Iterator[Consulting]:
         yield frame
     finally:
         recorder.closing()
+
+
+def settle_turn(outcome: str) -> None:
+    """Tell the turn in flight how it ended, once it has.
+
+    Called where a turn actually finishes, never where an earlier answer is replayed: a replay is
+    the same turn handed back, and counting it again would make `turns_total` a count of requests.
+    """
+    recorder = _current.get()
+    if recorder is not None:
+        recorder.outcome = _own_words(outcome, step=Step.OUTCOME, slot="outcome")
 
 
 def name_the_conversation(identifier: str) -> None:

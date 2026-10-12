@@ -31,10 +31,46 @@ from finguard_orchestrator.domain.ports.visual_planner import VisualPlannerPort
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
+from finguard_orchestrator.observability.decisions import Step, Verdict, record
 
 Verifier = Callable[[VisualPlanDraft, VisualProfile], ChartSpec | Rejection]
 
 logger = logging.getLogger(__name__)
+
+
+def _record_choice(
+    mode: str,
+    accepted: bool,
+    reason: "FallbackReason | None",
+    rejected: Rejection | None,
+    shown: ChartSpec,
+) -> None:
+    """Who chose the chart on screen, and why the rules' chart when it was theirs.
+
+    `agreed` is the model's chart, verified and shown. `overrode` is the rules refusing the model's
+    proposal and showing their own -- a real substitution, so `changed`. `failed` is no proposal in
+    time or from a working provider, and `declined` the model choosing not to propose: in both the
+    rules' chart is shown, but nothing of the model's was replaced. The exact reason rides on the
+    span; the counter's labels stay the bounded three.
+    """
+    if mode == "shadow":
+        verdict, detail = Verdict.AGREED, "shadow"
+    elif accepted:
+        verdict, detail = Verdict.AGREED, "llm"
+    elif reason == "invalid_proposal":
+        verdict = Verdict.OVERRODE
+        detail = f"invalid_proposal:{rejected.rule}" if rejected is not None else "invalid_proposal"
+    elif reason == "abstention":
+        verdict, detail = Verdict.DECLINED, "abstention"
+    else:
+        verdict, detail = Verdict.FAILED, reason or "no_proposal"
+    record(
+        Step.VISUAL_PLANNER,
+        verdict,
+        changed=verdict is Verdict.OVERRODE,
+        now=shown.mark,
+        detail=detail,
+    )
 
 
 class VisualPlanningPolicy:
@@ -83,6 +119,11 @@ class VisualPlanningPolicy:
                 floor = self._fallback.plan(profile, presentation)
                 if floor is None:
                     return None
+            # `claimed`, not `agreed`: no model was asked, so the rules took the choice outright,
+            # and a share of `agreed` charts has to mean the model's.
+            record(
+                Step.VISUAL_PLANNER, Verdict.CLAIMED, changed=False, now=floor.mark, detail="rules"
+            )
             return VisualDecision(spec=floor, profile=profile, source="deterministic")
 
         # `self._model` is narrowed non-None by the branch above; captured into a local so the
@@ -179,6 +220,7 @@ class VisualPlanningPolicy:
         accept = proposed_spec is not None and self._mode in {"hybrid", "promoted"}
         shown = proposed_spec if accept else floor
         assert shown is not None
+        _record_choice(self._mode, accept, reason, rejected, shown)
         return VisualDecision(
             spec=shown,
             profile=profile,

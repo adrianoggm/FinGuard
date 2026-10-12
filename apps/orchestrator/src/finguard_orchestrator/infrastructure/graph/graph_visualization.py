@@ -39,6 +39,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRa
 from finguard_orchestrator.infrastructure.graph import codec
 from finguard_orchestrator.infrastructure.graph.graph_state import Ctx, TurnGraphState
 from finguard_orchestrator.infrastructure.graph.graph_store import canonical_state, commit_state
+from finguard_orchestrator.observability.decisions import Step, Verdict, record
 
 
 def _view_id(artifact_id: str, version: int) -> str:
@@ -242,6 +243,7 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                 )
             else:
                 decision, style_note = _edited(shown, visual_op.edit)
+            _record_follow_up("edit", shown.spec.mark if shown else None, decision)
         else:
             before = ctx.ports.count_calls()
             decision = await ctx.ports.visual_policy.decide(ctx.sentence, profile, presentation)
@@ -263,7 +265,9 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                 )
                 if visual_op.target == "ACTIVE_CHART":
                     decision = None
+                _record_follow_up("style", mark, None)
             else:
+                _record_follow_up("style", decision.spec.mark, replace(decision, spec=verified))
                 decision = replace(
                     decision,
                     spec=verified,
@@ -435,6 +439,29 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
         "model_calls": state.get("model_calls", 0) + ctx.cache.get("visual_model_calls", 0),
         "rearm_payment": isinstance(saved.payment, PaymentConfirmationPending),
     }
+
+
+def _record_follow_up(kind: str, was: str | None, decision: VisualDecision | None) -> None:
+    """A change asked of a chart: applied over the chart it changes, or refused and left alone.
+
+    `overrode` when the asked-for mark replaced the one on screen -- the person's request standing
+    over the chart the turn would otherwise show. An edit that keeps the mark (an order, a limit)
+    changes the chart without replacing its choice, so it is `agreed`.
+    """
+    if decision is None:
+        record(Step.VISUAL_FOLLOW_UP, Verdict.DECLINED, changed=False, detail=kind)
+        return
+    now = decision.spec.mark
+    replaced = was is not None and was != now
+    record(
+        Step.VISUAL_FOLLOW_UP,
+        Verdict.OVERRODE if replaced else Verdict.AGREED,
+        changed=replaced,
+        field="mark",
+        was=was if replaced else None,
+        now=now if replaced else None,
+        detail=kind,
+    )
 
 
 def _edited(shown: ActiveVisual, edit: ChartEdit) -> tuple[VisualDecision | None, str | None]:

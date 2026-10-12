@@ -76,6 +76,7 @@ from finguard_orchestrator.infrastructure.engine.operations_schema import (
     read,
     schema_for,
 )
+from finguard_orchestrator.observability.decisions import Step, Verdict, record
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,7 @@ class LlmTurnOperations(TurnOperationsPort):
     ) -> tuple[Operation, ...]:
         if len(sentence) > MAX_SENTENCE:
             # Past what the prompt's budget holds (ruling R16): asked back, not sent truncated.
+            record(Step.PLANNER, Verdict.DECLINED, changed=False, detail="sentence_too_long")
             return (Clarify(Missing.SUBJECT),)
         prompt = build_prompt(
             sentence,
@@ -209,7 +211,11 @@ class LlmTurnOperations(TurnOperationsPort):
             categories=self._categories,
             account_names=account_names,
         )
-        answer = await self._complete(prompt)
+        try:
+            answer = await self._complete(prompt)
+        except InterpretationFailedError:
+            record(Step.PLANNER, Verdict.FAILED, changed=False, detail="model_error")
+            raise
         repair_used = False
         try:
             operations = self._read(answer)
@@ -217,7 +223,11 @@ class LlmTurnOperations(TurnOperationsPort):
             # The log gets types and paths; only the model, asked again, gets what it wrote.
             logger.warning("engine.operations_refused problem=%s", refused.logged)
             written = answer.generation or "" if isinstance(answer, _Refused) else answer
-            answer = await self._complete(prompt + repair_note(written, refused.problem))
+            try:
+                answer = await self._complete(prompt + repair_note(written, refused.problem))
+            except InterpretationFailedError:
+                record(Step.PLANNER, Verdict.FAILED, changed=False, detail="model_error")
+                raise
             repair_used = True
             try:
                 operations = self._read(answer)
@@ -226,12 +236,23 @@ class LlmTurnOperations(TurnOperationsPort):
                 # unclear: answered as an outage, nothing saved, any open question left as it was.
                 # Neither the person's words nor the model's reach the error: only that it failed.
                 logger.warning("engine.operations_unreadable problem=%s", refused_again.logged)
+                record(Step.PLANNER, Verdict.FAILED, changed=False, detail="unreadable_twice")
                 raise InterpretationFailedError(
                     "the interpreter's answer could not be read twice"
                 ) from None
+        # One reading per turn, whatever it took to get it: the repair call is the same reading
+        # asked for again, not a second decision.
+        record(
+            Step.PLANNER,
+            Verdict.AGREED,
+            changed=False,
+            now=_types(operations),
+            detail="repaired" if repair_used else self._model,
+        )
         held = _held_by_tasks(state, account_names)
         suspicions = _suspicions(operations, state, held, self._categories)
         semantic_reviewed = False
+        read_first = operations
         if suspicions and not repair_used:
             # One same-schema review. The model remains the semantic authority: what it answers
             # on review is the reading, and nothing here rewrites it.
@@ -258,6 +279,8 @@ class LlmTurnOperations(TurnOperationsPort):
                 ",".join(suspicions),
             )
             operations = _held_back(operations, suspicions, held)
+        if suspicions:
+            _record_review(read_first, operations, suspicions, reviewed=semantic_reviewed)
         clarifications = tuple(op for op in operations if isinstance(op, Clarify))
         patches = tuple(op for op in operations if isinstance(op, Patch))
         logger.info(
@@ -303,6 +326,41 @@ class LlmTurnOperations(TurnOperationsPort):
             raise InterpretationFailedError(
                 f"the interpreter's model failed: {type(failed).__name__}"
             ) from None
+
+
+def _types(operations: tuple[Operation, ...]) -> str:
+    """The reading as its operation types -- the shape of a decision, never its values."""
+    return "+".join(type(operation).__name__ for operation in operations) or "none"
+
+
+def _record_review(
+    first: tuple[Operation, ...],
+    final: tuple[Operation, ...],
+    suspicions: tuple[str, ...],
+    *,
+    reviewed: bool,
+) -> None:
+    """What the review of a suspect reading did to it.
+
+    `overrode` only when the reading that runs is not the one first read: the model's second
+    reading replaced it, or the rules held it back as a question. A review that confirmed the
+    first reading, or a held-back reading the rules let stand, is `agreed`.
+    """
+    changed = final != first
+    reasons = suspicions[0] if len(suspicions) == 1 else f"{suspicions[0]}+{len(suspicions) - 1}"
+    detail = f"{'review' if reviewed else 'held_back'}:{reasons}"
+    was, now = _types(first), _types(final)
+    record(
+        Step.PLAN_VERIFIER,
+        Verdict.OVERRODE if changed else Verdict.AGREED,
+        changed=changed,
+        field="reading",
+        # Only when the types say it; a reading whose filters changed under the same types is
+        # changed with nothing to show for it here, rather than was == now beside changed=True.
+        was=was if was != now else None,
+        now=now if was != now else None,
+        detail=detail,
+    )
 
 
 def _suspicions(

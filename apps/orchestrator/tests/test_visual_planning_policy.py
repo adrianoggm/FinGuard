@@ -24,6 +24,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
+from finguard_orchestrator.observability.decisions import Step, Verdict, recording_turn
 
 SIDEWAYS = D("sideways", (E("x", "dimension", "nominal"),))
 # The three modes that attempt the model at all -- `deterministic` never reaches the try block,
@@ -296,3 +297,35 @@ async def test_a_single_row_never_reaches_the_policy() -> None:
     model = ScriptedVisualPlanner(VERTICAL)
     assert await policy(model, "hybrid").decide("q", one, DEFAULT_PRESENTATION) is None
     assert model.received == []
+
+
+class _Slow(ScriptedVisualPlanner):
+    async def plan(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        import asyncio
+
+        await asyncio.sleep(1)
+        return await super().plan(*args, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("model", "verdict", "changed", "detail"),
+    [
+        (ScriptedVisualPlanner(VERTICAL), Verdict.AGREED, False, "llm"),
+        (ScriptedVisualPlanner(SIDEWAYS), Verdict.OVERRODE, True, "invalid_proposal"),
+        (ScriptedVisualPlanner(None), Verdict.DECLINED, False, "abstention"),
+        (_Slow(VERTICAL), Verdict.FAILED, False, "timeout"),
+    ],
+)
+async def test_every_chart_choice_is_recorded_once_with_who_chose_it(
+    model, verdict, changed, detail
+) -> None:
+    """`overrode` only when the rules replaced a proposal; a fallback with nothing to replace is
+    `failed` or `declined`, and the model's own chart is `agreed`."""
+    with recording_turn() as turn:
+        decision = await policy(model, "hybrid", budget=0.05).decide(
+            "q", PROFILE, DEFAULT_PRESENTATION
+        )
+    (recorded,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert (recorded.verdict, recorded.changed) == (verdict, changed)
+    assert recorded.detail is not None and recorded.detail.startswith(detail)
+    assert recorded.now == decision.spec.mark
