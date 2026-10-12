@@ -186,7 +186,9 @@ export function visualPresentation(
    */
   const dimensionAxis = (channel: string, item: Encoding, extra: Encoding = {}): Encoding => {
     if (channel === "tooltip") {
-      return { ...item, title: allMonths ? "Mes" : allDays ? "Día" : "Grupo" };
+      // The bars of a comparison are its periods, not groups of one.
+      const title = visualization.comparison ? "Periodo" : allMonths ? "Mes" : allDays ? "Día" : "Grupo";
+      return { ...item, title };
     }
     if (!quantitativeChannels.has(channel)) return item;
     // No axis title: the chart's own title, right above, already says what the groups are, and the

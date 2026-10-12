@@ -3071,6 +3071,10 @@ async def test_explained_comparison_can_be_charted_and_restyled_without_another_
         ("Dia", "junio de 2026", 8_000),
         ("Mercadona", "julio de 2026", 10_000),
     }
+    # The card is the change between the periods, not July's total alone.
+    assert chart.result.difference_minor == 10_000 - 28_000
+    assert chart.result.total_minor is None
+    assert chart.result.visual_dataset.title == "junio de 2026 frente a julio de 2026, por comercio"
     # A comparison by merchant has no time axis, so lines are refused and the chart stands.
     assert restyled.result is not None and restyled.result.visual_decision is None
     assert "sin una dimensión temporal" in restyled.result.text

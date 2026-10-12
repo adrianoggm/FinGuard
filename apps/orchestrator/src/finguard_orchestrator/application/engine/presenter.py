@@ -174,7 +174,12 @@ def _pair(run: PairRun) -> AskFinancialQuestionResult:
         # No single leading figure: the sentence states both sides and the change between them,
         # and the change goes out as one. A count's change is movements, which `_minor` is not.
         total_minor=None,
-        difference_minor=None if counted else run.difference,
+        difference_minor=(
+            None
+            if counted
+            or (run.pair.metric is Metric.AVERAGE and (run.earlier.is_empty or run.latest.is_empty))
+            else run.difference
+        ),
         movement_count=run.earlier.movement_count + run.latest.movement_count,
         groups=[
             _side(windows[0], run.earlier, earlier),

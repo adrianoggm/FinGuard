@@ -480,7 +480,7 @@ def test_a_graph_turn_consults_no_reader(monkeypatch: pytest.MonkeyPatch, route:
 
     assert tripped == []
     assert [answer["outcome"] for answer in answers] == ["PLANNED"] * 3
-    assert answers[1]["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
+    assert answers[1]["text"].startswith("465,56 € en ocio en julio de 2026")
     # Assessed, inspected (three reads), and the inspection is in the answer.
     assert (assessor.asked, rising.reads) == (1, 3)
     assert "En Amazon, la subida se debe a una compra" in answers[2]["text"]

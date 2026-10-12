@@ -215,6 +215,9 @@ def test_limit_presenter_uses_valid_rank_window_and_measure_sort() -> None:
         {"field": "value_minor", "order": "descending"}
     ]
     assert rendered["spec"]["transform"][1] == {"filter": "datum._rank <= 3"}
+    # A row number, not a rank: with a tie at the cut, a rank kept every tied bar and the chart
+    # drew more than the "se muestran los 3 mayores" written under it.
+    assert rendered["spec"]["transform"][0]["window"] == [{"op": "row_number", "as": "_rank"}]
 
 
 def test_temporal_bar_sort_is_presented_as_discrete_and_keeps_measure_sort() -> None:

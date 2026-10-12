@@ -56,7 +56,9 @@ def present(visualization: Visualization) -> dict[str, Any]:
             raise ValueError("a limited chart needs a quantitative measure")
         spec["transform"] = [
             {
-                "window": [{"op": "rank", "as": "_rank"}],
+                # A row number and not a rank: a tie at the cut kept every tied row, so the
+                # chart drew more bars than the sample line under it said.
+                "window": [{"op": "row_number", "as": "_rank"}],
                 "sort": [{"field": measure, "order": "descending"}],
             },
             {"filter": f"datum._rank <= {visualization.spec.limit}"},

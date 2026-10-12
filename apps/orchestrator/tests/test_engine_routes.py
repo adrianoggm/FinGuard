@@ -286,8 +286,8 @@ def test_engine_answers_a_query_over_http(route: str) -> None:
 
     assert turn.status == 200
     assert turn.body["outcome"] == "PLANNED"
-    assert turn.body["text"].startswith("465,56 € en restaurantes del 2026-07-01 al 2026-07-31")
-    assert turn.body["plan"] == "del 2026-07-01 al 2026-07-31, gastos, restaurantes"
+    assert turn.body["text"].startswith("465,56 € en restaurantes en julio de 2026")
+    assert turn.body["plan"] == "en julio de 2026, gastos, restaurantes"
     assert stack.ledger.plans == [ran("RESTAURANTS")]
     assert UUID(turn.conversation["conversation_id"])
     assert turn.conversation["version"] == 1
@@ -322,7 +322,7 @@ def test_a_delegation_is_said_and_the_focus_survives(route: str) -> None:
 
     patched = post(stack, route, "¿y en ocio?", delegated.conversation)
     assert patched.body["outcome"] == "PLANNED"
-    assert patched.body["text"].startswith("465,56 € en ocio del 2026-07-01 al 2026-07-31")
+    assert patched.body["text"].startswith("465,56 € en ocio en julio de 2026")
     assert interpreter.seen[-1].focus == QueryFocus(
         FinancialPlan(direction=Direction.EXPENSE, date_range=JULY, categories=("RESTAURANTS",))
     )

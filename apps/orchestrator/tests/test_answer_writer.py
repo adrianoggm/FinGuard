@@ -109,3 +109,28 @@ def test_a_relative_window_is_named_as_a_noun_on_a_chart() -> None:
 
     plan = FinancialPlan(Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
     assert period_label(plan) == "este mes"
+
+
+@pytest.mark.parametrize(
+    ("written", "said"),
+    [
+        (
+            "300,00 € del 2026-07-01 al 2026-07-31, en 5 movimientos",
+            "300,00 € en julio de 2026, en 5 movimientos",
+        ),
+        (
+            "Del 2026-04-01 al 2026-05-31: 250,00 €",
+            "Del 1 de abril al 31 de mayo de 2026: 250,00 €",
+        ),
+        (
+            "del 2025-12-15 al 2026-01-10, gastos",
+            "del 15 de diciembre de 2025 al 10 de enero de 2026, gastos",
+        ),
+        ("  · 2026-08-01: 30,00 €", "  · 1 de agosto de 2026: 30,00 €"),
+        ("sin fechas, IBAN ES12 3456", "sin fechas, IBAN ES12 3456"),
+    ],
+)
+def test_the_dates_a_person_reads_are_said_as_dates(written: str, said: str) -> None:
+    from finguard_orchestrator.domain.services.answer_writer import said_dates
+
+    assert said_dates(written) == said

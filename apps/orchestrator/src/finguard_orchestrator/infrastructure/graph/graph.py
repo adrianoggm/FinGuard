@@ -99,6 +99,7 @@ from finguard_orchestrator.domain.engine.state import (
 )
 from finguard_orchestrator.domain.engine.transitions import Transition, Work
 from finguard_orchestrator.domain.enums import (
+    Direction,
     GroupBy,
     PaymentOutcome,
     PlanningOutcome,
@@ -365,6 +366,11 @@ async def validate_and_apply(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
     }
 
 
+def _side_total(pair: Any, total: int) -> int:
+    """One side's figure: unsigned for spending or income, signed for both together."""
+    return total if pair.latest.direction is Direction.ALL else abs(total)
+
+
 async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphState:
     """One banking read per step, through the executor, and only reads: no operation that reaches
     here can move money, because none of the operations it runs can say so. What was read goes into
@@ -408,7 +414,9 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
                     [group.key, group.total_minor, group.movement_count]
                     for group in earlier.answer.groups
                 ],
-                "earlier_total": abs(earlier.answer.total_minor),
+                # A spending or an income total is a size; a total over both ("ALL") is
+                # signed, and dropping its sign called a net outflow the larger of the two.
+                "earlier_total": _side_total(work.plan, earlier.answer.total_minor),
                 "earlier_currency": earlier.answer.currency,
                 "earlier_movement_count": earlier.answer.movement_count,
                 "bank_calls": graph_execution.record_bank_calls(state, ctx),
@@ -441,7 +449,7 @@ async def execute_read_only(state: TurnGraphState, runtime: Ctx) -> TurnGraphSta
                 ],
             ],
             "comparison_counts": [state["earlier_movement_count"], latest.answer.movement_count],
-            "totals": [state["earlier_total"], abs(latest.answer.total_minor)],
+            "totals": [state["earlier_total"], _side_total(work.plan, latest.answer.total_minor)],
             "currency": latest.answer.currency,
         }
     if "earlier_groups" not in state:

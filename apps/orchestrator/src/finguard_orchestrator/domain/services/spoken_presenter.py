@@ -56,6 +56,9 @@ def _label(label: str, group_by: GroupBy) -> str:
     """The leader, said the way a person would -- never a raw wire value."""
     if visual_reference.parsed_month(label) is not None:
         return answer_writer.month_group_name(label)
+    if group_by in (GroupBy.DAY, GroupBy.WEEK):
+        # "2026-08-03" read aloud is eight digits and two dashes.
+        return answer_writer.said_dates(label)
     if group_by is GroupBy.CATEGORY:
         return category_words.name_of(label)
     return label
@@ -67,9 +70,15 @@ def spoken_summary(
     labels: tuple[str, ...],
     ranked: bool,
     plan: FinancialPlan | ComparisonPlan | RatioPlan | None,
+    *,
+    comparison: bool = False,
 ) -> str | None:
-    """One Spanish sentence, a caption for the chart on screen -- never an amount."""
-    if profile.comparison:
+    """One Spanish sentence, a caption for the chart on screen -- never an amount.
+
+    `comparison` is the dataset's own word that the chart is two periods: a comparison of two
+    totals draws no series, so the profile alone called it a breakdown.
+    """
+    if profile.comparison or comparison:
         return "Comparación de los dos periodos."
 
     financial = plan if isinstance(plan, FinancialPlan) else None

@@ -52,7 +52,7 @@ def _unit(metric: str, plan_metric: str | None) -> str:
     return "ratio" if measure == "RATIO_SHARE" else "money"
 
 
-def _dimension_order(metric: str, temporal: bool) -> FieldOrder:
+def _dimension_order(metric: str, temporal: bool, *, periods: bool = False) -> FieldOrder:
     """What ordering the dimension asks for, which is a property of the question, not the chart.
 
     FREQUENCY is the row that earns this function: its dimension is nominal weekday names in the
@@ -64,6 +64,10 @@ def _dimension_order(metric: str, temporal: bool) -> FieldOrder:
     """
     if temporal:
         return "TEMPORAL"
+    if periods:
+        # Two periods side by side read in the order they happened, as the sentence above says
+        # them: by size, the later one could come first.
+        return "INPUT"
     if metric == "FREQUENCY":
         return "INPUT"
     if metric == "RECURRENCE":
@@ -109,7 +113,11 @@ def visual_profile_of(
             "temporal" if temporal else "nominal",
             "dimension",
             len({row.dimension for row in rows}),
-            _dimension_order(dataset.metric, temporal),
+            _dimension_order(
+                dataset.metric,
+                temporal,
+                periods=dataset.metric == "COMPARISON" and not has_series,
+            ),
         ),
         VisualField(
             "value_minor", "quantitative", "measure", len({row.value_minor for row in rows})

@@ -14,6 +14,7 @@ makes.
 """
 
 import calendar
+import re
 from datetime import datetime, timedelta
 from fractions import Fraction
 from typing import Final
@@ -562,6 +563,40 @@ def period_label(plan: FinancialPlan) -> str:
     if plan.period is not None and plan.period.period.value in _PERIOD_LABELS:
         return _PERIOD_LABELS[plan.period.period.value]
     return window_of(plan)
+
+
+_RANGE = re.compile(r"\b([Dd])el (\d{4})-(\d{2})-(\d{2}) al (\d{4})-(\d{2})-(\d{2})\b")
+_DAY = re.compile(r"\b(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b")
+
+
+def _day_words(year: int, month: int, day: int, *, with_year: bool = True) -> str:
+    base = f"{day} de {_MONTHS[month - 1]}"
+    return f"{base} de {year}" if with_year else base
+
+
+def _range_words(match: re.Match[str]) -> str:
+    capital = match.group(1) == "D"
+    y1, m1, d1, y2, m2, d2 = (int(part) for part in match.groups()[1:])
+    if d1 == 1 and (y1, m1) == (y2, m2) and d2 == calendar.monthrange(y2, m2)[1]:
+        said = f"en {month_name(y1, m1)}"
+    else:
+        said = f"del {_day_words(y1, m1, d1, with_year=y1 != y2)} al {_day_words(y2, m2, d2)}"
+    return said[:1].upper() + said[1:] if capital else said
+
+
+def said_dates(text: str) -> str:
+    """The text a person reads, with the plan's ISO dates said as dates.
+
+    The answers and the plan line name a range by its ISO dates -- the closed vocabulary the
+    interpreter's history is measured against, and which stays as it is there. A person read
+    «300,00 € del 2026-07-01 al 2026-07-31» for July; this is applied where the answer leaves the
+    service, so only what a person sees changes.
+    """
+    text = _RANGE.sub(_range_words, text)
+    return _DAY.sub(
+        lambda match: _day_words(int(match.group(1)), int(match.group(2)), int(match.group(3))),
+        text,
+    )
 
 
 def month_group_name(key: str) -> str:

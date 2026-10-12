@@ -360,3 +360,30 @@ def test_result_ignores_unrelated_plan_fields() -> None:
     assert spoken_summary(spec, profile, labels, ranked, plan) == (
         "Evolución de tus gastos por mes, con febrero de 2026 como el mes de más gasto."
     )
+
+
+def test_a_comparison_of_two_totals_is_spoken_as_a_comparison() -> None:
+    """Two bars and no series: the profile alone called it a breakdown."""
+    spec, profile, labels, ranked = _context("breakdown")
+    plan = _last_month(Direction.EXPENSE, GroupBy.NONE)
+    assert spoken_summary(spec, profile, labels, ranked, plan, comparison=True) == (
+        "Comparación de los dos periodos."
+    )
+
+
+def test_a_day_is_spoken_as_a_day() -> None:
+    dataset = VisualDataset(
+        metric="SUM",
+        rows=(
+            VisualRow(dimension="2026-08-03", value_minor=300),
+            VisualRow(dimension="2026-08-01", value_minor=100),
+        ),
+    )
+    profile = visual_profile_of(dataset, total_minor=400, group_by="DAY")
+    spec = _PLANNER.plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    result = drawn_labels(dataset)
+    spoken = spoken_summary(
+        spec, profile, result.labels, result.ranked, _last_month(Direction.EXPENSE, GroupBy.DAY)
+    )
+    assert spoken is not None and "2026-08-03" not in spoken and "3 de agosto de 2026" in spoken

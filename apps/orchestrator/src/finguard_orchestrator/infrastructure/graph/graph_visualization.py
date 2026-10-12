@@ -149,16 +149,20 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                     GroupBy.MERCHANT: "comercio",
                     GroupBy.COUNTERPARTY: "contraparte",
                     GroupBy.ACCOUNT: "cuenta",
-                }.get(plan.group_by, "resultado")
+                    # An explained comparison is broken down by merchant while its plan keeps
+                    # no grouping of its own: "por resultado" was that fallback, read aloud.
+                }.get(plan.group_by, "comercio")
 
                 def comparison_rows(
                     groups: tuple[Group, ...], series: str
                 ) -> tuple[VisualRow, ...]:
                     return tuple(
                         VisualRow(
-                            category_words.name_of(group.key)
-                            if plan.group_by is GroupBy.CATEGORY
-                            else group.key,
+                            _short(
+                                category_words.name_of(group.key)
+                                if plan.group_by is GroupBy.CATEGORY
+                                else group.key
+                            ),
                             answer_writer.comparison_group_value(group, plan.metric),
                             series,
                         )
@@ -170,6 +174,12 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                 )
                 dataset_title = f"{earlier_label} frente a {latest_label}, por {grouping}"
                 profile_group_by = plan.group_by.value
+                if plan.metric is Metric.SUM:
+                    # Summed groups add up to each side's total; averages or counts per group do
+                    # not add up to anything the card could call a change.
+                    difference = sum(group.total_minor for group in latest_groups) - sum(
+                        group.total_minor for group in earlier_groups
+                    )
             elif artifact.comparison_values is not None or earlier_groups or latest_groups:
                 # Scalar comparisons -- no grouping, or each side's one "total" row -- show their
                 # two verified answers as two ordinary bars, with the periods on the axis and no
@@ -187,7 +197,14 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                     VisualRow(earlier_label[:1].upper() + earlier_label[1:], earlier_value),
                     VisualRow(latest_label[:1].upper() + latest_label[1:], latest_value),
                 )
-                difference = latest_value - earlier_value
+                # The card is money: a change in movements is not, and an average over a side
+                # with no movements is undefined -- the sentence says so, the card must not
+                # show a change anyway.
+                empty_side = not any(g.movement_count for g in earlier_groups) or not any(
+                    g.movement_count for g in latest_groups
+                )
+                if plan.metric is Metric.SUM or (plan.metric is Metric.AVERAGE and not empty_side):
+                    difference = latest_value - earlier_value
                 dataset_title = f"{earlier_label} frente a {latest_label}"
                 profile_group_by = GroupBy.NONE.value
             else:
@@ -197,14 +214,16 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
         else:
             rows = tuple(
                 VisualRow(
-                    (
+                    _short(
                         category_words.name_of(group.key)
                         if plan.group_by is GroupBy.CATEGORY
                         else group.key
                     ),
+                    # The figure the sentence gives for each group: an average chart plotted the
+                    # sums under a title that said "Gasto medio".
                     group.movement_count
-                    if plan.metric in {Metric.COUNT, Metric.FREQUENCY}
-                    else group.total_minor,
+                    if plan.metric is Metric.FREQUENCY
+                    else answer_writer.comparison_group_value(group, plan.metric),
                 )
                 for group in groups
             )
@@ -362,6 +381,11 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                 text=(
                     style_note
                     if style_note is not None
+                    # One row is one figure: it is shown as the figure, so the text says that
+                    # rather than that there was nothing to show.
+                    else "Con un solo resultado no hay nada que comparar en un gráfico; "
+                    "aquí tienes la cifra."
+                    if len(rows) == 1
                     else "La consulta no tiene suficientes grupos para dibujar un gráfico útil."
                 ),
                 plan_in_words=visual_words,
@@ -483,6 +507,15 @@ def _record_follow_up(kind: str, was: str | None, decision: VisualDecision | Non
     )
 
 
+_LABEL_LIMIT = 64
+
+
+def _short(label: str) -> str:
+    """A group's name as a chart label: the wire refuses labels past 64 characters, and a long
+    merchant name made the whole chart turn a 422 after the turn had already been committed."""
+    return label if len(label) <= _LABEL_LIMIT else label[: _LABEL_LIMIT - 1] + "\u2026"
+
+
 def _edited(shown: ActiveVisual, edit: ChartEdit) -> tuple[VisualDecision | None, str | None]:
     """The chart on screen with this edit applied and verified, or why it stays as it is.
 
@@ -565,7 +598,7 @@ async def _visualize_movement_page(
         verified = verify(draft_of(replace(decision.spec, mark=mark, stack=None)), profile)
         if isinstance(verified, Rejection):
             style_note = (
-                "No puedo usar un grafico de lineas sin una dimension temporal."
+                "No puedo usar un gr\u00e1fico de l\u00edneas sin una dimensi\u00f3n temporal."
                 if mark == "line"
                 else "Ese tipo de barras no encaja con estos resultados."
             )

@@ -37,6 +37,7 @@ from finguard_orchestrator.domain.models.chart import (
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.models.visual_plan import canonical, draft_of
+from finguard_orchestrator.domain.services import answer_writer
 from finguard_orchestrator.domain.services.spoken_presenter import spoken_summary
 from finguard_orchestrator.domain.services.visual_explanation import explain_chart
 from finguard_orchestrator.domain.services.visual_interpreter import (
@@ -245,6 +246,29 @@ def _visual_title(result: AskFinancialQuestionResult, dataset: VisualDataset) ->
         return f"{direction} · {dataset.title}"
     grouped = "" if dataset.metric == "RECURRENCE" else f" por {dimension}"
     return f"{subject}{grouped}" + (f" · {period}" if period else "")
+
+
+def _card_field(
+    result: AskFinancialQuestionResult,
+) -> Literal["difference", "total", "movement_count"] | None:
+    """The one figure the card above an answer shows, in the answer's own unit.
+
+    It used to be the first of difference, total and count that was set, and a total is set on
+    every query: a count answered "11 movimientos" under a card reading 500,00 €, and an average
+    under the sum it was taken from.
+    """
+    metric = result.plan_context.metric if result.plan_context is not None else "SUM"
+    if result.difference_minor is not None:
+        return "difference"
+    if metric in {"COUNT", "FREQUENCY"}:
+        # A count comparison has no total of its own: its two counts are in the sentence, and
+        # their sum is no figure anybody asked for.
+        return "movement_count" if result.total_minor is not None else None
+    if metric == "AVERAGE":
+        return None
+    if result.total_minor is not None:
+        return "total"
+    return "movement_count" if result.movement_count is not None else None
 
 
 def _evidence_of(plan: FinancialPlan | ComparisonPlan | RatioPlan | None) -> tuple[UUID, ...]:
@@ -601,7 +625,13 @@ def question_to_dto(
             result.metric_definition if not result.metric_definition_borrowed else None
         )
         spoken = spoken_summary(
-            newest.spec, newest.profile, newest.labels, newest.ranked, plan_for_spoken
+            newest.spec,
+            newest.profile,
+            newest.labels,
+            newest.ranked,
+            plan_for_spoken,
+            comparison=result.visual_dataset is not None
+            and result.visual_dataset.metric == "COMPARISON",
         )
     chart_id = (
         visualization.chart_id if isinstance(visualization, ChartVisualizationResponse) else None
@@ -647,15 +677,7 @@ def question_to_dto(
     if context_ids is not None and context_ids.artifact_id is not None:
         artifact_id = context_ids.artifact_id
         blocks: list[VisualResponseBlock] = []
-        metric_field: Literal["difference", "total", "movement_count"] | None = (
-            "difference"
-            if result.difference_minor is not None
-            else "total"
-            if result.total_minor is not None
-            else "movement_count"
-            if result.movement_count is not None
-            else None
-        )
+        metric_field = _card_field(result)
         if metric_field is not None:
             blocks.append(
                 MetricCardBlock(
@@ -709,13 +731,15 @@ def question_to_dto(
                 layout=layout,
                 blocks=blocks,
             )
+    plan_line = result.plan_in_words if result.plan_in_words is not None else result.plan
     return QuestionResponse(
         outcome=result.outcome,
-        text=result.text,
+        # Dates said as dates for the person; the interpreter's own history keeps the ISO line.
+        text=answer_writer.said_dates(result.text),
         question=result.question,
         # «Ver la consulta» is the person's line. `result.plan` is the identifier line the turn log
         # keeps for the turn interpreter; a result with no Spanish line wrote `plan` in Spanish.
-        plan=result.plan_in_words if result.plan_in_words is not None else result.plan,
+        plan=answer_writer.said_dates(plan_line) if plan_line is not None else None,
         plan_context=(
             PlanContextTraceResponse(
                 direction=result.plan_context.direction,
