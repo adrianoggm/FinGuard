@@ -250,9 +250,14 @@ def create_app() -> FastAPI:
     )
 
     settings = get_settings()
-    gemini_pacer = PostgresRequestPacer(
-        provider=GEMINI,
-        interval_seconds=settings.gemini_min_request_interval_seconds,
+    # No shared schedule when there is no interval to keep: 0 is a paid tier with pacing off.
+    gemini_pacer = (
+        PostgresRequestPacer(
+            provider=GEMINI,
+            interval_seconds=settings.gemini_min_request_interval_seconds,
+        )
+        if settings.gemini_min_request_interval_seconds > 0
+        else None
     )
     if sys.platform == "win32":
         # psycopg's async connection requires selector-based IO on native Windows. Uvicorn

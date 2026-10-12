@@ -49,6 +49,11 @@ voice-real:
 # apps/orchestrator/.env.
 gemini:
     docker compose -f compose.yaml -f compose.gemini.yaml --profile core up -d --wait --build --remove-orphans
+# The demo as recorded: Gemini, real speech both ways and the decisions in Grafana, in one start,
+# so no recipe recreates the orchestrator without another's settings. Needs the Gemini key in
+# apps/orchestrator/.env and `just voice-models` once. Grafana on 3001.
+demo:
+    docker compose -f compose.yaml -f compose.gemini.yaml -f compose.voice-real.yaml -f compose.otel.yaml --profile voice --profile observability up -d --wait --build --remove-orphans
 # The orchestrator is told where the gateway is only here: without the profile there is no
 # gateway, and a blank URL is how the capability says it does not exist. Exported as a parameter
 # rather than written `NAME=value docker compose`, which is bash syntax and not PowerShell's.

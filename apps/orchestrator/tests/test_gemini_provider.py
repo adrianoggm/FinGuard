@@ -435,3 +435,35 @@ async def test_a_turn_reports_its_pacing_wait_apart_from_its_requests(
     assert calls.provider_requests == 2
     assert 150 <= calls.provider_wait_ms <= 600
     assert calls.provider_request_ms < calls.provider_wait_ms
+
+
+@pytest.mark.parametrize(("interval", "paced"), [("0", False), ("12", True)])
+def test_pacing_is_an_environment_setting_and_zero_turns_it_off(
+    monkeypatch: pytest.MonkeyPatch, interval: str, paced: bool
+) -> None:
+    """A paid-tier key sets 0 and the app starts with no shared schedule; the free tier's 12 s
+    still builds one. The code's default stays the free tier's."""
+    from finguard_orchestrator.bootstrap.config import Settings, get_settings
+    from finguard_orchestrator.bootstrap.main import create_app
+    from finguard_orchestrator.infrastructure.llm.postgres_request_pacer import (
+        PostgresRequestPacer,
+    )
+
+    assert Settings.model_fields["gemini_min_request_interval_seconds"].default == 12.0
+    monkeypatch.setenv("ORCHESTRATOR_GEMINI_MIN_REQUEST_INTERVAL_SECONDS", interval)
+    built: list[float] = []
+    real = PostgresRequestPacer.__init__
+
+    def spy(self: PostgresRequestPacer, *, provider: str, interval_seconds: float) -> None:
+        built.append(interval_seconds)
+        real(self, provider=provider, interval_seconds=interval_seconds)
+
+    monkeypatch.setattr(PostgresRequestPacer, "__init__", spy)
+    get_settings.cache_clear()
+    try:
+        assert get_settings().gemini_min_request_interval_seconds == float(interval)
+        create_app()
+    finally:
+        get_settings.cache_clear()
+
+    assert built == ([12.0] if paced else [])

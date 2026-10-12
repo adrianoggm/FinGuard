@@ -188,8 +188,9 @@ class Settings(BaseSettings):
     # Free-tier quotas are shared across planner, visual and assessor calls and models can have
     # limits as low as 5 RPM. Pace all Gemini requests at no more than that rate, including retries
     # and failovers. When DATABASE_URL is configured, Postgres shares the schedule across replicas;
-    # otherwise the provider uses its per-process pacer. Do not allow runtime config to disable it.
-    gemini_min_request_interval_seconds: float = Field(default=12.0, ge=12.0)
+    # otherwise the provider uses its per-process pacer. The default is the free tier's; a key on a
+    # paid tier (hundreds of requests a minute) can set 0, which turns pacing off.
+    gemini_min_request_interval_seconds: float = Field(default=12.0, ge=0.0)
     # Gemini's Flash models think, and on the OpenAI-compatible endpoint the thinking counts
     # against max_tokens. Measured on the interpreter's prompt with gemini-3.5-flash: at 600 the
     # model spent ~550 tokens thinking and returned truncated JSON (finish_reason `length`); at

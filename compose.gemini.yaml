@@ -14,12 +14,13 @@ services:
       ORCHESTRATOR_ENGINE_TEMPERATURE: "0"
       ORCHESTRATOR_VISUAL_PLANNER: hybrid
       # Measured, not guessed (2026-10-12, gemini-3.5-flash). The visual planner's call is the
-      # turn's second, so its budget holds the pacing wait as well as the request: up to the 12 s
-      # minimum interval below, plus a request whose P95 was 12.9 s over 121 turns -- about 25 s.
-      # At the 6 s default every chart timed out into the rules' floor (fallback_reason=timeout),
-      # so no chart was ever the model's; at 30 s, five of five were. Raise it with the interval,
-      # never past ORCHESTRATOR_GEMINI_TIMEOUT_SECONDS.
+      # turn's second, and its request's P95 was 12.9 s over 121 turns. At the 6 s default every
+      # chart timed out into the rules' floor (fallback_reason=timeout), so no chart was ever the
+      # model's; at 30 s, five of five were. Kept at 30 with pacing off as headroom for a slow
+      # request, never past ORCHESTRATOR_GEMINI_TIMEOUT_SECONDS.
       ORCHESTRATOR_VISUAL_PLANNER_BUDGET_SECONDS: "30"
-      # Unchanged on purpose: the quota this protects has not been measured at a shorter
-      # interval, and a 429 mid-demo costs more than the seconds it would save.
-      ORCHESTRATOR_GEMINI_MIN_REQUEST_INTERVAL_SECONDS: "12"
+      # Pacing off by default here: the demo's key is on a paid tier, not the free tier's 5
+      # requests a minute the code's 12 s default protects, and with it half of a chart turn was
+      # waiting for the interval. A free-tier key sets GEMINI_MIN_REQUEST_INTERVAL_SECONDS=12 in
+      # the shell or the project's .env before `just demo`.
+      ORCHESTRATOR_GEMINI_MIN_REQUEST_INTERVAL_SECONDS: ${GEMINI_MIN_REQUEST_INTERVAL_SECONDS:-0}

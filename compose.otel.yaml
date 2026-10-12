@@ -1,0 +1,10 @@
+# The orchestrator exporting to the observability profile's collector, layered over compose.yaml:
+#   docker compose -f compose.yaml -f compose.otel.yaml --profile core --profile observability up -d
+#
+# Off in compose.yaml on purpose (otel_enabled defaults to false): this file is the one switch.
+# The collector is reached by service name on this project's network.
+services:
+  orchestrator:
+    environment:
+      ORCHESTRATOR_OTEL_ENABLED: "true"
+      ORCHESTRATOR_OTEL_ENDPOINT: http://otel-collector:4318
