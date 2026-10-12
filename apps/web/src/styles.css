@@ -1512,14 +1512,58 @@ body {
   color: var(--out);
 }
 
-/* Renamed away from `.stage`: that class is the desk the phone sits on, and a progress line that
-   inherited `min-height: 100vh` and a radial gradient is a layout nobody would debug twice. */
-.thinking {
-  margin: 0;
-  align-self: flex-start;
+/* The answer on its way: where it will appear, three dots breathing, and the stage when one is
+   known. */
+.bubble.pending {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   color: var(--ink-soft);
-  font-size: 0.82rem;
-  font-style: italic;
+}
+
+.bubble.pending small {
+  font-size: 0.8rem;
+}
+
+.dots {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.dots i {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--brand);
+  animation: breathe 1.2s ease-in-out infinite;
+}
+
+.dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes breathe {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-0.2rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dots i {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 details {

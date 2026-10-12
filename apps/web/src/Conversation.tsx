@@ -324,9 +324,11 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
     return attempt.current.key;
   }
 
+  // Down to the newest thing on every change, the waiting bubble included: a question sent from
+  // halfway up the thread otherwise answers out of sight.
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [thread.turns, stage]);
+    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [thread.turns, stage, busy]);
 
   /**
    * Sending a turn, optionally with the contact the user tapped.
@@ -401,10 +403,17 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
         {thread.turns.map((turn, index) => (
           <Bubble key={index} turn={turn} />
         ))}
-        {stage && (
-          <p className="thinking" role="status">
-            {stage}
-          </p>
+        {(busy || stage) && (
+          // From the moment a question is sent, not from the first stage: the service streams its
+          // stages with the answer, so waiting for one left the screen still for the whole wait.
+          <div className="bubble theirs pending" role="status" aria-label={stage ?? "FinGuard está pensando"}>
+            <span className="dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+            <small>{stage ?? "Pensando…"}</small>
+          </div>
         )}
         {awaitingConfirmation(thread) && !busy && (
           <div className="confirm">
@@ -933,6 +942,6 @@ function message(failure: unknown): string {
   if (code === "visualization_source_missing") {
     return "No encuentro el gráfico original en esta conversación. Vuelve a generarlo para aplicar el cambio.";
   }
-  if (code.includes("Failed to fetch")) return "No puedo hablar con el orquestador.";
+  if (code.includes("Failed to fetch")) return "No he podido conectar con FinGuard. Inténtalo de nuevo.";
   return `No he podido responder (${code}).`;
 }

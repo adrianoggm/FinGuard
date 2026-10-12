@@ -216,13 +216,17 @@ class Turn:
 
 
 def post(
-    stack: Stack, route: str, question: str, conversation: dict[str, Any] | None = None
+    stack: Stack,
+    route: str,
+    question: str,
+    conversation: dict[str, Any] | None = None,
+    channel: str = "TEXT",
 ) -> Turn:
     # A graph turn is durable and needs the caller's own attempt key; a fresh one per call, so
     # every post is a new turn and never the replay of an earlier one.
     response = stack.client.post(
         route,
-        json={"question": question, "conversation": conversation},
+        json={"question": question, "conversation": conversation, "channel": channel},
         headers={"Idempotency-Key": str(uuid.uuid4())},
     )
     if route == STREAM_ROUTE and response.status_code == 200:
@@ -709,6 +713,34 @@ def test_graph_visual_operations_render_and_restyle_over_http_without_bank_reads
     assert restyled.conversation["version"] == 3
     assert len(stack.ledger.ran) == bank_reads
     assert created.engine[0] == restyled.engine[0] == "model"
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_spoken_chart_is_summed_up_in_a_sentence_rather_than_read_out(route: str) -> None:
+    stack = a_stack()
+    stack.ledger.groups_for_next_turn = (
+        Group("2026-05", 30_000, 3),
+        Group("2026-06", 18_000, 2),
+        Group("2026-07", 9_000, 1),
+    )
+    engine_on(
+        stack,
+        Scripted(
+            (Ask(PlanFields(direction=Direction.EXPENSE, window=SPRING, group_by=GroupBy.MONTH)),),
+            (Visualize("ACTIVE_RESULT", "AUTO"),),
+            (Visualize("ACTIVE_CHART", "BAR"),),
+        ),
+    )
+
+    queried = post(stack, route, "desglosa mis gastos por meses de mayo a julio")
+    said = post(stack, route, "enséñamelo en un gráfico", queried.conversation, "VOICE")
+    typed = post(stack, route, "cámbialo a barras", said.conversation)
+
+    assert said.body["visualization"]["kind"] == "chart"
+    assert isinstance(said.body["spoken"], str) and said.body["spoken"]
+    assert said.body["spoken"] != said.body["text"]
+    assert typed.body["visualization"]["kind"] == "chart"
+    assert typed.body["spoken"] is None
 
 
 def test_graph_payment_confirmation_state_survives_the_http_mapping() -> None:

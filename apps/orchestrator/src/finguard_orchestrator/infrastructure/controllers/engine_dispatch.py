@@ -154,7 +154,7 @@ async def _turn(
                 outcome=PlanningOutcome.INVALID_DOMAIN.value, text=_RETIRED_WORKFLOW
             )
             held = Conversation(conversation_id=conversation_id, version=version)
-            return _on_the_wire(refused, held, who, metric_tokens)
+            return _on_the_wire(refused, held, who, metric_tokens, spoken)
     turn_context = Turn(
         conversation_id=conversation_id,
         version=version,
@@ -178,8 +178,8 @@ async def _turn(
             outcome=PlanningOutcome.INVALID_DOMAIN.value,
             text=_UNAVAILABLE.get(turn.delegate_to or "", _UNAVAILABLE["UNSUPPORTED"]),
         )
-        return _on_the_wire(unavailable, held, who, metric_tokens)
-    return _on_the_wire(turn.result, held, who, metric_tokens)
+        return _on_the_wire(unavailable, held, who, metric_tokens, spoken)
+    return _on_the_wire(turn.result, held, who, metric_tokens, spoken)
 
 
 async def try_engine_streaming(
@@ -207,6 +207,7 @@ def _on_the_wire(
     held: Conversation,
     who: Caller,
     metric_tokens: MetricTokenCodec,
+    spoken: bool = False,
 ) -> QuestionResponse:
     """The engine's result in the routes' shape, with its state and authoritative version.
 
@@ -225,6 +226,8 @@ def _on_the_wire(
         replace(result, conversation=conversation),
         holder_reference=who.holder_reference,
         metric_tokens=metric_tokens,
+        # A spoken turn that drew a chart says a sentence about it rather than reading the table.
+        spoken_for_voice=spoken,
     )
 
 
