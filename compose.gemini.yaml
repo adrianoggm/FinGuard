@@ -1,0 +1,25 @@
+# The demo on Gemini, layered over compose.yaml:
+#   docker compose -f compose.yaml -f compose.gemini.yaml --profile core up -d --wait --build
+#
+# The key is not here: put ORCHESTRATOR_GEMINI_API_KEY in the ignored apps/orchestrator/.env,
+# which compose.yaml already reads. A separate file for the same reason as compose.voice-real.yaml:
+# the knobs a hosted model needs belong together, and a recipe cannot set them in PowerShell.
+services:
+  orchestrator:
+    environment:
+      ORCHESTRATOR_PLANNER_PROVIDER: gemini
+      ORCHESTRATOR_PLANNER_MODEL: ${FINGUARD_GEMINI_MODEL:-gemini-3.5-flash}
+      ORCHESTRATOR_ENGINE_MODEL: ${FINGUARD_GEMINI_MODEL:-gemini-3.5-flash}
+      ORCHESTRATOR_PLANNER_TEMPERATURE: "0"
+      ORCHESTRATOR_ENGINE_TEMPERATURE: "0"
+      ORCHESTRATOR_VISUAL_PLANNER: hybrid
+      # Measured, not guessed (2026-10-12, gemini-3.5-flash). The visual planner's call is the
+      # turn's second, so its budget holds the pacing wait as well as the request: up to the 12 s
+      # minimum interval below, plus a request whose P95 was 12.9 s over 121 turns -- about 25 s.
+      # At the 6 s default every chart timed out into the rules' floor (fallback_reason=timeout),
+      # so no chart was ever the model's; at 30 s, five of five were. Raise it with the interval,
+      # never past ORCHESTRATOR_GEMINI_TIMEOUT_SECONDS.
+      ORCHESTRATOR_VISUAL_PLANNER_BUDGET_SECONDS: "30"
+      # Unchanged on purpose: the quota this protects has not been measured at a shorter
+      # interval, and a 429 mid-demo costs more than the seconds it would save.
+      ORCHESTRATOR_GEMINI_MIN_REQUEST_INTERVAL_SECONDS: "12"

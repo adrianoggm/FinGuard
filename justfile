@@ -45,6 +45,10 @@ voice-models:
 # Real speech both ways: Whisper in, Piper out. Needs `just voice-models` first.
 voice-real:
     docker compose -f compose.yaml -f compose.voice-real.yaml --profile voice up -d --wait --build --remove-orphans
+# The demo on Gemini: the hosted model, with the visual budget measured for it. Needs the key in
+# apps/orchestrator/.env.
+gemini:
+    docker compose -f compose.yaml -f compose.gemini.yaml --profile core up -d --wait --build --remove-orphans
 # The orchestrator is told where the gateway is only here: without the profile there is no
 # gateway, and a blank URL is how the capability says it does not exist. Exported as a parameter
 # rather than written `NAME=value docker compose`, which is bash syntax and not PowerShell's.

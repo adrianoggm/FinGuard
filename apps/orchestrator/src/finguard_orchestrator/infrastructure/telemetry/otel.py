@@ -160,8 +160,32 @@ _CUMULATIVE: Final[dict[type, AggregationTemporality]] = {
 # exponential one is accepted by the collector and dropped by Prometheus. The switch is one
 # environment variable, `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION`; stating the
 # aggregation here makes that variable inert too.
+#
+# The boundaries are the turn's, in milliseconds, not the SDK's: its default stops at 10 s, and a
+# hosted model's turn that draws a chart takes 25-35 s (two calls and the pacing between them), so
+# every such turn landed in the top bucket and P50/P95 read 10 s for a turn three times as long.
+# Up to a minute, the provider timeout; anything longer is a failure, not a latency.
+HTTP_DURATION_BUCKETS_MS: Final = (
+    5,
+    10,
+    25,
+    50,
+    100,
+    250,
+    500,
+    1_000,
+    2_500,
+    5_000,
+    7_500,
+    10_000,
+    15_000,
+    20_000,
+    30_000,
+    45_000,
+    60_000,
+)
 _EXPLICIT_BUCKETS: Final[dict[type, Aggregation]] = {
-    SdkHistogram: ExplicitBucketHistogramAggregation()
+    SdkHistogram: ExplicitBucketHistogramAggregation(boundaries=HTTP_DURATION_BUCKETS_MS)
 }
 
 # The signal paths OTLP/HTTP wants. The setting is a base URL because that is what an operator

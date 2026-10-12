@@ -293,9 +293,12 @@ def test_histograms_stay_explicit_bucket(monkeypatch) -> None:
         preferred_aggregation=otel._EXPLICIT_BUCKETS,
     )
 
-    assert isinstance(
-        stated._preferred_aggregation[SdkHistogram], ExplicitBucketHistogramAggregation
-    )
+    aggregation = stated._preferred_aggregation[SdkHistogram]
+    assert isinstance(aggregation, ExplicitBucketHistogramAggregation)
+    # A turn that draws a chart on a hosted model takes 25-35 s. With the SDK's default top bucket
+    # of 10 s every such turn read as 10 s; the boundaries have to reach the provider's timeout.
+    assert aggregation._boundaries[-1] >= 60_000
+    assert {15_000, 30_000} <= set(aggregation._boundaries)
 
 
 # --- off by default, and recording regardless -------------------------------------------------
