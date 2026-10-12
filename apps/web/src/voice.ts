@@ -10,8 +10,10 @@ const PLAYBACK_LEAD_SECONDS = 0.06;
 // `audioCompleted`/`playerIdle`, which only an actual `audio.started`/`audio.completed` pair can
 // ever set -- the status stuck on "processing", the button stuck on "Interrumpir y hablar", and
 // the mic never released. Chosen generously against the pipeline this app fronts (ASR, planning,
-// generation, TTS -- seconds, not milliseconds), not measured against a production P95.
-export const SILENT_TURN_TIMEOUT_MS = 15_000;
+// generation, TTS -- seconds, not milliseconds). 60 s since a chart turn on a hosted model was
+// measured at 25-35 s before transcription and synthesis are added: 15 s cut those answers off.
+// The same minute the gateway gives the orchestrator, so the gateway's own error arrives first.
+export const SILENT_TURN_TIMEOUT_MS = 60_000;
 export const SILENT_TURN_MESSAGE =
   "El asistente no ha respondido con voz a tiempo. Inténtalo de nuevo.";
 

@@ -46,6 +46,46 @@ where `spanId` is a *bytes* field and therefore base64 — not the hex that the 
 exemplar labels use. Comparing the two without decoding makes every span look like a miss, which
 is a false negative shaped exactly like the failure you are looking for.
 
+## The LangGraph turn (2026-10-12)
+
+Making LangGraph the only runtime (`c6765847`) deleted every call site that recorded a decision.
+The recorder, the exporter and the middleware survived intact, so the counters were wired and
+silent: no `turns_total`, no `decisions_total`, no `turn` span — a green-but-dead instrument of
+exactly the kind this document exists to prevent. The graph now records what it actually decides,
+in the vocabulary that was already there, plus one seam:
+
+| step | recorded in | verdicts |
+| --- | --- | --- |
+| `planner` | `LlmTurnOperations.interpret` | `agreed` once per reading (a schema repair is the same reading, `detail=repaired`); `failed` on a model error or two unreadable answers; `declined` past the sentence limit |
+| `plan_verifier` | the same, when a reading is suspect | `overrode`, `changed` only when the reading that runs is not the one first read (the model's review replaced it, or the rules held it back as a question); `agreed` when the review confirmed it |
+| `ledger` | `graph_execution.execute_work` | `agreed` per bank execution, with the work kind and the scope — never a figure; `failed` with the error type |
+| `visual_planner` | `VisualPlanningPolicy.decide` | `agreed` the model's chart, verified; `overrode` the rules refusing an invalid proposal; `failed` no proposal in the budget; `declined` none offered; `claimed` the rules alone (deterministic mode) |
+| `visual_follow_up` | `graph_visualization` | an edit or a requested style; `overrode` only when the mark on screen was replaced; `declined` when it did not fit |
+| `payment_confirmation` | `graph_turn._reply` | `overrode`, `changed`: a spoken yes held back as neither yes nor no (ADR-010 §5) |
+
+**Counted once.** The outcome and the conversation id are set where a turn finishes
+(`GraphTurnHandler.answer`), never on a replay: a request resent under its key is the same turn
+handed back. Decisions live inside graph nodes, which a resumed checkpoint does not run again, so a
+retry that resumes does not repeat them.
+
+**Verified live**, against Gemini 3.5 Flash through this stack, with a query on
+`/v1/questions/stream`, three charts and a Bizum answered with a spoken yes:
+
+- Prometheus: `turns_total` 10 (7 `PLANNED`, 2 `AWAITING_CONFIRMATION`, 1 `CANCELLED`);
+  `planner agreed` 9 (the cancelling "no" resumes the preview without the model); `ledger agreed`
+  4 (the charts read nothing); `visual_planner agreed` 3; `plan_verifier agreed` 1 (the new
+  payment's review); `payment_confirmation overrode changed=true` 1.
+- Tempo: every turn under its `conversation.id`, the three turns of the Bizum conversation
+  together, and the bank calls in the same trace with their ids templated (`/v1/accounts/{id}/…`).
+- None of the sentences' words, the contact's name or an account number in any exported span.
+
+**Known limits.** A decision is an instant, not an interval, so a 35 s chart turn shows *what*
+was decided and not *where the time went* — the model calls and the pacing wait between them are
+not spans; the response headers `X-FinGuard-Provider-Wait-Ms` and `-Request-Ms` carry that per
+turn. banking-api propagates `traceparent` but exports nothing of its own. Logs stay in stdout
+(no Loki). Voice (Whisper, Piper) is not instrumented. The HTTP histogram's boundaries were the
+SDK's, topping out at 10 s, which flattened every chart turn to 10 s; they now reach 60 s.
+
 ## Running it
 
 The stack is on its own compose profile and nothing outside it depends on it:
@@ -98,10 +138,15 @@ directory, and datasource uids are pinned so the JSON's references resolve on ev
 | **Change rate per step** | `decisions_total{changed="true"}` | how often that altered the answer |
 | Decisions by step, verdict and impact | `decisions_total` | the counts behind the two rates |
 | Overrides and changes over time | `decisions_total{changed="true"}` | when, plus the exemplars |
-| Turns the model never saw | `decisions_total{step="recogniser"}` / `turns_total` | how much never reached the planner |
-| Claimed by a recogniser, or planned | `decisions_total{step=~"recogniser\|planner"}` | the split over time |
-| Request duration · POST /v1/questions | `http_server_duration_milliseconds_bucket` | the HTTP request, **not** the planner |
+| **Charts chosen by the model** | `decisions_total{step="visual_planner",verdict="agreed"}` / all `visual_planner` | the share of first charts that were the model's |
+| How each chart was chosen | `decisions_total{step="visual_planner"}` by `verdict` | model, rules refusing it, timeout, abstention, rules alone |
+| Request duration · /v1/questions and /stream | `http_server_duration_milliseconds_bucket` | the HTTP request, **not** the planner |
+| Spoken yes held back | `decisions_total{step="payment_confirmation"}` | the voice guard firing; never money moved |
+| Bank reads per turn | `decisions_total{step="ledger"}` / `turns_total` | falls as a conversation turns to its charts |
 | Recent turns | Tempo, `{name="turn"}` | a waterfall without an exemplar to start from |
+
+The two recogniser panels this table used to hold were fed only by the cascade the legacy planner
+ran; it was removed with it (`c6765847`), and they were replaced rather than left empty.
 
 The waterfall is reachable two ways. The primary one is the exemplar: the dots on the three
 `increase()` panels each carry one turn's `trace_id`, and clicking one opens that turn in Tempo.
@@ -173,6 +218,10 @@ on the `turn` span and nowhere else — one trace is one turn, so repeating it o
 spans would multiply one fact and buy nothing.
 
 ## The path the reasoning fell through
+
+*History: the cascade below was the legacy planner's, removed in `c6765847`. The LangGraph turn
+consults no recognisers, so no reader spans are drawn and `otel_recogniser_spans` has nothing to
+turn down.*
 
 `@_recogniser` wraps nineteen deterministic readers and runs them in order until one claims. It
 records the winner as a `CLAIMED` decision; the eighteen that declined, and the order, existed at
