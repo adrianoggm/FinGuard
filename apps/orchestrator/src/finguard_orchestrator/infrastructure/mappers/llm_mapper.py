@@ -179,6 +179,7 @@ def _visualization_to_dto(
         spec=presented["spec"],
         data=presented["data"],
         limit=spec.limit,
+        comparison=dataset.metric == "COMPARISON",
     )
 
 

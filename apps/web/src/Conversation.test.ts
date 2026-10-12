@@ -38,9 +38,9 @@ import {
   type Thread,
   type Turn,
 } from "./Conversation";
-import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
+import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext, type Visualization } from "./api";
 import { compile } from "vega-lite";
-import { Chart, chartLead, chartSample, chartTitle, spanishNumberLocale, visualPresentation } from "./Chart";
+import { Chart, chartLead, chartSample, chartTitle, countLabel, moneyLabel, spanishNumberLocale, visualPresentation } from "./Chart";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -847,6 +847,80 @@ describe("financial breakdowns", () => {
     expect(chartLead(byCategory)).toBe("Alquiler es el 80 % del total.");
     expect(chartLead({ ...byCategory, data: [{ dimension: "2026-05", value_minor: 1 }, { dimension: "2026-06", value_minor: 2 }] })).toBeNull();
     expect(chartLead({ ...byCategory, unit: "count" })).toBeNull();
+    // Two periods side by side: their sum is no total, so neither is a share of it.
+    expect(chartLead({ ...byCategory, comparison: true })).toBeNull();
+  });
+
+  it("presents the edge cases a real ledger produces without lying or crashing", () => {
+    type Chartish = Extract<Visualization, { kind: "chart" }>;
+    const bars = (data: Record<string, unknown>[], extra: Partial<Chartish> = {}): Chartish => ({
+      kind: "chart", chart_id: "edge", unit: "money",
+      spec: {
+        mark: "bar",
+        encoding: {
+          y: { field: "dimension", type: "nominal", sort: { field: "value_minor", op: "sum", order: "descending" } },
+          x: { field: "value_minor", type: "quantitative" },
+          tooltip: [{ field: "dimension", type: "nominal" }, { field: "value_minor", type: "quantitative" }],
+        },
+      },
+      data,
+      ...extra,
+    });
+    const compiled = (presented: ReturnType<typeof visualPresentation>) =>
+      compile({ ...(presented.spec as Record<string, unknown>), data: { values: presented.data } } as never);
+
+    // A month among other keys is not a reason to parse the others as dates.
+    const mixed = visualPresentation(bars([{ dimension: "2026-04", value_minor: 100 }, { dimension: "total", value_minor: 50 }]), "EUR");
+    expect(mixed.data.map((row) => row.__dimension_display)).toEqual(["abr 2026", "Total"]);
+    expect(() => compiled(mixed)).not.toThrow();
+
+    // Brands keep their own capitals; plain names get one.
+    const brands = visualPresentation(bars([{ dimension: "iPhone Store", value_minor: 500 }, { dimension: "eBay", value_minor: 300 }, { dimension: "alquiler", value_minor: 100 }]), "EUR");
+    expect(brands.data.map((row) => row.__dimension_display)).toEqual(["iPhone Store", "eBay", "Alquiler"]);
+
+    // Negatives, ties and all-zeros have no leader to point at.
+    for (const values of [[-250_000, -5_000], [300, 300, 100], [0, 0]]) {
+      const presented = visualPresentation(bars(values.map((value_minor, i) => ({ dimension: `g${i}`, value_minor }))), "EUR");
+      expect(presented.data.every((row) => row.__emphasis === "rest")).toBe(true);
+      expect(() => compiled(presented)).not.toThrow();
+    }
+
+    // A top-8 of 35 rows is eight bars: labelled, every label shown.
+    const many = Array.from({ length: 35 }, (_, i) => ({ dimension: `c${i}`, value_minor: 10_000 - i }));
+    const limited = visualPresentation(bars(many, { limit: 8 }), "EUR");
+    expect((limited.spec as Record<string, unknown>).layer).toBeDefined();
+    expect(((limited.spec.encoding as Record<string, Record<string, Record<string, unknown>>>).y?.axis)?.labelOverlap).toBe(false);
+
+    // Days read as days.
+    const days = visualPresentation(bars([{ dimension: "2026-04-06", value_minor: 100 }, { dimension: "2026-04-13", value_minor: 50 }]), "EUR");
+    expect(days.data.map((row) => row.__dimension_display)).toEqual(["6 abr", "13 abr"]);
+
+    // Labels agree with each other and with the axis.
+    const clean = (text: string) => text.replace(/\s/g, " ");
+    expect(clean(moneyLabel(99_999))).toBe("1 mil");
+    expect(moneyLabel(5)).toBe("0,05");
+    expect(moneyLabel(-61_200)).toBe("−612");
+    expect(countLabel(1234)).toBe("1.234");
+
+    // A comparison's legend is its periods, and hovering says which period.
+    const grouped = visualPresentation({
+      kind: "chart", chart_id: "grouped", unit: "money", comparison: true,
+      spec: { mark: "bar", encoding: {
+        x: { field: "dimension", type: "nominal" }, y: { field: "value_minor", type: "quantitative" },
+        color: { field: "series", type: "nominal" }, xOffset: { field: "series", type: "nominal" },
+        tooltip: [{ field: "dimension", type: "nominal" }, { field: "value_minor", type: "quantitative" }],
+      } },
+      data: [{ dimension: "Comida", value_minor: 100, series: "abril de 2026" }, { dimension: "Comida", value_minor: 80, series: "este mes" }],
+    }, "EUR");
+    const groupedEncoding = grouped.spec.encoding as Record<string, unknown>;
+    expect((groupedEncoding.color as Record<string, unknown>).title).toBeNull();
+    expect((groupedEncoding.tooltip as Record<string, unknown>[]).map((item) => item.title)).toContain("Periodo");
+    expect(() => compiled(grouped)).not.toThrow();
+
+    // No share line for points over time, the same name twice, or a tie at the top.
+    expect(chartLead(bars([{ dimension: "netflix", value_minor: 1299 }, { dimension: "netflix", value_minor: 1299 }]))).toBeNull();
+    expect(chartLead({ ...bars([{ dimension: "a", value_minor: 2 }, { dimension: "b", value_minor: 1 }]), spec: { mark: "point", encoding: {} } })).toBeNull();
+    expect(chartLead(bars([{ dimension: "a", value_minor: 300 }, { dimension: "b", value_minor: 300 }]))).toBeNull();
   });
 
   it("hands the title to the app and sizes a discrete plot by its own rows", () => {

@@ -474,6 +474,8 @@ export type Visualization =
       data: Record<string, unknown>[];
       /** Rows the plot draws, when it draws fewer than `data` holds. Null when it draws them all. */
       limit?: number | null;
+      /** Periods side by side, not parts of a whole: no bar is a share of their sum. */
+      comparison?: boolean;
     }
   | {
       kind: "kpi";

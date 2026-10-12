@@ -1000,6 +1000,9 @@ class ChartVisualizationResponse(_Payload):
     # contract -- and the client needs it to say, under the chart, that it is showing a sample. Null
     # means every row is drawn, which is also the only case where saying nothing is honest.
     limit: int | None = None
+    # Two periods side by side rather than parts of one whole: their sum is not a total, so a
+    # client must not say what share of it either bar is.
+    comparison: bool = False
 
 
 class KpiVisualizationResponse(_Payload):

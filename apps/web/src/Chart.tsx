@@ -57,8 +57,46 @@ const EMPHASIS: Emphasis = { leader: "#1e5a48", rest: "#a9c9bd" };
 // A label over every bar reads; over thirty it is a texture.
 const MAX_LABELLED_BARS = 12;
 
+/**
+ * A lower-case name with a capital, the way a category is written on an axis. A name whose own
+ * capitals are inside it ("iPhone", "eBay") is a brand spelled on purpose and stays as it is.
+ */
 function capitalised(text: string): string {
-  return text ? text[0]!.toUpperCase() + text.slice(1) : text;
+  if (!text || /^\p{Ll}\p{Lu}/u.test(text)) return text;
+  return text[0]!.toUpperCase() + text.slice(1);
+}
+
+const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const MINUS = "\u2212";
+
+const WHOLE = new Intl.NumberFormat("es-ES", {
+  maximumFractionDigits: 0,
+  useGrouping: "always",
+} as unknown as Intl.NumberFormatOptions); // "always": es-ES leaves 4 digits ungrouped otherwise
+const CENTS = new Intl.NumberFormat("es-ES", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/** A count as the axis writes it: grouped from a thousand, "−" for a negative. */
+export function countLabel(value: number): string {
+  return WHOLE.format(value).replace("-", MINUS);
+}
+
+/**
+ * The amount over a bar, in the same voice as the axis beside it: "9,2 mil" from 99,95 €
+ * up (where rounding would already read a thousand), whole euros below that, and cents only
+ * when whole euros would round a real amount to 0.
+ */
+export function moneyLabel(minor: number): string {
+  const label =
+    Math.abs(minor) >= 99_950
+      ? compactMoney(minor)
+      : Math.abs(minor) < 100 && minor !== 0
+        ? CENTS.format(minor / 100)
+        : WHOLE.format(Math.round(minor / 100));
+  return label.replace("-", MINUS);
 }
 
 function markType(mark: unknown): string | undefined {
@@ -75,45 +113,67 @@ export function visualPresentation(
   const moneyUnit = visualization.unit === "money" || visualization.unit === "ratio";
   const valueField = moneyUnit ? "__value_major" : "value_minor";
   const displayField = "__value_display";
-  const hasMonthlyDimension = visualization.data.some(
-    (row) => typeof row.dimension === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(row.dimension),
-  );
-  const hasNamedDimension = !hasMonthlyDimension && visualization.data.some(
-    (row) => typeof row.dimension === "string",
-  );
+  // Each row is named by what its own key is -- a month, a day, a name -- and never by what the
+  // other rows are: one non-month row among months ("total") used to be parsed as a date, threw,
+  // and took the whole page down with it.
+  const keys = visualization.data
+    .map((row) => row.dimension)
+    .filter((key): key is string => typeof key === "string");
+  const hasNamedDimension = keys.length > 0;
+  const allMonths = hasNamedDimension && keys.every((key) => MONTH_KEY.test(key));
+  const allDays = hasNamedDimension && keys.every((key) => DAY_KEY.test(key));
+  const yearsShown = new Set(keys.filter((key) => DAY_KEY.test(key)).map((key) => key.slice(0, 4)));
   const monthLabel = new Intl.DateTimeFormat("es-ES", { month: "short", year: "numeric" });
+  const dayLabel = new Intl.DateTimeFormat("es-ES", {
+    day: "numeric",
+    month: "short",
+    ...(yearsShown.size > 1 ? { year: "numeric" } : {}),
+  });
+  const displayOf = (key: string): string => {
+    if (MONTH_KEY.test(key)) {
+      return monthLabel
+        .format(new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, 1))
+        .replace(".", "");
+    }
+    if (DAY_KEY.test(key)) {
+      const [year, month, day] = key.split("-").map(Number);
+      return dayLabel.format(new Date(year!, month! - 1, day!)).replace(".", "");
+    }
+    // "alquiler" on an axis reads as a value leaking through; a name starts with a capital.
+    return capitalised(key);
+  };
   const values = visualization.data
     .map((row) => row.value_minor)
     .filter((value): value is number => typeof value === "number");
+  // One bar to look at, or none: the largest of amounts that are all spending of one sign, and
+  // only when it is the largest alone. Negatives made the smallest expense the "leader", a tie
+  // led with whichever came first, and all zeros led with every bar.
   const top = values.length > 1 ? Math.max(...values) : null;
+  const leads =
+    top !== null &&
+    top > 0 &&
+    values.every((value) => value >= 0) &&
+    values.filter((value) => value === top).length === 1;
   const data = visualization.data.map<Record<string, unknown>>((row) => {
     const value = row.value_minor;
     return {
       ...row,
-      ...(hasMonthlyDimension && typeof row.dimension === "string" ? {
-        __dimension_display: monthLabel.format(new Date(
-          Number(row.dimension.slice(0, 4)),
-          Number(row.dimension.slice(5, 7)) - 1,
-          1,
-        )).replace(".", ""),
-      } : {}),
-      // "alquiler" on an axis reads as a value leaking through; a name starts with a capital.
-      ...(hasNamedDimension && typeof row.dimension === "string"
-        ? { __dimension_display: capitalised(row.dimension) }
-        : {}),
+      ...(typeof row.dimension === "string" ? { __dimension_display: displayOf(row.dimension) } : {}),
       ...(typeof value === "number" && moneyUnit ? {
         [valueField]: value / 100,
         [displayField]: money(value, currency),
       } : {}),
       ...(typeof value === "number" ? {
-        // "9,2 mil" over a big bar, "612" over a small one: whole units either way.
-        __value_short: visualization.unit === "money"
-          ? Math.abs(value) >= 100_000 ? compactMoney(value) : String(Math.round(value / 100))
-          : String(value),
-        __emphasis: value === top ? "leader" : "rest",
+        __value_short: visualization.unit === "money" ? moneyLabel(value) : countLabel(value),
+        __emphasis: leads && value === top ? "leader" : "rest",
       } : {}),
     };
   });
+  // What the plot draws, not what it was given: a top-8 of 35 rows is eight bars to label.
+  const drawn =
+    typeof visualization.limit === "number"
+      ? Math.min(visualization.limit, data.length)
+      : data.length;
   const spec = structuredClone(visualization.spec) as Record<string, unknown>;
   const encoding = (spec.encoding ?? {}) as Record<string, unknown>;
   const quantitativeChannels = new Set(["x", "y"]);
@@ -125,7 +185,9 @@ export function visualPresentation(
    * measure on `x` — so what it actually rotated was the money.
    */
   const dimensionAxis = (channel: string, item: Encoding, extra: Encoding = {}): Encoding => {
-    if (channel === "tooltip") return { ...item, title: hasMonthlyDimension ? "Mes" : "Grupo" };
+    if (channel === "tooltip") {
+      return { ...item, title: allMonths ? "Mes" : allDays ? "Día" : "Grupo" };
+    }
     if (!quantitativeChannels.has(channel)) return item;
     // No axis title: the chart's own title, right above, already says what the groups are, and the
     // field name it fell back to ("dimension") was the one word on screen nobody could read. Every
@@ -133,7 +195,7 @@ export function visualPresentation(
     const axis: Encoding = {
       title: null,
       grid: false,
-      labelOverlap: data.length > MAX_LABELLED_BARS,
+      labelOverlap: drawn > MAX_LABELLED_BARS,
       labelLimit: 92,
       ...extra,
     };
@@ -152,16 +214,27 @@ export function visualPresentation(
   });
   const rewrite = (channel: string, item: Encoding): Encoding => {
     if (item.field === "dimension") {
-      if (
-        (hasMonthlyDimension || hasNamedDimension) &&
-        (channel === "tooltip" || item.type === "nominal")
-      ) {
+      if (hasNamedDimension && (channel === "tooltip" || item.type === "nominal")) {
         return dimensionAxis(channel, { ...item, field: "__dimension_display", type: "nominal" });
       }
-      if (hasMonthlyDimension && item.type === "temporal") {
+      if (allMonths && item.type === "temporal") {
         return dimensionAxis(channel, item, { format: "%b %Y" });
       }
+      if (allDays && item.type === "temporal") {
+        return dimensionAxis(channel, item, { format: "%e %b" });
+      }
       return dimensionAxis(channel, item);
+    }
+    if (item.field === "series") {
+      // The periods of a comparison, or a recurrence's cadences: the legend's own entries name
+      // them, so its title -- the field name "series" when nobody set one -- goes.
+      if (channel === "tooltip") return { ...item, title: item.title ?? "Periodo" };
+      return channel === "color" ? { ...item, title: item.title ?? null } : item;
+    }
+    if (item.field === "occurred_at") {
+      // A date a person reads: "1 abr 2026", under "Fecha", not "occurred_at: Apr 01, 2026".
+      if (channel === "tooltip") return { ...item, title: "Fecha", format: "%e %b %Y" };
+      return { ...item, title: null, axis: { ...(item.axis as Encoding | undefined), title: null } };
     }
     if (item.field !== "value_minor") return item;
     const next: Encoding = { ...item, field: valueField };
@@ -189,6 +262,16 @@ export function visualPresentation(
       ? value.map((item) => item && typeof item === "object" ? rewrite(channel, item as Encoding) : item)
       : value && typeof value === "object" ? rewrite(channel, value as Encoding) : value;
   }
+  // Hovering a bar of a comparison has to say which period it is, and the tooltip the service
+  // sends names only the group and the amount.
+  const color = encoding.color as Encoding | undefined;
+  if (color?.field === "series") {
+    const tooltip = encoding.tooltip;
+    const listed = Array.isArray(tooltip) ? tooltip : tooltip ? [tooltip] : [];
+    if (!listed.some((item) => (item as Encoding)?.field === "series")) {
+      encoding.tooltip = [...listed, { field: "series", type: "nominal", title: color.title ?? "Periodo" }];
+    }
+  }
   spec.encoding = encoding;
   /*
    * The title leaves the spec and is typeset by the app.
@@ -214,7 +297,7 @@ export function visualPresentation(
   // width the spec arrived with was chosen without knowing the screen.
   spec.width = "container";
   spec.autosize = { type: "fit-x", contains: "padding" };
-  labelled(spec, encoding, data.length, visualization.unit, emphasis);
+  labelled(spec, encoding, drawn, visualization.unit, emphasis, leads);
   return { spec, data };
 }
 
@@ -232,6 +315,7 @@ function labelled(
   rows: number,
   unit: string,
   emphasis: Emphasis,
+  leads: boolean,
 ): void {
   if (markType(spec.mark) !== "bar" || encoding.color) return;
   if (rows < 2 || rows > MAX_LABELLED_BARS || (unit !== "money" && unit !== "count")) return;
@@ -257,14 +341,17 @@ function labelled(
   spec.layer = [
     {
       mark: bar,
-      encoding: {
-        color: {
-          field: "__emphasis",
-          type: "nominal",
-          scale: { domain: ["leader", "rest"], range: [emphasis.leader, emphasis.rest] },
-          legend: null,
-        },
-      },
+      // Without a single largest bar there is nothing to point at: every bar in the brand green.
+      encoding: leads
+        ? {
+            color: {
+              field: "__emphasis",
+              type: "nominal",
+              scale: { domain: ["leader", "rest"], range: [emphasis.leader, emphasis.rest] },
+              legend: null,
+            },
+          }
+        : {},
     },
     {
       mark: horizontal
@@ -282,18 +369,28 @@ function labelled(
  */
 export function chartLead(visualization: Visualization | null): string | null {
   if (visualization?.kind !== "chart" || visualization.unit !== "money") return null;
+  // Two periods side by side add up to nothing anybody spent: «abril es el 69 % del total» was a
+  // share of a sum that does not exist.
+  if (visualization.comparison) return null;
   const encoding = (visualization.spec.encoding ?? {}) as Record<string, unknown>;
   if (encoding.color) return null;
+  // Parts of a whole are bars, or slices: a point per date is a series over time, and the same
+  // subscription on two dates is one thing twice, not two halves.
+  if (!["bar", "arc"].includes(markType(visualization.spec.mark) ?? "")) return null;
   const rows = visualization.data.filter(
     (row) => typeof row.dimension === "string" && typeof row.value_minor === "number",
   );
   if (rows.length < 2 || rows.length !== visualization.data.length) return null;
+  if (new Set(rows.map((row) => row.dimension)).size !== rows.length) return null;
   if (rows.some((row) => /^\d{4}-\d{2}/.test(String(row.dimension)))) return null;
   const values = rows.map((row) => row.value_minor as number);
   if (values.some((value) => value < 0)) return null;
   const total = values.reduce((sum, value) => sum + value, 0);
   if (total <= 0) return null;
-  const leader = rows[values.indexOf(Math.max(...values))]!;
+  const top = Math.max(...values);
+  // A tie at the top has no single leader to name.
+  if (values.filter((value) => value === top).length > 1) return null;
+  const leader = rows[values.indexOf(top)]!;
   const share = Math.round((Number(leader.value_minor) / total) * 100);
   return `${capitalised(String(leader.dimension))} es el ${share} % del total.`;
 }
@@ -331,10 +428,17 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
     const element = host.current;
     setFailed(false);
     const palette = getComputedStyle(document.documentElement);
-    const presented = visualPresentation(visualization, currency ?? "EUR", {
-      leader: palette.getPropertyValue("--brand").trim() || EMPHASIS.leader,
-      rest: palette.getPropertyValue("--brand-soft").trim() || EMPHASIS.rest,
-    });
+    let presented: ReturnType<typeof visualPresentation>;
+    try {
+      presented = visualPresentation(visualization, currency ?? "EUR", {
+        leader: palette.getPropertyValue("--brand").trim() || EMPHASIS.leader,
+        rest: palette.getPropertyValue("--brand-soft").trim() || EMPHASIS.rest,
+      });
+    } catch {
+      // A chart that cannot be drawn says so in its place; it must never unmount the thread.
+      setFailed(true);
+      return;
+    }
     // Vega needs literal colours, and the app keeps its palette in `:root`. Reading the tokens
     // here is what stops the two from drifting: the teal the bars used was a shade off the teal
     // every button in the app is painted with, which reads as a mistake rather than a choice.
@@ -385,7 +489,7 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
       finalize?.();
       element.replaceChildren();
     };
-  }, [visualization, isKpi]);
+  }, [visualization, isKpi, currency]);
   if (!visualization || failed) {
     return visualization
       ? <p className="chart-fallback" role="status">Vista gráfica no disponible; consulta los datos.</p>
@@ -396,7 +500,9 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
     const value = row[visualization.value_field];
     const formatted = typeof value === "number" && visualization.unit === "money"
       ? money(value, currency ?? "EUR")
-      : String(value ?? "—");
+      : typeof value === "number"
+        ? countLabel(value)
+        : String(value ?? "—");
     return (
       <p className="chart-kpi" role="status">
         <strong>Resultado</strong>

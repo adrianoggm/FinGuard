@@ -3034,6 +3034,10 @@ async def test_a_comparison_of_two_totals_is_charted_as_two_named_periods_and_th
     assert dataset.title == "junio de 2026 frente a julio de 2026"
     assert chart.result.difference_minor == -18_000
     assert chart.result.total_minor is None
+    from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+
+    wire = question_to_dto(chart.result)
+    assert wire.visualization is not None and wire.visualization.comparison is True
 
 
 async def test_explained_comparison_can_be_charted_and_restyled_without_another_bank_read(
