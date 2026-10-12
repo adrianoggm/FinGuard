@@ -87,15 +87,31 @@ describe("PcmPlayer contract G", () => {
 });
 
 describe("VoiceClient transport A-J", () => {
-  function makeClient(uuid: (() => string) = () => "turn-1") {
+  function makeClient(uuid: (() => string) = () => "turn-1", conversation?: () => unknown, silentTurnTimeoutMs?: number) {
     const fakeSocket = socketFake(); const media = mediaFake(); const order: string[] = []; const capture = captureContext(48_000, () => { order.push(typeof fakeSocket.sent.at(-1) === "string" ? JSON.parse(fakeSocket.sent.at(-1) as string).type : "binary"); }); const playback = playbackContext(); const statuses: string[] = []; const finished: string[] = []; const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
-    const client = new VoiceClient({ gatewayUrl: "http://gateway.test", token: "secret", fetch: async (input, init) => { fetchCalls.push({ input, init }); return new Response(json({ sessionId: "s-1", ticket: "opaque-ticket", websocketUrl: "/v1/voice/sessions/s-1" }), { status: 200, headers: { "content-type": "application/json" } }); }, websocket: (_url, protocols) => { expect(protocols).toEqual([VOICE_SUBPROTOCOL, "opaque-ticket"]); expect(_url).not.toContain("ticket"); return fakeSocket.socket; }, mediaDevices: media.media, captureContext: () => capture.context, player: new PcmPlayer(() => playback.context), uuid, clock: () => "2026-08-17T00:00:00.000Z", onEvent: () => undefined, onStatus: (status, error) => { statuses.push(error ? `${status}:${error}` : status); }, onFinished: () => { finished.push("finished"); } });
+    const client = new VoiceClient({ gatewayUrl: "http://gateway.test", token: "secret", fetch: async (input, init) => { fetchCalls.push({ input, init }); return new Response(json({ sessionId: "s-1", ticket: "opaque-ticket", websocketUrl: "/v1/voice/sessions/s-1" }), { status: 200, headers: { "content-type": "application/json" } }); }, websocket: (_url, protocols) => { expect(protocols).toEqual([VOICE_SUBPROTOCOL, "opaque-ticket"]); expect(_url).not.toContain("ticket"); return fakeSocket.socket; }, mediaDevices: media.media, captureContext: () => capture.context, player: new PcmPlayer(() => playback.context), uuid, clock: () => "2026-08-17T00:00:00.000Z", onEvent: () => undefined, onStatus: (status, error) => { statuses.push(error ? `${status}:${error}` : status); }, onFinished: () => { finished.push("finished"); }, conversation, silentTurnTimeoutMs });
     return { client, fakeSocket, media, capture, playback, statuses, finished, order, fetchCalls };
   }
   async function ready() { const setup = makeClient(); const promise = setup.client.start(); for (let i = 0; i < 10; i += 1) await Promise.resolve(); setup.fakeSocket.open(); expect(setup.fakeSocket.sent).toHaveLength(1); setup.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 })); await promise; expect(setup.statuses).toEqual(["connecting", "listening"]); expect(JSON.parse(setup.fakeSocket.sent[1] as string).type).toBe("input.start"); return setup; }
 
   it("uses POST Bearer auth, keeps ticket in subprotocol, and sends start before capture binary", async () => {
     const setup = makeClient(); const promise = setup.client.start(); for (let i = 0; i < 10; i += 1) await Promise.resolve(); setup.fakeSocket.open(); expect(setup.fetchCalls).toHaveLength(1); expect(setup.fetchCalls[0]!.init?.method).toBe("POST"); expect((setup.fetchCalls[0]!.init?.headers as Record<string, string>).Authorization).toBe("Bearer secret"); expect(setup.fakeSocket.sent[0]).toBeTypeOf("string"); setup.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 })); await promise; expect(setup.order).toEqual(["input.start"]); const captureMessages = setup.fakeSocket.sent.slice(1); expect(JSON.parse(captureMessages[0] as string).type).toBe("input.start"); expect(captureMessages[1]).toBeInstanceOf(ArrayBuffer); setup.client.stopCapture(); setup.client.stopCapture(); const controls = setup.fakeSocket.sent.filter((value): value is string => typeof value === "string").map((value) => JSON.parse(value)); expect(controls.filter((value) => value.type === "input.commit")).toHaveLength(1); expect(controls.map((value) => value.sequence)).toEqual([0, 1, 2]);
+  });
+  it("sends the conversation on screen with every input.start, read when the turn starts", async () => {
+    let onScreen: unknown = { conversation_id: "c-1", version: 1 };
+    let next = 0;
+    const setup = makeClient(() => `turn-${++next}`, () => onScreen);
+    const promise = setup.client.start(); for (let i = 0; i < 10; i += 1) await Promise.resolve(); setup.fakeSocket.open();
+    setup.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 })); await promise;
+    const starts = () => setup.fakeSocket.sent.filter((value): value is string => typeof value === "string").map((value) => JSON.parse(value)).filter((value) => value.type === "input.start");
+    expect(starts()[0].conversation).toEqual({ conversation_id: "c-1", version: 1 });
+    // A turn typed in between: the next spoken turn starts from it, not from what the socket last saw.
+    setup.client.stopCapture();
+    onScreen = { conversation_id: "c-1", version: 3 };
+    await setup.client.start();
+    expect(starts().at(-1).conversation).toEqual({ conversation_id: "c-1", version: 3 });
+    const controls = setup.fakeSocket.sent.filter((value): value is string => typeof value === "string").map((value) => JSON.parse(value));
+    expect(controls.filter((value) => value.type !== "input.start").every((value) => !("conversation" in value))).toBe(true);
   });
   it("handles permission, HTTP and socket errors with cleanup and no throw", async () => {
     const setup = makeClient(); setup.media.media.getUserMedia = async () => { throw new DOMException("secret browser detail", "NotAllowedError"); }; const promise = setup.client.start(); for (let i = 0; i < 10; i += 1) await Promise.resolve(); setup.fakeSocket.open(); setup.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 })); await promise; expect(setup.statuses.at(-1)).toBe("error:Permiso de micrófono denegado. Actívalo para usar la voz."); expect(setup.statuses.join(" ")).not.toContain("secret browser detail"); expect(setup.fakeSocket.socket.readyState).toBe(3);
@@ -316,6 +332,19 @@ describe("VoiceClient transport A-J", () => {
   // W-5: a turn whose answer produces no audio at all (a refusal that forgot to synthesise, a
   // dead TTS provider) left `maybeFinish` waiting forever on `audioCompleted`/`playerIdle`, which
   // only audio.started/audio.completed can ever set. The client now gives up visibly instead.
+  it("waits for a silent turn without limit when the timeout is 0", async () => {
+    vi.useFakeTimers();
+    try {
+      const setup = makeClient(() => "turn-1", undefined, 0);
+      const promise = setup.client.start(); for (let i = 0; i < 10; i += 1) await Promise.resolve(); setup.fakeSocket.open();
+      setup.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 })); await promise;
+      setup.client.stopCapture();
+      await vi.advanceTimersByTimeAsync(SILENT_TURN_TIMEOUT_MS * 10);
+      expect(setup.statuses.at(-1)).toBe("processing");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("fails a silent turn after the timeout instead of hanging on processing forever", async () => {
     vi.useFakeTimers();
     try {

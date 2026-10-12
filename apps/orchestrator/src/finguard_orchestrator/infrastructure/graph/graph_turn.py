@@ -166,6 +166,7 @@ class GraphTurnHandler:
         reporting_timezone: str,
         request_id: str | None = None,
         caller_scopes: frozenset[str] = frozenset(),
+        spoken: bool = False,
     ) -> EngineAnswer:
         """`request_id` is the turn's idempotency key; without one every call is a new request."""
         calls_before = self._ports.count_calls()
@@ -235,7 +236,7 @@ class GraphTurnHandler:
 
         try:
             try:
-                initial = await lease_bound(self._input(turn, config, sentence, context))
+                initial = await lease_bound(self._input(turn, config, sentence, context, spoken))
                 final = await lease_bound(self._graph.ainvoke(initial, config, context=context))
             except _UNANSWERED as unanswered:
                 # Resumable by the same request: its checkpoint stays.
@@ -492,7 +493,7 @@ class GraphTurnHandler:
         return _Turn(key, request_id, reserved.lease_token, held)
 
     async def _input(
-        self, turn: _Turn, config: Any, sentence: str, context: GraphContext
+        self, turn: _Turn, config: Any, sentence: str, context: GraphContext, spoken: bool = False
     ) -> TurnGraphState | Command[Any] | None:
         """None to resume the turn's own checkpoint; a fresh state to start (or start again)."""
         found = await self._graph.aget_state(config)
@@ -526,7 +527,7 @@ class GraphTurnHandler:
                         context.financial_reads = 0
                     return Command(
                         # Checkpoints hold only the decision, never the user's free-form reply.
-                        resume=confirmation.canonical_reply(sentence),
+                        resume=_reply(sentence, spoken),
                         update=update,
                     )
                 return None
@@ -555,7 +556,7 @@ class GraphTurnHandler:
             # up that legacy thread; this request has its own thread id now.
             await self._checkpointer.adelete_thread(pending.workflow_id)
             fresh["payment_workflow_id"] = pending.workflow_id
-            reply = confirmation.canonical_reply(sentence)
+            reply = _reply(sentence, spoken)
             if reply != "respuesta ambigua":
                 # A versioned checkpoint can be discarded during a graph upgrade, but a bank
                 # preview is still live in canonical state. Route an explicit yes/no through the
@@ -563,6 +564,16 @@ class GraphTurnHandler:
                 fresh["direct_payment_confirmation"] = True
                 fresh["payment_reply"] = reply
         return fresh
+
+
+def _reply(sentence: str, spoken: bool) -> str:
+    """The confirmation reply, where a spoken yes counts as no answer at all.
+
+    A transcript is a guess at what was said, and a yes is the one word that moves money. Spoken,
+    it is ambiguous: the preview stays open and the button on screen confirms it. A spoken no
+    still cancels, because cancelling a payment by mistake costs nothing."""
+    reply = confirmation.canonical_reply(sentence)
+    return "respuesta ambigua" if spoken and reply == "s\u00ed" else reply
 
 
 def _with_open_preview(

@@ -318,6 +318,7 @@ class World:
         request_id: str | None = "req-1",
         sentence: str = SENTENCE,
         caller_scopes: frozenset[str] = frozenset(),
+        spoken: bool = False,
     ) -> EngineAnswer:
         return await self.handler.answer(
             sentence,
@@ -328,6 +329,7 @@ class World:
             reporting_timezone="Europe/Madrid",
             request_id=request_id,
             caller_scopes=caller_scopes,
+            spoken=spoken,
         )
 
 
@@ -2766,6 +2768,46 @@ async def test_unclear_bizum_reply_reinterrupts_then_explicit_yes_confirms_once(
     assert paid.result is not None and paid.result.outcome == PaymentOutcome.PAID.value
     assert paid.state.payment is None and paid.state.version == 3
     assert bank.confirmed == [INTENT]
+
+
+@pytest.mark.asyncio
+async def test_a_spoken_yes_keeps_the_preview_and_a_spoken_no_cancels_it() -> None:
+    world = World((PrepareBizum("Aitor Beltran Diaz", 2_000),))
+    bank = with_payment_commands(world)
+    scopes = frozenset({"payments:prepare", "payments:confirm"})
+    prepared = await world.ask(
+        sentence="Haz un bizum de 20 euros a Aitor Beltran Diaz",
+        request_id="prepare-spoken",
+        caller_scopes=scopes,
+    )
+    # Ambiguous, like any reply that is not a closed yes or no, so the interpreter reads it.
+    world.interpreter._turns.append((PrepareBizum(None, None),))  # noqa: SLF001
+
+    said_yes = await world.ask(
+        conversation_id=prepared.state.conversation_id,
+        version=prepared.state.version,
+        sentence="sí",
+        request_id="spoken-yes",
+        caller_scopes=scopes,
+        spoken=True,
+    )
+
+    assert said_yes.result is not None
+    assert said_yes.result.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert isinstance(said_yes.state.payment, PaymentConfirmationPending)
+    assert bank.confirmed == []
+
+    said_no = await world.ask(
+        conversation_id=said_yes.state.conversation_id,
+        version=said_yes.state.version,
+        sentence="no",
+        request_id="spoken-no",
+        caller_scopes=scopes,
+        spoken=True,
+    )
+
+    assert said_no.state.payment is None
+    assert bank.confirmed == []
 
 
 @pytest.mark.asyncio

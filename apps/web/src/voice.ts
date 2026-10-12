@@ -282,6 +282,14 @@ export type VoiceClientOptions = {
   onEvent: (event: VoiceEvent) => void | boolean;
   onStatus: (status: VoiceStatus, error?: string) => void;
   onFinished?: () => void;
+  /**
+   * The conversation on screen, read when each turn starts and sent with its `input.start`. The
+   * client holds it, as it does for a typed question, so a spoken turn continues whatever was
+   * typed or said before it -- even on a socket opened after that (VOICE-001).
+   */
+  conversation?: () => unknown;
+  /** Overrides `SILENT_TURN_TIMEOUT_MS`; 0 turns the timeout off. */
+  silentTurnTimeoutMs?: number;
   fetch?: typeof fetch;
   websocket?: SocketFactory;
   mediaDevices?: Pick<MediaDevices, "getUserMedia">;
@@ -818,10 +826,14 @@ export class VoiceClient {
    * `SILENT_TURN_TIMEOUT_MS` of the holder falling silent -- see the constant's own comment. */
   private armSilentTurnTimeout(): void {
     this.clearSilentTurnTimeout();
+    const timeout = this.options.silentTurnTimeoutMs ?? SILENT_TURN_TIMEOUT_MS;
+    // ponytail: off means a turn whose audio never comes stays "processing" until the button
+    // interrupts it -- acceptable for trying a slow model by hand, not as a deployed setting.
+    if (timeout <= 0) return;
     this.silentTurnTimer = setTimeout(() => {
       this.silentTurnTimer = null;
       void this.fail(SILENT_TURN_MESSAGE);
-    }, SILENT_TURN_TIMEOUT_MS);
+    }, timeout);
   }
 
   private clearSilentTurnTimeout(): void {
@@ -838,6 +850,9 @@ export class VoiceClient {
         type,
         sessionId: this.sessionId,
         ...(turnId ? { turnId } : {}),
+        ...(type === "input.start" && this.options.conversation
+          ? { conversation: this.options.conversation() ?? null }
+          : {}),
         sequence: this.clientSequence++,
         at: this.options.clock?.() ?? new Date().toISOString(),
       }),

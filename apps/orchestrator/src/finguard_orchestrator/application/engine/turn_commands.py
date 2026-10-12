@@ -35,6 +35,9 @@ class Turn:
     reporting_timezone: str
     request_id: str | None = None
     caller_scopes: frozenset[str] = field(default_factory=frozenset)
+    # Said rather than typed. A spoken yes never confirms a payment: a misheard word must not move
+    # money, so the confirmation is the button on screen (ADR-010 §5).
+    spoken: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,7 @@ class AnswerTurnHandler:
             reporting_timezone=turn.reporting_timezone,
             request_id=turn.request_id,
             caller_scopes=turn.caller_scopes,
+            spoken=turn.spoken,
         )
 
 

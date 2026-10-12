@@ -437,6 +437,11 @@ async def handle_control(
             else None
         )
         session.machine.start_input(control.turnId)
+        # The client's conversation wins over the one this session last saw: a turn typed between
+        # two spoken ones, or a reply cancelled after the bank was read, changed what is on screen.
+        # A client that omits the field keeps the session's own, as before.
+        if "conversation" in control.model_fields_set:
+            session.conversation = control.conversation
         session.turn_timings[control.turnId] = TurnTimings(session.monotonic)
         session.turn_timings[control.turnId].mark("input_start")
         if old_turn_id:

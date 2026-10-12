@@ -288,6 +288,8 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
     const client = createVoiceClient({
       onStatus: (status, error) => { setVoiceStatus(status); if (error) setVoiceError(error); },
       onFinished: () => { voice.current = null; },
+      // Read at each turn's start, so a turn typed since the last spoken one is in it.
+      conversation: () => threadRef.current.conversation,
       onEvent: (event: VoiceEvent) => {
         const key = voiceEventIdentity(event);
         if (seenVoiceEvents.current.has(key)) return;

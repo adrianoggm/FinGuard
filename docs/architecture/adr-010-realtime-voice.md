@@ -86,7 +86,7 @@ Client control events:
 | event | meaning |
 | --- | --- |
 | `session.configure` | negotiate protocol and audio formats |
-| `input.start` | open a user turn; following binary frames belong to it |
+| `input.start` | open a user turn; following binary frames belong to it. VOICE-001: optional `conversation`, the one on the client's screen, which replaces the session's own |
 | `input.commit` | finish the utterance and start transcription |
 | `response.cancel` | interrupt current assistant work or playback |
 | `session.close` | close deliberately |
@@ -156,6 +156,12 @@ sequence numbers are protocol errors. Cancellation is idempotent.
 The gateway owns this transport state. The orchestrator remains the sole owner of conversational
 meaning; its returned `conversation` object is opaque gateway session data.
 
+VOICE-001: the client holds the conversation, as it does for a typed question, and sends it with
+every `input.start`. A turn typed between two spoken ones, a socket opened after a typed turn, or a
+reply cancelled after the bank was read all change what is on screen, and the session's own copy
+cannot know. When the field is present it replaces the session's copy; when it is absent the session
+keeps its own, as before. The gateway still reads nothing in it.
+
 ### 5. Voice may prepare a payment, but version 1 may not confirm one
 
 Speech recognition can turn noise or a near-homophone into “sí”. Therefore a voice turn may reach
@@ -165,6 +171,11 @@ and requires its existing explicit confirmation control.
 
 This is a channel policy, not a new payment rule. Supporting spoken confirmation later requires a
 separate decision with transcript display, explicit read-back and evidence about false acceptance.
+
+The orchestrator enforces it, not only the gateway: on a `VOICE` request a yes to a pending preview
+counts as an ambiguous reply, so the preview stays open and nothing is confirmed, however many times
+it is said. A spoken no still cancels. The gateway's one-shot refusal below remains the spoken
+explanation; it is no longer the guarantee.
 
 G-7 (fix wave): the spoken refusal this policy produces is not a fabricated orchestrator answer.
 The assistant is never asked on this turn, so the gateway holds no real value for the eleven other

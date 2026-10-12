@@ -22,6 +22,10 @@ class ConfigureEvent(ControlEvent):
 class StartEvent(ControlEvent):
     type: Literal["input.start"]
     turnId: str
+    # The conversation on the client's screen when this turn starts. The client holds it, as it
+    # does for a typed question, so a voice turn continues whatever was typed or said before it,
+    # even on a socket opened after that. Opaque here: the orchestrator validates it.
+    conversation: dict[str, Any] | None = None
 
 
 class CommitEvent(ControlEvent):

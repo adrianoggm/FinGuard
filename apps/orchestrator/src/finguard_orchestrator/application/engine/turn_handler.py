@@ -24,6 +24,7 @@ class ConversationTurnHandler(Protocol):
         reporting_timezone: str,
         request_id: str | None = None,
         caller_scopes: frozenset[str] = frozenset(),
+        spoken: bool = False,
     ) -> EngineAnswer: ...
 
     async def owns_workflow(

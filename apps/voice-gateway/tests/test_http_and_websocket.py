@@ -2,7 +2,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from fastapi import WebSocket
@@ -893,6 +893,72 @@ def test_an_orchestrator_4xx_is_a_recoverable_turn_error_not_a_socket_close(
                 assert rejecting_assistant.calls == 2
     finally:
         sessions.clear()
+
+
+class _RecordsConversations:
+    """A fake assistant that remembers which conversation each turn reached it with."""
+
+    def __init__(self) -> None:
+        self.seen: list[object] = []
+
+    async def ask(
+        self,
+        text: str,
+        conversation: object,
+        *,
+        credential: str,
+        idempotency_key: str,
+        on_stage: object = None,
+    ) -> AssistantReply:
+        self.seen.append(conversation)
+        answered = {"answered": len(self.seen)}
+        return AssistantReply(
+            text="Hecho.",
+            conversation=answered,
+            answer={"outcome": "ANSWERED", "text": "Hecho.", "conversation": answered},
+        )
+
+
+def test_a_voice_turn_continues_the_conversation_on_the_clients_screen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """VOICE-001: the client's conversation, sent with `input.start`, is the one the turn asks
+    with -- on a socket opened after a typed turn, and after a turn typed between two spoken ones.
+    A start without it keeps the session's own, as before."""
+    assistant = _RecordsConversations()
+    monkeypatch.setattr(services, "assistant", assistant)
+
+    def turn(socket: Any, session_id: str, sequence: int, turn_id: str, **extra: object) -> None:
+        start = json.loads(_control("input.start", session_id, sequence, turn_id))
+        socket.send_text(json.dumps({**start, **extra}))
+        socket.send_bytes(b"ok")
+        socket.send_text(_control("input.commit", session_id, sequence + 1, turn_id))
+        while True:  # audio frames arrive between the JSON events
+            item = socket.receive()
+            if item.get("text") and json.loads(item["text"])["type"] == "turn.completed":
+                break
+
+    typed = {"conversation_id": "c-1", "version": 1}
+    typed_again = {"conversation_id": "c-1", "version": 3}
+    try:
+        with TestClient(app) as client:
+            body = client.post(
+                "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+            ).json()
+            with client.websocket_connect(
+                body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+            ) as socket:
+                session_id = body["sessionId"]
+                socket.send_text(_control("session.configure", session_id, 0))
+                socket.receive_json()
+                turn(socket, session_id, 1, "turn-1", conversation=typed)
+                turn(socket, session_id, 3, "turn-2", conversation=typed_again)
+                turn(socket, session_id, 5, "turn-3")
+                turn(socket, session_id, 7, "turn-4", conversation=None)
+    finally:
+        sessions.clear()
+
+    assert assistant.seen == [typed, typed_again, {"answered": 2}, None]
 
 
 def test_a_refused_voice_payment_does_not_silence_the_session() -> None:

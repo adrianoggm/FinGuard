@@ -127,6 +127,7 @@ async def try_engine(
         lambda turn: AnswerTurnCommand(question.question, turn),
         today=today,
         request_id=request_id,
+        spoken=question.channel == "VOICE",
     )
 
 
@@ -140,6 +141,7 @@ async def _turn(
     *,
     today: date,
     request_id: str | None,
+    spoken: bool = False,
 ) -> QuestionResponse:
     conversation_id = echoed.conversation_id if echoed is not None else None
     version = echoed.version if echoed is not None else None
@@ -161,6 +163,7 @@ async def _turn(
         reporting_timezone=who.reporting_timezone,
         request_id=request_id,
         caller_scopes=who.scopes,
+        spoken=spoken,
     )
     with provider_request_budget(MAX_MODEL_CALLS):
         turn = await commands.dispatch(command_for(turn_context))

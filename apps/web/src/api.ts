@@ -16,18 +16,29 @@ const TOKEN = import.meta.env.VITE_ORCHESTRATOR_TOKEN ?? "";
 
 export const voiceGatewayUrl = import.meta.env.VITE_VOICE_GATEWAY_URL ?? "";
 export const voiceEnabled = voiceGatewayUrl !== "" && TOKEN !== "";
+// How long a spoken turn may wait for its first audio, in ms; 0 turns the wait off. Unset keeps
+// the client's own default.
+const VOICE_TURN_TIMEOUT = import.meta.env.VITE_VOICE_TURN_TIMEOUT_MS;
+const voiceTurnTimeoutMs =
+  VOICE_TURN_TIMEOUT === undefined || VOICE_TURN_TIMEOUT === "" ? undefined : Number(VOICE_TURN_TIMEOUT);
 
 export type VoiceCallbacks = {
   /** `false` disarms the audio fence for this turn -- see `VoiceClientOptions.onEvent`. */
   onEvent: (event: VoiceEvent) => void | boolean;
   onStatus: (status: VoiceStatus, error?: string) => void;
   onFinished?: () => void;
+  conversation?: () => unknown;
 };
 
 export function createVoiceClient(callbacks: VoiceCallbacks): VoiceClient | null {
   if (!voiceEnabled) return null;
   // Keep the credential in this module's closure. The UI receives a configured client, never the token.
-  return new VoiceClient({ gatewayUrl: voiceGatewayUrl, token: TOKEN, ...callbacks });
+  return new VoiceClient({
+    gatewayUrl: voiceGatewayUrl,
+    token: TOKEN,
+    silentTurnTimeoutMs: Number.isFinite(voiceTurnTimeoutMs) ? voiceTurnTimeoutMs : undefined,
+    ...callbacks,
+  });
 }
 
 export const configured = TOKEN !== "";
