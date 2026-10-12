@@ -686,7 +686,7 @@ function Bubble({ turn }: { turn: Turn }) {
               {part.save_candidate && (
                 <SaveMetricControl
                   token={part.save_candidate.definition_token}
-                  suggestion={chartTitle(chartForResponse(part))}
+                  suggestion={chartTitle(chartForResponse(part)) ?? planName(part.plan)}
                 />
               )}
               <AnswerEvidence answer={part} />
@@ -701,7 +701,7 @@ function Bubble({ turn }: { turn: Turn }) {
           {answer.save_candidate && (
             <SaveMetricControl
               token={answer.save_candidate.definition_token}
-              suggestion={chartTitle(chart)}
+              suggestion={chartTitle(chart) ?? planName(answer.plan)}
             />
           )}
           <AnswerEvidence answer={answer} />
@@ -766,6 +766,12 @@ function FinancialMetricBlocks({ answer }: { answer: Answer }) {
  * what the metric is: an empty box asked somebody to name a thing that was named on screen half a
  * centimetre above the box. It stays editable — a prefilled name is a suggestion, not a decision.
  */
+/** A figure with no chart is named by the question it answers, as "Ver la consulta" shows it. */
+function planName(plan: string | null | undefined): string | null {
+  const words = plan?.trim();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : null;
+}
+
 function SaveMetricControl({ token, suggestion }: { token: string; suggestion?: string | null }) {
   const [title, setTitle] = useState(suggestion ?? "");
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");

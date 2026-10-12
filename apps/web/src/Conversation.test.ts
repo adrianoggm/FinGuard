@@ -40,7 +40,7 @@ import {
 } from "./Conversation";
 import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
 import { compile } from "vega-lite";
-import { Chart, chartSample, chartTitle, spanishNumberLocale, visualPresentation } from "./Chart";
+import { Chart, chartLead, chartSample, chartTitle, spanishNumberLocale, visualPresentation } from "./Chart";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -793,6 +793,45 @@ describe("financial breakdowns", () => {
     expect(monthlyEncoding.x?.field).toBe("__dimension_display");
     expect(monthlyEncoding.x?.sort).toEqual({ field: "value_minor", order: "descending" });
     expect(monthlyEncoding.tooltip?.field).toBe("__dimension_display");
+  });
+
+  it("labels a single-series bar chart, leads with its largest bar and keeps the service's order", () => {
+    const byCategory = {
+      kind: "chart" as const, chart_id: "by-category", unit: "money" as const,
+      spec: {
+        mark: "bar",
+        encoding: {
+          x: { field: "dimension", type: "nominal", sort: { field: "value_minor", op: "sum", order: "descending" } },
+          y: { field: "value_minor", type: "quantitative" },
+          tooltip: [{ field: "dimension", type: "nominal" }, { field: "value_minor", type: "quantitative" }],
+        },
+      },
+      data: [
+        { dimension: "alquiler", value_minor: 920_000 },
+        { dimension: "ocio", value_minor: 6_290 },
+        { dimension: "supermercado", value_minor: 230_700 },
+      ],
+    };
+    const presented = visualPresentation(byCategory, "EUR");
+    const spec = presented.spec as Record<string, unknown>;
+    const encoding = spec.encoding as Record<string, Record<string, unknown>>;
+
+    expect(presented.data.map((row) => row.__dimension_display)).toEqual(["Alquiler", "Ocio", "Supermercado"]);
+    expect(presented.data.map((row) => String(row.__value_short).replace(/\s/g, " "))).toEqual(["9,2 mil", "63", "2,3 mil"]);
+    expect(presented.data.map((row) => row.__emphasis)).toEqual(["leader", "rest", "rest"]);
+    // Two layers share the axis, and Vega only keeps a max-ordered shared domain.
+    expect(encoding.x?.sort).toEqual({ field: "value_minor", op: "max", order: "descending" });
+    expect((encoding.x?.axis as Record<string, unknown>).title).toBeNull();
+    expect((encoding.y?.axis as Record<string, unknown>).title).toBeNull();
+    expect((encoding.tooltip as unknown as Record<string, unknown>[]).map((item) => item.title)).toEqual(["Grupo", "Importe"]);
+    expect(spec.mark).toBeUndefined();
+    expect((spec.layer as unknown[]).length).toBe(2);
+    expect(spec.width).toBe("container");
+    expect(() => compile({ ...spec, data: { values: presented.data } } as never)).not.toThrow();
+
+    expect(chartLead(byCategory)).toBe("Alquiler es el 80 % del total.");
+    expect(chartLead({ ...byCategory, data: [{ dimension: "2026-05", value_minor: 1 }, { dimension: "2026-06", value_minor: 2 }] })).toBeNull();
+    expect(chartLead({ ...byCategory, unit: "count" })).toBeNull();
   });
 
   it("hands the title to the app and sizes a discrete plot by its own rows", () => {

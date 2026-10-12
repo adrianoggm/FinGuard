@@ -23,7 +23,7 @@ import {
   type Breakdown,
   type SavedMetric,
 } from "./api";
-import { categoryName, money, monthName, time } from "./format";
+import { categoryName, compactMoney, money, monthName, time } from "./format";
 import { categoryIcon, Icon } from "./Icon";
 import { Chart, chartTitle } from "./Chart";
 import { AnswerEvidence } from "./Conversation";
@@ -368,16 +368,23 @@ export function Finances() {
         <section className="card" aria-label="Gasto por mes">
           <h2>Mes a mes</h2>
           <div className="bars">
-            {months.groups.slice(-6).map((group) => (
-              <div className="bar-slot" key={group.key}>
-                <div
-                  className="bar"
-                  style={{ height: `${Math.round((group.total_minor / biggest) * 100)}%` }}
-                  title={money(group.total_minor, months.currency)}
-                />
-                <small>{monthName(group.key)}</small>
-              </div>
-            ))}
+            {months.groups.slice(-6).map((group) => {
+              // The same bars as the home screen: the amount over each, the running month apart.
+              const today = new Date();
+              const running =
+                group.key === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+              return (
+                <div className={running ? "bar-slot running" : "bar-slot"} key={group.key}>
+                  <span className="bar-amount">{compactMoney(group.total_minor)}</span>
+                  <div
+                    className="bar"
+                    style={{ height: `${Math.round((group.total_minor / biggest) * 100)}%` }}
+                    title={money(group.total_minor, months.currency)}
+                  />
+                  <small>{running ? `${monthName(group.key)} · en curso` : monthName(group.key)}</small>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

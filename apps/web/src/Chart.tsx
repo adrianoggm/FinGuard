@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { TopLevelSpec } from "vega-lite";
 import type { Visualization } from "./api";
-import { money } from "./format";
+import { compactMoney, money } from "./format";
 
 type Props = {
   visualization: Visualization | null;
@@ -49,14 +49,43 @@ export const spanishTimeLocale: Record<string, unknown> = {
   shortMonths: ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"],
 };
 
-export function visualPresentation(visualization: Extract<Visualization, { kind: "chart" }>, currency: string) {
+/** The two greens of a single-series bar chart: the leader, and every other bar. */
+export type Emphasis = { leader: string; rest: string };
+
+const EMPHASIS: Emphasis = { leader: "#1e5a48", rest: "#a9c9bd" };
+
+// A label over every bar reads; over thirty it is a texture.
+const MAX_LABELLED_BARS = 12;
+
+function capitalised(text: string): string {
+  return text ? text[0]!.toUpperCase() + text.slice(1) : text;
+}
+
+function markType(mark: unknown): string | undefined {
+  if (typeof mark === "string") return mark;
+  if (mark && typeof mark === "object") return (mark as { type?: string }).type;
+  return undefined;
+}
+
+export function visualPresentation(
+  visualization: Extract<Visualization, { kind: "chart" }>,
+  currency: string,
+  emphasis: Emphasis = EMPHASIS,
+) {
   const moneyUnit = visualization.unit === "money" || visualization.unit === "ratio";
   const valueField = moneyUnit ? "__value_major" : "value_minor";
   const displayField = "__value_display";
   const hasMonthlyDimension = visualization.data.some(
     (row) => typeof row.dimension === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(row.dimension),
   );
+  const hasNamedDimension = !hasMonthlyDimension && visualization.data.some(
+    (row) => typeof row.dimension === "string",
+  );
   const monthLabel = new Intl.DateTimeFormat("es-ES", { month: "short", year: "numeric" });
+  const values = visualization.data
+    .map((row) => row.value_minor)
+    .filter((value): value is number => typeof value === "number");
+  const top = values.length > 1 ? Math.max(...values) : null;
   const data = visualization.data.map<Record<string, unknown>>((row) => {
     const value = row.value_minor;
     return {
@@ -68,9 +97,20 @@ export function visualPresentation(visualization: Extract<Visualization, { kind:
           1,
         )).replace(".", ""),
       } : {}),
+      // "alquiler" on an axis reads as a value leaking through; a name starts with a capital.
+      ...(hasNamedDimension && typeof row.dimension === "string"
+        ? { __dimension_display: capitalised(row.dimension) }
+        : {}),
       ...(typeof value === "number" && moneyUnit ? {
         [valueField]: value / 100,
         [displayField]: money(value, currency),
+      } : {}),
+      ...(typeof value === "number" ? {
+        // "9,2 mil" over a big bar, "612" over a small one: whole units either way.
+        __value_short: visualization.unit === "money"
+          ? Math.abs(value) >= 100_000 ? compactMoney(value) : String(Math.round(value / 100))
+          : String(value),
+        __emphasis: value === top ? "leader" : "rest",
       } : {}),
     };
   });
@@ -85,14 +125,37 @@ export function visualPresentation(visualization: Extract<Visualization, { kind:
    * measure on `x` — so what it actually rotated was the money.
    */
   const dimensionAxis = (channel: string, item: Encoding, extra: Encoding = {}): Encoding => {
+    if (channel === "tooltip") return { ...item, title: hasMonthlyDimension ? "Mes" : "Grupo" };
     if (!quantitativeChannels.has(channel)) return item;
-    const axis: Encoding = { labelOverlap: true, labelLimit: 92, ...extra };
+    // No axis title: the chart's own title, right above, already says what the groups are, and the
+    // field name it fell back to ("dimension") was the one word on screen nobody could read. Every
+    // label is shown while they fit: Vega's overlap pass hid five of eight categories.
+    const axis: Encoding = {
+      title: null,
+      grid: false,
+      labelOverlap: data.length > MAX_LABELLED_BARS,
+      labelLimit: 92,
+      ...extra,
+    };
     if (channel === "x") axis.labelAngle = -32;
     return { ...item, axis };
   };
+  // The measure's axis: a few dashed gridlines to read against, and nothing else.
+  const measureAxis = (extra: Encoding): Encoding => ({
+    title: null,
+    grid: true,
+    gridDash: [3, 3],
+    domain: false,
+    ticks: false,
+    tickCount: 4,
+    ...extra,
+  });
   const rewrite = (channel: string, item: Encoding): Encoding => {
     if (item.field === "dimension") {
-      if (hasMonthlyDimension && (channel === "tooltip" || item.type === "nominal")) {
+      if (
+        (hasMonthlyDimension || hasNamedDimension) &&
+        (channel === "tooltip" || item.type === "nominal")
+      ) {
         return dimensionAxis(channel, { ...item, field: "__dimension_display", type: "nominal" });
       }
       if (hasMonthlyDimension && item.type === "temporal") {
@@ -105,16 +168,19 @@ export function visualPresentation(visualization: Extract<Visualization, { kind:
     if (moneyUnit && channel === "tooltip") {
       next.field = displayField;
       next.type = "nominal";
+      next.title = "Importe";
+    } else if (channel === "tooltip") {
+      next.title = visualization.unit === "count" ? "Movimientos" : "Valor";
     } else if (visualization.unit === "ratio" && quantitativeChannels.has(channel)) {
       next.title = "Porcentaje";
-      next.axis = { format: ".0%" };
+      next.axis = measureAxis({ format: ".0%" });
     } else if (moneyUnit && quantitativeChannels.has(channel)) {
       next.title = `${String(next.title ?? "Importe")} (${currency})`;
       // Whole euros on the ticks. The cents were two digits of noise on every gridline of a
       // phone-width axis, and the exact figure is a hover and a tap away in "Ver los datos".
-      next.axis = { format: "$,.0f" };
+      next.axis = measureAxis({ format: "$,.0f" });
     } else if (visualization.unit === "count" && quantitativeChannels.has(channel)) {
-      next.axis = { format: "d" };
+      next.axis = measureAxis({ format: "d" });
     }
     return next;
   };
@@ -144,7 +210,92 @@ export function visualPresentation(visualization: Extract<Visualization, { kind:
     // A normalised share is a single stacked bar. At the default height it is a slab.
     spec.height = 56;
   }
+  // The plot takes the card's width, so a chart never scrolls sideways inside a bubble -- whatever
+  // width the spec arrived with was chosen without knowing the screen.
+  spec.width = "container";
+  spec.autosize = { type: "fit-x", contains: "padding" };
+  labelled(spec, encoding, data.length, visualization.unit, emphasis);
   return { spec, data };
+}
+
+/**
+ * A single-series bar chart, labelled and led.
+ *
+ * Its amount over every bar, so the figure is read rather than estimated against a gridline, and
+ * the largest bar in the brand green with the rest a step lighter: the chart says where to look
+ * without a second colour. Only the drawing changes -- the mark, the orientation, the order and
+ * the rows the service chose stay as they are, so a later "ponlo vertical" edits the same chart.
+ */
+function labelled(
+  spec: Record<string, unknown>,
+  encoding: Record<string, unknown>,
+  rows: number,
+  unit: string,
+  emphasis: Emphasis,
+): void {
+  if (markType(spec.mark) !== "bar" || encoding.color) return;
+  if (rows < 2 || rows > MAX_LABELLED_BARS || (unit !== "money" && unit !== "count")) return;
+  const x = encoding.x as Encoding | undefined;
+  const y = encoding.y as Encoding | undefined;
+  const horizontal = x?.type === "quantitative";
+  const measure = horizontal ? x : y;
+  if (!measure || measure.type !== "quantitative") return;
+  // Headroom past the longest bar, or its own label runs off the card.
+  encoding[horizontal ? "x" : "y"] = {
+    ...measure,
+    scale: { ...(measure.scale as Encoding | undefined), padding: horizontal ? 36 : 14 },
+  };
+  // Two layers share the dimension's scale, and Vega only orders a shared domain by count, min or
+  // max. One row per group makes max the same order as the sum the service asked for.
+  const dimension = (horizontal ? y : x) as Encoding | undefined;
+  const sort = dimension?.sort as Encoding | undefined;
+  if (dimension && sort && typeof sort === "object" && "field" in sort) {
+    encoding[horizontal ? "y" : "x"] = { ...dimension, sort: { ...sort, op: "max" } };
+  }
+  const bar = typeof spec.mark === "string" ? { type: "bar" } : (spec.mark as Encoding);
+  delete spec.mark;
+  spec.layer = [
+    {
+      mark: bar,
+      encoding: {
+        color: {
+          field: "__emphasis",
+          type: "nominal",
+          scale: { domain: ["leader", "rest"], range: [emphasis.leader, emphasis.rest] },
+          legend: null,
+        },
+      },
+    },
+    {
+      mark: horizontal
+        ? { type: "text", align: "left", baseline: "middle", dx: 4, fontSize: 10, fontWeight: 600 }
+        : { type: "text", align: "center", baseline: "bottom", dy: -3, fontSize: 10, fontWeight: 600 },
+      encoding: { text: { field: "__value_short", type: "nominal" } },
+    },
+  ];
+}
+
+/**
+ * One line under the title saying where most of it went -- "Alquiler es el 47 % del total." --
+ * when a share of a whole is something the chart shows: money, one series, named groups, none
+ * negative. A month-by-month chart or a comparison has no share worth a sentence.
+ */
+export function chartLead(visualization: Visualization | null): string | null {
+  if (visualization?.kind !== "chart" || visualization.unit !== "money") return null;
+  const encoding = (visualization.spec.encoding ?? {}) as Record<string, unknown>;
+  if (encoding.color) return null;
+  const rows = visualization.data.filter(
+    (row) => typeof row.dimension === "string" && typeof row.value_minor === "number",
+  );
+  if (rows.length < 2 || rows.length !== visualization.data.length) return null;
+  if (rows.some((row) => /^\d{4}-\d{2}/.test(String(row.dimension)))) return null;
+  const values = rows.map((row) => row.value_minor as number);
+  if (values.some((value) => value < 0)) return null;
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) return null;
+  const leader = rows[values.indexOf(Math.max(...values))]!;
+  const share = Math.round((Number(leader.value_minor) / total) * 100);
+  return `${capitalised(String(leader.dimension))} es el ${share} % del total.`;
 }
 
 /** The title the service wrote for a chart, rendered by the app rather than by Vega. */
@@ -179,7 +330,11 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
     if (!host.current || !visualization || isKpi) return;
     const element = host.current;
     setFailed(false);
-    const presented = visualPresentation(visualization, currency ?? "EUR");
+    const palette = getComputedStyle(document.documentElement);
+    const presented = visualPresentation(visualization, currency ?? "EUR", {
+      leader: palette.getPropertyValue("--brand").trim() || EMPHASIS.leader,
+      rest: palette.getPropertyValue("--brand-soft").trim() || EMPHASIS.rest,
+    });
     // Vega needs literal colours, and the app keeps its palette in `:root`. Reading the tokens
     // here is what stops the two from drifting: the teal the bars used was a shade off the teal
     // every button in the app is painted with, which reads as a mistake rather than a choice.
@@ -209,6 +364,7 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
         line: { color: accent, strokeWidth: 2 },
         area: { color: accent, opacity: 0.16, line: { color: accent, strokeWidth: 2 } },
         point: { color: accent, filled: true, size: 70, stroke: card, strokeWidth: 1.5 },
+        text: { color: ink },
       },
     };
     void import("vega-embed")
@@ -252,9 +408,11 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
   // reader that there is a chart and nothing about which one.
   const title = chartTitle(visualization);
   const sample = chartSample(visualization);
+  const lead = chartLead(visualization);
   return (
     <figure className="chart-figure">
       {title && <figcaption className="chart-title">{title}</figcaption>}
+      {lead && <p className="chart-lead">{lead}</p>}
       <div
         className="visualization-chart"
         ref={host}

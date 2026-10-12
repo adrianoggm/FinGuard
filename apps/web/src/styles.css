@@ -12,6 +12,7 @@
   --brand: #1e5a48;
   --brand-bright: #2a7a62;
   --accent: #2a7a62;
+  --brand-soft: #a9c9bd;
   /* The assistant's colour, and nothing else's: its mark and the bar it lives in. Never under
      text, where it would not carry the contrast. */
   --signal: #f0b04a;
@@ -64,23 +65,53 @@
 }
 
 .chart-title {
-  margin: 0 0 0.4rem;
-  font-size: 0.82rem;
-  font-weight: 700;
+  margin: 0;
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   line-height: 1.3;
-  color: var(--brand);
+  color: var(--ink);
 }
 
+/* Where most of it went, in one quiet line between the title and the plot. */
+.chart-lead {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+/* No frame of its own: the answer's bubble is already the card, and a box inside a box was the
+   chart looking pasted in. */
 .visualization-chart {
   width: 100%;
   min-height: 8rem;
-  /* Never `hidden`: a wide chart scrolls rather than losing its last label to a crop. */
-  overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  padding: 0.5rem 0.5rem 0.25rem;
-  background: var(--card);
+  margin-top: 0.6rem;
+  /* The plot is fitted to this width (autosize fit-x), so what overflows is Vega's own few pixels
+     of rounding -- which drew a scrollbar under every chart. */
+  overflow-x: hidden;
   color: var(--ink);
+}
+
+.visualization-chart svg {
+  animation: fade 260ms ease both;
+}
+
+/* Vega's tooltip, in the app's card and type rather than its own grey box. */
+#vg-tooltip-element.vg-tooltip {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.78rem;
+}
+
+#vg-tooltip-element.vg-tooltip td.key {
+  color: var(--ink-soft);
+  font-weight: 500;
 }
 
 .visualization-chart .vega-embed,
