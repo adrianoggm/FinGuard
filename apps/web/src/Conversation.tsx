@@ -236,12 +236,18 @@ export function applyVoiceEvent(
 export async function voiceButtonAction(
   status: VoiceStatus,
   client: VoiceControlClient,
-): Promise<"stopped" | "barge-in" | "cancelled"> {
+): Promise<"stopped" | "barge-in" | "silenced" | "cancelled"> {
   if (status === "listening") {
     client.stopCapture();
     return "stopped";
   }
-  if (status === "processing" || status === "speaking") {
+  if (status === "speaking") {
+    // Silence, not a new turn: the answer, its chart and the conversation were applied when its
+    // text arrived, before any audio, so cutting the sound loses none of them.
+    client.cancel();
+    return "silenced";
+  }
+  if (status === "processing") {
     // VoiceClient.start() reuses the open session and performs the fencing/cancellation handshake.
     await client.start();
     return "barge-in";
@@ -268,6 +274,7 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
   const attempt = useRef<{ text: string; key: string } | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceLevel, setVoiceLevel] = useState(0);
   const voice = useRef<VoiceClient | null>(null);
   const threadRef = useRef(thread);
   const seenVoiceEvents = useRef(new Set<string>());
@@ -286,7 +293,12 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
     }
     setVoiceError(null);
     const client = createVoiceClient({
-      onStatus: (status, error) => { setVoiceStatus(status); if (error) setVoiceError(error); },
+      onStatus: (status, error) => {
+        setVoiceStatus(status);
+        if (status !== "listening") setVoiceLevel(0);
+        if (error) setVoiceError(error);
+      },
+      onLevel: setVoiceLevel,
       onFinished: () => { voice.current = null; },
       // Read at each turn's start, so a turn typed since the last spoken one is in it.
       conversation: () => threadRef.current.conversation,
@@ -389,14 +401,15 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
           <Icon name="close" size={18} />
         </button>
       </header>
-      {voiceEnabled && <div className="voice-controls" aria-label="Control de voz">
-        <button type="button" className="voice-button" onClick={() => void toggleVoice()} aria-pressed={voiceStatus !== "idle" && voiceStatus !== "error"} aria-label={voiceStatus === "processing" || voiceStatus === "speaking" ? "Interrumpir y hablar" : undefined}>
-          <Icon name={voiceStatus === "listening" ? "stop" : "mic"} size={18} />
-          {voiceStatus === "idle" || voiceStatus === "error" ? "Iniciar voz" : voiceStatus === "processing" || voiceStatus === "speaking" ? "Interrumpir y hablar" : voiceStatus === "connecting" ? "Cancelar conexión" : "Detener voz"}
-        </button>
-        <span role="status">{voiceStatus === "connecting" ? "Conectando…" : voiceStatus === "listening" ? "Escuchando" : voiceStatus === "processing" ? "Procesando…" : voiceStatus === "speaking" ? "Reproduciendo" : voiceStatus === "error" ? "Voz no disponible" : "Voz apagada"}</span>
-        <VoiceError message={voiceError} />
-      </div>}
+      {voiceEnabled && (
+        <VoiceStrip
+          status={voiceStatus}
+          level={voiceLevel}
+          error={voiceError}
+          onToggle={() => void toggleVoice()}
+        />
+      )}
+      {voiceEnabled && voiceStatus !== "error" && <VoiceError message={voiceError} />}
 
       <div className="turns">
         {thread.turns.length === 0 && <Suggestions onPick={send} />}
@@ -476,6 +489,96 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
         </button>
       </form>
     </section>
+  );
+}
+
+/**
+ * What the voice is doing, said large enough to be seen from across a table.
+ *
+ * The button used to change its words and a small grey label beside it said "Escuchando", and
+ * nobody could tell when to start talking or that they had to press again to send. Each state now
+ * has its own colour, a title and the next thing to do, and while listening the bars move with the
+ * microphone's real level -- the proof it is hearing you.
+ */
+const VOICE_COPY: Record<VoiceStatus, { title: string; hint: string; action: string }> = {
+  idle: {
+    title: "Habla con FinGuard",
+    hint: "Pulsa «Hablar», di tu pregunta y pulsa «Enviar» al terminar.",
+    action: "Hablar",
+  },
+  connecting: { title: "Preparando el micrófono…", hint: "Un momento.", action: "Cancelar" },
+  listening: {
+    title: "Te escucho",
+    hint: "Habla ahora. Pulsa «Enviar» cuando termines.",
+    action: "Enviar",
+  },
+  processing: {
+    title: "Pensando la respuesta…",
+    hint: "Puedes interrumpir y volver a hablar.",
+    action: "Interrumpir",
+  },
+  speaking: {
+    title: "FinGuard está respondiendo",
+    hint: "Pulsa «Silenciar» para cortar el audio; la respuesta se queda.",
+    action: "Silenciar",
+  },
+  error: { title: "Voz no disponible", hint: "Inténtalo de nuevo.", action: "Hablar" },
+};
+
+const LEVEL_BARS = [0.55, 0.85, 1, 0.75, 0.5];
+
+function VoiceStrip({
+  status,
+  level,
+  error,
+  onToggle,
+}: {
+  status: VoiceStatus;
+  level: number;
+  error: string | null;
+  onToggle: () => void;
+}) {
+  const copy = VOICE_COPY[status];
+  const active = status !== "idle" && status !== "error";
+  return (
+    <div className={`voice-strip is-${status}`} aria-label="Control de voz">
+      <span className="voice-orb" aria-hidden="true">
+        {status === "listening" ? (
+          <span className="voice-level">
+            {LEVEL_BARS.map((weight, index) => (
+              <i key={index} style={{ height: `${Math.max(18, Math.round(level * weight * 100))}%` }} />
+            ))}
+          </span>
+        ) : (
+          <Icon name="mic" size={22} />
+        )}
+      </span>
+      <span className="voice-copy" role="status">
+        <strong>{copy.title}</strong>
+        <small>{status === "error" && error ? error : copy.hint}</small>
+      </span>
+      <button
+        type="button"
+        className="voice-action"
+        onClick={onToggle}
+        aria-pressed={active}
+        aria-label={status === "processing" ? "Interrumpir y hablar" : undefined}
+      >
+        <Icon
+          name={
+            status === "listening"
+              ? "send"
+              : status === "connecting"
+                ? "close"
+                : status === "speaking"
+                  ? "stop"
+                  : "mic"
+          }
+          size={18}
+        />
+        {copy.action}
+      </button>
+    </div>
   );
 }
 

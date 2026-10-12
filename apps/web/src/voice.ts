@@ -290,6 +290,11 @@ export type VoiceClientOptions = {
    * typed or said before it -- even on a socket opened after that (VOICE-001).
    */
   conversation?: () => unknown;
+  /**
+   * How loud the microphone is, 0 to 1, a dozen times a second while it is capturing -- so the
+   * screen can show it is hearing you rather than only saying so.
+   */
+  onLevel?: (level: number) => void;
   /** Overrides `SILENT_TURN_TIMEOUT_MS`; 0 turns the timeout off. */
   silentTurnTimeoutMs?: number;
   fetch?: typeof fetch;
@@ -876,9 +881,18 @@ export class VoiceClient {
     const context = this.context!;
     this.source = context.createMediaStreamSource(this.stream!);
     this.resampler = new StreamingResampler(context.sampleRate);
+    let lastLevelAt = 0;
     const send = (samples: Float32Array) => {
       const frame = this.resampler!.push(samples);
       if (frame.length > 0) this.sendBinary(pcm16le(frame));
+      const onLevel = this.options.onLevel;
+      const now = Date.now();
+      if (onLevel && now - lastLevelAt >= 80) {
+        lastLevelAt = now;
+        let peak = 0;
+        for (let i = 0; i < samples.length; i += 1) peak = Math.max(peak, Math.abs(samples[i]!));
+        onLevel(Math.min(1, peak * 2.5));
+      }
     };
 
     if (context.audioWorklet && typeof AudioWorkletNode !== "undefined") {

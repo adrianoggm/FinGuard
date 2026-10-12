@@ -3008,6 +3008,34 @@ async def test_a_comparison_explains_decreases_without_calling_them_increases(
     assert world.assessor.seen == []
 
 
+async def test_a_comparison_of_two_totals_is_charted_as_two_named_periods_and_their_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each side one "total" row: two bars named by their months, no series, and the card is the
+    change between them -- not one side's total, not a bar named "total" in two colours."""
+    monkeypatch.setitem(FIGURES, JUNE, (Group("total", 28_000, 7),))
+    monkeypatch.setitem(FIGURES, JULY, (Group("total", 10_000, 2),))
+    world = World(BY_MERCHANT, (Visualize("ACTIVE_RESULT", "BAR"),))
+
+    answer = await world.ask(sentence="comparison explanation")
+    chart = await world.ask(
+        conversation_id=answer.state.conversation_id,
+        version=answer.state.version,
+        request_id="two-totals-chart",
+        sentence="muestramelo en un grafico",
+    )
+
+    assert chart.result is not None and chart.result.visual_dataset is not None
+    dataset = chart.result.visual_dataset
+    assert [(row.dimension, row.series, row.value_minor) for row in dataset.rows] == [
+        ("Junio de 2026", None, 28_000),
+        ("Julio de 2026", None, 10_000),
+    ]
+    assert dataset.title == "junio de 2026 frente a julio de 2026"
+    assert chart.result.difference_minor == -18_000
+    assert chart.result.total_minor is None
+
+
 async def test_explained_comparison_can_be_charted_and_restyled_without_another_bank_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3035,9 +3063,9 @@ async def test_explained_comparison_can_be_charted_and_restyled_without_another_
     assert chart.result is not None and chart.result.visual_dataset is not None
     rows = chart.result.visual_dataset.rows
     assert {(row.dimension, row.series, row.value_minor) for row in rows} == {
-        ("Mercadona", "del 2026-06-01 al 2026-06-30, gastos", 20_000),
-        ("Dia", "del 2026-06-01 al 2026-06-30, gastos", 8_000),
-        ("Mercadona", "del 2026-07-01 al 2026-07-31, gastos", 10_000),
+        ("Mercadona", "junio de 2026", 20_000),
+        ("Dia", "junio de 2026", 8_000),
+        ("Mercadona", "julio de 2026", 10_000),
     }
     # A comparison by merchant has no time axis, so lines are refused and the chart stands.
     assert restyled.result is not None and restyled.result.visual_decision is None

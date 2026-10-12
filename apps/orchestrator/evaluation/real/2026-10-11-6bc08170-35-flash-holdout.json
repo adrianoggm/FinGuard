@@ -1,0 +1,2309 @@
+{
+  "name": "2026-10-11-6bc08170-35-flash-holdout",
+  "preflight": {
+    "services": {
+      "orchestrator": "ok",
+      "banking": "ok",
+      "gateway": "skipped (not used by this evaluation)"
+    },
+    "ready": {
+      "http_status": 200,
+      "status": "ok",
+      "provider": "echo",
+      "financial_path": {
+        "engine": "model",
+        "graph": "on",
+        "active_runtime": "langgraph",
+        "authoritative": true,
+        "provider": "gemini",
+        "model": "gemini-3.5-flash"
+      },
+      "payments": true,
+      "checks": {
+        "questions_enabled": true,
+        "catalogue_provider": true,
+        "planner": true,
+        "banking": true,
+        "conversation_runtime": true,
+        "persistence": true
+      }
+    },
+    "version": {
+      "service": "orchestrator",
+      "sha": "6bc08170",
+      "ref": "task/legacy-removal",
+      "source_sha256": "d95518552fb88cf497198cb4b824fefeeb29369ee81908ee6ddcc2134edaba40"
+    },
+    "banking_version": {
+      "service": "banking-api",
+      "sha": "6bc08170",
+      "ref": "task/legacy-removal",
+      "source_sha256": "ca81ab863f670021662c0e93710024262c90c95228a4e61ad03e25f99c62212a"
+    },
+    "ollama": [],
+    "newest": "2026-10-12",
+    "at": "2026-10-12T01:10:49+02:00",
+    "today": "2026-10-12",
+    "gpu": "P8, 180 MHz",
+    "head": "ccc61fbf",
+    "source_sha256_local": {
+      "orchestrator": "d95518552fb88cf497198cb4b824fefeeb29369ee81908ee6ddcc2134edaba40",
+      "banking": "ca81ab863f670021662c0e93710024262c90c95228a4e61ad03e25f99c62212a"
+    },
+    "source_sha256": {
+      "orchestrator": "d95518552fb88cf497198cb4b824fefeeb29369ee81908ee6ddcc2134edaba40",
+      "banking": "ca81ab863f670021662c0e93710024262c90c95228a4e61ad03e25f99c62212a"
+    },
+    "component_code_under_test": {
+      "orchestrator": "same as current source",
+      "banking": "same as current source"
+    },
+    "code_under_test": "same as current source",
+    "problems": [],
+    "max_age_days": 4
+  },
+  "goals": {
+    "holdout-saldos-movimientos-nomina": "Ver el dinero que tiene, repasar los últimos movimientos de la Hucha y luego comprobar la nómina sin que se cuele el filtro de la Hucha.",
+    "holdout-gasolina-aclaracion-con-dato-repetido": "Consultar la gasolina, responder la aclaración añadiendo un dato de más, comparar con el año anterior, pedir un gráfico y cambiar a una pregunta nueva sobre un comercio.",
+    "holdout-bizum-ambiguo-suspendido-y-cancelado": "Empezar un Bizum a una Marta sin decir cuál, interrumpirlo con una consulta de saldo, retomarlo, cambiar el importe y cancelarlo; después consultar lo enviado sin crear un pago.",
+    "holdout-compras-tarjeta-paginadas": "Revisar las compras recientes con tarjeta, filtrarlas, pasar página, pasar a un total y compararlo con el año anterior.",
+    "holdout-correcciones-e-interrupcion": "Corregir dos veces una consulta, acotarla a un comercio, interrumpirla con otra gestión y volver a ella.",
+    "holdout-capacidades-y-traspaso-desistido": "Preguntar qué puede hacer el asistente, preparar un traspaso a la Hucha, cambiar el importe y desistir, y acabar con una consulta normal."
+  },
+  "expected_turns": {
+    "holdout-saldos-movimientos-nomina": 7,
+    "holdout-gasolina-aclaracion-con-dato-repetido": 6,
+    "holdout-bizum-ambiguo-suspendido-y-cancelado": 6,
+    "holdout-compras-tarjeta-paginadas": 6,
+    "holdout-correcciones-e-interrupcion": 6,
+    "holdout-capacidades-y-traspaso-desistido": 6
+  },
+  "expected_tasks": {},
+  "records": [
+    {
+      "conversation": "holdout-saldos-movimientos-nomina",
+      "turn": 1,
+      "said": "hola, ¿cuánto dinero tengo en total?",
+      "outcome": "BALANCE",
+      "text": "Tienes 6.995,56 € entre tus cuentas: 571,56 € en Cuenta corriente y 6.424,00 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "plan_in_words": "saldo de tus cuentas",
+      "last_plan": null,
+      "total_minor": 699556,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 11.87,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3943,
+      "completion_tokens": 14,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 3760,
+      "provider_request_ms": 6851,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "task": "saldos",
+        "mechanism": "intent",
+        "route": "BALANCE",
+        "want": "Saldo por cuenta y total, solo con cifras de la banca."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-saldos-movimientos-nomina",
+      "turn": 2,
+      "said": "¿y solo en la hucha?",
+      "outcome": "BALANCE",
+      "text": "Tienes 6.424,00 € en Hucha.",
+      "plan_in_words": "saldo de Hucha",
+      "last_plan": null,
+      "total_minor": 642400,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 8.94,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3972,
+      "completion_tokens": 9,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 4947,
+      "provider_request_ms": 3019,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "task": "saldos",
+        "mechanism": "follow_up",
+        "route": "BALANCE",
+        "want": "El saldo de la Hucha; no vuelve a dar el resto de cuentas como respuesta principal."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-saldos-movimientos-nomina",
+      "turn": 3,
+      "said": "a ver los 5 movimientos más nuevos de la hucha",
+      "outcome": "PLANNED",
+      "text": "Estos son tus últimos 5 movimientos. Dime \"dame otros 5\" para ver los siguientes.\nConsultado en Hucha.",
+      "plan_in_words": "movimientos recientes",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [
+        "12145bd4d7c8a577a2b2",
+        "3eb3c7b739c17e780633",
+        "c00c4ee54bb96fb079a1",
+        "d78c4ba55c76516423a5",
+        "eaa7e427c54cb853cc24"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 13.01,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4009,
+      "completion_tokens": 38,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 6149,
+      "provider_request_ms": 5487,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "movimientos-hucha",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Una lista de hasta cinco movimientos de la Hucha, los más recientes primero, con fecha, concepto e importe; no pide periodo."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-saldos-movimientos-nomina",
+      "turn": 4,
+      "said": "¿cuál de esos fue el más grande?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres ver tus gastos?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 30.17,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 7950,
+      "completion_tokens": 51,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 3116,
+      "provider_request_ms": 23981,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "movimientos-hucha",
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "Señala el movimiento de mayor importe entre los cinco listados; no amplía a otras cuentas ni a otro periodo."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-saldos-movimientos-nomina",
+      "turn": 5,
+      "said": "cambiando de tema, ¿cuándo me pagaron la nómina este mes?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos recientes en tus cuentas.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "ingresos recientes, en lo que va de mes, nómina",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 14.49,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3552,
+      "completion_tokens": 27,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 6,
+      "provider_request_ms": 12967,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "nomina",
+        "mechanism": "interruption",
+        "route": "QUERY",
+        "want": "Fecha e importe del ingreso de nómina de este mes; no se limita a la Hucha ni a cinco filas."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-saldos-movimientos-nomina",
+      "turn": 6,
+      "said": "¿y el mes anterior cuánto fue?",
+      "outcome": "PLANNED",
+      "text": "2.483,13 € el mes pasado, en 2 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "el mes pasado, ingresos",
+      "last_plan": null,
+      "total_minor": 248313,
+      "movement_count": 2,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 248313,
+          "movement_count": 2,
+          "value_minor": 248313
+        }
+      ],
+      "movement_keys": [
+        "41afc2f548db2704d288",
+        "d78c4ba55c76516423a5"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 30.11,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8330,
+      "completion_tokens": 71,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 2795,
+      "provider_request_ms": 24226,
+      "figure_query": {
+        "direction": "INCOME",
+        "period": "LAST_MONTH",
+        "n": null,
+        "start": null,
+        "end": null,
+        "categories": [],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 248313,
+        "movement_count": 2
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "task": "nomina",
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "El importe de la nómina del mes anterior; conserva que se habla de la nómina."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-saldos-movimientos-nomina",
+      "turn": 7,
+      "said": "gracias, eso es todo",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 2.62,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4363,
+      "completion_tokens": 10,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 3,
+      "provider_request_ms": 2301,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "task": "cierre",
+        "mechanism": "intent",
+        "route": "COURTESY",
+        "want": "Una despedida breve; no repite cifras ni lanza consultas."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-gasolina-aclaracion-con-dato-repetido",
+      "turn": 1,
+      "said": "quiero saber lo que me he gastado en gasolina",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres ver tus gastos en gasolina?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 19.57,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3944,
+      "completion_tokens": 25,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 9648,
+      "provider_request_ms": 7909,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "gasolina",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Si pregunta algo, pregunta solo por el periodo; no pregunta por la categoría. Si asume un periodo, lo dice."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-gasolina-aclaracion-con-dato-repetido",
+      "turn": 2,
+      "said": "el mes pasado, solo de la corriente",
+      "outcome": "PLANNED",
+      "text": "167,31 € en gasolina el mes pasado, en 3 movimientos.\nConsultado en Cuenta corriente.",
+      "plan_in_words": "el mes pasado, gastos, gasolina",
+      "last_plan": null,
+      "total_minor": 16731,
+      "movement_count": 3,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 16731,
+          "movement_count": 3,
+          "value_minor": 16731
+        }
+      ],
+      "movement_keys": [
+        "36c216be86c0bf9b8ba4",
+        "63cc02251efd0927ba8c",
+        "a3ecf70f98ae25e1ad27"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 9.21,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3456,
+      "completion_tokens": 29,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 698,
+      "provider_request_ms": 7523,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "consulta de cuenta específica: el informe no conserva ids de cuenta",
+      "expect": {
+        "task": "gasolina",
+        "mechanism": "pending_resolution",
+        "route": "QUERY",
+        "want": "Gasto en gasolina del mes pasado en Cuenta corriente. Usa los dos datos sin volver a preguntar nada."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-gasolina-aclaracion-con-dato-repetido",
+      "turn": 3,
+      "said": "¿en qué gasolinera gasté más?",
+      "outcome": "PLANNED",
+      "text": "El comercio con mayor importe total en gasolina el mes pasado es:\n  · Shell: 74,17 € (1)\nConsultado en Cuenta corriente.",
+      "plan_in_words": "el mes pasado, gastos, gasolina, por comercio, top 1",
+      "last_plan": null,
+      "total_minor": 7417,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "Shell",
+          "total_minor": 7417,
+          "movement_count": 1,
+          "value_minor": 7417
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 14.93,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4078,
+      "completion_tokens": 35,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 1881,
+      "provider_request_ms": 11487,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "consulta de cuenta específica: el informe no conserva ids de cuenta",
+      "expect": {
+        "task": "gasolina",
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "Ranking por comercio dentro de gasolina, mes pasado y Cuenta corriente, con la primera gasolinera destacada."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-gasolina-aclaracion-con-dato-repetido",
+      "turn": 4,
+      "said": "¿y en ese mismo mes del año pasado?",
+      "outcome": "PLANNED",
+      "text": "El comercio con mayor importe total en gasolina del 2025-09-01 al 2025-09-30 es:\n  · Repsol: 168,79 € (3)\nConsultado en Cuenta corriente.",
+      "plan_in_words": "del 2025-09-01 al 2025-09-30, gastos, gasolina, por comercio, top 1",
+      "last_plan": null,
+      "total_minor": 16879,
+      "movement_count": 3,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "Repsol",
+          "total_minor": 16879,
+          "movement_count": 3,
+          "value_minor": 16879
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.72,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4216,
+      "completion_tokens": 46,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 6,
+      "provider_request_ms": 5071,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "consulta de cuenta específica: el informe no conserva ids de cuenta",
+      "expect": {
+        "task": "gasolina",
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "Mismo ranking de gasolina en Cuenta corriente para ese mes un año antes; no pierde ninguno de los filtros."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-gasolina-aclaracion-con-dato-repetido",
+      "turn": 5,
+      "said": "¿me lo pintas con barras?",
+      "outcome": "PLANNED",
+      "text": "Aquí tienes el gráfico de los resultados de la consulta.",
+      "plan_in_words": "del 2025-09-01 al 2025-09-30, gastos, gasolina, por comercio, top 1",
+      "last_plan": null,
+      "total_minor": 27270,
+      "movement_count": 5,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [
+        "Ordena de menor a mayor",
+        "Ponlo en vertical"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 13.82,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4331,
+      "completion_tokens": 10,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 1191,
+      "provider_request_ms": 5185,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "consulta de cuenta específica: el informe no conserva ids de cuenta",
+      "expect": {
+        "task": "gasolina",
+        "mechanism": "reference",
+        "route": "VISUAL",
+        "want": "Gráfico de barras del último ranking con sus cifras verificadas; no consulta otro periodo."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-gasolina-aclaracion-con-dato-repetido",
+      "turn": 6,
+      "said": "olvida el gráfico, ¿cuántas veces he ido a Repsol este año?",
+      "outcome": "PLANNED",
+      "text": "10 movimientos en Repsol en lo que va de año.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de año, gastos, comercios con «Repsol» en el nombre, número de movimientos",
+      "last_plan": null,
+      "total_minor": 55221,
+      "movement_count": 10,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 55221,
+          "movement_count": 10,
+          "value_minor": 10
+        }
+      ],
+      "movement_keys": [
+        "19543486226d1facfb01",
+        "271ccb6ea53eddda2136",
+        "3de3ebf90e91b80d8a4d",
+        "47d7aa0e3d8980ba48be",
+        "746ea854c079eeb02607",
+        "b881dd8ee08d74d988cd",
+        "c7a4d2219e8105cc7630",
+        "f19746e9d6dc114e3c8a",
+        "f50b3285673ff914882c",
+        "f599bf6f6c49fa54887d"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 20.77,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4501,
+      "completion_tokens": 41,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 12758,
+      "provider_request_ms": 5861,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": "THIS_YEAR",
+        "n": null,
+        "start": null,
+        "end": null,
+        "categories": [],
+        "merchants": [],
+        "merchant_terms": [
+          "Repsol"
+        ],
+        "group_by": "NONE",
+        "metric": "COUNT",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 55221,
+        "movement_count": 10
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "task": "repsol",
+        "mechanism": "interruption",
+        "route": "QUERY",
+        "want": "Número de movimientos en Repsol en lo que va de año; no hereda el periodo del año pasado y deja claro qué cuentas incluye."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-bizum-ambiguo-suspendido-y-cancelado",
+      "turn": 1,
+      "said": "mándale 30 euros a Marta por bizum",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "Tienes varios contactos con ese nombre: Marta Ruiz Gomez, Marta Solis Vega. ¿A quién se lo envío?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 19.29,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8020,
+      "completion_tokens": 46,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 12028,
+      "provider_request_ms": 5275,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "bizum-marta",
+        "mechanism": "intent",
+        "route": "PAYMENT",
+        "want": "Pregunta a qué Marta (Ruiz Gomez o Solis Vega); no muestra todavía una previsualización ni envía dinero."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-bizum-ambiguo-suspendido-y-cancelado",
+      "turn": 2,
+      "said": "espera, antes dime cuánto me queda en la corriente",
+      "outcome": "BALANCE",
+      "text": "Tienes 571,56 € en Cuenta corriente.",
+      "plan_in_words": "saldo de Cuenta corriente",
+      "last_plan": null,
+      "total_minor": 57156,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 10.08,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4001,
+      "completion_tokens": 9,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 5989,
+      "provider_request_ms": 3008,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "task": "saldo-corriente",
+        "mechanism": "interruption",
+        "route": "BALANCE",
+        "want": "El saldo de Cuenta corriente. El Bizum queda en suspenso, no cancelado ni enviado."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-bizum-ambiguo-suspendido-y-cancelado",
+      "turn": 3,
+      "said": "vale, la de Solis",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "El Bizum de 30,00 € está pausado. Para retomarlo, escribe «continuar con el Bizum»; para descartarlo, responde «no».",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.07,
+      "engine": "model",
+      "model_calls": 0,
+      "model_calls_malformed": false,
+      "provider_requests": 0,
+      "provider_requests_malformed": false,
+      "models_attempted": [],
+      "models_used": [],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": null,
+      "completion_tokens": null,
+      "token_reports": 0,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": null,
+      "provider_request_ms": null,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "bizum-marta",
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "want": "Retoma el Bizum con los 30 € y muestra la previsualización a Marta Solis Vega; no vuelve a pedir el importe y no envía nada."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-bizum-ambiguo-suspendido-y-cancelado",
+      "turn": 4,
+      "said": "que sean 25 en vez de 30",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "Tienes varios contactos con ese nombre: Marta Ruiz Gomez, Marta Solis Vega. ¿A quién se lo envío?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 11.83,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4023,
+      "completion_tokens": 25,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 5,
+      "provider_request_ms": 10585,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "bizum-marta",
+        "mechanism": "slot_carryover",
+        "route": "PAYMENT",
+        "want": "Nueva previsualización de 25 € a la misma Marta; no envía nada."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-bizum-ambiguo-suspendido-y-cancelado",
+      "turn": 5,
+      "said": "no, al final no lo mandes",
+      "outcome": "GUIDANCE",
+      "text": "De acuerdo, empezamos de nuevo. ¿Qué quieres consultar?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.89,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4041,
+      "completion_tokens": 8,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 6,
+      "provider_request_ms": 4333,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "GUIDANCE: no es la cifra de una consulta",
+      "expect": {
+        "task": "bizum-marta",
+        "mechanism": "reset",
+        "want": "Cancela el Bizum y lo dice; nunca llama a la confirmación bancaria."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-bizum-ambiguo-suspendido-y-cancelado",
+      "turn": 6,
+      "said": "¿cuánto le he enviado a Marta este año?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "El Bizum de 25,00 € está pausado. Para retomarlo, escribe «continuar con el Bizum»; para descartarlo, responde «no».",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.07,
+      "engine": "model",
+      "model_calls": 0,
+      "model_calls_malformed": false,
+      "provider_requests": 0,
+      "provider_requests_malformed": false,
+      "models_attempted": [],
+      "models_used": [],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": null,
+      "completion_tokens": null,
+      "token_reports": 0,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": null,
+      "provider_request_ms": null,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "enviado-marta",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Total enviado por Bizum a Marta en lo que va de año, a partir de los movimientos; no abre un borrador de pago."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-compras-tarjeta-paginadas",
+      "turn": 1,
+      "said": "qué compras he hecho con la tarjeta últimamente",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "No encuentro la cuenta «Tarjeta». ¿En cuál de tus cuentas quieres consultarlo: Cuenta corriente, Hucha y Fondo indexado?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 10.47,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3942,
+      "completion_tokens": 24,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 1147,
+      "provider_request_ms": 8223,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "compras-tarjeta",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Lista de las compras con tarjeta más recientes, ordenadas por fecha; no pide periodo ni da solo un total."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-compras-tarjeta-paginadas",
+      "turn": 2,
+      "said": "solo las del super",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres verlo?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 15.92,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3982,
+      "completion_tokens": 22,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 2341,
+      "provider_request_ms": 11925,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "compras-tarjeta",
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "La misma lista limitada a supermercados; sigue siendo una lista, no un total."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-compras-tarjeta-paginadas",
+      "turn": 3,
+      "said": "más",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 8.29,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3433,
+      "completion_tokens": 38,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 4,
+      "provider_request_ms": 7395,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "compras-tarjeta",
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "La página siguiente de compras de supermercado, sin repetir filas de la anterior."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-compras-tarjeta-paginadas",
+      "turn": 4,
+      "said": "¿cuánto suman las del super de este mes?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué categoría, comercio o persona quieres ver tus gastos en lo que va de mes?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 28.58,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8333,
+      "completion_tokens": 87,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 6876,
+      "provider_request_ms": 18785,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "total-super",
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "Total gastado en supermercados en el mes en curso; pasa de lista a total."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-compras-tarjeta-paginadas",
+      "turn": 5,
+      "said": "compáralo con el mismo mes del año pasado",
+      "outcome": "PLANNED",
+      "text": "En octubre de 2025: 2.050,96 €; en lo que va de mes: 1.054,42 €. El gasto fue 996,54 € mayor en octubre de 2025.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2025-10-01 al 2025-10-31, gastos frente a en lo que va de mes, gastos",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": 35,
+      "difference_minor": -99654,
+      "groups": [
+        {
+          "key": "en octubre de 2025",
+          "total_minor": 205096,
+          "movement_count": 27,
+          "value_minor": 205096
+        },
+        {
+          "key": "en lo que va de mes",
+          "total_minor": 105442,
+          "movement_count": 8,
+          "value_minor": 105442
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 11.73,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4148,
+      "completion_tokens": 61,
+      "token_reports": 1,
+      "financial_reads": 2,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 3,
+      "provider_request_ms": 10480,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "una comparación: la juzga la rúbrica",
+      "expect": {
+        "task": "total-super",
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "Compara supermercados entre este mes y el mismo mes del año anterior, con los dos periodos explícitos; avisa si el mes actual aún no ha terminado."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-compras-tarjeta-paginadas",
+      "turn": 6,
+      "said": "¿y sin contar Mercadona?",
+      "outcome": "PLANNED",
+      "text": "En octubre de 2025: 1.910,67 €; en lo que va de mes: 1.054,42 €. El gasto sin Mercadona fue 856,25 € mayor en octubre de 2025.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2025-10-01 al 2025-10-31, gastos, sin Mercadona frente a en lo que va de mes, gastos, sin Mercadona",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": 33,
+      "difference_minor": -85625,
+      "groups": [
+        {
+          "key": "en octubre de 2025",
+          "total_minor": 191067,
+          "movement_count": 25,
+          "value_minor": 191067
+        },
+        {
+          "key": "en lo que va de mes",
+          "total_minor": 105442,
+          "movement_count": 8,
+          "value_minor": 105442
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 8.07,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3695,
+      "completion_tokens": 22,
+      "token_reports": 1,
+      "financial_reads": 2,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 1193,
+      "provider_request_ms": 5993,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "una comparación: la juzga la rúbrica",
+      "expect": {
+        "task": "total-super",
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "Si puede excluir un comercio, repite la comparación sin Mercadona; si no puede, lo dice y ofrece una alternativa. Nunca inventa una cifra."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-correcciones-e-interrupcion",
+      "turn": 1,
+      "said": "cuanto me gaste en ocio en agosto",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en ocio del 2026-08-01 al 2026-08-31. Puedes buscar sin categoría o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-08-01 al 2026-08-31, gastos, ocio",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 7.12,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3943,
+      "completion_tokens": 56,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 2598,
+      "provider_request_ms": 3746,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": null,
+        "n": null,
+        "start": "2026-08-01",
+        "end": "2026-08-31",
+        "categories": [
+          "LEISURE"
+        ],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 0,
+        "movement_count": 0
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "task": "consulta-corregida",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Gasto en ocio en agosto, con el periodo explícito."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-correcciones-e-interrupcion",
+      "turn": 2,
+      "said": "no, en julio",
+      "outcome": "PLANNED",
+      "text": "44,59 € en ocio del 2026-07-01 al 2026-07-31, en 2 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-07-01 al 2026-07-31, gastos, ocio",
+      "last_plan": null,
+      "total_minor": 4459,
+      "movement_count": 2,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 4459,
+          "movement_count": 2,
+          "value_minor": 4459
+        }
+      ],
+      "movement_keys": [
+        "07546a2f8fb06749928d",
+        "fb11fe362bb82584bd79"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 10.03,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4030,
+      "completion_tokens": 46,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 3780,
+      "provider_request_ms": 5174,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": null,
+        "n": null,
+        "start": "2026-07-01",
+        "end": "2026-07-31",
+        "categories": [
+          "LEISURE"
+        ],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 4459,
+        "movement_count": 2
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "task": "consulta-corregida",
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "Gasto en ocio en julio; conserva la categoría."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-correcciones-e-interrupcion",
+      "turn": 3,
+      "said": "no me referia a eso, lo de restaurantes",
+      "outcome": "PLANNED",
+      "text": "133,57 € en restaurantes del 2026-07-01 al 2026-07-31, en 6 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-07-01 al 2026-07-31, gastos, restaurantes",
+      "last_plan": null,
+      "total_minor": 13357,
+      "movement_count": 6,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 13357,
+          "movement_count": 6,
+          "value_minor": 13357
+        }
+      ],
+      "movement_keys": [
+        "0f04ecc6d45a28a94be4",
+        "49440d1836bde001db31",
+        "4c556b9a32de5ff27719",
+        "a1646bb4454e4213b24a",
+        "f029cc90129b8d8b3398",
+        "fb3869ae6d2c61a6174c"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 13.94,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4135,
+      "completion_tokens": 21,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 4974,
+      "provider_request_ms": 7502,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": null,
+        "n": null,
+        "start": "2026-07-01",
+        "end": "2026-07-31",
+        "categories": [
+          "RESTAURANTS"
+        ],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 13357,
+        "movement_count": 6
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "task": "consulta-corregida",
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "Gasto en restaurantes en julio; cambia la categoría y conserva el mes."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-correcciones-e-interrupcion",
+      "turn": 4,
+      "said": "¿y en el Goiko solo?",
+      "outcome": "PLANNED",
+      "text": "18,55 € en Goiko del 2026-07-01 al 2026-07-31, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-07-01 al 2026-07-31, gastos, restaurantes, comercios con «Goiko» en el nombre",
+      "last_plan": null,
+      "total_minor": 1855,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 1855,
+          "movement_count": 1,
+          "value_minor": 1855
+        }
+      ],
+      "movement_keys": [
+        "0f04ecc6d45a28a94be4"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 9.38,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4246,
+      "completion_tokens": 22,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 1052,
+      "provider_request_ms": 7321,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": null,
+        "n": null,
+        "start": "2026-07-01",
+        "end": "2026-07-31",
+        "categories": [
+          "RESTAURANTS"
+        ],
+        "merchants": [],
+        "merchant_terms": [
+          "Goiko"
+        ],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 1855,
+        "movement_count": 1
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "task": "consulta-corregida",
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "Gasto en Goiko en julio."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-correcciones-e-interrupcion",
+      "turn": 5,
+      "said": "por cierto, ¿qué tarjetas tengo?",
+      "outcome": "UNSUPPORTED",
+      "text": "Todavía no puedo resolver esa operación desde esta conversación.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 9.0,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4367,
+      "completion_tokens": 10,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 2243,
+      "provider_request_ms": 5803,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "UNSUPPORTED: no es la cifra de una consulta",
+      "expect": {
+        "task": "tarjetas",
+        "mechanism": "interruption",
+        "want": "Las tarjetas del titular con su estado; no mezcla la consulta de Goiko."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-correcciones-e-interrupcion",
+      "turn": 6,
+      "said": "volviendo a lo del Goiko, ¿y en todo el año?",
+      "outcome": "PLANNED",
+      "text": "497,04 € en comercios con «Goiko» en el nombre en lo que va de año, en 16 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de año, gastos, restaurantes, comercios con «Goiko» en el nombre",
+      "last_plan": null,
+      "total_minor": 49704,
+      "movement_count": 16,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 49704,
+          "movement_count": 16,
+          "value_minor": 49704
+        }
+      ],
+      "movement_keys": [
+        "0f04ecc6d45a28a94be4",
+        "1c61a36053908f2a03a3",
+        "35a854df4d99358a8b89",
+        "a22713c5bd2e350b694e",
+        "a2b1c902f3d3f417e498",
+        "b0d7ff5342a2fe65a6eb",
+        "bbccc83baa1193ec7d6b",
+        "d8a9f2900fe742841aae",
+        "eda4099985b216dea8c9",
+        "f56f1085ed2b7e759c7a"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 12.13,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4391,
+      "completion_tokens": 22,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 2509,
+      "provider_request_ms": 8328,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": "THIS_YEAR",
+        "n": null,
+        "start": null,
+        "end": null,
+        "categories": [
+          "RESTAURANTS"
+        ],
+        "merchants": [],
+        "merchant_terms": [
+          "Goiko"
+        ],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 49704,
+        "movement_count": 16
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "task": "consulta-corregida",
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "Gasto en Goiko en lo que va de año; recupera el comercio tras la interrupción."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-capacidades-y-traspaso-desistido",
+      "turn": 1,
+      "said": "¿qué cosas puedes hacer por mí?",
+      "outcome": "IDENTITY",
+      "text": "Puedo decirte cuánto gastaste o ingresaste en un periodo, por categoría, comercio o persona; tus mayores gastos; comparar dos periodos, también en porcentaje; qué parte de tus gastos se fue en algo; y tu saldo. También puedo preparar un Bizum para uno de tus contactos guardados y enseñarte la vista previa. No se envía hasta que confirmes.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.47,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3941,
+      "completion_tokens": 9,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 3558,
+      "provider_request_ms": 2216,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "IDENTITY: no es la cifra de una consulta",
+      "expect": {
+        "task": "capacidades",
+        "mechanism": "intent",
+        "want": "Explica sus capacidades en pocas frases; no consulta ni prepara nada."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-capacidades-y-traspaso-desistido",
+      "turn": 2,
+      "said": "¿puedes hacer una transferencia a otro banco?",
+      "outcome": "IDENTITY",
+      "text": "Puedo decirte cuánto gastaste o ingresaste en un periodo, por categoría, comercio o persona; tus mayores gastos; comparar dos periodos, también en porcentaje; qué parte de tus gastos se fue en algo; y tu saldo. También puedo preparar un Bizum para uno de tus contactos guardados y enseñarte la vista previa. No se envía hasta que confirmes.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.0,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3974,
+      "completion_tokens": 9,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 662,
+      "provider_request_ms": 2876,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "IDENTITY: no es la cifra de una consulta",
+      "expect": {
+        "task": "capacidades",
+        "mechanism": "follow_up",
+        "want": "Dice con honestidad si puede o no y qué alternativa tiene; no crea un borrador."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-capacidades-y-traspaso-desistido",
+      "turn": 3,
+      "said": "pásame 100 euros de la corriente a la hucha",
+      "outcome": "AWAITING_CONFIRMATION",
+      "text": "Vas a mover 100,00 € a Hucha. Te quedarían 471,56 €. ¿Confirmas? Responde sí o no.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": "PAYMENT_CONFIRMATION",
+        "awaiting": "CONFIRMATION",
+        "last_asked": null
+      },
+      "seconds": 21.11,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8156,
+      "completion_tokens": 24,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 6232,
+      "provider_request_ms": 12668,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "AWAITING_CONFIRMATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "traspaso",
+        "mechanism": "intent",
+        "route": "PAYMENT",
+        "want": "Previsualización del traspaso de 100 € de Cuenta corriente a Hucha; no lo ejecuta."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-capacidades-y-traspaso-desistido",
+      "turn": 4,
+      "said": "mejor 50",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿A cuál de tus cuentas lo muevo? Tienes Cuenta corriente, Hucha y Fondo indexado.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": "PAYMENT_CONFIRMATION",
+        "awaiting": "CONFIRMATION",
+        "last_asked": null
+      },
+      "seconds": 16.88,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4110,
+      "completion_tokens": 28,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 5204,
+      "provider_request_ms": 9935,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "traspaso",
+        "mechanism": "slot_carryover",
+        "route": "PAYMENT",
+        "want": "Nueva previsualización de 50 € entre las mismas cuentas; no lo ejecuta."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-capacidades-y-traspaso-desistido",
+      "turn": 5,
+      "said": "déjalo, no hagas nada",
+      "outcome": "GUIDANCE",
+      "text": "De acuerdo, empezamos de nuevo. ¿Qué quieres consultar?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": "PAYMENT_CONFIRMATION",
+        "awaiting": "CONFIRMATION",
+        "last_asked": null
+      },
+      "seconds": 3.91,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4149,
+      "completion_tokens": 8,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 3,
+      "provider_request_ms": 3458,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "GUIDANCE: no es la cifra de una consulta",
+      "expect": {
+        "task": "traspaso",
+        "mechanism": "reset",
+        "want": "Cancela el traspaso y lo dice; nunca llama a la confirmación bancaria."
+      },
+      "error": null
+    },
+    {
+      "conversation": "holdout-capacidades-y-traspaso-desistido",
+      "turn": 6,
+      "said": "¿cuánto llevo gastado en suscripciones este año?",
+      "outcome": "PLANNED",
+      "text": "665,52 € en suscripciones en lo que va de año, en 34 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de año, gastos, suscripciones",
+      "last_plan": null,
+      "total_minor": 66552,
+      "movement_count": 34,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 66552,
+          "movement_count": 34,
+          "value_minor": 66552
+        }
+      ],
+      "movement_keys": [
+        "0abede1f5f056e5b176d",
+        "12103d21e26dd3dc9815",
+        "28b7141ecb3e965bc806",
+        "3f06d40482e06e930ead",
+        "5193dedd5dcbd1b415fd",
+        "68cd2b598d4691f62ffc",
+        "764e6c31c96f0cbf56be",
+        "9954cf0b64aa0dc7b6b7",
+        "99925490de3c4fc92cc4",
+        "d63ae05f675a1f32de81"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": "PAYMENT_CONFIRMATION",
+        "awaiting": "CONFIRMATION",
+        "last_asked": null
+      },
+      "seconds": 9.09,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4150,
+      "completion_tokens": 35,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 1175,
+      "provider_request_ms": 6930,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": "THIS_YEAR",
+        "n": null,
+        "start": null,
+        "end": null,
+        "categories": [
+          "SUBSCRIPTIONS"
+        ],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 66552,
+        "movement_count": 34
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "task": "suscripciones",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Total de suscripciones en lo que va de año; no arrastra cuentas ni importes del traspaso cancelado."
+      },
+      "error": null
+    }
+  ],
+  "findings": []
+}

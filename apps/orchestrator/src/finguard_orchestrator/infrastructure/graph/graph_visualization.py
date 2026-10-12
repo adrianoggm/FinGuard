@@ -125,15 +125,22 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
     else:
         plan = artifact.plan
         groups = artifact.groups
+        # A comparison's figure is the change between its sides, never one side's total: the
+        # card above a two-period chart read "Total" with the latest period's amount alone.
+        difference: int | None = None
         if artifact.comparison is not None and artifact.comparison_groups is not None:
             earlier_plan, latest_plan = artifact.comparison.earlier, artifact.comparison.latest
-            earlier_label = answer_writer.plan_in_words(earlier_plan)
-            latest_label = answer_writer.plan_in_words(latest_plan)
+            earlier_label = answer_writer.period_label(earlier_plan)
+            latest_label = answer_writer.period_label(latest_plan)
             dataset_metric = "COMPARISON"
             profile_metric = plan.metric.value
             plan_window = None
             earlier_groups, latest_groups = artifact.comparison_groups
-            if earlier_groups or latest_groups:
+            # Real groups -- categories, months, or the merchants an explained comparison is
+            # broken down by -- are drawn per group. A side whose only row is its "total" is a
+            # scalar, whatever the plan's grouping says.
+            grouped = any(group.key != "total" for group in (*earlier_groups, *latest_groups))
+            if grouped:
                 grouping = {
                     GroupBy.DAY: "día",
                     GroupBy.WEEK: "semana",
@@ -163,14 +170,24 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                 )
                 dataset_title = f"{earlier_label} frente a {latest_label}, por {grouping}"
                 profile_group_by = plan.group_by.value
-            elif artifact.comparison_values is not None:
-                # Scalar comparisons have no group rows: show their two verified answers as two
-                # ordinary bars, with the period labels on the axis and no invented series.
-                earlier_value, latest_value = artifact.comparison_values
-                rows = (
-                    VisualRow(earlier_label, earlier_value),
-                    VisualRow(latest_label, latest_value),
+            elif artifact.comparison_values is not None or earlier_groups or latest_groups:
+                # Scalar comparisons -- no grouping, or each side's one "total" row -- show their
+                # two verified answers as two ordinary bars, with the periods on the axis and no
+                # invented series. A one-row-per-side comparison drawn as series was one bar
+                # named "total" in two colours, with a legend reading "series".
+                earlier_value, latest_value = artifact.comparison_values or (
+                    sum(
+                        answer_writer.comparison_group_value(g, plan.metric) for g in earlier_groups
+                    ),
+                    sum(
+                        answer_writer.comparison_group_value(g, plan.metric) for g in latest_groups
+                    ),
                 )
+                rows = (
+                    VisualRow(earlier_label[:1].upper() + earlier_label[1:], earlier_value),
+                    VisualRow(latest_label[:1].upper() + latest_label[1:], latest_value),
+                )
+                difference = latest_value - earlier_value
                 dataset_title = f"{earlier_label} frente a {latest_label}"
                 profile_group_by = GroupBy.NONE.value
             else:
@@ -350,7 +367,8 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                 plan_in_words=visual_words,
                 plan_context=spoken_plan,
                 currency=artifact.currency,
-                total_minor=artifact.total_minor,
+                total_minor=artifact.total_minor if difference is None else None,
+                difference_minor=difference,
                 movement_count=artifact.movement_count,
                 explicit_visualization=True,
                 visual_dataset=dataset,
@@ -363,7 +381,8 @@ async def visualize_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraph
                 plan_in_words=visual_words,
                 plan_context=spoken_plan,
                 currency=artifact.currency,
-                total_minor=artifact.total_minor,
+                total_minor=artifact.total_minor if difference is None else None,
+                difference_minor=difference,
                 movement_count=artifact.movement_count,
                 explicit_visualization=True,
                 visual_dataset=dataset,

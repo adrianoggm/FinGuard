@@ -79,3 +79,33 @@ def test_the_month_of_largest_spending_is_named_as_a_month_with_its_article() ->
     assert text.startswith("El mes con mayor importe total")
     assert "abril de 2026" in text
     assert "2026-04" not in text and "enero" not in text
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "said"),
+    [
+        ("2026-04-01", "2026-04-30", "abril de 2026"),
+        ("2026-02-01", "2026-02-28", "febrero de 2026"),
+        ("2026-04-03", "2026-04-17", "del 3 de abril al 17 de abril de 2026"),
+        ("2025-12-15", "2026-01-10", "del 15 de diciembre de 2025 al 10 de enero de 2026"),
+    ],
+)
+def test_a_range_is_named_the_way_a_chart_says_it(start: str, end: str, said: str) -> None:
+    """A whole month by its name, any other range in words: never the ISO dates of the plan."""
+    from datetime import date
+
+    from finguard_orchestrator.domain.services.answer_writer import period_label
+    from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
+
+    plan = FinancialPlan(
+        Direction.EXPENSE,
+        date_range=AbsoluteRange(date.fromisoformat(start), date.fromisoformat(end)),
+    )
+    assert period_label(plan) == said
+
+
+def test_a_relative_window_is_named_as_a_noun_on_a_chart() -> None:
+    from finguard_orchestrator.domain.services.answer_writer import period_label
+
+    plan = FinancialPlan(Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+    assert period_label(plan) == "este mes"

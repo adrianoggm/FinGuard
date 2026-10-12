@@ -1,0 +1,835 @@
+{
+  "name": "2026-10-11-bd52f69b-35-flash-batteries",
+  "preflight": {
+    "services": {
+      "orchestrator": "ok",
+      "banking": "ok",
+      "gateway": "skipped (not used by this evaluation)"
+    },
+    "ready": {
+      "http_status": 200,
+      "status": "ok",
+      "provider": "echo",
+      "financial_path": {
+        "engine": "model",
+        "graph": "on",
+        "active_runtime": "langgraph",
+        "authoritative": true,
+        "provider": "gemini",
+        "model": "gemini-3.5-flash"
+      },
+      "payments": true,
+      "checks": {
+        "questions_enabled": true,
+        "catalogue_provider": true,
+        "planner": true,
+        "banking": true,
+        "conversation_runtime": true,
+        "persistence": true
+      }
+    },
+    "version": {
+      "service": "orchestrator",
+      "sha": "bd52f69b",
+      "ref": "task/legacy-removal",
+      "source_sha256": "1b770438bbd0cbeb50326545ceb81e965d6090fc8c78b224a0eb1a8f34180fd5"
+    },
+    "banking_version": {
+      "service": "banking-api",
+      "sha": "bd52f69b",
+      "ref": "task/legacy-removal",
+      "source_sha256": "ca81ab863f670021662c0e93710024262c90c95228a4e61ad03e25f99c62212a"
+    },
+    "ollama": [],
+    "newest": "2026-10-11",
+    "at": "2026-10-12T00:02:55+02:00",
+    "today": "2026-10-12",
+    "gpu": "P8, 180 MHz",
+    "head": "bd52f69b",
+    "source_sha256_local": {
+      "orchestrator": "1b770438bbd0cbeb50326545ceb81e965d6090fc8c78b224a0eb1a8f34180fd5",
+      "banking": "ca81ab863f670021662c0e93710024262c90c95228a4e61ad03e25f99c62212a"
+    },
+    "source_sha256": {
+      "orchestrator": "1b770438bbd0cbeb50326545ceb81e965d6090fc8c78b224a0eb1a8f34180fd5",
+      "banking": "ca81ab863f670021662c0e93710024262c90c95228a4e61ad03e25f99c62212a"
+    },
+    "component_code_under_test": {
+      "orchestrator": "same as current source",
+      "banking": "same as current source"
+    },
+    "code_under_test": "same as current source",
+    "problems": [],
+    "max_age_days": 4
+  },
+  "goals": {
+    "referencias-ranking-comparacion-categoria": "Encontrar el mes de mayor gasto, compararlo con el mes actual y desglosar ese mismo mes.",
+    "edicion-continua-de-grafico": "Crear un gráfico de gastos por categoría y editarlo varias veces sin perder cambios ni leer el banco.",
+    "bizum-interrumpido-y-reanudado": "Empezar un Bizum, interrumpirlo con una consulta de saldo, retomarlo y cancelarlo en la vista previa."
+  },
+  "expected_turns": {
+    "referencias-ranking-comparacion-categoria": 3,
+    "edicion-continua-de-grafico": 6,
+    "bizum-interrumpido-y-reanudado": 4
+  },
+  "expected_tasks": {},
+  "records": [
+    {
+      "conversation": "referencias-ranking-comparacion-categoria",
+      "turn": 1,
+      "said": "¿Cuál fue el mes de mayor gasto este año?",
+      "outcome": "PLANNED",
+      "text": "El mes con mayor importe total en lo que va de año es:\n  · abril de 2026: 2.294,13 € (32)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de año, gastos, por mes, top 1",
+      "last_plan": null,
+      "total_minor": 229413,
+      "movement_count": 32,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "2026-04",
+          "total_minor": 229413,
+          "movement_count": 32,
+          "value_minor": 229413
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.2,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3944,
+      "completion_tokens": 39,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "mes-de-mayor-gasto",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Nombra el mes de mayor gasto del año (abril de 2026 en el seed) con su importe."
+      },
+      "error": null
+    },
+    {
+      "conversation": "referencias-ranking-comparacion-categoria",
+      "turn": 2,
+      "said": "Compáralo con el actual",
+      "outcome": "PLANNED",
+      "text": "En abril de 2026: 2.294,13 €; en lo que va de mes: 1.030,42 €. El gasto fue 1.263,71 € mayor en abril de 2026.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-04-01 al 2026-04-30, gastos frente a en lo que va de mes, gastos",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": 39,
+      "difference_minor": -126371,
+      "groups": [
+        {
+          "key": "en abril de 2026",
+          "total_minor": 229413,
+          "movement_count": 32,
+          "value_minor": 229413
+        },
+        {
+          "key": "en lo que va de mes",
+          "total_minor": 103042,
+          "movement_count": 7,
+          "value_minor": 103042
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 12.83,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4115,
+      "completion_tokens": 36,
+      "token_reports": 1,
+      "financial_reads": 2,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "una comparación: la juzga la rúbrica",
+      "expect": {
+        "task": "mes-de-mayor-gasto",
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "Compara ese mes (abril) con el mes en curso (octubre), con ambos importes del banco."
+      },
+      "error": null
+    },
+    {
+      "conversation": "referencias-ranking-comparacion-categoria",
+      "turn": 3,
+      "said": "¿Y en qué categoría gasté más ese mes?",
+      "outcome": "PLANNED",
+      "text": "La categoría con mayor importe total del 2026-04-01 al 2026-04-30 es:\n  · alquiler: 920,00 € (1)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 2026-04-01 al 2026-04-30, gastos, por categoría, top 1",
+      "last_plan": null,
+      "total_minor": 92000,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 92000,
+          "movement_count": 1,
+          "value_minor": 92000
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 10.42,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3551,
+      "completion_tokens": 38,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "mes-de-mayor-gasto",
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "La categoría de mayor gasto de abril de 2026, no del año ni del mes en curso."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 1,
+      "said": "Muéstrame mis gastos de este año por categoría",
+      "outcome": "PLANNED",
+      "text": "19.306,70 € en lo que va de año, en 266 movimientos.\n  · alquiler: 9.200,00 € (10)\n  · supermercado: 4.219,38 € (76)\n  · restaurantes: 2.086,68 € (61)\n  · gasolina: 1.447,21 € (28)\n  · suscripciones: 665,52 € (34)\n  · transporte público: 659,38 € (31)\n  · bizum: 587,72 € (13)\n  · salud: 377,91 € (9)\n  · ocio: 62,90 € (4)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en lo que va de año, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 1930670,
+      "movement_count": 266,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 920000,
+          "movement_count": 10,
+          "value_minor": 920000
+        },
+        {
+          "key": "GROCERIES",
+          "total_minor": 421938,
+          "movement_count": 76,
+          "value_minor": 421938
+        },
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 208668,
+          "movement_count": 61,
+          "value_minor": 208668
+        },
+        {
+          "key": "TRANSPORT_FUEL",
+          "total_minor": 144721,
+          "movement_count": 28,
+          "value_minor": 144721
+        },
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 66552,
+          "movement_count": 34,
+          "value_minor": 66552
+        },
+        {
+          "key": "TRANSPORT_PUBLIC",
+          "total_minor": 65938,
+          "movement_count": 31,
+          "value_minor": 65938
+        },
+        {
+          "key": "TRANSFER_BIZUM",
+          "total_minor": 58772,
+          "movement_count": 13,
+          "value_minor": 58772
+        },
+        {
+          "key": "HEALTH",
+          "total_minor": 37791,
+          "movement_count": 9,
+          "value_minor": 37791
+        },
+        {
+          "key": "LEISURE",
+          "total_minor": 6290,
+          "movement_count": 4,
+          "value_minor": 6290
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "57a0f80cbbcebe3d192e",
+        "68cd2b598d4691f62ffc",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "ac0b6f3373a786f1e9e3",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.82,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3944,
+      "completion_tokens": 35,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Desglose de gastos del año por categoría."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 2,
+      "said": "Ponlo en gráfico",
+      "outcome": "PLANNED",
+      "text": "Aquí tienes el gráfico de los resultados de la consulta.",
+      "plan_in_words": "en lo que va de año, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 1930670,
+      "movement_count": 266,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [
+        "Ordena de menor a mayor",
+        "Ponlo en vertical"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 13.05,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4172,
+      "completion_tokens": 10,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "reference",
+        "route": "VISUAL",
+        "want": "Un gráfico de esas categorías, sin nueva lectura bancaria."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 3,
+      "said": "Vertical",
+      "outcome": "PLANNED",
+      "text": "He actualizado el gráfico con la misma consulta.",
+      "plan_in_words": "en lo que va de año, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 1930670,
+      "movement_count": 266,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [
+        "Ordena de menor a mayor",
+        "Ponlo en horizontal"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 20.51,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4319,
+      "completion_tokens": 12,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "Las mismas barras en vertical; mismo total, sin nueva lectura bancaria."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 4,
+      "said": "Ordena ascendente",
+      "outcome": "PLANNED",
+      "text": "He actualizado el gráfico con la misma consulta.",
+      "plan_in_words": "en lo que va de año, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 1930670,
+      "movement_count": 266,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [
+        "Ordena de mayor a menor",
+        "Ponlo en horizontal"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 9.62,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4334,
+      "completion_tokens": 12,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "Barras verticales ordenadas de menor a mayor; mismo total."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 5,
+      "said": "Solo las cinco mayores",
+      "outcome": "PLANNED",
+      "text": "He actualizado el gráfico con la misma consulta.",
+      "plan_in_words": "en lo que va de año, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 1930670,
+      "movement_count": 266,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [
+        "Ver todos",
+        "Ordena de mayor a menor",
+        "Ponlo en horizontal"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 16.52,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4349,
+      "completion_tokens": 12,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "Las cinco categorías mayores, verticales y ascendentes; el total de la consulta no cambia."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 6,
+      "said": "Vuelve a mostrar todas",
+      "outcome": "PLANNED",
+      "text": "He actualizado el gráfico con la misma consulta.",
+      "plan_in_words": "en lo que va de año, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 1930670,
+      "movement_count": 266,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [
+        "Ordena de mayor a menor",
+        "Ponlo en horizontal"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 10.74,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4369,
+      "completion_tokens": 14,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "Todas las categorías otra vez, verticales y ascendentes."
+      },
+      "error": null
+    },
+    {
+      "conversation": "bizum-interrumpido-y-reanudado",
+      "turn": 1,
+      "said": "Quiero hacerle un bizum a Marta Solis Vega",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De cuánto quieres hacerle el bizum a Marta Solis Vega?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 21.18,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8020,
+      "completion_tokens": 46,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "bizum-a-marta",
+        "mechanism": "intent",
+        "route": "PAYMENT",
+        "want": "Pide solo el importe; destinatario Marta Solis Vega."
+      },
+      "error": null
+    },
+    {
+      "conversation": "bizum-interrumpido-y-reanudado",
+      "turn": 2,
+      "said": "Espera, ¿cuánto tengo en la cuenta corriente?",
+      "outcome": "BALANCE",
+      "text": "Tienes 595,56 € en Cuenta corriente.",
+      "plan_in_words": "saldo de Cuenta corriente",
+      "last_plan": null,
+      "total_minor": 59556,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 9.94,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3979,
+      "completion_tokens": 9,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "task": "saldo-intercalado",
+        "mechanism": "interruption",
+        "route": "BALANCE",
+        "want": "Saldo de la cuenta corriente, sin crear ni perder el borrador del Bizum."
+      },
+      "error": null
+    },
+    {
+      "conversation": "bizum-interrumpido-y-reanudado",
+      "turn": 3,
+      "said": "Vale, sigamos con el bizum, que sean 15 euros",
+      "outcome": "AWAITING_CONFIRMATION",
+      "text": "Vas a enviar 15,00 € a Marta Solis Vega (+34600333444). Te quedarían 580,56 €. ¿Confirmas? Responde sí o no.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": "PAYMENT_CONFIRMATION",
+        "awaiting": "CONFIRMATION",
+        "last_asked": null
+      },
+      "seconds": 9.91,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash"
+      ],
+      "models_used": [
+        "gemini-3.5-flash"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4002,
+      "completion_tokens": 26,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "AWAITING_CONFIRMATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "bizum-a-marta",
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "want": "Vista previa de 15 € a Marta Solis Vega con botones de confirmación; no envía dinero."
+      },
+      "error": null
+    },
+    {
+      "conversation": "bizum-interrumpido-y-reanudado",
+      "turn": 4,
+      "said": "No, mejor no",
+      "outcome": "CANCELLED",
+      "text": "Vale, no he enviado nada.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 0.06,
+      "engine": "model",
+      "model_calls": 0,
+      "model_calls_malformed": false,
+      "provider_requests": 0,
+      "provider_requests_malformed": false,
+      "models_attempted": [],
+      "models_used": [],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": null,
+      "completion_tokens": null,
+      "token_reports": 0,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "CANCELLED: no es la cifra de una consulta",
+      "expect": {
+        "task": "bizum-a-marta",
+        "mechanism": "reset",
+        "want": "Cancela la vista previa; no se envía nada."
+      },
+      "error": null
+    }
+  ],
+  "findings": []
+}

@@ -199,7 +199,7 @@ describe("the state the service sent", () => {
 });
 
 describe("voice button controls", () => {
-  it("reuses the existing client for barge-in without cancelling or closing it", async () => {
+  it("reuses the existing client for barge-in while thinking, without cancelling or closing it", async () => {
     const calls: string[] = [];
     const client = {
       start: async () => { calls.push("start"); },
@@ -208,14 +208,29 @@ describe("voice button controls", () => {
       close: async () => { calls.push("close"); },
     };
 
-    const first = await voiceButtonAction("processing", client);
-    const second = await voiceButtonAction("speaking", client);
+    expect(await voiceButtonAction("processing", client)).toBe("barge-in");
+    expect(calls).toEqual(["start"]);
+  });
 
-    expect(first).toBe("barge-in");
-    expect(second).toBe("barge-in");
-    expect(calls).toEqual(["start", "start"]);
-    expect(calls).not.toContain("cancel");
-    expect(calls).not.toContain("close");
+  it("silences an answer being spoken: the audio stops, no new turn starts, the session stays", async () => {
+    const calls: string[] = [];
+    const client = {
+      start: async () => { calls.push("start"); },
+      stopCapture: () => { calls.push("stopCapture"); },
+      cancel: () => { calls.push("cancel"); },
+      close: async () => { calls.push("close"); },
+    };
+
+    expect(await voiceButtonAction("speaking", client)).toBe("silenced");
+    expect(calls).toEqual(["cancel"]);
+  });
+
+  it("keeps the spoken answer on screen when its audio is silenced", () => {
+    const answer = { outcome: "PLANNED", text: "Tienes 6.424,00 € en Hucha.", conversation: { conversation_id: "c-1", version: 2 } };
+    const afterText = applyVoiceEvent(thread(), { type: "assistant.text.final", answer } as never, noop).thread!;
+    // Silencing ends the turn with no turn.completed: what is on screen is what text.final put there.
+    expect(afterText.turns.at(-1)).toMatchObject({ who: "assistant" });
+    expect(afterText.conversation).toMatchObject({ conversation_id: "c-1", version: 2 });
   });
 
   it("keeps listening as the capture confirmation action", async () => {

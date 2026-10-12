@@ -238,6 +238,10 @@ def _visual_title(result: AskFinancialQuestionResult, dataset: VisualDataset) ->
         subject = "Distribución"
     else:
         subject = direction
+    if dataset.metric == "COMPARISON" and dataset.title:
+        # Both periods, as the dataset names them: the plan context is the latest side alone, so
+        # a two-period chart was titled with one of its periods ("Gastos por periodo · Este mes").
+        return f"{direction} · {dataset.title}"
     grouped = "" if dataset.metric == "RECURRENCE" else f" por {dimension}"
     return f"{subject}{grouped}" + (f" · {period}" if period else "")
 

@@ -1,0 +1,357 @@
+{
+  "name": "2026-10-11-bd52f69b-35-flash-lite-session-11",
+  "preflight": {
+    "services": {
+      "orchestrator": "ok",
+      "banking": "ok",
+      "gateway": "skipped (not used by this evaluation)"
+    },
+    "ready": {
+      "http_status": 200,
+      "status": "ok",
+      "provider": "echo",
+      "financial_path": {
+        "engine": "model",
+        "graph": "on",
+        "active_runtime": "langgraph",
+        "authoritative": true,
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite"
+      },
+      "payments": true,
+      "checks": {
+        "questions_enabled": true,
+        "catalogue_provider": true,
+        "planner": true,
+        "banking": true,
+        "conversation_runtime": true,
+        "persistence": true
+      }
+    },
+    "version": {
+      "service": "orchestrator",
+      "sha": "bd52f69b",
+      "ref": "task/legacy-removal",
+      "source_sha256": "1b770438bbd0cbeb50326545ceb81e965d6090fc8c78b224a0eb1a8f34180fd5"
+    },
+    "banking_version": {
+      "service": "banking-api",
+      "sha": "bd52f69b",
+      "ref": "task/legacy-removal",
+      "source_sha256": "ca81ab863f670021662c0e93710024262c90c95228a4e61ad03e25f99c62212a"
+    },
+    "ollama": [
+      {
+        "name": "qwen2.5-coder:7b",
+        "size_vram": 4748056984,
+        "context_length": 4096
+      }
+    ],
+    "newest": "2026-10-11",
+    "at": "2026-10-11T23:32:45+02:00",
+    "today": "2026-10-11",
+    "gpu": "P8, 22 MHz",
+    "head": "bd52f69b",
+    "source_sha256_local": {
+      "orchestrator": "1b770438bbd0cbeb50326545ceb81e965d6090fc8c78b224a0eb1a8f34180fd5",
+      "banking": "ca81ab863f670021662c0e93710024262c90c95228a4e61ad03e25f99c62212a"
+    },
+    "source_sha256": {
+      "orchestrator": "1b770438bbd0cbeb50326545ceb81e965d6090fc8c78b224a0eb1a8f34180fd5",
+      "banking": "ca81ab863f670021662c0e93710024262c90c95228a4e61ad03e25f99c62212a"
+    },
+    "component_code_under_test": {
+      "orchestrator": "same as current source",
+      "banking": "same as current source"
+    },
+    "code_under_test": "same as current source",
+    "problems": [],
+    "max_age_days": 4
+  },
+  "goals": {
+    "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado": "Completar varias gestiones en una conversación: consultar saldos, listar movimientos y paginar sin duplicados, graficar la página de movimientos ya mostrada, cambiar de tema, comparar restaurantes, visualizar el resultado y cancelar un Bizum antes de ejecutarlo."
+  },
+  "expected_turns": {
+    "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado": 11
+  },
+  "expected_tasks": {},
+  "records": [
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 1,
+      "said": "¿Me dices cómo están mis cuentas?",
+      "outcome": "BALANCE",
+      "text": "Tienes 7.019,56 € entre tus cuentas: 595,56 € en Cuenta corriente y 6.424,00 € en Hucha. Aparte, tienes 3.150,00 € en Fondo indexado, que es lo que invertiste y no lo que vale hoy.",
+      "plan_in_words": "saldo de tus cuentas",
+      "last_plan": null,
+      "total_minor": 701956,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 11.81,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash-lite"
+      ],
+      "models_used": [
+        "gemini-3.5-flash-lite"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3941,
+      "completion_tokens": 7,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "BALANCE: no es la cifra de una consulta",
+      "expect": {
+        "task": "saldos",
+        "mechanism": "intent",
+        "route": "BALANCE",
+        "want": "Saldo actual por cuenta y total basado únicamente en la banca; no confunde saldo de inversión con valoración actual."
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 2,
+      "said": "Enséñame los últimos 20 gastos de la corriente.",
+      "outcome": "PLANNED",
+      "text": "Estos son tus últimos 20 movimientos. Dime \"dame otros 20\" para ver los siguientes.\nConsultado en Cuenta corriente.",
+      "plan_in_words": "gastos recientes",
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "28b73f93c7225c0e2b57",
+        "36c216be86c0bf9b8ba4",
+        "47b221c50b73d73a34bc",
+        "493170868061d613a9ee",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "57a0f80cbbcebe3d192e",
+        "68cd2b598d4691f62ffc",
+        "76b790f8eaf6261a0466",
+        "7756fbe32a8816a90c23",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "9ffeb6c3693d87ecb0d1",
+        "a4a45d466784d793985c",
+        "ac0b6f3373a786f1e9e3",
+        "c868bca87a58fbf74a7e",
+        "e4eb1c42875190928abe",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 9.26,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash-lite"
+      ],
+      "models_used": [
+        "gemini-3.5-flash-lite"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3976,
+      "completion_tokens": 87,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "movimientos-paginacion",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Una lista ordenada de hasta 20 movimientos de gasto de Cuenta corriente, con fechas, comercios e importes; no solicita periodo."
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 3,
+      "said": "Dame otros 10.",
+      "outcome": "PROVIDER_ERROR",
+      "text": "No he podido leer tu mensaje ahora mismo. Vuelve a intentarlo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 11.28,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash-lite"
+      ],
+      "models_used": [
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash-lite"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 7850,
+      "completion_tokens": 134,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "PROVIDER_ERROR: no es la cifra de una consulta",
+      "expect": {
+        "task": "movimientos-paginacion",
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "invariants": [
+          "no_duplicate_movement_ids_across_task_pages"
+        ],
+        "want": "Devuelve la página siguiente de hasta 10 gastos de Cuenta corriente, ordenada igual y sin repetir ninguna fila de la página anterior."
+      },
+      "error": null,
+      "provider_retries": 1,
+      "session_invariant": "unverified",
+      "session_invariant_note": "no hay filas identificables en ambas páginas para comprobar duplicados"
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 4,
+      "said": "¿Me los enseñas en una gráfica?",
+      "skipped": "replay detenido tras indisponibilidad del proveedor en sesion-bancaria-grafica-de-pagina-y-bizum-nombrado turno 3; no es un fallo semántico evaluado",
+      "expect": {
+        "task": "movimientos-paginacion",
+        "mechanism": "reference",
+        "route": "VISUAL",
+        "invariants": [
+          "no_financial_read_for_reused_visualization"
+        ],
+        "want": "Dibuja los movimientos de la página que acaba de mostrar, dejando claro que no representa el total de una consulta mayor y reutilizando el resultado ya obtenido."
+      }
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 5,
+      "said": "¿Y los de la Hucha?",
+      "skipped": "replay detenido tras indisponibilidad del proveedor en sesion-bancaria-grafica-de-pagina-y-bizum-nombrado turno 3; no es un fallo semántico evaluado",
+      "expect": {
+        "task": "movimientos-paginacion",
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "Conserva el tipo de lista y la dirección de gastos, cambia solo la cuenta a Hucha y muestra que no hay gastos en esa cuenta; no convierte traspasos internos ni intereses en gastos."
+      }
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 6,
+      "said": "¿Cuánto gasté en restaurantes el mes pasado?",
+      "skipped": "replay detenido tras indisponibilidad del proveedor en sesion-bancaria-grafica-de-pagina-y-bizum-nombrado turno 3; no es un fallo semántico evaluado",
+      "expect": {
+        "task": "restaurantes-comparacion-visualizacion",
+        "mechanism": "interruption",
+        "route": "QUERY",
+        "want": "Inicia una consulta independiente de restaurantes para el mes pasado en todas las cuentas; no hereda Hucha ni el límite de movimientos."
+      }
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 7,
+      "said": "Compáralo con agosto.",
+      "skipped": "replay detenido tras indisponibilidad del proveedor en sesion-bancaria-grafica-de-pagina-y-bizum-nombrado turno 3; no es un fallo semántico evaluado",
+      "expect": {
+        "task": "restaurantes-comparacion-visualizacion",
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "Compara el mismo gasto en restaurantes entre el mes pasado y agosto, con ambos periodos explícitos y resultados bancarios."
+      }
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 8,
+      "said": "Ponme una gráfica.",
+      "skipped": "replay detenido tras indisponibilidad del proveedor en sesion-bancaria-grafica-de-pagina-y-bizum-nombrado turno 3; no es un fallo semántico evaluado",
+      "expect": {
+        "task": "restaurantes-comparacion-visualizacion",
+        "mechanism": "reference",
+        "route": "VISUAL",
+        "want": "Dibuja la comparación anterior usando sus resultados verificados, sin una nueva lectura bancaria ni un desglose distinto."
+      }
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 9,
+      "said": "¿Puedes hacer Bizums?",
+      "skipped": "replay detenido tras indisponibilidad del proveedor en sesion-bancaria-grafica-de-pagina-y-bizum-nombrado turno 3; no es un fallo semántico evaluado",
+      "expect": {
+        "task": "capacidad-bizum",
+        "mechanism": "interruption",
+        "want": "Explica la capacidad sin crear un borrador de pago ni iniciar una confirmación."
+      }
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 10,
+      "said": "Vale, quiero enviar 15 euros a Marta Ruiz Gomez.",
+      "skipped": "replay detenido tras indisponibilidad del proveedor en sesion-bancaria-grafica-de-pagina-y-bizum-nombrado turno 3; no es un fallo semántico evaluado",
+      "expect": {
+        "task": "bizum-cancelacion",
+        "mechanism": "intent",
+        "route": "PAYMENT",
+        "want": "Resuelve Marta contra los contactos y muestra la previsualización bancaria exacta; todavía no envía dinero."
+      }
+    },
+    {
+      "conversation": "sesion-bancaria-grafica-de-pagina-y-bizum-nombrado",
+      "turn": 11,
+      "said": "No, mejor déjalo.",
+      "skipped": "replay detenido tras indisponibilidad del proveedor en sesion-bancaria-grafica-de-pagina-y-bizum-nombrado turno 3; no es un fallo semántico evaluado",
+      "expect": {
+        "task": "bizum-cancelacion",
+        "mechanism": "reset",
+        "want": "Cancela el borrador o la previsualización y no ejecuta el pago."
+      }
+    }
+  ],
+  "findings": []
+}

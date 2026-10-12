@@ -13,6 +13,7 @@ The text is Spanish because it is product data, which is the one exception rule 
 makes.
 """
 
+import calendar
 from datetime import datetime, timedelta
 from fractions import Fraction
 from typing import Final
@@ -522,6 +523,45 @@ def month_name(year: int, month: int) -> str:
     if not 1 <= month <= 12:
         return f"{year}-{month:02d}"
     return f"{_MONTHS[month - 1]} de {year}"
+
+
+# A relative window as a chart labels it: a noun, where a sentence wants "en lo que va de mes".
+_PERIOD_LABELS: Final = {
+    "TODAY": "hoy",
+    "YESTERDAY": "ayer",
+    "THIS_WEEK": "esta semana",
+    "LAST_WEEK": "semana pasada",
+    "THIS_MONTH": "este mes",
+    "LAST_MONTH": "mes pasado",
+    "THIS_YEAR": "este año",
+    "LAST_YEAR": "año pasado",
+}
+
+
+def period_label(plan: FinancialPlan) -> str:
+    """A period as a chart names it: «abril de 2026», «este mes», «del 3 al 17 de abril de 2026».
+
+    `window_of` names a range by its ISO dates, which is what the plan says and what a log wants;
+    on an axis or in a title it read as «del 2026-04-01 al 2026-04-30» for a month anybody would
+    call April.
+    """
+    if plan.date_range is not None:
+        start, end = plan.date_range.start, plan.date_range.end
+        whole_month = (
+            start.day == 1
+            and (end.year, end.month) == (start.year, start.month)
+            and end.day == calendar.monthrange(end.year, end.month)[1]
+        )
+        if whole_month:
+            return month_name(start.year, start.month)
+        first = f"{start.day} de {_MONTHS[start.month - 1]}"
+        last = f"{end.day} de {_MONTHS[end.month - 1]} de {end.year}"
+        if start.year != end.year:
+            first = f"{first} de {start.year}"
+        return f"del {first} al {last}"
+    if plan.period is not None and plan.period.period.value in _PERIOD_LABELS:
+        return _PERIOD_LABELS[plan.period.period.value]
+    return window_of(plan)
 
 
 def month_group_name(key: str) -> str:

@@ -28,6 +28,7 @@ export type VoiceCallbacks = {
   onStatus: (status: VoiceStatus, error?: string) => void;
   onFinished?: () => void;
   conversation?: () => unknown;
+  onLevel?: (level: number) => void;
 };
 
 export function createVoiceClient(callbacks: VoiceCallbacks): VoiceClient | null {
