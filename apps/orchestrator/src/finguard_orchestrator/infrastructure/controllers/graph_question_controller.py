@@ -40,9 +40,14 @@ def _metric_token_codec(request: Request) -> MetricTokenCodec:
     return codec
 
 
+def _metrics_on(request: Request) -> bool:
+    return bool(getattr(request.app.state, "metrics_enabled", False))
+
+
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 MetricTokens = Annotated[MetricTokenCodec, Depends(_metric_token_codec)]
+MetricsOn = Annotated[bool, Depends(_metrics_on)]
 
 
 @router.post(
@@ -58,9 +63,10 @@ async def ask(
     metric_tokens: MetricTokens,
     commands: Commands,
     queries: Queries,
+    metrics_on: MetricsOn,
 ) -> QuestionResponse:
     return await engine_dispatch.try_engine(
-        commands, queries, body, who, today, metric_tokens, request_id=attempt
+        commands, queries, body, who, today, metric_tokens, attempt, metrics_on
     )
 
 
@@ -77,7 +83,8 @@ async def ask_streaming(
     metric_tokens: MetricTokens,
     commands: Commands,
     queries: Queries,
+    metrics_on: MetricsOn,
 ) -> StreamingResponse:
     return await engine_dispatch.try_engine_streaming(
-        commands, queries, body, who, today, metric_tokens, request_id=attempt
+        commands, queries, body, who, today, metric_tokens, attempt, metrics_on
     )

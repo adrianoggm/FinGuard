@@ -6,9 +6,11 @@ reads exactly three value-free facts an accepted `ChartSpec`/`VisualProfile` pai
 the plan's own `group_by`/`direction`, and nothing else. It never opens `result.groups`,
 `result.total_minor` or a single row: the rows are what the screen is for.
 
-What it deliberately never says: an amount, a count, or the name of every category on the chart --
-only the top one, and only when the chart is actually ranked (a tie at the top is not a fact the
-chart shows, so an unranked chart gets no top sentence at all).
+One sentence, said the way a caption sits under a figure in an article: what the chart shows, and
+its leader when it has one -- "Tus gastos por categoría, con restaurantes en cabeza." Never an
+amount, a count, or the name of every category: the rows are on screen, and reading them out was
+what made a spoken chart tiring. The leader is named only when the chart is actually ranked (a tie
+at the top is not a fact the chart shows).
 """
 
 from __future__ import annotations
@@ -36,32 +38,27 @@ _NOUNS: dict[GroupBy, tuple[str, str] | None] = {
 }
 assert set(_NOUNS) == set(GroupBy)
 
-_MEASURES: dict[Direction, str] = {
-    Direction.EXPENSE: "gasto",
-    Direction.INCOME: "ingreso",
-    Direction.ALL: "movimiento",
+_MEASURES: dict[Direction, tuple[str, str]] = {
+    Direction.EXPENSE: ("gasto", "gastos"),
+    Direction.INCOME: ("ingreso", "ingresos"),
+    Direction.ALL: ("movimiento", "movimientos"),
 }
 
-# The temporal unit named in the second sentence, keyed the same way as `_NOUNS` -- only the three
-# grouping kinds a temporal dimension can actually be. "meses" is the fallback for a temporal
-# dimension whose plan is not a `FinancialPlan` naming one of the three (nothing in the pipeline
-# produces that combination today, but the sentence still needs a word).
+# The unit of a time axis, for the plan groupings that are one.
 _TIME_UNITS: dict[GroupBy, str] = {
-    GroupBy.DAY: "días",
-    GroupBy.WEEK: "semanas",
-    GroupBy.MONTH: "meses",
+    GroupBy.DAY: "día",
+    GroupBy.WEEK: "semana",
+    GroupBy.MONTH: "mes",
 }
 
 
-def _top_label(label: str, group_by: GroupBy) -> str:
-    """The top label, said the way a person would -- capitalised, never a raw wire value."""
+def _label(label: str, group_by: GroupBy) -> str:
+    """The leader, said the way a person would -- never a raw wire value."""
     if visual_reference.parsed_month(label) is not None:
-        name = answer_writer.month_group_name(label)
-    elif group_by is GroupBy.CATEGORY:
-        name = category_words.name_of(label)
-    else:
-        name = label
-    return name[:1].upper() + name[1:] if name else name
+        return answer_writer.month_group_name(label)
+    if group_by is GroupBy.CATEGORY:
+        return category_words.name_of(label)
+    return label
 
 
 def spoken_summary(
@@ -71,46 +68,31 @@ def spoken_summary(
     ranked: bool,
     plan: FinancialPlan | ComparisonPlan | RatioPlan | None,
 ) -> str | None:
-    """One Spanish sentence pair naming the chart's top group and its shape -- never an amount."""
+    """One Spanish sentence, a caption for the chart on screen -- never an amount."""
     if profile.comparison:
-        return (
-            "En pantalla tienes la comparación de los dos periodos; puedes preguntarme por "
-            "cualquiera de los dos."
-        )
-    if spec.mark == "donut":
-        return "En pantalla tienes el reparto."
+        return "Comparación de los dos periodos."
 
-    group_by = plan.group_by if isinstance(plan, FinancialPlan) else None
+    financial = plan if isinstance(plan, FinancialPlan) else None
+    group_by = financial.group_by if financial is not None else None
+    measure, measures = _MEASURES[financial.direction] if financial is not None else ("", "")
+    subject = f"tus {measures}" if financial is not None else "lo que has pedido"
     nouns = _NOUNS.get(group_by) if group_by is not None else None
+    noun = nouns[0].split(" ", 1)[1] if nouns is not None else None
 
-    top_sentence = None
-    if ranked and labels and nouns is not None and group_by is not None:
-        if not isinstance(plan, FinancialPlan):
-            # `group_by` is only ever set two lines up, from a `FinancialPlan`'s own attribute --
-            # so reaching a non-`None` `group_by` with a `plan` that is not one is a type-narrowing
-            # invariant, not a real input. A plain check that degrades to the generic second
-            # sentence keeps that invariant true without an `assert`, which an `-O` run strips.
-            second = _second_sentence(profile, group_by, nouns)
-            return second
-        singular, _ = nouns
-        measure = _MEASURES[plan.direction]
-        top_sentence = f"{_top_label(labels[0], group_by)} fue {singular} con mayor {measure}."
-
-    second = _second_sentence(profile, group_by, nouns)
-    return f"{top_sentence} {second}" if top_sentence else second
-
-
-def _second_sentence(
-    profile: VisualProfile, group_by: GroupBy | None, nouns: tuple[str, str] | None
-) -> str:
-    """The shape sentence: temporal evolution, a named desglose, or the bare desglose."""
     if profile.temporal():
-        unit = _TIME_UNITS.get(group_by, "meses") if group_by is not None else "meses"
-        return (
-            f"En pantalla tienes la evolución por {unit}, y puedes preguntarme por "
-            "cualquiera de ellos."
-        )
-    if nouns is not None:
-        _, plural = nouns
-        return f"En pantalla tienes el desglose, y puedes preguntarme por cualquiera de {plural}."
-    return "En pantalla tienes el desglose."
+        unit = _TIME_UNITS.get(group_by) if group_by is not None else None
+        caption = f"Evolución de {subject} " + (f"por {unit}" if unit else "en el tiempo")
+    elif spec.mark == "donut":
+        caption = f"Reparto de {subject}" + (f" por {noun}" if noun else "")
+    elif noun is not None:
+        caption = f"{subject} por {noun}"
+    else:
+        caption = f"Desglose de {subject}"
+
+    if ranked and labels and nouns is not None and group_by is not None and financial is not None:
+        leader = _label(labels[0], group_by)
+        if profile.temporal():
+            caption += f", con {leader} como {nouns[0]} de más {measure}"
+        else:
+            caption += f", con {leader} en cabeza"
+    return caption[:1].upper() + caption[1:] + "."

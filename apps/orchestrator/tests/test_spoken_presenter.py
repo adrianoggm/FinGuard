@@ -72,15 +72,14 @@ def test_the_noun_vocabulary_covers_every_groupby_member() -> None:
 def test_a_breakdown_with_no_grouping_names_no_top_and_a_generic_desglose() -> None:
     spec, profile, labels, ranked = _context("breakdown")
     plan = _last_month(Direction.EXPENSE, GroupBy.NONE)
-    assert spoken_summary(spec, profile, labels, ranked, plan) == "En pantalla tienes el desglose."
+    assert spoken_summary(spec, profile, labels, ranked, plan) == "Desglose de tus gastos."
 
 
 def test_a_temporal_chart_names_the_top_month_and_the_evolution() -> None:
     spec, profile, labels, ranked = _context("temporal")
     plan = _last_month(Direction.EXPENSE, GroupBy.MONTH)
     assert spoken_summary(spec, profile, labels, ranked, plan) == (
-        "Febrero de 2026 fue el mes con mayor gasto. En pantalla tienes la evolución por "
-        "meses, y puedes preguntarme por cualquiera de ellos."
+        "Evolución de tus gastos por mes, con febrero de 2026 como el mes de más gasto."
     )
 
 
@@ -88,8 +87,7 @@ def test_a_cumulative_chart_names_the_top_month_too() -> None:
     spec, profile, labels, ranked = _context("cumulative")
     plan = _last_month(Direction.EXPENSE, GroupBy.MONTH)
     assert spoken_summary(spec, profile, labels, ranked, plan) == (
-        "Marzo de 2026 fue el mes con mayor gasto. En pantalla tienes la evolución por "
-        "meses, y puedes preguntarme por cualquiera de ellos."
+        "Evolución de tus gastos por mes, con marzo de 2026 como el mes de más gasto."
     )
 
 
@@ -98,13 +96,13 @@ def test_a_frequency_chart_with_no_financial_plan_grouping_is_generic() -> None:
     financial noun for a weekday breakdown, so this is the generic desglose, same as breakdown."""
     spec, profile, labels, ranked = _context("frequency")
     plan = _last_month(Direction.EXPENSE, GroupBy.NONE)
-    assert spoken_summary(spec, profile, labels, ranked, plan) == "En pantalla tienes el desglose."
+    assert spoken_summary(spec, profile, labels, ranked, plan) == "Desglose de tus gastos."
 
 
 def test_a_ratio_share_chart_is_generic_too() -> None:
     spec, profile, labels, ranked = _context("ratio_share")
     plan = _last_month(Direction.EXPENSE, GroupBy.NONE)
-    assert spoken_summary(spec, profile, labels, ranked, plan) == "En pantalla tienes el desglose."
+    assert spoken_summary(spec, profile, labels, ranked, plan) == "Desglose de tus gastos."
 
 
 def test_a_merchant_grouped_recurrence_chart_names_the_top_merchant() -> None:
@@ -120,8 +118,7 @@ def test_a_merchant_grouped_recurrence_chart_names_the_top_merchant() -> None:
     spec, profile, labels, ranked = _context("recurrence")
     plan = _last_month(Direction.EXPENSE, GroupBy.MERCHANT)
     assert spoken_summary(spec, profile, labels, ranked, plan) == (
-        "Netflix fue el comercio con mayor gasto. En pantalla tienes la evolución por meses, "
-        "y puedes preguntarme por cualquiera de ellos."
+        "Evolución de tus gastos en el tiempo, con Netflix como el comercio de más gasto."
     )
 
 
@@ -139,8 +136,7 @@ def test_a_category_grouped_breakdown_names_the_top_category() -> None:
     result = drawn_labels(dataset)
     plan = _last_month(Direction.EXPENSE, GroupBy.CATEGORY)
     assert spoken_summary(spec, profile, result.labels, result.ranked, plan) == (
-        "Restaurantes fue la categoría con mayor gasto. En pantalla tienes el desglose, y "
-        "puedes preguntarme por cualquiera de las categorías."
+        "Tus gastos por categoría, con restaurantes en cabeza."
     )
 
 
@@ -169,19 +165,14 @@ def test_every_other_noun_in_the_closed_vocabulary(
     result = drawn_labels(dataset)
     plan = _last_month(Direction.EXPENSE, group_by)
     spoken = spoken_summary(spec, profile, result.labels, result.ranked, plan)
+    noun = singular_noun.split(" ", 1)[1]
     if group_by in {GroupBy.DAY, GroupBy.WEEK}:
-        # DAY/WEEK are temporal groupings (`_TEMPORAL_GROUPS`): the top sentence still names the
-        # grouping noun, but the second sentence is the temporal one, not the nominal one.
-        unit = "días" if group_by is GroupBy.DAY else "semanas"
+        # DAY/WEEK are temporal groupings (`_TEMPORAL_GROUPS`): an evolution, led by its peak.
         assert spoken == (
-            f"A fue {singular_noun} con mayor gasto. En pantalla tienes la evolución por "
-            f"{unit}, y puedes preguntarme por cualquiera de ellos."
+            f"Evolución de tus gastos por {noun}, con A como {singular_noun} de más gasto."
         )
     else:
-        assert spoken == (
-            f"A fue {singular_noun} con mayor gasto. En pantalla tienes el desglose, y puedes "
-            f"preguntarme por cualquiera de {plural_noun}."
-        )
+        assert spoken == f"Tus gastos por {noun}, con A en cabeza."
 
 
 def test_an_income_plan_says_ingreso_not_gasto() -> None:
@@ -199,8 +190,7 @@ def test_an_income_plan_says_ingreso_not_gasto() -> None:
     plan = _last_month(Direction.INCOME, GroupBy.CATEGORY)
     spoken = spoken_summary(spec, profile, result.labels, result.ranked, plan)
     assert spoken is not None
-    assert "con mayor ingreso." in spoken
-    assert "gasto" not in spoken
+    assert spoken == "Tus ingresos por categoría, con restaurantes en cabeza."
 
 
 def test_an_all_direction_plan_says_movimiento() -> None:
@@ -218,7 +208,7 @@ def test_an_all_direction_plan_says_movimiento() -> None:
     plan = _last_month(Direction.ALL, GroupBy.CATEGORY)
     spoken = spoken_summary(spec, profile, result.labels, result.ranked, plan)
     assert spoken is not None
-    assert "con mayor movimiento." in spoken
+    assert spoken == "Tus movimientos por categoría, con restaurantes en cabeza."
 
 
 def test_an_unranked_tie_at_the_top_gets_no_top_sentence() -> None:
@@ -238,7 +228,7 @@ def test_an_unranked_tie_at_the_top_gets_no_top_sentence() -> None:
     assert result.ranked is False
     plan = _last_month(Direction.EXPENSE, GroupBy.CATEGORY)
     assert spoken_summary(spec, profile, result.labels, result.ranked, plan) == (
-        "En pantalla tienes el desglose, y puedes preguntarme por cualquiera de las categorías."
+        "Tus gastos por categoría."
     )
 
 
@@ -246,7 +236,7 @@ def test_a_plan_group_by_none_is_generic_with_no_top_sentence() -> None:
     spec, profile, labels, ranked = _context("breakdown")
     plan = _last_month(Direction.EXPENSE, GroupBy.NONE)
     spoken = spoken_summary(spec, profile, labels, ranked, plan)
-    assert spoken == "En pantalla tienes el desglose."
+    assert spoken == "Desglose de tus gastos."
 
 
 def test_a_comparison_profile_ignores_the_mark_and_the_plan() -> None:
@@ -258,8 +248,7 @@ def test_a_comparison_profile_ignores_the_mark_and_the_plan() -> None:
     result = drawn_labels(dataset)
     plan = _last_month(Direction.EXPENSE, GroupBy.CATEGORY)
     assert spoken_summary(spec, profile, result.labels, result.ranked, plan) == (
-        "En pantalla tienes la comparación de los dos periodos; puedes preguntarme por "
-        "cualquiera de los dos."
+        "Comparación de los dos periodos."
     )
 
 
@@ -282,14 +271,14 @@ def test_a_donut_names_the_reparto_regardless_of_grouping() -> None:
     result = drawn_labels(donut_dataset)
     plan = _last_month(Direction.EXPENSE, GroupBy.CATEGORY)
     assert spoken_summary(spec, profile, result.labels, result.ranked, plan) == (
-        "En pantalla tienes el reparto."
+        "Reparto de tus gastos por categoría, con Alquiler en cabeza."
     )
 
 
 def test_a_no_plan_turn_is_generic_with_no_top_sentence() -> None:
     spec, profile, labels, ranked = _context("temporal")
     assert spoken_summary(spec, profile, labels, ranked, None) == (
-        "En pantalla tienes la evolución por meses, y puedes preguntarme por cualquiera de ellos."
+        "Evolución de lo que has pedido en el tiempo."
     )
 
 
@@ -306,7 +295,7 @@ def test_a_ratio_plan_is_treated_as_no_plan() -> None:
     )
     comparison = ComparisonPlan(earlier=earlier, latest=latest)
     assert spoken_summary(spec, profile, labels, ranked, comparison) == (
-        "En pantalla tienes la evolución por meses, y puedes preguntarme por cualquiera de ellos."
+        "Evolución de lo que has pedido en el tiempo."
     )
 
 
@@ -334,8 +323,8 @@ def test_a_month_top_sentence_names_only_a_calendar_year_never_a_ledger_value(
     family_name: str,
 ) -> None:
     """The one acknowledged exception to the blanket "no digit" claim above: when the top label is
-    a `YYYY-MM` key, `_top_label` reuses `answer_writer.month_group_name`, which names the year --
-    e.g. "Febrero de 2026 fue el mes con mayor gasto." A digit here is a calendar fact, never an
+    a `YYYY-MM` key, `_label` reuses `answer_writer.month_group_name`, which names the year --
+    e.g. "con febrero de 2026 como el mes de más gasto". A digit here is a calendar fact, never an
     amount or a count, so the property this test actually pins is narrower and exact: every digit
     in the output belongs to a 4-digit year, and there is at most one such run."""
     spec, profile, labels, ranked = _context(family_name)
@@ -369,6 +358,5 @@ def test_result_ignores_unrelated_plan_fields() -> None:
         transaction_ids=(uuid4(),),
     )
     assert spoken_summary(spec, profile, labels, ranked, plan) == (
-        "Febrero de 2026 fue el mes con mayor gasto. En pantalla tienes la evolución por "
-        "meses, y puedes preguntarme por cualquiera de ellos."
+        "Evolución de tus gastos por mes, con febrero de 2026 como el mes de más gasto."
     )

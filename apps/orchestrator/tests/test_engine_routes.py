@@ -743,6 +743,53 @@ def test_a_spoken_chart_is_summed_up_in_a_sentence_rather_than_read_out(route: s
     assert typed.body["spoken"] is None
 
 
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_typed_answer_offers_to_be_saved_when_metrics_are_on(
+    route: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(app.state, "metrics_enabled", True, raising=False)
+    stack = a_stack()
+    stack.ledger.groups_for_next_turn = (
+        Group("2026-05", 30_000, 3),
+        Group("2026-06", 18_000, 2),
+        Group("2026-07", 9_000, 1),
+    )
+    engine_on(
+        stack,
+        Scripted(
+            (Ask(PlanFields(direction=Direction.EXPENSE, window=SPRING, group_by=GroupBy.MONTH)),),
+            (Visualize("ACTIVE_RESULT", "AUTO"),),
+            (Visualize("ACTIVE_CHART", "BAR"),),
+            (Visualize("ACTIVE_CHART", "LINE"),),
+        ),
+    )
+
+    queried = post(stack, route, "desglosa mis gastos por meses de mayo a julio")
+    drawn = post(stack, route, "enséñamelo en un gráfico", queried.conversation)
+    restyled = post(stack, route, "cámbialo a barras", drawn.conversation)
+    said = post(stack, route, "ponlo en líneas", restyled.conversation, "VOICE")
+
+    assert queried.body["save_candidate"]["definition_token"]
+    assert queried.body["save_candidate"]["chart_id"] is None
+    assert drawn.body["save_candidate"]["chart_id"] == drawn.body["visualization"]["chart_id"]
+    # A restyled chart is saved as it now looks, under its own name.
+    assert restyled.body["save_candidate"]["chart_id"] == restyled.body["visualization"]["chart_id"]
+    assert said.body["save_candidate"] is None
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_no_answer_offers_to_be_saved_when_metrics_are_off(route: str) -> None:
+    stack = a_stack()
+    engine_on(
+        stack,
+        Scripted((Ask(PlanFields(direction=Direction.EXPENSE, window=SPRING)),)),
+    )
+
+    answered = post(stack, route, "cuánto gasté en primavera")
+
+    assert answered.body["save_candidate"] is None
+
+
 def test_graph_payment_confirmation_state_survives_the_http_mapping() -> None:
     conversation_id = UUID(int=501)
     intent_id = UUID(int=502)

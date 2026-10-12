@@ -113,6 +113,7 @@ async def try_engine(
     today: date,
     metric_tokens: MetricTokenCodec,
     request_id: str | None = None,
+    metrics_on: bool = False,
 ) -> QuestionResponse:
     """The graph's answer to this turn.
 
@@ -128,6 +129,8 @@ async def try_engine(
         today=today,
         request_id=request_id,
         spoken=question.channel == "VOICE",
+        # Offered on a typed answer only: a spoken one has no screen moment to name it in.
+        offer_saving=metrics_on and question.channel == "TEXT",
     )
 
 
@@ -142,6 +145,7 @@ async def _turn(
     today: date,
     request_id: str | None,
     spoken: bool = False,
+    offer_saving: bool = False,
 ) -> QuestionResponse:
     conversation_id = echoed.conversation_id if echoed is not None else None
     version = echoed.version if echoed is not None else None
@@ -154,7 +158,7 @@ async def _turn(
                 outcome=PlanningOutcome.INVALID_DOMAIN.value, text=_RETIRED_WORKFLOW
             )
             held = Conversation(conversation_id=conversation_id, version=version)
-            return _on_the_wire(refused, held, who, metric_tokens, spoken)
+            return _on_the_wire(refused, held, who, metric_tokens, spoken, offer_saving)
     turn_context = Turn(
         conversation_id=conversation_id,
         version=version,
@@ -178,8 +182,8 @@ async def _turn(
             outcome=PlanningOutcome.INVALID_DOMAIN.value,
             text=_UNAVAILABLE.get(turn.delegate_to or "", _UNAVAILABLE["UNSUPPORTED"]),
         )
-        return _on_the_wire(unavailable, held, who, metric_tokens, spoken)
-    return _on_the_wire(turn.result, held, who, metric_tokens, spoken)
+        return _on_the_wire(unavailable, held, who, metric_tokens, spoken, offer_saving)
+    return _on_the_wire(turn.result, held, who, metric_tokens, spoken, offer_saving)
 
 
 async def try_engine_streaming(
@@ -190,10 +194,13 @@ async def try_engine_streaming(
     today: date,
     metric_tokens: MetricTokenCodec,
     request_id: str | None = None,
+    metrics_on: bool = False,
 ) -> StreamingResponse:
     """`try_engine` for the streaming route: one stage, then the answer, in the route's frames.
     The graph answers before the stream starts, so the headers carry exact counts."""
-    answer = await try_engine(commands, queries, question, who, today, metric_tokens, request_id)
+    answer = await try_engine(
+        commands, queries, question, who, today, metric_tokens, request_id, metrics_on
+    )
 
     async def frames() -> AsyncIterator[str]:
         yield _sse({"type": "stage", "name": "interpreting", "detail": None})
@@ -208,6 +215,7 @@ def _on_the_wire(
     who: Caller,
     metric_tokens: MetricTokenCodec,
     spoken: bool = False,
+    offer_saving: bool = False,
 ) -> QuestionResponse:
     """The engine's result in the routes' shape, with its state and authoritative version.
 
@@ -228,6 +236,7 @@ def _on_the_wire(
         metric_tokens=metric_tokens,
         # A spoken turn that drew a chart says a sentence about it rather than reading the table.
         spoken_for_voice=spoken,
+        offer_saving=offer_saving,
     )
 
 

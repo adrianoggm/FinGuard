@@ -407,7 +407,7 @@ async def test_a_voice_charted_answer_carries_a_spoken_summary() -> None:
     voice_result = await _charted_result_grouped_by_category()
     response = llm_mapper.question_to_dto(voice_result, spoken_for_voice=True)
     assert response.spoken is not None
-    assert response.spoken.startswith("Comida fue la categoría con mayor gasto.")
+    assert response.spoken == "Tus gastos por categoría, con Comida en cabeza."
     assert response.text == "Resultado"  # the screen keeps the full written answer regardless
 
 

@@ -126,6 +126,8 @@ def _query(run: QueryRun, reporting_timezone: str) -> AskFinancialQuestionResult
         movement_count=sum(g.movement_count for g in groups) if limited else answer.movement_count,
         groups=[_spoken_group(g.key, g, plan) for g in groups],
         movements=[] if limited else [_spoken(m) for m in answer.movements],
+        # The question this figure answers, kept so it can be saved and asked again later.
+        metric_definition=plan,
     )
 
 
