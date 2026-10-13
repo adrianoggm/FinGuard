@@ -24,9 +24,9 @@
   \node[channel,text width=3.2cm] (web) at (7.50,0) {Web o voz\\petición de la persona};
   \node[shared] (turn) at (7.50,-1.90) {1. Recibir el turno y correlacionarlo};
   \node[shared] (context) at (7.50,-2.95) {2. Recuperar contexto útil de la conversación};
-  \node[shared] (reader) at (7.50,-4.00) {3. Resolver la intención};
-  \node[core] (rules) at (5.25,-5.30) {Lector determinista\\si reconoce la petición};
-  \node[core] (model) at (9.65,-5.30) {Modelo de lenguaje\\si hace falta\\interpretar};
+  \node[shared] (reader) at (7.50,-4.00) {3. Leer el turno en operaciones};
+  \node[core] (rules) at (5.25,-5.30) {Estado de la\\conversación:\\qué hay en pantalla};
+  \node[core] (model) at (9.65,-5.30) {Modelo de lenguaje\\operaciones cerradas;\\revisión si es dudosa};
   \node[edge] (llm) at (13.47,-5.30) {Proveedor LLM\\propone, no autoriza};
   \node[shared] (validate) at (7.50,-6.50) {4. Construir y validar\\un plan tipado};
   \node[core] (clarify) at (5.25,-7.62) {Falta información o\\se rechaza la petición};

@@ -1,0 +1,1004 @@
+{
+  "name": "2026-10-13-96cccafa-qwen35-9b-batteries",
+  "preflight": {
+    "services": {
+      "orchestrator": "ok",
+      "banking": "ok",
+      "gateway": "skipped (not used by this evaluation)"
+    },
+    "ready": {
+      "http_status": 200,
+      "status": "ok",
+      "provider": "echo",
+      "financial_path": {
+        "engine": "model",
+        "graph": "on",
+        "active_runtime": "langgraph",
+        "authoritative": true,
+        "provider": "ollama",
+        "model": "qwen3.5:9b"
+      },
+      "payments": true,
+      "checks": {
+        "questions_enabled": true,
+        "catalogue_provider": true,
+        "planner": true,
+        "banking": true,
+        "conversation_runtime": true,
+        "persistence": true
+      }
+    },
+    "version": {
+      "service": "orchestrator",
+      "sha": "unknown",
+      "ref": "unknown",
+      "source_sha256": "bf236dd9542898fef6a5420ae83867889cef42bbd4a91fb1057c1fc17f2cd231"
+    },
+    "banking_version": {
+      "service": "banking-api",
+      "sha": "unknown",
+      "ref": "unknown",
+      "source_sha256": "bf0592a5ee7e448eeba77a7c0494f3be45e7b0d7924db3ad3b015a1666bbec27"
+    },
+    "ollama": [
+      {
+        "name": "qwen3.5:9b",
+        "size_vram": 5376646838,
+        "context_length": 8192
+      }
+    ],
+    "newest": "2026-10-12",
+    "at": "2026-10-13T21:05:28+02:00",
+    "today": "2026-10-13",
+    "gpu": "P2, 217 MHz",
+    "head": "96cccafa",
+    "source_sha256_local": {
+      "orchestrator": "bf236dd9542898fef6a5420ae83867889cef42bbd4a91fb1057c1fc17f2cd231",
+      "banking": "bf0592a5ee7e448eeba77a7c0494f3be45e7b0d7924db3ad3b015a1666bbec27"
+    },
+    "source_sha256": {
+      "orchestrator": "bf236dd9542898fef6a5420ae83867889cef42bbd4a91fb1057c1fc17f2cd231",
+      "banking": "bf0592a5ee7e448eeba77a7c0494f3be45e7b0d7924db3ad3b015a1666bbec27"
+    },
+    "component_code_under_test": {
+      "orchestrator": "same as current source",
+      "banking": "same as current source"
+    },
+    "code_under_test": "same as current source",
+    "problems": [],
+    "max_age_days": 1
+  },
+  "goals": {
+    "referencias-ranking-comparacion-categoria": "Encontrar el mes de mayor gasto, compararlo con el mes actual y desglosar ese mismo mes.",
+    "edicion-continua-de-grafico": "Crear un gráfico de gastos por categoría y editarlo varias veces sin perder cambios ni leer el banco.",
+    "bizum-interrumpido-y-reanudado": "Empezar un Bizum, interrumpirlo con una consulta de saldo, retomarlo y cancelarlo en la vista previa."
+  },
+  "expected_turns": {
+    "referencias-ranking-comparacion-categoria": 3,
+    "edicion-continua-de-grafico": 6,
+    "bizum-interrumpido-y-reanudado": 4
+  },
+  "expected_tasks": {},
+  "records": [
+    {
+      "conversation": "referencias-ranking-comparacion-categoria",
+      "turn": 1,
+      "said": "¿Cuál fue el mes de mayor gasto este año?",
+      "outcome": "PLANNED",
+      "text": "El mes con mayor importe total en los últimos 12 meses es:\n  · abril de 2026: 2.294,13 € (32)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 12 meses, gastos, por mes, top 1",
+      "last_plan": null,
+      "total_minor": 229413,
+      "movement_count": 32,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "2026-04",
+          "total_minor": 229413,
+          "movement_count": 32,
+          "value_minor": 229413
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.48,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3827,
+      "completion_tokens": 47,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "mes-de-mayor-gasto",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Nombra el mes de mayor gasto del año (abril de 2026 en el seed) con su importe."
+      },
+      "error": null
+    },
+    {
+      "conversation": "referencias-ranking-comparacion-categoria",
+      "turn": 2,
+      "said": "Compáralo con el actual",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué dos periodos quieres comparar?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.35,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3997,
+      "completion_tokens": 42,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "mes-de-mayor-gasto",
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "Compara ese mes (abril) con el mes en curso (octubre), con ambos importes del banco."
+      },
+      "error": null
+    },
+    {
+      "conversation": "referencias-ranking-comparacion-categoria",
+      "turn": 3,
+      "said": "¿Y en qué categoría gasté más ese mes?",
+      "outcome": "PLANNED",
+      "text": "La categoría con mayor importe total en los últimos 12 meses es:\n  · alquiler: 11.040,00 € (12)\nConsultado en todas tus cuentas.\n\nAquí tienes el gráfico de los resultados de la consulta.",
+      "plan_in_words": "en los últimos 12 meses, gastos, por categoría, top 1",
+      "last_plan": null,
+      "total_minor": 1104000,
+      "movement_count": 12,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 1104000,
+          "movement_count": 12,
+          "value_minor": 1104000
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [
+        "Ordena de menor a mayor",
+        "Ponlo en vertical"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.2,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4791,
+      "completion_tokens": 53,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "mes-de-mayor-gasto",
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "La categoría de mayor gasto de abril de 2026, no del año ni del mes en curso."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 1,
+      "said": "Muéstrame mis gastos de este año por categoría",
+      "outcome": "PLANNED",
+      "text": "24.210,91 € en los últimos 12 meses, en 337 movimientos.\n  · alquiler: 11.040,00 € (12)\n  · supermercado: 5.708,49 € (104)\n  · restaurantes: 2.521,49 € (73)\n  · gasolina: 1.947,39 € (37)\n  · suscripciones: 775,28 € (40)\n  · bizum: 759,46 € (18)\n  · transporte público: 666,14 € (32)\n  · salud: 633,92 € (15)\n  · ocio: 158,74 € (6)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 12 meses, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 2421091,
+      "movement_count": 337,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 1104000,
+          "movement_count": 12,
+          "value_minor": 1104000
+        },
+        {
+          "key": "GROCERIES",
+          "total_minor": 570849,
+          "movement_count": 104,
+          "value_minor": 570849
+        },
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 252149,
+          "movement_count": 73,
+          "value_minor": 252149
+        },
+        {
+          "key": "TRANSPORT_FUEL",
+          "total_minor": 194739,
+          "movement_count": 37,
+          "value_minor": 194739
+        },
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 77528,
+          "movement_count": 40,
+          "value_minor": 77528
+        },
+        {
+          "key": "TRANSFER_BIZUM",
+          "total_minor": 75946,
+          "movement_count": 18,
+          "value_minor": 75946
+        },
+        {
+          "key": "TRANSPORT_PUBLIC",
+          "total_minor": 66614,
+          "movement_count": 32,
+          "value_minor": 66614
+        },
+        {
+          "key": "HEALTH",
+          "total_minor": 63392,
+          "movement_count": 15,
+          "value_minor": 63392
+        },
+        {
+          "key": "LEISURE",
+          "total_minor": 15874,
+          "movement_count": 6,
+          "value_minor": 15874
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "3e4c52277c703fc3e376",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "68cd2b598d4691f62ffc",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "d2d2fd9ee8fcb809cbb0",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.19,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3827,
+      "completion_tokens": 42,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "Desglose de gastos del año por categoría."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 2,
+      "said": "Ponlo en gráfico",
+      "outcome": "PLANNED",
+      "text": "Aquí tienes el gráfico de los resultados de la consulta.",
+      "plan_in_words": "en los últimos 12 meses, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 2421091,
+      "movement_count": 337,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [
+        "Ordena de menor a mayor",
+        "Ponlo en vertical"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 8.57,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4777,
+      "completion_tokens": 153,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "reference",
+        "route": "VISUAL",
+        "want": "Un gráfico de esas categorías, sin nueva lectura bancaria."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 3,
+      "said": "Vertical",
+      "outcome": "INVALID_DOMAIN",
+      "text": "Ese cambio no encaja con los datos de este gráfico; lo dejo como estaba.",
+      "plan_in_words": "en los últimos 12 meses, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 2421091,
+      "movement_count": 337,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.8,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8533,
+      "completion_tokens": 73,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "INVALID_DOMAIN: no es la cifra de una consulta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "Las mismas barras en vertical; mismo total, sin nueva lectura bancaria."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 4,
+      "said": "Ordena ascendente",
+      "outcome": "PLANNED",
+      "text": "24.210,91 € en los últimos 12 meses, en 337 movimientos.\n  · alquiler: 11.040,00 € (12)\n  · supermercado: 5.708,49 € (104)\n  · restaurantes: 2.521,49 € (73)\n  · gasolina: 1.947,39 € (37)\n  · suscripciones: 775,28 € (40)\n  · bizum: 759,46 € (18)\n  · transporte público: 666,14 € (32)\n  · salud: 633,92 € (15)\n  · ocio: 158,74 € (6)\nConsultado en todas tus cuentas.\n\nAquí tienes el gráfico de los resultados de la consulta.",
+      "plan_in_words": "en los últimos 12 meses, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 2421091,
+      "movement_count": 337,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 1104000,
+          "movement_count": 12,
+          "value_minor": 1104000
+        },
+        {
+          "key": "GROCERIES",
+          "total_minor": 570849,
+          "movement_count": 104,
+          "value_minor": 570849
+        },
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 252149,
+          "movement_count": 73,
+          "value_minor": 252149
+        },
+        {
+          "key": "TRANSPORT_FUEL",
+          "total_minor": 194739,
+          "movement_count": 37,
+          "value_minor": 194739
+        },
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 77528,
+          "movement_count": 40,
+          "value_minor": 77528
+        },
+        {
+          "key": "TRANSFER_BIZUM",
+          "total_minor": 75946,
+          "movement_count": 18,
+          "value_minor": 75946
+        },
+        {
+          "key": "TRANSPORT_PUBLIC",
+          "total_minor": 66614,
+          "movement_count": 32,
+          "value_minor": 66614
+        },
+        {
+          "key": "HEALTH",
+          "total_minor": 63392,
+          "movement_count": 15,
+          "value_minor": 63392
+        },
+        {
+          "key": "LEISURE",
+          "total_minor": 15874,
+          "movement_count": 6,
+          "value_minor": 15874
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "3e4c52277c703fc3e376",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "68cd2b598d4691f62ffc",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "d2d2fd9ee8fcb809cbb0",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [
+        "Ordena de menor a mayor",
+        "Ponlo en vertical"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 10.8,
+      "engine": "model",
+      "model_calls": 3,
+      "model_calls_malformed": false,
+      "provider_requests": 3,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 9290,
+      "completion_tokens": 188,
+      "token_reports": 3,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "Barras verticales ordenadas de menor a mayor; mismo total."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 5,
+      "said": "Solo las cinco mayores",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.48,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8603,
+      "completion_tokens": 83,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "Las cinco categorías mayores, verticales y ascendentes; el total de la consulta no cambia."
+      },
+      "error": null
+    },
+    {
+      "conversation": "edicion-continua-de-grafico",
+      "turn": 6,
+      "said": "Vuelve a mostrar todas",
+      "outcome": "PLANNED",
+      "text": "24.210,91 € en los últimos 12 meses, en 337 movimientos.\n  · alquiler: 11.040,00 € (12)\n  · supermercado: 5.708,49 € (104)\n  · restaurantes: 2.521,49 € (73)\n  · gasolina: 1.947,39 € (37)\n  · suscripciones: 775,28 € (40)\n  · bizum: 759,46 € (18)\n  · transporte público: 666,14 € (32)\n  · salud: 633,92 € (15)\n  · ocio: 158,74 € (6)\nConsultado en todas tus cuentas.\n\nAquí tienes el gráfico de los resultados de la consulta.",
+      "plan_in_words": "en los últimos 12 meses, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 2421091,
+      "movement_count": 337,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 1104000,
+          "movement_count": 12,
+          "value_minor": 1104000
+        },
+        {
+          "key": "GROCERIES",
+          "total_minor": 570849,
+          "movement_count": 104,
+          "value_minor": 570849
+        },
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 252149,
+          "movement_count": 73,
+          "value_minor": 252149
+        },
+        {
+          "key": "TRANSPORT_FUEL",
+          "total_minor": 194739,
+          "movement_count": 37,
+          "value_minor": 194739
+        },
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 77528,
+          "movement_count": 40,
+          "value_minor": 77528
+        },
+        {
+          "key": "TRANSFER_BIZUM",
+          "total_minor": 75946,
+          "movement_count": 18,
+          "value_minor": 75946
+        },
+        {
+          "key": "TRANSPORT_PUBLIC",
+          "total_minor": 66614,
+          "movement_count": 32,
+          "value_minor": 66614
+        },
+        {
+          "key": "HEALTH",
+          "total_minor": 63392,
+          "movement_count": 15,
+          "value_minor": 63392
+        },
+        {
+          "key": "LEISURE",
+          "total_minor": 15874,
+          "movement_count": 6,
+          "value_minor": 15874
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "3e4c52277c703fc3e376",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "68cd2b598d4691f62ffc",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "d2d2fd9ee8fcb809cbb0",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [
+        "Ordena de menor a mayor",
+        "Ponlo en vertical"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.88,
+      "engine": "model",
+      "model_calls": 3,
+      "model_calls_malformed": false,
+      "provider_requests": 3,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 9526,
+      "completion_tokens": 74,
+      "token_reports": 3,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "task": "grafico-por-categoria",
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "Todas las categorías otra vez, verticales y ascendentes."
+      },
+      "error": null
+    },
+    {
+      "conversation": "bizum-interrumpido-y-reanudado",
+      "turn": 1,
+      "said": "Quiero hacerle un bizum a Marta Solis Vega",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos a Marta Solis Vega del 13 de octubre al 13 de octubre de 2026. Puedes buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, gastos, Marta Solis Vega",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.02,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 7781,
+      "completion_tokens": 82,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "consulta con filtros privados omitidos del plan verificable",
+      "expect": {
+        "task": "bizum-a-marta",
+        "mechanism": "intent",
+        "route": "PAYMENT",
+        "want": "Pide solo el importe; destinatario Marta Solis Vega."
+      },
+      "error": null
+    },
+    {
+      "conversation": "bizum-interrumpido-y-reanudado",
+      "turn": 2,
+      "said": "Espera, ¿cuánto tengo en la cuenta corriente?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, movimientos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.57,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3919,
+      "completion_tokens": 53,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "task": "saldo-intercalado",
+        "mechanism": "interruption",
+        "route": "BALANCE",
+        "want": "Saldo de la cuenta corriente, sin crear ni perder el borrador del Bizum."
+      },
+      "error": null
+    },
+    {
+      "conversation": "bizum-interrumpido-y-reanudado",
+      "turn": 3,
+      "said": "Vale, sigamos con el bizum, que sean 15 euros",
+      "outcome": "INVALID_DOMAIN",
+      "text": "No puedo combinar ese Bizum con las otras operaciones de este turno.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.44,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8168,
+      "completion_tokens": 60,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "INVALID_DOMAIN: no es la cifra de una consulta",
+      "expect": {
+        "task": "bizum-a-marta",
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "want": "Vista previa de 15 € a Marta Solis Vega con botones de confirmación; no envía dinero."
+      },
+      "error": null
+    },
+    {
+      "conversation": "bizum-interrumpido-y-reanudado",
+      "turn": 4,
+      "said": "No, mejor no",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, movimientos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.28,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4031,
+      "completion_tokens": 77,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "task": "bizum-a-marta",
+        "mechanism": "reset",
+        "want": "Cancela la vista previa; no se envía nada."
+      },
+      "error": null
+    }
+  ],
+  "findings": []
+}

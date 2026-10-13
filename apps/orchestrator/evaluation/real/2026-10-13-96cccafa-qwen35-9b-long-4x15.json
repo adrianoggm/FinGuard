@@ -1,0 +1,4039 @@
+{
+  "name": "2026-10-13-96cccafa-qwen35-9b-long-4x15",
+  "preflight": {
+    "services": {
+      "orchestrator": "ok",
+      "banking": "ok",
+      "gateway": "skipped (not used by this evaluation)"
+    },
+    "ready": {
+      "http_status": 200,
+      "status": "ok",
+      "provider": "echo",
+      "financial_path": {
+        "engine": "model",
+        "graph": "on",
+        "active_runtime": "langgraph",
+        "authoritative": true,
+        "provider": "ollama",
+        "model": "qwen3.5:9b"
+      },
+      "payments": true,
+      "checks": {
+        "questions_enabled": true,
+        "catalogue_provider": true,
+        "planner": true,
+        "banking": true,
+        "conversation_runtime": true,
+        "persistence": true
+      }
+    },
+    "version": {
+      "service": "orchestrator",
+      "sha": "unknown",
+      "ref": "unknown",
+      "source_sha256": "bf236dd9542898fef6a5420ae83867889cef42bbd4a91fb1057c1fc17f2cd231"
+    },
+    "banking_version": {
+      "service": "banking-api",
+      "sha": "unknown",
+      "ref": "unknown",
+      "source_sha256": "bf0592a5ee7e448eeba77a7c0494f3be45e7b0d7924db3ad3b015a1666bbec27"
+    },
+    "ollama": [
+      {
+        "name": "qwen3.5:9b",
+        "size_vram": 5376646838,
+        "context_length": 8192
+      }
+    ],
+    "newest": "2026-10-12",
+    "at": "2026-10-13T20:58:36+02:00",
+    "today": "2026-10-13",
+    "gpu": "P5, 247 MHz",
+    "head": "96cccafa",
+    "source_sha256_local": {
+      "orchestrator": "bf236dd9542898fef6a5420ae83867889cef42bbd4a91fb1057c1fc17f2cd231",
+      "banking": "bf0592a5ee7e448eeba77a7c0494f3be45e7b0d7924db3ad3b015a1666bbec27"
+    },
+    "source_sha256": {
+      "orchestrator": "bf236dd9542898fef6a5420ae83867889cef42bbd4a91fb1057c1fc17f2cd231",
+      "banking": "bf0592a5ee7e448eeba77a7c0494f3be45e7b0d7924db3ad3b015a1666bbec27"
+    },
+    "component_code_under_test": {
+      "orchestrator": "same as current source",
+      "banking": "same as current source"
+    },
+    "code_under_test": "same as current source",
+    "problems": [],
+    "max_age_days": 1
+  },
+  "goals": {
+    "sesion-1-consultas-y-correcciones": "Mantener consultas y filtros a trav?s de cambios de tema y correcciones.",
+    "sesion-2-aclaraciones-y-erratas": "Completar consultas, corregirlas y probar una nueva consulta dentro de la misma conversaci?n.",
+    "sesion-3-pagos-y-comparaciones": "Distinguir consultas de pagos, cancelar con seguridad y mantener una comparaci?n.",
+    "sesion-4-graficos-y-recuperacion": "Reutilizar resultados en gr?ficos, recuperarse y seguir consultando sin filtros heredados."
+  },
+  "expected_turns": {
+    "sesion-1-consultas-y-correcciones": 15,
+    "sesion-2-aclaraciones-y-erratas": 15,
+    "sesion-3-pagos-y-comparaciones": 15,
+    "sesion-4-graficos-y-recuperacion": 15
+  },
+  "expected_tasks": {
+    "sesion-1-consultas-y-correcciones": {
+      "suscripciones-y-cambios-de-comercio": 5,
+      "consulta-de-supermercado": 1,
+      "saldo-de-hucha": 1,
+      "consulta-de-contactos": 1,
+      "retomar-supermercado-y-cambiar-filtros": 6
+    },
+    "sesion-2-aclaraciones-y-erratas": {
+      "desglose-de-supermercado-y-reagrupacion": 5,
+      "primer-saldo": 1,
+      "cambio-entre-categorias": 4,
+      "segundo-saldo": 1,
+      "comparacion-de-restaurantes-y-gasolina": 2
+    },
+    "sesion-3-pagos-y-comparaciones": {
+      "preparar-y-cancelar-primer-bizum": 4,
+      "primer-saldo": 1,
+      "consultar-bizums-por-direccion": 2,
+      "preparar-y-cancelar-segundo-bizum": 2,
+      "consultar-contactos": 1,
+      "segundo-saldo": 1,
+      "comparar-categorias-y-seleccionar-periodo": 3
+    },
+    "sesion-4-graficos-y-recuperacion": {
+      "quitar-top-n-y-visualizar-datos": 6,
+      "corregir-consulta-y-cancelar-borrador": 4,
+      "ingresos-y-seguimiento-de-periodo": 2,
+      "gastos-de-restaurantes-y-seguimiento": 2
+    }
+  },
+  "records": [
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 1,
+      "said": "q llevo gastado en suscripciones estos ultimos 9 meses",
+      "outcome": "PLANNED",
+      "text": "610,64 € en suscripciones en los últimos 9 meses, en 31 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 9 meses, gastos, suscripciones",
+      "last_plan": null,
+      "total_minor": 61064,
+      "movement_count": 31,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 61064,
+          "movement_count": 31,
+          "value_minor": 61064
+        }
+      ],
+      "movement_keys": [
+        "0abede1f5f056e5b176d",
+        "12103d21e26dd3dc9815",
+        "28b7141ecb3e965bc806",
+        "3f06d40482e06e930ead",
+        "5193dedd5dcbd1b415fd",
+        "68cd2b598d4691f62ffc",
+        "764e6c31c96f0cbf56be",
+        "9954cf0b64aa0dc7b6b7",
+        "99925490de3c4fc92cc4",
+        "d63ae05f675a1f32de81"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.41,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3830,
+      "completion_tokens": 43,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": "LAST_N_MONTHS",
+        "n": 9,
+        "start": null,
+        "end": null,
+        "categories": [
+          "SUBSCRIPTIONS"
+        ],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 61064,
+        "movement_count": 31
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [SUBSCRIPTIONS], window: 'LAST_N_MONTHS:9'}}",
+        "task": "suscripciones-y-cambios-de-comercio"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 2,
+      "said": "solo Netflix",
+      "outcome": "PLANNED",
+      "text": "125,91 € en Netflix en los últimos 9 meses, en 9 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 9 meses, gastos, suscripciones, comercios con «Netflix» en el nombre",
+      "last_plan": null,
+      "total_minor": 12591,
+      "movement_count": 9,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 12591,
+          "movement_count": 9,
+          "value_minor": 12591
+        }
+      ],
+      "movement_keys": [
+        "70567a7a64970e66f48d",
+        "764e6c31c96f0cbf56be",
+        "8d099a4899091a525240",
+        "99925490de3c4fc92cc4",
+        "cf065d11d694eb4332f0",
+        "d63ae05f675a1f32de81",
+        "df060ad1c0b251876472",
+        "e01bb6e5dcc25140e6dd",
+        "edaf4714b6c4575dc6b2"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.97,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3941,
+      "completion_tokens": 31,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": "LAST_N_MONTHS",
+        "n": 9,
+        "start": null,
+        "end": null,
+        "categories": [
+          "SUBSCRIPTIONS"
+        ],
+        "merchants": [],
+        "merchant_terms": [
+          "Netflix"
+        ],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 12591,
+        "movement_count": 9
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Netflix], window: 'LAST_N_MONTHS:9'}}",
+        "task": "suscripciones-y-cambios-de-comercio"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 3,
+      "said": "y este mes?",
+      "outcome": "PLANNED",
+      "text": "13,99 € en Netflix en el último mes, en 1 movimiento.\n  · suscripciones: 13,99 € (1)\nConsultado en todas tus cuentas.\n\nCon un solo resultado no hay nada que comparar en un gráfico; aquí tienes la cifra.",
+      "plan_in_words": "en el último mes, gastos, suscripciones, comercios con «Netflix» en el nombre, por categoría",
+      "last_plan": null,
+      "total_minor": 1399,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 1399,
+          "movement_count": 1,
+          "value_minor": 1399
+        }
+      ],
+      "movement_keys": [
+        "99925490de3c4fc92cc4"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.94,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4054,
+      "completion_tokens": 54,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Netflix], window: THIS_MONTH}}",
+        "task": "suscripciones-y-cambios-de-comercio"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 4,
+      "said": "no, Spotify",
+      "outcome": "PLANNED",
+      "text": "10,99 € en Spotify en el último mes, en 1 movimiento.\n  · suscripciones: 10,99 € (1)\nConsultado en todas tus cuentas.\n\nCon un solo resultado no hay nada que comparar en un gráfico; aquí tienes la cifra.",
+      "plan_in_words": "en el último mes, gastos, comercios con «Spotify» en el nombre, por categoría",
+      "last_plan": null,
+      "total_minor": 1099,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 1099,
+          "movement_count": 1,
+          "value_minor": 1099
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.76,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4246,
+      "completion_tokens": 36,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Spotify], window: THIS_MONTH}}",
+        "task": "suscripciones-y-cambios-de-comercio"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 5,
+      "said": "y el mes pasado?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres ver tus gastos?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.54,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4361,
+      "completion_tokens": 74,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Spotify], window: LAST_MONTH}}",
+        "task": "suscripciones-y-cambios-de-comercio"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 6,
+      "said": "gracias",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.35,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3946,
+      "completion_tokens": 27,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 7,
+      "said": "cuanto gaste en el super en julio de 2026",
+      "outcome": "PLANNED",
+      "text": "449,62 € en supermercado en julio de 2026, en 8 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en julio de 2026, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 44962,
+      "movement_count": 8,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 44962,
+          "movement_count": 8,
+          "value_minor": 44962
+        }
+      ],
+      "movement_keys": [
+        "28039f22d10fb582e53d",
+        "45e03203dcb2e96f3b50",
+        "82eb8e4b03751e41b747",
+        "a0ba9b8531d7e618c244",
+        "a8d773671dd31f5017ea",
+        "c3b7357e35327f9d1506",
+        "d42c230472caf35e64d9",
+        "d58c3db0f222b9b25233"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.04,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3971,
+      "completion_tokens": 62,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: 2026-07-01..2026-07-31}}",
+        "task": "consulta-de-supermercado"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 8,
+      "said": "cuanto tengo en la hucha",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, movimientos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 7.56,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 9112,
+      "completion_tokens": 112,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE",
+        "task": "saldo-de-hucha"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 9,
+      "said": "quienes son mis contactos",
+      "outcome": "CONTACTS",
+      "text": "Tienes estos contactos para enviar dinero: Aitor Beltran Diaz, Carmen Nieto Lara, Marta Ruiz Gomez, Marta Solis Vega.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 3.69,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4584,
+      "completion_tokens": 10,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "CONTACTS: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "CONTACTS",
+        "task": "consulta-de-contactos"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 10,
+      "said": "volviendo al super, y en junio de 2026?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres ver tus gastos?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.62,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4609,
+      "completion_tokens": 77,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "interruption",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: 2026-06-01..2026-06-30}}",
+        "task": "retomar-supermercado-y-cambiar-filtros"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 11,
+      "said": "solo Mercadona",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres ver tus gastos?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.12,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4260,
+      "completion_tokens": 91,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Mercadona], window: 2026-06-01..2026-06-30}}",
+        "task": "retomar-supermercado-y-cambiar-filtros"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 12,
+      "said": "y en julio de 2026?",
+      "outcome": "PLANNED",
+      "text": "131,21 € en Mercadona en julio de 2026, en 2 movimientos.\n  · supermercado: 131,21 € (2)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en julio de 2026, gastos, comercios con «Mercadona» en el nombre, por categoría",
+      "last_plan": null,
+      "total_minor": 13121,
+      "movement_count": 2,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "GROCERIES",
+          "total_minor": 13121,
+          "movement_count": 2,
+          "value_minor": 13121
+        }
+      ],
+      "movement_keys": [
+        "82eb8e4b03751e41b747",
+        "c3b7357e35327f9d1506"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 8.82,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8798,
+      "completion_tokens": 166,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {merchants: [Mercadona], window: 2026-07-01..2026-07-31}}",
+        "task": "retomar-supermercado-y-cambiar-filtros"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 13,
+      "said": "gastos de julio de 2026",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres ver tus gastos?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.94,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4861,
+      "completion_tokens": 74,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {window: 2026-07-01..2026-07-31}}",
+        "task": "retomar-supermercado-y-cambiar-filtros"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 14,
+      "said": "perdon junio de 2026",
+      "outcome": "PLANNED",
+      "text": "86,57 € en Mercadona en junio de 2026, en 1 movimiento.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en junio de 2026, gastos, comercios con «Mercadona» en el nombre",
+      "last_plan": null,
+      "total_minor": 8657,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 8657,
+          "movement_count": 1,
+          "value_minor": 8657
+        }
+      ],
+      "movement_keys": [
+        "4ec8ff5224ff33d2b199"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 10.37,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 9141,
+      "completion_tokens": 214,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {window: 2026-06-01..2026-06-30}}",
+        "task": "retomar-supermercado-y-cambiar-filtros"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-1-consultas-y-correcciones",
+      "turn": 15,
+      "said": "solo gasolina",
+      "outcome": "PLANNED",
+      "text": "1.673,53 € en el último mes, en 24 movimientos.\n  · Arrendamiento Centro: 920,00 € (1)\n  · Dia: 166,23 € (3)\n  · Marta: 75,12 € (1)\n  · Elena: 70,78 € (1)\n  · Carrefour: 64,47 € (1)\n  · y 14 más\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en el último mes, gastos, por comercio",
+      "last_plan": null,
+      "total_minor": 167353,
+      "movement_count": 24,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "Arrendamiento Centro",
+          "total_minor": 92000,
+          "movement_count": 1,
+          "value_minor": 92000
+        },
+        {
+          "key": "Dia",
+          "total_minor": 16623,
+          "movement_count": 3,
+          "value_minor": 16623
+        },
+        {
+          "key": "Marta",
+          "total_minor": 7512,
+          "movement_count": 1,
+          "value_minor": 7512
+        },
+        {
+          "key": "Elena",
+          "total_minor": 7078,
+          "movement_count": 1,
+          "value_minor": 7078
+        },
+        {
+          "key": "Carrefour",
+          "total_minor": 6447,
+          "movement_count": 1,
+          "value_minor": 6447
+        },
+        {
+          "key": "Gimnasio Altafit",
+          "total_minor": 5980,
+          "movement_count": 2,
+          "value_minor": 5980
+        },
+        {
+          "key": "Cepsa",
+          "total_minor": 4982,
+          "movement_count": 1,
+          "value_minor": 4982
+        },
+        {
+          "key": "Farmacia Gran Via",
+          "total_minor": 4531,
+          "movement_count": 2,
+          "value_minor": 4531
+        },
+        {
+          "key": "Cafe Central",
+          "total_minor": 3099,
+          "movement_count": 1,
+          "value_minor": 3099
+        },
+        {
+          "key": "Rocio",
+          "total_minor": 2905,
+          "movement_count": 1,
+          "value_minor": 2905
+        },
+        {
+          "key": "EMT Madrid",
+          "total_minor": 2851,
+          "movement_count": 1,
+          "value_minor": 2851
+        },
+        {
+          "key": "Bar Manolo",
+          "total_minor": 2553,
+          "movement_count": 2,
+          "value_minor": 2553
+        },
+        {
+          "key": "Marta Solis Vega",
+          "total_minor": 2500,
+          "movement_count": 1,
+          "value_minor": 2500
+        },
+        {
+          "key": "Marta Ruiz Gomez",
+          "total_minor": 2400,
+          "movement_count": 1,
+          "value_minor": 2400
+        },
+        {
+          "key": "La Tagliatella",
+          "total_minor": 1548,
+          "movement_count": 1,
+          "value_minor": 1548
+        },
+        {
+          "key": "Netflix",
+          "total_minor": 1399,
+          "movement_count": 1,
+          "value_minor": 1399
+        },
+        {
+          "key": "Steam",
+          "total_minor": 1104,
+          "movement_count": 1,
+          "value_minor": 1104
+        },
+        {
+          "key": "Spotify",
+          "total_minor": 1099,
+          "movement_count": 1,
+          "value_minor": 1099
+        },
+        {
+          "key": "Cabify",
+          "total_minor": 742,
+          "movement_count": 1,
+          "value_minor": 742
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "3e4c52277c703fc3e376",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "68cd2b598d4691f62ffc",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "d2d2fd9ee8fcb809cbb0",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.76,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4879,
+      "completion_tokens": 77,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: 2026-06-01..2026-06-30}}",
+        "task": "retomar-supermercado-y-cambiar-filtros"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 1,
+      "said": "cuanto gaste en supermercados el mes pasado",
+      "outcome": "PLANNED",
+      "text": "230,70 € en supermercado en el último mes, en 4 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en el último mes, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 23070,
+      "movement_count": 4,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 23070,
+          "movement_count": 4,
+          "value_minor": 23070
+        }
+      ],
+      "movement_keys": [
+        "76b790f8eaf6261a0466",
+        "7756fbe32a8816a90c23",
+        "c868bca87a58fbf74a7e",
+        "e4eb1c42875190928abe"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.33,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3825,
+      "completion_tokens": 44,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": "LAST_N_MONTHS",
+        "n": 1,
+        "start": null,
+        "end": null,
+        "categories": [
+          "GROCERIES"
+        ],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 23070,
+        "movement_count": 4
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}",
+        "task": "desglose-de-supermercado-y-reagrupacion"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 2,
+      "said": "en todas",
+      "outcome": "PLANNED",
+      "text": "1.673,53 € en supermercado, gasolina, restaurantes, transporte público, salud, ocio, suscripciones, alquiler, nómina, bizum y intereses en el último mes, en 24 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en el último mes, gastos, supermercado/gasolina/restaurantes/transporte público/salud/ocio/suscripciones/alquiler/nómina/bizum/intereses",
+      "last_plan": null,
+      "total_minor": 167353,
+      "movement_count": 24,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 167353,
+          "movement_count": 24,
+          "value_minor": 167353
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "3e4c52277c703fc3e376",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "68cd2b598d4691f62ffc",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "d2d2fd9ee8fcb809cbb0",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 8.68,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8027,
+      "completion_tokens": 150,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": "LAST_N_MONTHS",
+        "n": 1,
+        "start": null,
+        "end": null,
+        "categories": [
+          "GROCERIES",
+          "TRANSPORT_FUEL",
+          "RESTAURANTS",
+          "TRANSPORT_PUBLIC",
+          "HEALTH",
+          "LEISURE",
+          "SUBSCRIPTIONS",
+          "HOUSING_RENT",
+          "SALARY",
+          "TRANSFER_BIZUM",
+          "INTEREST"
+        ],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 167353,
+        "movement_count": 24
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}",
+        "task": "desglose-de-supermercado-y-reagrupacion"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 3,
+      "said": "por comercio",
+      "outcome": "PLANNED",
+      "text": "1.673,53 € en supermercado, gasolina, restaurantes, transporte público, salud, ocio, suscripciones, alquiler, nómina, bizum y intereses en el último mes, en 24 movimientos.\n  · Arrendamiento Centro: 920,00 € (1)\n  · Dia: 166,23 € (3)\n  · Marta: 75,12 € (1)\n  · Elena: 70,78 € (1)\n  · Carrefour: 64,47 € (1)\n  · y 14 más\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en el último mes, gastos, supermercado/gasolina/restaurantes/transporte público/salud/ocio/suscripciones/alquiler/nómina/bizum/intereses, por comercio",
+      "last_plan": null,
+      "total_minor": 167353,
+      "movement_count": 24,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "Arrendamiento Centro",
+          "total_minor": 92000,
+          "movement_count": 1,
+          "value_minor": 92000
+        },
+        {
+          "key": "Dia",
+          "total_minor": 16623,
+          "movement_count": 3,
+          "value_minor": 16623
+        },
+        {
+          "key": "Marta",
+          "total_minor": 7512,
+          "movement_count": 1,
+          "value_minor": 7512
+        },
+        {
+          "key": "Elena",
+          "total_minor": 7078,
+          "movement_count": 1,
+          "value_minor": 7078
+        },
+        {
+          "key": "Carrefour",
+          "total_minor": 6447,
+          "movement_count": 1,
+          "value_minor": 6447
+        },
+        {
+          "key": "Gimnasio Altafit",
+          "total_minor": 5980,
+          "movement_count": 2,
+          "value_minor": 5980
+        },
+        {
+          "key": "Cepsa",
+          "total_minor": 4982,
+          "movement_count": 1,
+          "value_minor": 4982
+        },
+        {
+          "key": "Farmacia Gran Via",
+          "total_minor": 4531,
+          "movement_count": 2,
+          "value_minor": 4531
+        },
+        {
+          "key": "Cafe Central",
+          "total_minor": 3099,
+          "movement_count": 1,
+          "value_minor": 3099
+        },
+        {
+          "key": "Rocio",
+          "total_minor": 2905,
+          "movement_count": 1,
+          "value_minor": 2905
+        },
+        {
+          "key": "EMT Madrid",
+          "total_minor": 2851,
+          "movement_count": 1,
+          "value_minor": 2851
+        },
+        {
+          "key": "Bar Manolo",
+          "total_minor": 2553,
+          "movement_count": 2,
+          "value_minor": 2553
+        },
+        {
+          "key": "Marta Solis Vega",
+          "total_minor": 2500,
+          "movement_count": 1,
+          "value_minor": 2500
+        },
+        {
+          "key": "Marta Ruiz Gomez",
+          "total_minor": 2400,
+          "movement_count": 1,
+          "value_minor": 2400
+        },
+        {
+          "key": "La Tagliatella",
+          "total_minor": 1548,
+          "movement_count": 1,
+          "value_minor": 1548
+        },
+        {
+          "key": "Netflix",
+          "total_minor": 1399,
+          "movement_count": 1,
+          "value_minor": 1399
+        },
+        {
+          "key": "Steam",
+          "total_minor": 1104,
+          "movement_count": 1,
+          "value_minor": 1104
+        },
+        {
+          "key": "Spotify",
+          "total_minor": 1099,
+          "movement_count": 1,
+          "value_minor": 1099
+        },
+        {
+          "key": "Cabify",
+          "total_minor": 742,
+          "movement_count": 1,
+          "value_minor": 742
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "3e4c52277c703fc3e376",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "68cd2b598d4691f62ffc",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "d2d2fd9ee8fcb809cbb0",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 3.96,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4166,
+      "completion_tokens": 25,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], group_by: COUNTERPARTY, window: LAST_MONTH}}",
+        "task": "desglose-de-supermercado-y-reagrupacion"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 4,
+      "said": "y este mes",
+      "outcome": "PLANNED",
+      "text": "1.079,42 € en supermercado, gasolina, restaurantes, transporte público, salud, ocio, suscripciones, alquiler, nómina, bizum y intereses del 1 de octubre al 13 de octubre de 2026, en 9 movimientos.\n  · Arrendamiento Centro: 920,00 € (1)\n  · Cafe Central: 30,99 € (1)\n  · Gimnasio Altafit: 29,90 € (1)\n  · Marta Solis Vega: 25,00 € (1)\n  · Marta Ruiz Gomez: 24,00 € (1)\n  · y 4 más\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 1 de octubre al 13 de octubre de 2026, gastos, supermercado/gasolina/restaurantes/transporte público/salud/ocio/suscripciones/alquiler/nómina/bizum/intereses, por comercio",
+      "last_plan": null,
+      "total_minor": 107942,
+      "movement_count": 9,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "Arrendamiento Centro",
+          "total_minor": 92000,
+          "movement_count": 1,
+          "value_minor": 92000
+        },
+        {
+          "key": "Cafe Central",
+          "total_minor": 3099,
+          "movement_count": 1,
+          "value_minor": 3099
+        },
+        {
+          "key": "Gimnasio Altafit",
+          "total_minor": 2990,
+          "movement_count": 1,
+          "value_minor": 2990
+        },
+        {
+          "key": "Marta Solis Vega",
+          "total_minor": 2500,
+          "movement_count": 1,
+          "value_minor": 2500
+        },
+        {
+          "key": "Marta Ruiz Gomez",
+          "total_minor": 2400,
+          "movement_count": 1,
+          "value_minor": 2400
+        },
+        {
+          "key": "La Tagliatella",
+          "total_minor": 1548,
+          "movement_count": 1,
+          "value_minor": 1548
+        },
+        {
+          "key": "Netflix",
+          "total_minor": 1399,
+          "movement_count": 1,
+          "value_minor": 1399
+        },
+        {
+          "key": "Spotify",
+          "total_minor": 1099,
+          "movement_count": 1,
+          "value_minor": 1099
+        },
+        {
+          "key": "Bar Manolo",
+          "total_minor": 907,
+          "movement_count": 1,
+          "value_minor": 907
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "3e4c52277c703fc3e376",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "d2d2fd9ee8fcb809cbb0",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.96,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4330,
+      "completion_tokens": 50,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], group_by: COUNTERPARTY, window: THIS_MONTH}}",
+        "task": "desglose-de-supermercado-y-reagrupacion"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 5,
+      "said": "mejor por categoria",
+      "outcome": "PLANNED",
+      "text": "1.079,42 € en supermercado, gasolina, restaurantes, transporte público, salud, ocio, suscripciones, alquiler, nómina, bizum y intereses del 1 de octubre al 13 de octubre de 2026, en 9 movimientos.\n  · alquiler: 920,00 € (1)\n  · restaurantes: 55,54 € (3)\n  · suscripciones: 54,88 € (3)\n  · bizum: 49,00 € (2)\nConsultado en todas tus cuentas.\n\nAquí tienes el gráfico de los resultados de la consulta.",
+      "plan_in_words": "del 1 de octubre al 13 de octubre de 2026, gastos, supermercado/gasolina/restaurantes/transporte público/salud/ocio/suscripciones/alquiler/nómina/bizum/intereses, por categoría",
+      "last_plan": null,
+      "total_minor": 107942,
+      "movement_count": 9,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 92000,
+          "movement_count": 1,
+          "value_minor": 92000
+        },
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 5554,
+          "movement_count": 3,
+          "value_minor": 5554
+        },
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 5488,
+          "movement_count": 3,
+          "value_minor": 5488
+        },
+        {
+          "key": "TRANSFER_BIZUM",
+          "total_minor": 4900,
+          "movement_count": 2,
+          "value_minor": 4900
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "3e4c52277c703fc3e376",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "d2d2fd9ee8fcb809cbb0",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [
+        "Ordena de menor a mayor",
+        "Ponlo en vertical"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.59,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 5206,
+      "completion_tokens": 41,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {group_by: CATEGORY, window: THIS_MONTH}}",
+        "task": "desglose-de-supermercado-y-reagrupacion"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 6,
+      "said": "cuanto tengo?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, movimientos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.02,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4817,
+      "completion_tokens": 53,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE",
+        "task": "primer-saldo"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 7,
+      "said": "cuanto gaste en el super el mes pasao",
+      "outcome": "PLANNED",
+      "text": "La categoría con mayor importe total en el último mes es:\n  · alquiler: 920,00 € (1)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en el último mes, gastos, por categoría, top 1",
+      "last_plan": null,
+      "total_minor": 92000,
+      "movement_count": 1,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 92000,
+          "movement_count": 1,
+          "value_minor": 92000
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.65,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4624,
+      "completion_tokens": 89,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}",
+        "task": "cambio-entre-categorias"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 8,
+      "said": "y restauantes?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «restaurantes» en el nombre en el último mes. Puedes buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.\n\nCon un solo resultado no hay nada que comparar en un gráfico; aquí tienes la cifra.",
+      "plan_in_words": "en el último mes, gastos, comercios con «restaurantes» en el nombre, por comercio, top 1",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.32,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4848,
+      "completion_tokens": 45,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [RESTAURANTS], merchants: [], window: LAST_MONTH}}",
+        "task": "cambio-entre-categorias"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 9,
+      "said": "solo esta semna",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.9,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4878,
+      "completion_tokens": 64,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [RESTAURANTS], merchants: [], window: THIS_WEEK}}",
+        "task": "cambio-entre-categorias"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 10,
+      "said": "y gasolina?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.08,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 5017,
+      "completion_tokens": 70,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], merchants: [], window: THIS_WEEK}}",
+        "task": "cambio-entre-categorias"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 11,
+      "said": "cunato tengo",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, movimientos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.18,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 5030,
+      "completion_tokens": 53,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE",
+        "task": "segundo-saldo"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 12,
+      "said": "gracias",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.18,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 5094,
+      "completion_tokens": 12,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 13,
+      "said": "Compara mis gastos de restaurantes entre junio y julio de 2026",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué dos periodos quieres comparar?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.55,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 5121,
+      "completion_tokens": 89,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "intent",
+        "want": "Comparaci?n de restaurantes en junio y julio, con los dos resultados.",
+        "task": "comparacion-de-restaurantes-y-gasolina"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 14,
+      "said": "Y en gasolina?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «gasolina» en el nombre del 13 de octubre al 13 de octubre de 2026. Puedes buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.\n\nCon un solo resultado no hay nada que comparar en un gráfico; aquí tienes la cifra.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, movimientos, comercios con «gasolina» en el nombre, por comercio",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.04,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 5168,
+      "completion_tokens": 45,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "comparison",
+        "want": "Conserva ambos meses y cambia ?nicamente la categor?a a gasolina.",
+        "task": "comparacion-de-restaurantes-y-gasolina"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-2-aclaraciones-y-erratas",
+      "turn": 15,
+      "said": "Gracias",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, movimientos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.16,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 5168,
+      "completion_tokens": 73,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "route": "COURTESY",
+        "mechanism": "intent",
+        "want": "Cierra brevemente sin iniciar otra consulta."
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 1,
+      "said": "haz un bixum a Marta Solis Vega",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.17,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 7779,
+      "completion_tokens": 81,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "PAYMENT",
+        "task": "preparar-y-cancelar-primer-bizum"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 2,
+      "said": "20 euros",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en el último día. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en el último día, gastos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 7.67,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 7899,
+      "completion_tokens": 117,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": "LAST_N_DAYS",
+        "n": 1,
+        "start": null,
+        "end": null,
+        "categories": [],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 0,
+        "movement_count": 0
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "task": "preparar-y-cancelar-primer-bizum"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 3,
+      "said": "mejor 25",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en supermercado en el último día. Puedes buscar sin categoría o ampliar el periodo.\nConsultado en todas tus cuentas.\n\nCon un solo resultado no hay nada que comparar en un gráfico; aquí tienes la cifra.",
+      "plan_in_words": "en el último día, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.12,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4012,
+      "completion_tokens": 60,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "task": "preparar-y-cancelar-primer-bizum"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 4,
+      "said": "no",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en supermercado en el último día. Puedes buscar sin categoría o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en el último día, gastos, supermercado",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 3.91,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4136,
+      "completion_tokens": 24,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": {
+        "direction": "EXPENSE",
+        "period": "LAST_N_DAYS",
+        "n": 1,
+        "start": null,
+        "end": null,
+        "categories": [
+          "GROCERIES"
+        ],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 0,
+        "movement_count": 0
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "want": "En el corpus UX: {ends: true}",
+        "task": "preparar-y-cancelar-primer-bizum"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 5,
+      "said": "cuanto tengo",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en el último día. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en el último día, movimientos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.1,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4149,
+      "completion_tokens": 38,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": {
+        "direction": "ALL",
+        "period": "LAST_N_DAYS",
+        "n": 1,
+        "start": null,
+        "end": null,
+        "categories": [],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 0,
+        "movement_count": 0
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE",
+        "task": "primer-saldo"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 6,
+      "said": "gracias",
+      "outcome": "COURTESY",
+      "text": "De nada. Si necesitas algo más de tus cuentas, dímelo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 3.51,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4233,
+      "completion_tokens": 12,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "COURTESY: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "COURTESY"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 7,
+      "said": "cuanto le mande a Marta este mes",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres ver tus gastos?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.79,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4253,
+      "completion_tokens": 109,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {direction: EXPENSE, window: THIS_MONTH}}",
+        "task": "consultar-bizums-por-direccion"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 8,
+      "said": "y lo que me mando ella?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.88,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3889,
+      "completion_tokens": 123,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {direction: INCOME, window: THIS_MONTH}}",
+        "task": "consultar-bizums-por-direccion"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 9,
+      "said": "ahora quiero mandarle 20 euros a Marta",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.\n\nNo he podido verificar el importe, el destinatario y el tipo de pago en tu mensaje y tus contactos. Indica el importe, un contacto reconocible y si quieres hacer un Bizum o una transferencia.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 9.29,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 9033,
+      "completion_tokens": 170,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "interruption",
+        "route": "PAYMENT",
+        "task": "preparar-y-cancelar-segundo-bizum"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 10,
+      "said": "no",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.29,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4418,
+      "completion_tokens": 63,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "PAYMENT",
+        "want": "En el corpus UX: {ends: true}",
+        "task": "preparar-y-cancelar-segundo-bizum"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 11,
+      "said": "mis contactos",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.\n\nCon un solo resultado no hay nada que comparar en un gráfico; aquí tienes la cifra.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, movimientos, por contraparte, número de movimientos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.37,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4516,
+      "completion_tokens": 92,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "CONTACTS",
+        "task": "consultar-contactos"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 12,
+      "said": "cuanto tengo",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, movimientos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.83,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4535,
+      "completion_tokens": 53,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "BALANCE",
+        "task": "segundo-saldo"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 13,
+      "said": "compara mis gastos en restaurantes de junio y julio de 2026",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué dos periodos quieres comparar?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.19,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4639,
+      "completion_tokens": 89,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: [{categories: [RESTAURANTS], window: 2026-06-01..2026-06-30}, {categories: [\n        RESTAURANTS], window: 2026-07-01..2026-07-31}]}",
+        "task": "comparar-categorias-y-seleccionar-periodo"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 14,
+      "said": "y en gasolina?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, gastos",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.85,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4686,
+      "completion_tokens": 80,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: [{categories: [TRANSPORT_FUEL], window: 2026-06-01..2026-06-30}, {categories: [\n        TRANSPORT_FUEL], window: 2026-07-01..2026-07-31}]}",
+        "task": "comparar-categorias-y-seleccionar-periodo"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-3-pagos-y-comparaciones",
+      "turn": 15,
+      "said": "ahora solo julio de 2026",
+      "outcome": "PLANNED",
+      "text": "1.895,97 € en julio de 2026, en 28 movimientos.\n  · alquiler: 920,00 € (1)\n  · supermercado: 449,62 € (8)\n  · gasolina: 159,46 € (3)\n  · restaurantes: 133,57 € (6)\n  · transporte público: 73,06 € (3)\n  · suscripciones: 54,88 € (3)\n  · salud: 53,71 € (1)\n  · ocio: 44,59 € (2)\n  · bizum: 7,08 € (1)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en julio de 2026, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 189597,
+      "movement_count": 28,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 92000,
+          "movement_count": 1,
+          "value_minor": 92000
+        },
+        {
+          "key": "GROCERIES",
+          "total_minor": 44962,
+          "movement_count": 8,
+          "value_minor": 44962
+        },
+        {
+          "key": "TRANSPORT_FUEL",
+          "total_minor": 15946,
+          "movement_count": 3,
+          "value_minor": 15946
+        },
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 13357,
+          "movement_count": 6,
+          "value_minor": 13357
+        },
+        {
+          "key": "TRANSPORT_PUBLIC",
+          "total_minor": 7306,
+          "movement_count": 3,
+          "value_minor": 7306
+        },
+        {
+          "key": "SUBSCRIPTIONS",
+          "total_minor": 5488,
+          "movement_count": 3,
+          "value_minor": 5488
+        },
+        {
+          "key": "HEALTH",
+          "total_minor": 5371,
+          "movement_count": 1,
+          "value_minor": 5371
+        },
+        {
+          "key": "LEISURE",
+          "total_minor": 4459,
+          "movement_count": 2,
+          "value_minor": 4459
+        },
+        {
+          "key": "TRANSFER_BIZUM",
+          "total_minor": 708,
+          "movement_count": 1,
+          "value_minor": 708
+        }
+      ],
+      "movement_keys": [
+        "1e0756e08408aceb9477",
+        "28039f22d10fb582e53d",
+        "45e03203dcb2e96f3b50",
+        "49440d1836bde001db31",
+        "4c556b9a32de5ff27719",
+        "82eb8e4b03751e41b747",
+        "a1646bb4454e4213b24a",
+        "cd876aaa413c56ee6ab5",
+        "d42c230472caf35e64d9",
+        "f029cc90129b8d8b3398"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 6.57,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4753,
+      "completion_tokens": 101,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "comparison",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: 2026-07-01..2026-07-31}}",
+        "task": "comparar-categorias-y-seleccionar-periodo"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 1,
+      "said": "gastos de los ultimos 3 meses por categoria, top 1",
+      "outcome": "PLANNED",
+      "text": "La categoría con mayor importe total en los últimos 3 meses es:\n  · alquiler: 2.760,00 € (3)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 3 meses, gastos, por categoría, top 1",
+      "last_plan": null,
+      "total_minor": 276000,
+      "movement_count": 3,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "HOUSING_RENT",
+          "total_minor": 276000,
+          "movement_count": 3,
+          "value_minor": 276000
+        }
+      ],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.44,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 3831,
+      "completion_tokens": 46,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {groups: [[GROCERIES, 20000, 5]], ran: {group_by: CATEGORY, group_limit: 1,\n    window: 'LAST_N_MONTHS:3'}}",
+        "task": "quitar-top-n-y-visualizar-datos"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 2,
+      "said": "pero no el top 1, muestrame todas las categorias",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué quieres consultar? Dime qué gastos o ingresos y de qué periodo.",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.24,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4031,
+      "completion_tokens": 65,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {groups: [[GROCERIES, 20000, 5], [RESTAURANTS, 10000, 3]], ran: {group_by:\n    CATEGORY, window: 'LAST_N_MONTHS:3'}}",
+        "task": "quitar-top-n-y-visualizar-datos"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 3,
+      "said": "por meses mejor",
+      "outcome": "PLANNED",
+      "text": "5.813,90 € en los últimos 3 meses, en 87 movimientos.\n  · julio de 2026: 477,25 € (13)\n  · agosto de 2026: 2.159,87 € (33)\n  · septiembre de 2026: 2.097,36 € (32)\n  · octubre de 2026: 1.079,42 € (9)\nConsultado en todas tus cuentas.\n\nAquí tienes el gráfico de los resultados de la consulta.",
+      "plan_in_words": "en los últimos 3 meses, gastos, por mes",
+      "last_plan": null,
+      "total_minor": 581390,
+      "movement_count": 87,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "2026-07",
+          "total_minor": 47725,
+          "movement_count": 13,
+          "value_minor": 47725
+        },
+        {
+          "key": "2026-08",
+          "total_minor": 215987,
+          "movement_count": 33,
+          "value_minor": 215987
+        },
+        {
+          "key": "2026-09",
+          "total_minor": 209736,
+          "movement_count": 32,
+          "value_minor": 209736
+        },
+        {
+          "key": "2026-10",
+          "total_minor": 107942,
+          "movement_count": 9,
+          "value_minor": 107942
+        }
+      ],
+      "movement_keys": [
+        "12103d21e26dd3dc9815",
+        "3e4c52277c703fc3e376",
+        "5193dedd5dcbd1b415fd",
+        "54907b4c26a32c71cccf",
+        "68cd2b598d4691f62ffc",
+        "884eca372811fd44b2c6",
+        "99925490de3c4fc92cc4",
+        "999e8fea6aa322b89284",
+        "d2d2fd9ee8fcb809cbb0",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [
+        "Ponlo en línea"
+      ],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 7.83,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4894,
+      "completion_tokens": 123,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {groups: [[2026-06, 10000, 2], [2026-07, 30000, 6], [2026-08, 5000, 1]], ran: {group_by: MONTH,\n    window: 'LAST_N_MONTHS:3'}}",
+        "task": "quitar-top-n-y-visualizar-datos"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 4,
+      "said": "ponlo en lineas",
+      "outcome": "INVALID_DOMAIN",
+      "text": "Ese cambio no encaja con los datos de este gráfico; lo dejo como estaba.",
+      "plan_in_words": "en los últimos 3 meses, gastos, por mes",
+      "last_plan": null,
+      "total_minor": 581390,
+      "movement_count": 87,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 7.14,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 8855,
+      "completion_tokens": 73,
+      "token_reports": 2,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "INVALID_DOMAIN: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "VISUAL",
+        "want": "En el corpus UX: {banking_calls: 0}",
+        "task": "quitar-top-n-y-visualizar-datos"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 5,
+      "said": "por que julio es tan alto?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿Qué dos periodos quieres comparar?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 3.54,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4366,
+      "completion_tokens": 11,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "mechanism": "reference",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {window: 2026-07-01..2026-07-31}}",
+        "task": "quitar-top-n-y-visualizar-datos"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 6,
+      "said": "y solo restaurantes en julio de 2026?",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «restaurantes» en el nombre en julio de 2026. Puedes buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.\n\nCon un solo resultado no hay nada que comparar en un gráfico; aquí tienes la cifra.",
+      "plan_in_words": "en julio de 2026, gastos, comercios con «restaurantes» en el nombre, por mes",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 8.45,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 9044,
+      "completion_tokens": 150,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "slot_carryover",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [RESTAURANTS], window: 2026-07-01..2026-07-31}}",
+        "task": "quitar-top-n-y-visualizar-datos"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 7,
+      "said": "cuanto gaste en supermercado el mes pasado",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «supermercado» en el nombre en septiembre de 2026. Puedes buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en septiembre de 2026, gastos, comercios con «supermercado» en el nombre, por categoría",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 7.28,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4226,
+      "completion_tokens": 132,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [GROCERIES], window: LAST_MONTH}}",
+        "task": "corregir-consulta-y-cancelar-borrador"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 8,
+      "said": "no era eso",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos del 13 de octubre al 13 de octubre de 2026. Puedes ampliar el periodo o consultar las categorías disponibles.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, gastos, por categoría",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.76,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4385,
+      "completion_tokens": 80,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "reset",
+        "route": "GUIDANCE",
+        "task": "corregir-consulta-y-cancelar-borrador"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 9,
+      "said": "me referia a gasolina este mes",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «gasolina» en el nombre del 13 de octubre al 13 de octubre de 2026. Puedes buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.\n\nCon un solo resultado no hay nada que comparar en un gráfico; aquí tienes la cifra.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, gastos, comercios con «gasolina» en el nombre, por categoría",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.64,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4488,
+      "completion_tokens": 44,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "pending_resolution",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [TRANSPORT_FUEL], window: THIS_MONTH}}",
+        "task": "corregir-consulta-y-cancelar-borrador"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 10,
+      "said": "olvidalo",
+      "outcome": "PLANNED",
+      "text": "No he encontrado movimientos en comercios con «gasolina» en el nombre del 13 de octubre al 13 de octubre de 2026. Puedes buscar sin comercio o ampliar el periodo.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "del 13 de octubre al 13 de octubre de 2026, gastos, comercios con «gasolina» en el nombre, por categoría",
+      "last_plan": null,
+      "total_minor": 0,
+      "movement_count": 0,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.18,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4621,
+      "completion_tokens": 55,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "mechanism": "reset",
+        "route": "GUIDANCE",
+        "want": "En el corpus UX: {banking_calls: 0}",
+        "task": "corregir-consulta-y-cancelar-borrador"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 11,
+      "said": "cuanto he ingresado este ano",
+      "outcome": "PLANNED",
+      "text": "30.332,70 € en los últimos 12 meses, en 33 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 12 meses, ingresos",
+      "last_plan": null,
+      "total_minor": 3033270,
+      "movement_count": 33,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 3033270,
+          "movement_count": 33,
+          "value_minor": 3033270
+        }
+      ],
+      "movement_keys": [
+        "06109c3e76f9c1da710d",
+        "086ec199448a575cbc1e",
+        "0a095cc5bae558800fa2",
+        "12145bd4d7c8a577a2b2",
+        "33f7e7795b05474bb179",
+        "41afc2f548db2704d288",
+        "4bfcce05c3dd2241526f",
+        "593ba0c4e7f90106fb68",
+        "8ca38b7980f725b5f9a0",
+        "d78c4ba55c76516423a5"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 4.64,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4646,
+      "completion_tokens": 41,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": {
+        "direction": "INCOME",
+        "period": "LAST_N_MONTHS",
+        "n": 12,
+        "start": null,
+        "end": null,
+        "categories": [],
+        "merchants": [],
+        "merchant_terms": [],
+        "group_by": "NONE",
+        "metric": "SUM",
+        "group_limit": null,
+        "rank": null
+      },
+      "sql": {
+        "total_minor": 3033270,
+        "movement_count": 33
+      },
+      "figure_check": "match",
+      "figure_note": "comprobada",
+      "expect": {
+        "mechanism": "intent",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [], direction: INCOME, merchants: [], window: THIS_YEAR}}",
+        "task": "ingresos-y-seguimiento-de-periodo"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 12,
+      "said": "y el mes pasado?",
+      "outcome": "PLANNED",
+      "text": "2.483,13 € en el último mes, en 2 movimientos.\nConsultado en todas tus cuentas.\n\nCon un solo resultado no hay nada que comparar en un gráfico; aquí tienes la cifra.",
+      "plan_in_words": "en el último mes, ingresos",
+      "last_plan": null,
+      "total_minor": 248313,
+      "movement_count": 2,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 248313,
+          "movement_count": 2,
+          "value_minor": 248313
+        }
+      ],
+      "movement_keys": [
+        "41afc2f548db2704d288",
+        "d78c4ba55c76516423a5"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.07,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4717,
+      "completion_tokens": 43,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "mechanism": "follow_up",
+        "route": "QUERY",
+        "want": "En el corpus UX: {ran: {categories: [], direction: INCOME, merchants: [], window: LAST_MONTH}}",
+        "task": "ingresos-y-seguimiento-de-periodo"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 13,
+      "said": "Cu?nto he gastado en restaurantes este a?o?",
+      "outcome": "PLANNED",
+      "text": "2.521,49 € en restaurantes en los últimos 12 meses, en 73 movimientos.\n  · restaurantes: 2.521,49 € (73)\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en los últimos 12 meses, gastos, restaurantes, por categoría",
+      "last_plan": null,
+      "total_minor": 252149,
+      "movement_count": 73,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "RESTAURANTS",
+          "total_minor": 252149,
+          "movement_count": 73,
+          "value_minor": 252149
+        }
+      ],
+      "movement_keys": [
+        "1c61a36053908f2a03a3",
+        "28b73f93c7225c0e2b57",
+        "35a854df4d99358a8b89",
+        "884eca372811fd44b2c6",
+        "999e8fea6aa322b89284",
+        "b0d7ff5342a2fe65a6eb",
+        "bbccc83baa1193ec7d6b",
+        "e78144384ae0d29da91a",
+        "eda4099985b216dea8c9",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.23,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 4838,
+      "completion_tokens": 49,
+      "token_reports": 1,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "no queda un plan verificable en la respuesta",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "intent",
+        "want": "Consulta gastos de restaurantes en el a?o actual.",
+        "task": "gastos-de-restaurantes-y-seguimiento"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 14,
+      "said": "Y solo en octubre?",
+      "outcome": "NEEDS_CLARIFICATION",
+      "text": "¿De qué periodo quieres ver tus gastos?",
+      "plan_in_words": null,
+      "last_plan": null,
+      "total_minor": null,
+      "movement_count": null,
+      "difference_minor": null,
+      "groups": [],
+      "movement_keys": [],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 5.89,
+      "engine": "model",
+      "model_calls": 1,
+      "model_calls_malformed": false,
+      "provider_requests": 1,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 5012,
+      "completion_tokens": 70,
+      "token_reports": 1,
+      "financial_reads": 0,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "NEEDS_CLARIFICATION: no es la cifra de una consulta",
+      "expect": {
+        "route": "QUERY",
+        "mechanism": "slot_carryover",
+        "want": "Mantiene restaurantes y cambia el periodo a octubre.",
+        "task": "gastos-de-restaurantes-y-seguimiento"
+      },
+      "error": null
+    },
+    {
+      "conversation": "sesion-4-graficos-y-recuperacion",
+      "turn": 15,
+      "said": "Gracias",
+      "outcome": "PLANNED",
+      "text": "55,54 € en restaurantes en octubre de 2026, en 3 movimientos.\nConsultado en todas tus cuentas.",
+      "plan_in_words": "en octubre de 2026, gastos, restaurantes",
+      "last_plan": null,
+      "total_minor": 5554,
+      "movement_count": 3,
+      "difference_minor": null,
+      "groups": [
+        {
+          "key": "total",
+          "total_minor": 5554,
+          "movement_count": 3,
+          "value_minor": 5554
+        }
+      ],
+      "movement_keys": [
+        "884eca372811fd44b2c6",
+        "999e8fea6aa322b89284",
+        "f1f9438da5977be5dea1"
+      ],
+      "suggestions": [],
+      "state": {
+        "workflow": null,
+        "awaiting": null,
+        "last_asked": null
+      },
+      "seconds": 9.23,
+      "engine": "model",
+      "model_calls": 2,
+      "model_calls_malformed": false,
+      "provider_requests": 2,
+      "provider_requests_malformed": false,
+      "models_attempted": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "models_used": [
+        "qwen3.5:9b",
+        "qwen3.5:9b"
+      ],
+      "provider_failures": [],
+      "provider_terminal_failure": null,
+      "prompt_tokens": 9334,
+      "completion_tokens": 168,
+      "token_reports": 2,
+      "financial_reads": 1,
+      "financial_reads_malformed": false,
+      "provider_wait_ms": 0,
+      "provider_request_ms": 0,
+      "figure_query": null,
+      "sql": null,
+      "figure_check": "n/a",
+      "figure_note": "la respuesta es de otra consulta que la recordada",
+      "expect": {
+        "route": "COURTESY",
+        "mechanism": "intent",
+        "want": "Cierra brevemente sin iniciar otra consulta."
+      },
+      "error": null
+    }
+  ],
+  "findings": []
+}
