@@ -44,12 +44,7 @@ class Settings(BaseSettings):
     # Query limits this deployment applies. They can only narrow the domain ceilings in
     # domain/constants.py, never widen them: a configuration mistake cannot turn into a
     # query that returns half the ledger.
-    max_supporting_movements: int = Field(default=constants.MAX_SUPPORTING_MOVEMENTS, ge=0)
     max_groups: int = Field(default=constants.MAX_GROUPS, ge=1)
-
-    @property
-    def supporting_movements_limit(self) -> int:
-        return min(self.max_supporting_movements, constants.MAX_SUPPORTING_MOVEMENTS)
 
     @property
     def groups_limit(self) -> int:

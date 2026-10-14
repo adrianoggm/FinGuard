@@ -72,20 +72,6 @@ UNMAPPED = "unmapped"
 # assistant answering about itself -- but over half of it asserts on the *category*
 # vocabulary, so a category regression was reported as `out_of_domain`. That was found by
 # breaking `category_words` on purpose and watching the wrong family light up.
-# Read before `_BY_PATH`, against the whole node id rather than the file.
-#
-# `test_cumulative_and_group_rankings` is the one file whose name says out loud that it holds two
-# capabilities. Nine of its twelve tests are group rankings and three are calendar accumulations,
-# so the file rule the module argues for -- a mixed file gets no row, because picking one of its
-# groups reports the other one's regression under the wrong name -- left it in `unmapped` and left
-# `grouping` looking like a capability with no tests at all. It is not: it is the largest thing
-# `grouping` owns. Three test names carry the distinction the file name already made, so they are
-# read here and the rest of the file falls through to `grouping` below.
-#
-# This table stays short on purpose. A file that needs more than a line or two here is a file that
-# should be split, and the row would be hiding that.
-_BY_NAME: tuple[tuple[str, str], ...] = (("accumulation", "metric"),)
-
 _BY_PATH: tuple[tuple[str, str], ...] = (
     # -- windows ----------------------------------------------------------------------
     # `window_words` reads months, years and explicit ranges -- "a month of a year",
@@ -97,35 +83,17 @@ _BY_PATH: tuple[tuple[str, str], ...] = (
     ("test_holder_timezone", "period_named"),
     ("uses_the_holder_timezone", "period_named"),
     # -- what is being asked ----------------------------------------------------------
-    ("test_category_words", "category_single"),
     ("test_category_misread", "category_single"),
     ("test_frequency", "metric"),
-    ("test_cumulative_and_group_rankings", "grouping"),
-    ("test_how_many_subscriptions", "metric"),
     # -- the refusal boundary ---------------------------------------------------------
     # GROUPS.md names averages, comparisons and ratios as what `unsupported` is for, so
-    # the guard files and the two capabilities carved out of that boundary sit here.
-    ("test_capability_guard", "unsupported"),
-    ("test_the_guard_owns_refusals", "unsupported"),
-    ("test_guard_policy", "unsupported"),
+    # the two capabilities carved out of that boundary sit here.
     ("test_percentages", "unsupported"),
     ("test_comparison_plan", "unsupported"),
-    # -- a sentence that needs the one before it --------------------------------------
-    ("test_continuation_patch", "follow_up"),
-    ("test_planning_focus_readers", "follow_up"),
-    ("test_plan_merger", "follow_up"),
-    ("test_plan_patch", "follow_up"),
-    ("test_result_reference", "follow_up"),
-    ("test_a_follow_up_said_differently", "follow_up"),
-    ("test_a_follow_up_keeps_the_window", "follow_up"),
     # -- a sentence that determines no plan -------------------------------------------
     ("test_plan_draft", "ambiguity"),
-    ("test_clarification_round_trip", "ambiguity"),
-    ("test_a_question_is_not_asked_twice", "ambiguity"),
     # -- surface that must not change the plan ----------------------------------------
-    ("test_a_pleasantry_is_not_a_query", "noise"),
     ("test_accents_do_not_hide_a_rule", "noise"),
-    ("test_the_same_question_said_differently", "noise"),
     # -- the question may not rewrite the rules ---------------------------------------
     ("test_prompt", "injection"),
     # -- charts and the visual planner --------------------------------------------------
@@ -193,10 +161,6 @@ def family_of(nodeid: str) -> str:
                 group = cases.get(piece.strip())
                 if group is not None:
                     return group
-        node = nodeid.replace("\\", "/")
-        for fragment, family in _BY_NAME:
-            if fragment in node:
-                return family
         stem = path.replace("\\", "/")
         for fragment, family in _BY_PATH:
             if fragment in stem:

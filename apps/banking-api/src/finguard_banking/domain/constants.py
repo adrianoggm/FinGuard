@@ -8,8 +8,8 @@ configuration; that is why the split exists:
     bootstrap/config.py   the policy. What this deployment actually allows, always
                           clamped to the ceiling.
 
-So `BANKING_MAX_SUPPORTING_MOVEMENTS=50` narrows the limit and `=5000` does not widen
-it past 100.
+So `BANKING_MAX_GROUPS=50` narrows the limit and `=5000` does not widen it past
+`MAX_GROUPS`.
 """
 
 # Evidence movements returned alongside a figure (vision.md §8.6).

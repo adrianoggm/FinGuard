@@ -1,5 +1,8 @@
 # The three question sets over HTTP — properties, not accuracy
 
+> Historical. `scripts/evaluate_e2e.py`, which produced these results, was removed with the rules
+> route in October 2026. Real conversations are measured in `../real/` now.
+
 `RESULTS.md` beside this file measures the plan and stops where the plan is built.
 `../conversations/RESULTS-E2E.md` measures the same deployed service over multi-turn episodes.
 This one is `scripts/evaluate_e2e.py` against `dev.yaml`, `validation.yaml` and

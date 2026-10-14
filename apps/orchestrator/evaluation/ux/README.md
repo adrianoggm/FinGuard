@@ -1,5 +1,8 @@
 # Conversaciones de UX — 7 de octubre de 2026
 
+> Histórico. `scripts/evaluate_conversation_ux.py`, que medía estas conversaciones, se eliminó
+> con la ruta de reglas en octubre de 2026; `scripts/real_conversation.py --ux` las reproduce.
+
 Diez conversaciones de seis turnos con cambios de tema, correcciones, elipsis,
 abreviaturas y erratas. Las frases y sus resultados esperados están en
 [`conversations.yaml`](conversations.yaml). La respuesta completa, los planes

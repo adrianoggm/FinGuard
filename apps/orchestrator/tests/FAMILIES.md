@@ -1,5 +1,9 @@
 # Capability families in the unit suite
 
+> The counts on this page were measured on 3,070 tests, before the rules route and its readers
+> were removed in October 2026. The table under "The table" is current. Rule 1 below labels
+> nothing today: the guard and verifier tests it read went with the rules route.
+
 `3070 passed` says nothing about what the product can do, and a red run does not say
 whether it was a window, a follow-up or a payment. This is the label that makes the
 suite readable beside the planning report.
@@ -17,9 +21,9 @@ would make every new test remember a marker or silently lose its family, and it 
 collide with anyone else editing test files. The family is derived from what a test
 already says about itself, by two rules and a bucket:
 
-1. **The dataset's own label.** `test_capability_guard` and `test_plan_verifier` are
-   parametrised over the cases in `evaluation/planning/*.yaml`, and every one of those
-   cases already declares a `group`. Where a test id carries a case id, that group *is*
+1. **The dataset's own label.** A test parametrised over the cases in
+   `evaluation/planning/*.yaml` carries a case id, and every one of those cases already
+   declares a `group`. Where a test id carries a case id, that group *is*
    the answer. This is the only rule that can label one test inside a large file, and it
    is authoritative by construction: it is the same label the planning report uses.
 2. **The file it lives in.** The table in `tests/families.py` maps a path fragment to a
@@ -76,34 +80,20 @@ dataset-parametrised guard or verifier case. They are measured by the planning h
 and by nothing a person wrote for them, and `merchant` (16), `boundary` (14) and
 `out_of_domain` (6) are the thinnest cells in the suite.
 
-`grouping` was the seventh and that was a mistake in this table, not a hole in the
-suite. `test_cumulative_and_group_rankings` holds nine group-ranking tests and three
-calendar accumulations, so the mixed-file rule below left it unmapped -- and left the
-family that owns the largest grouping file in the repo reading as a capability nobody
-had written a test for. The three accumulations say so in their names, so `_BY_NAME`
-reads them into `metric` and the rest of the file falls through to `grouping`. What
-`test_explainer` taught still holds -- a mixed file may not be filed under one of its
-groups -- but "no row at all" was the wrong remedy for a file that names its own seam.
-
-`test_ranking_pipeline` (19 tests) stays unmapped, and that is not a gap in this table:
-GROUPS.md has no group for rankings at all.
-
 ## The table
 
-Files covering several groups at once — `test_explicit_facts`, `test_intent_router`,
-`test_e2e_checks` — get no row on purpose. Picking one of their groups would be a guess,
-and rule 1 already labels the parametrised tests inside them case by case.
+A file covering several groups at once gets no row on purpose: picking one of its groups
+would be a guess.
 
 | family | files |
 | --- | --- |
 | `period_named` | `natural_period*`, `holder_timezone`, `*uses_the_holder_timezone` |
 | `period_absolute` | `window_words` — months, years and explicit ranges, not the nine names |
-| `category_single` | `category_words`, `category_misread` |
-| `metric` | `frequency`, `how_many_subscriptions` |
-| `unsupported` | `capability_guard`, `the_guard_owns_refusals`, `guard_policy`, `percentages`, `comparison_plan` |
-| `follow_up` | `continuation_patch*`, `planning_focus_readers`, `plan_merger`, `plan_patch`, `result_reference`, `a_follow_up_said_differently` |
-| `ambiguity` | `plan_draft`, `clarification_round_trip`, `a_question_is_not_asked_twice` |
-| `noise` | `a_pleasantry_is_not_a_query`, `accents_do_not_hide_a_rule`, `the_same_question_said_differently` |
+| `category_single` | `category_misread` |
+| `metric` | `frequency` |
+| `unsupported` | `percentages`, `comparison_plan` |
+| `ambiguity` | `plan_draft` |
+| `noise` | `accents_do_not_hide_a_rule` |
 | `injection` | `prompt` |
 
 Three judgement calls worth knowing about. `window_words` is `period_absolute` rather

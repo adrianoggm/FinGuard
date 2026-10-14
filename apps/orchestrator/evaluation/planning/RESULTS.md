@@ -1,5 +1,8 @@
 # Planning accuracy — measured, not argued
 
+> Historical. `scripts/evaluate_planning.py` and `scripts/judge_plans.py`, which produced these
+> results, were removed with the planner they measured in October 2026.
+
 ## State at HEAD (2026-09-14)
 
 **Three things, and the version of this section written on 2026-09-11 ran them together.** It

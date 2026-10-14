@@ -5,7 +5,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="VOICE_GATEWAY_", extra="ignore")
-    service_version: str = "0.1.0"
     ticket_ttl_seconds: int = 30
     max_frame_bytes: int = 64 * 1024
     max_utterance_seconds: int = 30
@@ -13,7 +12,6 @@ class Settings(BaseSettings):
     output_sample_rate: Literal[24_000] = 24_000
     session_idle_seconds: int = 30 * 60
     session_absolute_seconds: int = 2 * 60 * 60
-    max_queued_audio_seconds: int = 5
     audio_bytes_per_second: int = 16_000 * 2
     assistant_mode: Literal["fake", "orchestrator_http"] = "fake"
     stt_mode: Literal["fake", "local"] = "fake"

@@ -1,5 +1,8 @@
 # Groups
 
+> Historical. `scripts/evaluate_planning.py`, which scored these groups, was removed with the
+> rules route in October 2026; the groups still label the unit suite (`tests/FAMILIES.md`).
+
 Every case declares the functionality it exercises. A single accuracy number says the
 assistant is 85% right and nothing about *what* it is wrong at; per-group scores say
 "dates are fine, breakdowns are not", which is a thing you can act on.
