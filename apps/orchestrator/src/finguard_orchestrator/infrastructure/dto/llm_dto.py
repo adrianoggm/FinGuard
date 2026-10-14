@@ -795,13 +795,6 @@ class ConversationPayload(_Payload):
         return self
 
 
-class MetricSourcePayload(_Payload):
-    """Signed save authority for one chart already present in the conversation."""
-
-    chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-    definition_token: str = Field(min_length=1, max_length=20000)
-
-
 class QuestionRequest(_Payload):
     """A financial question in natural language.
 
@@ -831,7 +824,6 @@ class QuestionRequest(_Payload):
     # is what consumes `max_visible_rows`.
     viewport: Literal["MOBILE", "DESKTOP"] = "DESKTOP"
     max_visible_rows: int = Field(default=ROWS_THAT_FIT, ge=1, le=100)
-    metric_sources: list[MetricSourcePayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
 
 
 class SpokenGroupResponse(_Payload):

@@ -24,7 +24,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, createVoiceClient, newAttempt, saveMetric, validateVoiceAnswer, type Answer, type ConversationState, type MetricSource } from "./api";
+import { ask, createVoiceClient, newAttempt, saveMetric, validateVoiceAnswer, type Answer, type ConversationState } from "./api";
 import { categoryName, day, ibanGroups, money, outgoing, signed } from "./format";
 import { displayText } from "./displayText";
 import { Icon } from "./Icon";
@@ -107,28 +107,6 @@ export function materializeVisualizationDerivation(turns: Turn[], answer: Answer
       data: source.visualization.data,
     },
   };
-}
-
-export function metricSources(
-  turns: Turn[],
-  conversation: ConversationState | null = null,
-): MetricSource[] {
-  const found = new Map<string, MetricSource>();
-  const collect = (answer: Answer) => {
-    const candidate = answer.save_candidate;
-    // A candidate without a chart is a figure worth keeping and nothing a restyle can target, so
-    // it is never offered back as a visual source.
-    if (candidate?.chart_id) {
-      found.set(candidate.chart_id, { ...candidate, chart_id: candidate.chart_id });
-    }
-    answer.parts?.forEach(collect);
-  };
-  for (const turn of turns) if (turn.who === "assistant") collect(turn.answer);
-  const active = conversation?.visual_contexts?.slice(-5) ?? [];
-  return active.flatMap((context) => {
-    const source = found.get(context.chart_id);
-    return source ? [source] : [];
-  });
 }
 
 /** The stage names the service emits, in words somebody can read. */
@@ -370,7 +348,6 @@ export function Conversation({ thread, onThread, onClose, onSettled, initialDraf
         before.conversation,
         keyFor(text),
         "TEXT",
-        metricSources(before.turns, before.conversation),
       )) {
         if ("name" in step) setStage(STAGES[step.name] ?? null);
         else {

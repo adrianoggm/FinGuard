@@ -641,7 +641,6 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
 }
 
 export type Stage = { name: string };
-export type MetricSource = { chart_id: string; definition_token: string };
 
 export class ApiError extends Error {
   constructor(
@@ -692,7 +691,6 @@ export async function* ask(
   conversation: ConversationState | null = null,
   attempt?: string,
   channel: "TEXT" | "VOICE" = "TEXT",
-  metricSources: MetricSource[] = [],
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
@@ -708,7 +706,6 @@ export async function* ask(
       question: sentence,
       conversation,
       channel,
-      metric_sources: channel === "TEXT" ? metricSources : [],
     }),
   });
   if (!response.ok || !response.body) await readError(response);
@@ -740,8 +737,6 @@ export async function* ask(
 }
 
 
-
-export type Contact = { contact_id: string; display_name: string; phone: string };
 
 export type Group = { key: string; total_minor: number; movement_count: number };
 
@@ -813,10 +808,6 @@ async function read<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE}${path}`, { headers: headers() });
   if (!response.ok) await readError(response);
   return (await response.json()) as T;
-}
-
-export async function contacts(): Promise<Contact[]> {
-  return (await read<{ contacts: Contact[] }>("/v1/contacts")).contacts;
 }
 
 /**
@@ -896,23 +887,4 @@ export type Charges = { card_id: string; since: string; charges: Charge[] };
 
 export async function chargesOn(cardId: string, days: number): Promise<Charges> {
   return read<Charges>(`/v1/cards/${cardId}/charges?days=${days}&limit=50`);
-}
-
-export async function categories(): Promise<string[]> {
-  return (await read<{ categories: string[] }>("/v1/categories")).categories;
-}
-
-/**
- * Files a movement under a category, or hands it back to the bank with `null`.
- *
- * `null` is a choice, not an absence: the ledger keeps what it inferred, so there is always something
- * to fall back to. Which categories exist is banking's answer — this only sends one.
- */
-export async function categorise(transactionId: string, category: string | null): Promise<void> {
-  const response = await fetch(`${BASE}/v1/movements/${transactionId}/category`, {
-    method: "PUT",
-    headers: headers(),
-    body: JSON.stringify({ category }),
-  });
-  if (!response.ok) await readError(response);
 }

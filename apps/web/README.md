@@ -34,7 +34,6 @@ src/Home.tsx          balance, month by month, four shortcuts, accounts, last mo
 src/Accounts.tsx      every movement, with a merchant search and category filters
 src/Cards.tsx         the cards, with what each one was charged in the window
 src/Finances.tsx      where the money went: by category and by month
-src/Bizum.tsx         pick a contact, type an amount, read the preview, say yes
 src/Conversation.tsx  the sheet: turns, stages, the plan behind each figure, payments
 src/api.ts            the orchestrator. The only file that knows a URL
 src/format.ts         money, dates and amounts as Spain writes them

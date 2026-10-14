@@ -26,7 +26,6 @@ import {
   awaitingConfirmation,
   groupFigure,
   materializeVisualizationDerivation,
-  metricSources,
   pendingIntent,
   quickReplies,
   recipientChoices,
@@ -1104,28 +1103,6 @@ describe("financial breakdowns", () => {
     expect(turns).toEqual([]);
   });
 
-  it("sends metric sources in active context order and caps long derivation chains", () => {
-    const turns: Thread["turns"] = Array.from({ length: 7 }, (_, index) => ({
-      who: "assistant" as const,
-      answer: answer({ save_candidate: {
-        chart_id: `chart-${index}`, definition_token: `token-${index}`,
-      } }),
-    }));
-    const conversation = state({
-      visual_contexts: Array.from({ length: 5 }, (_, index) => ({
-        chart_id: `chart-${index + 2}`, spec: {},
-        profile: {
-          fields: [], cardinality: 0, positive: false,
-          mutually_exclusive: false, verified_total: false,
-        },
-      })),
-    });
-    expect(metricSources(turns, conversation).map((source) => source.chart_id)).toEqual([
-      "chart-2", "chart-3", "chart-4", "chart-5", "chart-6",
-    ]);
-    expect((turns[0] as { who: "assistant"; answer: Answer }).answer.save_candidate?.definition_token)
-      .toBe("token-0");
-  });
   it("validates presented Vega specs with encoding and separate data", () => {
     const payload = answer({ visualization: {
       kind: "chart", chart_id: "chart-1", unit: "money", spec: { mark: { type: "line" }, encoding: { x: { field: "key", type: "temporal" } } },
