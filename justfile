@@ -168,7 +168,7 @@ llm-policy token="demo-token-operator":
 
 # Ask one fresh financial question against the local stack.
 ask question token="demo-token-laura-0001":
-    @uv run --directory apps/orchestrator python -c "import json, sys, urllib.request; payload=json.dumps({'question': sys.argv[1]}, ensure_ascii=False).encode('utf-8'); request=urllib.request.Request('http://127.0.0.1:8000/v1/questions', data=payload, headers={'Authorization': 'Bearer ' + sys.argv[2], 'Content-Type': 'application/json; charset=utf-8'}, method='POST'); print(json.dumps(json.load(urllib.request.urlopen(request)), ensure_ascii=False, indent=2))" "{{ question }}" "{{ token }}"
+    @uv run --directory apps/orchestrator python -c "import json, sys, urllib.request, uuid; payload=json.dumps({'question': sys.argv[1]}, ensure_ascii=False).encode('utf-8'); request=urllib.request.Request('http://127.0.0.1:8000/v1/questions', data=payload, headers={'Authorization': 'Bearer ' + sys.argv[2], 'Content-Type': 'application/json; charset=utf-8', 'Idempotency-Key': str(uuid.uuid4())}, method='POST'); print(json.dumps(json.load(urllib.request.urlopen(request)), ensure_ascii=False, indent=2))" "{{ question }}" "{{ token }}"
 # --- Quality ------------------------------------------------------------------
 
 lint:
