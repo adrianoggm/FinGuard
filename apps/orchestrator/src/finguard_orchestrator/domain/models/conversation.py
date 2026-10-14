@@ -34,19 +34,12 @@ from uuid import UUID
 from finguard_orchestrator.domain.constants import (
     MAX_AGENT_NAME,
     MAX_CONTEXT_ID,
-    MAX_ENTITY_ALIAS_LENGTH,
-    MAX_ENTITY_ALIASES,
     MAX_GROUP_RANK,
-    MAX_MERCHANT_LENGTH,
     MAX_OFFERS,
-    MAX_REMEMBERED_TURNS,
     MAX_SELECTED_ACCOUNTS,
-    MAX_SELECTED_TRANSACTIONS,
-    MAX_TURN_NOTE,
-    MAX_TURN_SENTENCE,
     MAX_VISUAL_CONTEXTS,
 )
-from finguard_orchestrator.domain.enums import CounterpartyType, GroupBy, Rail
+from finguard_orchestrator.domain.enums import GroupBy, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import CHART_ID_PATTERN, VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
@@ -55,13 +48,11 @@ from finguard_orchestrator.domain.value_objects.account_selection import (
     AccountSelection,
     AccountSelectionMode,
 )
-from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
-from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 # What a sentence can turn into and a follow-up can inherit from. Declared here as well as on
@@ -75,82 +66,6 @@ type PlannedQuery = FinancialPlan | TopMovements
 
 
 @dataclass(frozen=True)
-class Turn:
-    """One exchange that already happened, as the two facts a later turn can lean on.
-
-    The fields below are memory of *what the conversation was*; this is the record of *what it
-    did*, and the difference matters. Every one of those fields describes the turn immediately
-    before, and each is a projection taken by whichever branch happened to run — so a chain of
-    them is lossy at every hop, which is exactly why an ellipsis three turns deep stops resolving.
-    A log loses nothing, because nobody decides what it keeps.
-
-    Deliberately not the state. The code still reads `last_plan` and `awaiting`, which are validated
-    values a decision can safely rest on, and a sentence is neither. This exists so the *model* has
-    the antecedent, and denying it one was measurably the largest thing wrong with the
-    classification prompt.
-
-    One branch reads it, as the note below asked: the account question the handler's backstop asks
-    (`_scope_question`) has no plan to keep, so the turn that asked it is the only record of what
-    was asked, and `_asked_which_account_about` takes the sentence back from here once `last_asked`
-    says the question is still open. Nothing is decided on the sentence itself: it is asked again,
-    through every gate a sentence passes, which is what the holder would get by retyping it.
-
-    No other reply reads it. The resumable account question, a window given after «¿De qué
-    periodo?» and a retry each complete a plan that was kept, and the plan already carries what
-    the question named -- the kind of shop and the shop (`explicit_facts.of_its_kind`, and the
-    handler's `_the_shop_it_names`) -- so the reply's words, which name only an account, a window
-    or a retry, have nothing to look up. Reading the asking sentence back out of this log on those
-    routes was tried, and each route found a way to pick the wrong turn.
-
-    ponytail: two representations of the same history. If another branch needs the log, derive
-    its field from this the same way instead of adding a seventeenth one beside it.
-    """
-
-    # As the holder wrote it, truncated rather than refused: a long sentence is still evidence of
-    # what the conversation is about, and this is the one field here a person authored.
-    sentence: str
-    # What this service decided, by the name the result already carries. A closed vocabulary.
-    outcome: str
-    # The query behind the answer, in the ledger's identifiers (`answer_writer.describe`) — not the
-    # Spanish line «Ver la consulta» showed the person (`plan_in_words`). The turn interpreter's
-    # prompt quotes this back as "you answered: …" and was measured on these words, so they stay
-    # its words. Absent when the turn ran no query — a greeting, a refusal, a question asked back.
-    plan: str | None = None
-    # The question this turn asked back, when it asked one.
-    question: str | None = None
-
-    def __post_init__(self) -> None:
-        """Truncate rather than refuse, because a record is not a query.
-
-        Every other value object here rejects what it cannot hold, and that is right: a plan is
-        going to be executed. A turn is only ever read as evidence, and refusing one would mean a
-        long sentence six turns ago could make the *next* turn fail. Cut it and keep going.
-        """
-        if not self.outcome.strip():
-            raise InvalidValueError("a recorded turn needs its outcome")
-        object.__setattr__(self, "sentence", self.sentence[:MAX_TURN_SENTENCE])
-        for note in ("plan", "question"):
-            written = getattr(self, note)
-            if written is not None:
-                object.__setattr__(self, note, written[:MAX_TURN_NOTE])
-
-
-@dataclass(frozen=True)
-class AccountAlias:
-    """A user-chosen phrase grounded to one real account identifier."""
-
-    alias: str
-    account_id: UUID
-    display_name: str
-
-    def __post_init__(self) -> None:
-        if not self.alias.strip() or len(self.alias) > MAX_ENTITY_ALIAS_LENGTH:
-            raise InvalidValueError("account alias has an invalid length")
-        if not self.display_name.strip() or len(self.display_name) > MAX_MERCHANT_LENGTH:
-            raise InvalidValueError("aliased account name has an invalid length")
-
-
-@dataclass(frozen=True)
 class AccountCandidate:
     account_id: UUID
     display_name: str
@@ -159,21 +74,6 @@ class AccountCandidate:
     def __post_init__(self) -> None:
         if not self.display_name.strip() or not self.kind.strip():
             raise InvalidValueError("account candidate needs display name and kind")
-
-
-@dataclass(frozen=True)
-class CounterpartyAlias:
-    """A user phrase grounded to a real, typed other side of a ledger movement."""
-
-    alias: str
-    counterparty_name: str
-    counterparty_type: CounterpartyType
-
-    def __post_init__(self) -> None:
-        if not self.alias.strip() or len(self.alias) > MAX_ENTITY_ALIAS_LENGTH:
-            raise InvalidValueError("counterparty alias has an invalid length")
-        if not self.counterparty_name.strip() or len(self.counterparty_name) > MAX_MERCHANT_LENGTH:
-            raise InvalidValueError("aliased counterparty name has an invalid length")
 
 
 class Workflow(StrEnum):
@@ -401,83 +301,24 @@ class ActivityOffers:
 
 @dataclass(frozen=True)
 class Conversation:
-    """Everything this service needs to know about a conversation it does not store.
+    """What the client holds of a conversation: the wire projection of the canonical state.
 
-    Held by whoever is having it, exactly like the five fields were and for the same reason: there
-    are no sessions here. What changes is that the client no longer decides what the state means —
-    it round-trips one value.
+    The canonical state lives in the dialogue store; the client echoes this back so the next turn
+    names which conversation, at which version, it continues.
     """
 
-    # Which conversation this is. There are still no sessions and no store: the identifier is
-    # minted on the first turn by the edge that maps the payload, travels back to the client with
-    # everything else, and comes home on the next turn — the same rule as every field below it.
-    #
-    # **Nothing in this file, and nothing in the pipeline, may branch on it.** It is not state the
-    # reasoning reads; it exists so that N turns of one conversation stop being N unrelated traces.
-    # It lives on the conversation rather than beside it because the alternative was stamping it
-    # onto fifteen `to_payload` call sites in the controller, and the fifteenth would be the one
-    # that forgot — which is the failure mode this whole value replaced.
-    #
-    # `None` for a conversation nobody mapped from the wire: `IDLE` is a module-level singleton and
-    # a default factory here would mint one identifier at import time and hand the same one to
-    # every conversation in the process, which is worse than having none.
+    # Which conversation this is, minted by the store on the first turn. `None` for a conversation
+    # nobody mapped from the wire: `IDLE` is a module-level singleton, and a default factory here
+    # would hand one identifier to every conversation in the process.
     conversation_id: UUID | None = None
-    # The model-led engine's version of this conversation, when that engine is on and has saved
-    # it. Carried here for the identifier's reason: a turn the engine hands to the rules route (a
-    # payment) must come back holding the version it left with, and every branch of that route
-    # builds its answer from the conversation it was given. Never read by the rules engine.
+    # The stored version the client last saw; a turn at an older one is refused as stale.
     version: int | None = None
 
     active: ActiveWorkflow | None = None
-    account_selection: AccountSelection | None = None
     # The last answered question, whichever kind it was. An aggregate and a ranking are both
     # things a follow-up inherits from — "¿y en gasolina?" narrows either — so this is the union
     # rather than a field per kind, which would let both be set and neither mean anything.
     last_plan: PlannedQuery | None = None
-    # The answered plan immediately before `last_plan`. Two compatible plans with different
-    # windows are enough to answer "compáralos" without storing prose or financial results.
-    prior_plan: PlannedQuery | None = None
-    # A validated read that could not reach banking. It is memory, not a workflow: a suspended
-    # payment may coexist with it, and retrying must execute this exact plan instead of asking the
-    # model to interpret "reintenta" as a new financial question.
-    retry_plan: PlannedQuery | None = None
-    # Canonical, source-bound referent. Its wire projection lives in ConversationPayload.
-    result_reference: "ResultReference | None" = None
-    # What the last turn asked for. Memory too, and it exists because `awaiting` cannot cover this:
-    # a clarification records its slot on the workflow, and a question asked with nothing
-    # half-built behind it leaves no workflow to record it on. Without this, that question can be
-    # asked forever — and the user cannot escape by rephrasing, because rephrasing is what already
-    # failed. It survives exactly one turn: everything that is not another question clears it.
-    last_asked: Slot | None = None
-    # Whether the last turn answered a balance. Memory again, and the narrowest form of it: "¿y en
-    # la hucha?" is a follow-up about spending after a spending question and a follow-up about the
-    # balance after a balance, and the sentence is identical in both. Without this the second one
-    # reached the financial planner and came back "¿de qué periodo?" — a question about a window,
-    # to somebody who had just been told a figure and asked which account it was in.
-    #
-    # A flag rather than the whole answer: nothing else needs remembering, and a field that holds
-    # more than one thing is a field the next branch reads wrongly.
-    answered_the_balance: bool = False
-    # A two-query calculation cannot fit in `last_plan`. The answered pair and the half-built pair
-    # are memory rather than parallel workflows: one lets "¿y el mes pasado?" patch both sides;
-    # the other lets a two-word period complete the proportion that asked for it.
-    last_ratio: RatioPlan | None = None
-    pending_ratio: RatioDraft | None = None
-    # The last comparison as one validated value. ``last_plan`` and ``prior_plan`` remain for
-    # backwards-compatible single-query follow-ups; this field prevents later comparison turns
-    # from having to infer whether those two happen to form a compatible pair.
-    last_comparison: ComparisonPlan | None = None
-    # User-defined names are memory, not a workflow. They survive every turn and are re-grounded
-    # against the authenticated holder's account directory whenever they are used.
-    account_aliases: tuple[AccountAlias, ...] = ()
-    counterparty_aliases: tuple[CounterpartyAlias, ...] = ()
-    # A one-turn anaphora after a completed payment. Keeping only the rail means "otro" can reuse
-    # the operation while the new amount and recipient still have to be explicit and grounded.
-    recent_payment_rail: Rail | None = None
-    # What actually happened, oldest first, bounded. Appended to once per turn and never edited,
-    # so unlike every field above it there is no branch deciding what survives — which is what the
-    # fields above it kept getting wrong.
-    turns: tuple[Turn, ...] = ()
     # Structural chart contexts only; rows and financial values stay in the browser.
     visual_contexts: tuple[VisualContext, ...] = ()
     # The last activity search's verified slots, sealed on the wire (spec §5.3). Memory like the
@@ -493,61 +334,11 @@ class Conversation:
         for context in self.visual_contexts:
             if not context.spec.valid_for(context.profile.field_names()):
                 raise InvalidValueError("visual context spec is incompatible with its profile")
-        folded_aliases = tuple(alias.alias.casefold().strip() for alias in self.account_aliases)
-        if len(self.account_aliases) > MAX_ENTITY_ALIASES:
-            raise InvalidValueError("too many account aliases")
-        if len(set(folded_aliases)) != len(folded_aliases):
-            raise InvalidValueError("account aliases must be unique")
-        folded_counterparties = tuple(
-            alias.alias.casefold().strip() for alias in self.counterparty_aliases
-        )
-        if len(self.counterparty_aliases) > MAX_ENTITY_ALIASES:
-            raise InvalidValueError("too many counterparty aliases")
-        if len(set(folded_counterparties)) != len(folded_counterparties):
-            raise InvalidValueError("counterparty aliases must be unique")
-        if len(self.turns) > MAX_REMEMBERED_TURNS:
-            raise InvalidValueError("too many remembered turns")
-        if (
-            self.result_reference is not None
-            and self.result_reference.source_query is not self.last_plan
-        ):
-            raise InvalidValueError("a result reference needs its exact source query")
 
     def with_visual_context(self, context: VisualContext) -> "Conversation":
         """Remember a structural chart context, newest last, without any chart rows."""
         contexts = tuple(item for item in self.visual_contexts if item.chart_id != context.chart_id)
         return replace(self, visual_contexts=(*contexts, context)[-MAX_VISUAL_CONTEXTS:])
-
-    def visual_context(self, chart_id: str | None = None) -> VisualContext | None:
-        if not self.visual_contexts:
-            return None
-        if chart_id is None:
-            return self.visual_contexts[-1]
-        return next((item for item in self.visual_contexts if item.chart_id == chart_id), None)
-
-    def with_turn(self, turn: Turn) -> "Conversation":
-        """Record what this turn did, dropping the oldest once the log is full.
-
-        Truncating rather than refusing: a long conversation is the normal case, and the far end of
-        it is what an ellipsis never reaches back to anyway.
-        """
-        return replace(self, turns=(*self.turns, turn)[-MAX_REMEMBERED_TURNS:])
-
-    def with_account_alias(self, alias: AccountAlias) -> "Conversation":
-        """Learn or replace one alias without disturbing the active conversation."""
-        key = alias.alias.casefold().strip()
-        kept = tuple(
-            known for known in self.account_aliases if known.alias.casefold().strip() != key
-        )
-        return replace(self, account_aliases=(*kept, alias)[-MAX_ENTITY_ALIASES:])
-
-    def with_counterparty_alias(self, alias: CounterpartyAlias) -> "Conversation":
-        """Learn or replace a typed entity alias without disturbing the active workflow."""
-        key = alias.alias.casefold().strip()
-        kept = tuple(
-            known for known in self.counterparty_aliases if known.alias.casefold().strip() != key
-        )
-        return replace(self, counterparty_aliases=(*kept, alias)[-MAX_ENTITY_ALIASES:])
 
     @property
     def awaiting(self) -> Slot | None:
@@ -575,190 +366,6 @@ class Conversation:
         if isinstance(self.active, PaymentConfirmation | BookingConfirmation):
             return Slot.CONFIRMATION
         return None
-
-    @property
-    def at_rest(self) -> bool:
-        """Whether anything is waiting for a reply.
-
-        The one fact that decides whether an acknowledgement is an acknowledgement. «Vale» after an
-        answer is a person being polite; «vale» while something is waiting for a value might be an
-        answer to it, and reading it as manners would swallow the turn. Thirty of the corpus's turns
-        are a bare «vale», so this is not a corner.
-
-        Built on `awaiting` rather than on `active`, and the difference is a real turn: a refusal
-        leaves `UnsupportedCapability` open, and that workflow is a *record* of the last turn rather
-        than a question. Reading "something is active" as "something is waiting" sent a «vale» two
-        turns after a refused forecast back to the planner.
-
-        `last_asked` as well, because a question this service asked and then closed is still a
-        question the *user* is answering on the next turn.
-        """
-        return self.awaiting is None and self.last_asked is None
-
-    def with_active(self, active: ActiveWorkflow | None) -> "Conversation":
-        """The same conversation with a different workflow — replacing, never accumulating.
-
-        One active workflow is the invariant this type exists for, so there is no method that adds a
-        second. A payment starting while a clarification is open ends the clarification, which is
-        also what happens in the conversation.
-
-        `last_asked` is deliberately dropped. This builds the state a turn *leaves behind*, and a
-        turn that asked something says so by calling `asking` — so the memory lasts one turn and a
-        slot from three questions ago cannot make an unrelated one look like a repeat.
-        """
-        return replace(self, active=active, last_asked=None)
-
-    def paid(self, rail: Rail) -> "Conversation":
-        """Close a successful preview and remember what an immediate ``otro`` refers to."""
-        return replace(self, active=None, last_asked=None, recent_payment_rail=rail)
-
-    def without_recent_payment(self) -> "Conversation":
-        """Consume the short-lived payment referent without disturbing financial memory."""
-        return replace(self, recent_payment_rail=None)
-
-    def asking(self, slot: Slot) -> "Conversation":
-        """Remember the question this turn asked, whether or not it left a workflow behind."""
-        return replace(self, last_asked=slot)
-
-    def refused(self, capability: str) -> "Conversation":
-        """A capability this service does not have, recorded — and nothing else disturbed.
-
-        A refusal answers nothing, so it must not end the thread the user was on. `last_plan`
-        already survived one and `answered_the_balance` did not, which made the spending thread
-        outlive a refusal while the balance thread died on it:
-
-            "¿cuánto tengo en el fondo?"           the fund's balance
-            "¿qué porcentaje tengo en el fondo?"   refused
-            "¿y en la hucha?"                      …a question about spending
-
-        `last_asked` still goes, and that is not the same thing: the refusal genuinely asked
-        nothing, so there is no open question for the next turn to be answering.
-        """
-        return replace(self, active=UnsupportedCapability(capability=capability), last_asked=None)
-
-    def answering_the_balance(self) -> "Conversation":
-        """This turn said how much money there is, so a bare account name is about that.
-
-        The analysis behind it survives: a balance is a turn and not a reset, and asking it in the
-        middle of an analysis of last month must not cost the window. So does a half-built Bizum,
-        which steps aside for the balance rather than ending.
-
-        **The question left open about the plan does not** (ruling R12). «¿cuánto tengo?» while
-        «¿De qué periodo?» waits is a clear new intent, and with the clarification still open behind
-        the answer, «en julio» on the next turn ran the restaurants question the holder had walked
-        away from — the cage `suspend` already refuses to build for a clarification. The slot asked
-        and a half-built proportion go with it, as they do when any other answer supersedes them.
-
-        The account question stays, and that is pinned rather than overlooked: «¿En qué cuenta…?»
-        holds a question already complete and owed an answer, and `31-account-scope.yaml` walks away
-        from it to a balance and back on purpose. Whether it should go too is a product decision,
-        not this rule's.
-        """
-        keeps_the_account_question = self.last_asked is Slot.ACCOUNT
-        return replace(
-            self,
-            answered_the_balance=True,
-            active=None if isinstance(self.active, FinancialClarification) else self.active,
-            last_asked=self.last_asked if keeps_the_account_question else None,
-            pending_ratio=None,
-        )
-
-    def awaiting_retry(self, plan: PlannedQuery) -> "Conversation":
-        """Remember the exact validated read that banking could not execute."""
-        return replace(self, retry_plan=plan)
-
-    def without_retry(self) -> "Conversation":
-        """Abandon a failed read while preserving the rest of the conversation."""
-        return replace(self, retry_plan=None)
-
-    def _answering(self) -> "Conversation":
-        """What answering a financial question resets, whichever of the three kinds it was.
-
-        One place rather than three. `answered`, `answered_comparison` and `answered_ratio` each
-        enumerated this separately and disagreed about it — a comparison forgot the rows a plain
-        answer remembered — and nothing in the code said whether the difference was a decision.
-        """
-        return replace(
-            self,
-            # A suspended payment belongs to the conversation before this answer and deliberately
-            # stepped aside for it. Anything else open is superseded by the answer.
-            active=(
-                self.active
-                if isinstance(self.active, PaymentInProgress) and self.active.suspended
-                else None
-            ),
-            # This read succeeded, so there is nothing left to retry, and the question the turn
-            # was answering is closed.
-            retry_plan=None,
-            last_asked=None,
-            # A figure over a period, not a balance.
-            answered_the_balance=False,
-            # A half-built proportion is abandoned by an answer to something else.
-            pending_ratio=None,
-            # These three describe the same fact — what the last answer was — so the kind that just
-            # ran sets its own and the other two go. Leaving a stale one behind is how a plain
-            # question inherited the operands of a comparison two turns earlier.
-            last_plan=None,
-            last_ratio=None,
-            last_comparison=None,
-            result_reference=None,
-        )
-
-    def answered(self, plan: PlannedQuery) -> "Conversation":
-        """Remember a financial answer and close only the workflow that answer resolves.
-
-        A suspended payment belongs to the conversation before this answer and deliberately stepped
-        aside for it. It survives; a financial clarification or refusal does not, because the new
-        answer supersedes it.
-        """
-        return replace(
-            self._answering(),
-            last_plan=plan,
-            # Asking the same question twice must not push the plan behind it out of memory.
-            prior_plan=self.prior_plan if plan == self.last_plan else self.last_plan,
-        )
-
-    def waiting_for_ratio(self, draft: RatioDraft) -> "Conversation":
-        """Remember both operands while asking for their shared period."""
-        return replace(self, last_asked=Slot.WINDOW, pending_ratio=draft)
-
-    def answered_comparison(self, plan: ComparisonPlan) -> "Conversation":
-        """Keep the compatible pair as one value while exposing both legacy plan slots."""
-        return replace(
-            self._answering(),
-            last_plan=plan.latest,
-            prior_plan=plan.earlier,
-            last_comparison=plan,
-        )
-
-    def answered_ratio(self, plan: RatioPlan) -> "Conversation":
-        """Put the exact pair in view and close the period question it answered."""
-        return replace(
-            self._answering(),
-            last_plan=plan.part,
-            prior_plan=plan.whole,
-            last_ratio=plan,
-        )
-
-    def without_pending_ratio(self) -> "Conversation":
-        """Abandon an unanswered proportion when the user starts another financial subject."""
-        return replace(self, pending_ratio=None)
-
-    def suspend(self) -> "Conversation":
-        """The active payment steps aside for a turn about something else.
-
-        Only payments suspend. A clarification does not: the question it asked is either answered or
-        it is not, and keeping one alive across a change of subject is how "este año" completed a
-        plan the user had moved on from.
-
-        Every piece of memory is kept, which is now the default rather than a list. Dropping
-        `answered_the_balance` here meant a payment under way silently turned "¿y en la hucha?" back
-        into a question about spending, so a balance follow-up worked or not depending on whether a
-        Bizum happened to be half-built.
-        """
-        if not isinstance(self.active, PaymentInProgress):
-            return replace(self, active=None)
-        return replace(self, active=replace(self.active, suspended=True))
 
 
 def workflow_of(active: "ActiveWorkflow | None") -> Workflow | None:
@@ -796,14 +403,12 @@ IDLE = Conversation()
 
 __all__ = [
     "IDLE",
-    "AccountAlias",
     "AccountCandidate",
     "AccountScopeClarification",
     "AccountSelection",
     "AccountSelectionMode",
     "ActivityOffers",
     "BookingConfirmation",
-    "CounterpartyAlias",
     "ActiveWorkflow",
     "Conversation",
     "FinancialClarification",
@@ -811,7 +416,6 @@ __all__ = [
     "PaymentInProgress",
     "TransferInProgress",
     "Slot",
-    "Turn",
     "UnsupportedCapability",
     "Workflow",
     "slot_for",
@@ -825,49 +429,3 @@ _REFERENCEABLE_GROUPS = {
     GroupBy.COUNTERPARTY,
     GroupBy.ACCOUNT,
 }
-
-
-@dataclass(frozen=True)
-class ResultReference:
-    """The row and evidence selected from one immutable source query."""
-
-    source_query: PlannedQuery
-    category: str | None = None
-    group_by: GroupBy | None = None
-    group_key: str | None = None
-    transaction_ids: tuple[UUID, ...] = ()
-
-    def __post_init__(self) -> None:
-        if (self.group_by is None) != (self.group_key is None):
-            raise InvalidValueError("a result reference needs both its dimension and key")
-        if self.group_by not in {None, *_REFERENCEABLE_GROUPS}:
-            raise InvalidValueError("the result reference dimension is not referenceable")
-        if self.category is not None:
-            if not self.category.strip():
-                raise InvalidValueError("a result reference category cannot be blank")
-            if len(self.category) > MAX_MERCHANT_LENGTH:
-                raise InvalidValueError("result reference category is too long")
-        if self.group_key is not None:
-            if not self.group_key.strip():
-                raise InvalidValueError("a result reference key cannot be blank")
-            if len(self.group_key) > MAX_MERCHANT_LENGTH:
-                raise InvalidValueError("result reference key is too long")
-        if len(set(self.transaction_ids)) != len(self.transaction_ids):
-            raise InvalidValueError("result reference transaction ids must be unique")
-        if len(self.transaction_ids) > MAX_SELECTED_TRANSACTIONS:
-            raise InvalidValueError("too many result reference transaction ids")
-        if (
-            self.group_by is GroupBy.CATEGORY
-            and self.category is not None
-            and self.category != self.group_key
-        ):
-            raise InvalidValueError("the selected category and category row disagree")
-        if (
-            self.category is not None
-            and self.group_by not in {None, GroupBy.CATEGORY}
-            and (
-                not isinstance(self.source_query, FinancialPlan)
-                or self.category not in self.source_query.categories
-            )
-        ):
-            raise InvalidValueError("the selected category is not grounded by its source query")

@@ -1,49 +1,21 @@
-"""What a turn is, what an answer looks like, and the few facts both sides read off one.
+"""What an answer looks like: the result the graph's presenter builds and the edge maps to the wire.
 
-**Underneath both the handler and the readers, and that is what it is for.** Every one of the
-nineteen readers takes an `AskFinancialQuestionQuery`, so the handler cannot be the module that
-defines it: a reader importing the handler would import the module that imports the table that names
-the reader. The type moves down a layer instead and both sides import it — a cycle broken by putting
-the shared thing underneath, rather than by an import hidden inside a function.
-
-It sits beside `reader_registry` and not inside `readers/`, because it is not about readers. It is
-the query this handler answers and the shape of the answer, which is the contract the edge and every
-test have always used.
-
-It holds nothing that decides anything. `_clean_turn` folds a sentence, `_direction_of` reads a
-list of categories, `_query_for_reader` says which question a reader is being asked about. They are
-here because they are read by several reader modules **and** by the handler, and a helper copied
-into two of them is how two readers come to disagree about the same sentence — the defect this
-whole section exists to stop repeating.
+It holds nothing that decides anything.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
-from uuid import UUID
 
-from finguard_orchestrator.application.bus.query_bus import Query
-from finguard_orchestrator.domain.errors import (
-    InvalidValueError,
-)
 from finguard_orchestrator.domain.models.chart import (
-    DEFAULT_PRESENTATION,
-    PresentationContext,
     VisualDataset,
     VisualDecision,
 )
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
     Conversation,
-    PlannedQuery,
-)
-from finguard_orchestrator.domain.models.turn_analysis import (
-    TurnAnalysis,
 )
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
-from finguard_orchestrator.domain.services.intent_router import Intent
-from finguard_orchestrator.domain.services.turn_arbiter import Arbitration
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -272,58 +244,3 @@ class AskFinancialQuestionResult:
     # `None` when `metric_definition` is not a `FinancialPlan` at all (a comparison, a ratio, or no
     # plan ran this turn).
     visual_plan_digest: str | None = None
-
-
-@dataclass(frozen=True)
-class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
-    sentence: str
-    account_id: UUID
-    today: date
-    # The zone `today` was measured in. It travels with the date because neither describes a
-    # window alone, and it belongs to the holder rather than the deployment: between
-    # midnight and 01:00 peninsular time, today in the Canaries is yesterday in Madrid.
-    reporting_timezone: str = "Europe/Madrid"
-    # Where the conversation was before this turn, echoed back by the caller. Held by whoever is
-    # having it rather than by this service, and already typed by the time it arrives here — the
-    # edge rebuilt it through the domain, so nothing in here has to believe a string.
-    conversation: Conversation = IDLE
-    # What this turn was read as, when the caller already knows.
-    #
-    # The edge has to classify the sentence before it can decide whether to dispatch this query at
-    # all — a payment order never reaches here. Left out, the classification happened again inside,
-    # and two readings of one sentence is a thing that can disagree with itself. It already did:
-    # the edge and the handler each grew their own exception for "¿a quién puedo hacer un bizum?"
-    # and only one of them got it.
-    #
-    # It is *not* a client field. Nothing deserialises into it; the edge fills it from the
-    # interpreter it just asked, and a caller that leaves it out gets the same reading computed
-    # here. That keeps the handler usable on its own — every test and the corpus call it that way —
-    # without letting a second reading exist on the path a user is actually on.
-    intent: Intent | None = None
-    analysis: TurnAnalysis | None = None
-    # What kind of turn this is — `turn_arbiter.arbitrate`, decided once at the edge from the
-    # analysis above, for the same reason the analysis travels: the edge already acted on it (an
-    # order to pay never reaches here), and a second arbitration in here is a second opinion that
-    # could disagree with the first. Not a client field either. Left out, the handler reads the one
-    # kind that needs no analysis — a reset is the sentence alone — first, and arbitrates the rest
-    # itself once it has the analysis, with the same function: a reply to the question left open is
-    # one whoever built the query.
-    arbitration: Arbitration | None = None
-    # How this answer will be consumed. It belongs to the execution request rather than to the
-    # dataset profile. Kept last so adding it does not shift established positional callers.
-    presentation: PresentationContext = DEFAULT_PRESENTATION
-
-    def __post_init__(self) -> None:
-        if (
-            self.intent is not None
-            and self.analysis is not None
-            and self.intent is not self.analysis.intent
-        ):
-            raise InvalidValueError("intent and turn analysis disagree")
-
-
-@dataclass(frozen=True)
-class _QueryForReader:
-    plan: PlannedQuery | None
-    wording: str
-    returned_from_balance: bool = False

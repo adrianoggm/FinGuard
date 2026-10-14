@@ -18,8 +18,6 @@ from finguard_orchestrator.domain.constants import (
     MAX_AGENT_NAME,
     MAX_CATEGORY_LENGTH,
     MAX_CONTEXT_ID,
-    MAX_ENTITY_ALIAS_LENGTH,
-    MAX_ENTITY_ALIASES,
     MAX_EXPERT_AGENTS,
     MAX_GROUP_RANK,
     MAX_GROUP_ROWS,
@@ -29,12 +27,9 @@ from finguard_orchestrator.domain.constants import (
     MAX_PROMPT_LENGTH,
     MAX_RANK,
     MAX_RECIPIENT_NAME,
-    MAX_REMEMBERED_TURNS,
     MAX_SELECTED_ACCOUNTS,
     MAX_SELECTED_TRANSACTIONS,
     MAX_SLOT_REF,
-    MAX_TURN_NOTE,
-    MAX_TURN_SENTENCE,
     MAX_VISUAL_CONTEXTS,
 )
 from finguard_orchestrator.domain.enums import (
@@ -62,8 +57,6 @@ from finguard_orchestrator.domain.models.chart import (
 from finguard_orchestrator.domain.models.conversation import Slot, Workflow
 from finguard_orchestrator.domain.models.expert_agents import AGENT_ID, REFERENCE
 from finguard_orchestrator.domain.services.visual_profile import MAX_DRAWN_LABELS
-from finguard_orchestrator.domain.value_objects.account_selection import AccountSelectionMode
-from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
 
 class _Payload(BaseModel):
@@ -221,38 +214,10 @@ _SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
 }
 
 
-class AccountAliasPayload(_Payload):
-    alias: str = Field(min_length=1, max_length=MAX_ENTITY_ALIAS_LENGTH)
-    account_id: UUID
-    display_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
-
-
 class AccountCandidatePayload(_Payload):
     account_id: UUID
     display_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
     kind: str = Field(min_length=1, max_length=32)
-
-
-class CounterpartyAliasPayload(_Payload):
-    alias: str = Field(min_length=1, max_length=MAX_ENTITY_ALIAS_LENGTH)
-    counterparty_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
-    counterparty_type: CounterpartyType
-
-
-class TurnPayload(_Payload):
-    """One past exchange, round-tripped so the next turn has a thread to read against.
-
-    Bounded on both axes — how many travel and how long each may be — because there are no sessions
-    here and the log rides every request. `sentence` is the one field a holder authored; it is
-    fenced as data before it reaches any prompt and nothing branches on it.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    sentence: str = Field(default="", max_length=MAX_TURN_SENTENCE)
-    outcome: str = Field(min_length=1, max_length=40, pattern=r"^[A-Z][A-Z0-9_]*$")
-    plan: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
-    question: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
 
 
 # `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
@@ -690,42 +655,6 @@ class ConversationPayload(_Payload):
     # What the last turn asked for, when it asked for anything. This is what makes "de este"
     # readable: the slot says which field the sentence is filling.
     awaiting: Slot | None = None
-    # What the last turn asked for, when it left nothing open. Memory rather than a workflow, which
-    # is why it has no per-state rule below: `awaiting` is constrained because a window slot on a
-    # payment would let a reply meant for a period complete a Bizum, and this decides one thing —
-    # whether the same question has now been asked twice.
-    last_asked: Slot | None = None
-    # Whether the last turn said how much money there is. Memory, like the two below, and it is
-    # what makes "¿y en la hucha?" a balance question after a balance and a spending question after
-    # a spending one — the same sentence, two meanings, decided by the turn before.
-    answered_the_balance: bool = False
-    # The category explicitly highlighted by the last answer. It is an identifier from banking,
-    # not prose, and the client only echoes it so a later "esa categoría" can be grounded.
-    referenced_category: str | None = Field(
-        default=None, max_length=40, pattern=r"^[A-Z][A-Z0-9_]*$"
-    )
-    # A typed row reference emitted by a category, merchant or account breakdown. The key is bank
-    # data, never free prose inferred by the client, and both halves are validated as one value.
-    referenced_group_by: GroupBy | None = None
-    referenced_group_key: str | None = Field(
-        default=None, min_length=1, max_length=MAX_MERCHANT_LENGTH
-    )
-    # Exact evidence rows shown by the preceding answer. UUIDs are harmless selectors: banking
-    # still scopes every query to the authenticated holder.
-    referenced_transaction_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_TRANSACTIONS)
-    account_aliases: list["AccountAliasPayload"] = Field(default=[], max_length=MAX_ENTITY_ALIASES)
-    account_selection_mode: AccountSelectionMode | None = None
-    account_selection_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_ACCOUNTS)
-    counterparty_aliases: list["CounterpartyAliasPayload"] = Field(
-        default=[], max_length=MAX_ENTITY_ALIASES
-    )
-    # The rail of the payment that just completed. It is deliberately tiny and short-lived: it
-    # only grounds an immediate "y ahora otro de 14 a Aitor", never a recipient or an amount.
-    recent_payment_rail: Rail | None = None
-    # What happened, oldest first. Every field above it is a projection of the turn immediately
-    # before, taken by whichever branch ran; this is the turn itself, and it is what lets an
-    # ellipsis three deep still resolve. Bounded, because it travels on every request.
-    turns: list[TurnPayload] = Field(default=[], max_length=MAX_REMEMBERED_TURNS)
     visual_contexts: list[VisualContextPayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
     # The last activity search's verified slots, sealed (A2A expert agents, spec §5.3). Memory, not
     # a workflow, so it rides beside any state; absent in a payload from before it existed.
@@ -733,22 +662,6 @@ class ConversationPayload(_Payload):
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
-    prior_plan: PlanPayload | None = None
-    # The validated query banking could not execute. Kept separately from `last_plan`: a failed
-    # read is retryable context, not an answer a later "y este mes" should inherit from.
-    retry_plan: PlanPayload | None = None
-    # A derived relationship connects two plans. These triples are memory, not an active workflow,
-    # are all-or-nothing: one missing operand is not a calculation this service emitted.
-    last_ratio_kind: RatioKind | None = None
-    last_ratio_part: PlanPayload | None = None
-    last_ratio_whole: PlanPayload | None = None
-    pending_ratio_kind: RatioKind | None = None
-    pending_ratio_part: PlanPayload | None = None
-    pending_ratio_whole: PlanPayload | None = None
-    # A comparison has two ordered operands and no independently selectable metric: both plans
-    # carry the same one. The pair is all-or-nothing for the same reason as ratio memory.
-    last_comparison_earlier: PlanPayload | None = None
-    last_comparison_latest: PlanPayload | None = None
     # FINANCIAL_CLARIFICATION: the reading so far.
     draft: PlanPayload | None = None
     pending_plan: PlanPayload | None = None
@@ -877,50 +790,8 @@ class ConversationPayload(_Payload):
             if self.pending_plan is None or self.pending_plan.action is not Action.RANK_MOVEMENTS:
                 raise ValueError("pendingRequestedCount requires a movement-ranking plan")
 
-        if self.account_selection_mode is None and self.account_selection_ids:
-            raise ValueError("accountSelectionIds require accountSelectionMode")
-        if self.account_selection_mode is AccountSelectionMode.ALL and self.account_selection_ids:
-            raise ValueError("ALL account selection cannot contain ids")
-        if (
-            self.account_selection_mode is AccountSelectionMode.SELECTED
-            and not self.account_selection_ids
-        ):
-            raise ValueError("SELECTED account selection needs ids")
-
         if self.awaiting is not None and self.awaiting not in _SLOTS_OF[self.workflow]:
             raise ValueError(f"{self.workflow or 'an idle state'} never asks for {self.awaiting}")
-        for prefix in ("last_ratio", "pending_ratio"):
-            values = (
-                getattr(self, f"{prefix}_kind"),
-                getattr(self, f"{prefix}_part"),
-                getattr(self, f"{prefix}_whole"),
-            )
-            if any(value is not None for value in values) and any(
-                value is None for value in values
-            ):
-                raise ValueError(f"{prefix} needs its kind and both operands")
-        comparison = (self.last_comparison_earlier, self.last_comparison_latest)
-        if any(value is not None for value in comparison) and any(
-            value is None for value in comparison
-        ):
-            raise ValueError("last_comparison needs both ordered operands")
-        group_reference = (self.referenced_group_by, self.referenced_group_key)
-        if any(value is not None for value in group_reference) and any(
-            value is None for value in group_reference
-        ):
-            raise ValueError("a referenced group needs both its dimension and key")
-        if self.referenced_group_by not in {
-            None,
-            GroupBy.CATEGORY,
-            GroupBy.MERCHANT,
-            GroupBy.COUNTERPARTY,
-            GroupBy.ACCOUNT,
-        }:
-            raise ValueError(
-                "only category, merchant, counterparty and account rows can be referenced"
-            )
-        if len(set(self.referenced_transaction_ids)) != len(self.referenced_transaction_ids):
-            raise ValueError("referenced transaction ids must be unique")
         return self
 
 

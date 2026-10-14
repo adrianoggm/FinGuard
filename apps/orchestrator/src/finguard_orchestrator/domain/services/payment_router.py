@@ -111,8 +111,6 @@ _ALREADY: Final = re.compile(
     rf"|\b(?:{_MADE})\b"
 )
 
-_A_WORD: Final = re.compile(r"[a-z0-9]+")
-
 # Money arriving, which is never an order to send any.
 #
 # Its own signal rather than another entry in `_ALREADY`, because it is not about tense. "¿He

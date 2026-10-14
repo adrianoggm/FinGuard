@@ -23,7 +23,7 @@ from finguard_orchestrator.application.engine.executor import RankingRun
 from finguard_orchestrator.application.engine.presenter import answered
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
-from finguard_orchestrator.domain.services import answer_writer, continuation_patch
+from finguard_orchestrator.domain.services import answer_writer
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -411,24 +411,6 @@ def test_an_answer_with_no_figure_does_not_explain_a_figure_that_did_not_change(
     assert said == (
         "No he encontrado movimientos en supermercado el mes pasado. "
         "Puedes buscar sin categoría o ampliar el periodo."
-    )
-
-
-def test_the_inert_exclusion_is_still_applied_to_the_plan() -> None:
-    """Decision (a), end to end: the instruction is kept — it matters the day the category filter
-    widens — and what changes is only what the answer claims about the figure."""
-    patched = continuation_patch.apply(
-        "sin contar el alquiler",
-        plan(categories=("GROCERIES",)),
-        today=date(2026, 8, 25),
-        answered_last=True,
-    )
-
-    assert patched.plan is not None
-    assert patched.plan.excluded_categories == ("HOUSING_RENT",)
-    assert patched.plan.categories == ("GROCERIES",)
-    assert answer_writer.write(answer(), patched.plan).endswith(
-        "No hay alquiler en supermercado, así que la cifra no cambia."
     )
 
 

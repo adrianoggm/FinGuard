@@ -3,8 +3,7 @@
 All four evaluation trees, because the question "has this vocabulary ever been measured?" does not
 care which harness measures it. Planning, conversations, dispatch paraphrases and payment drift
 are all replayed by tests; omitting the latter two called vocabulary unwatched while a dedicated
-robustness test was exercising it. `scripts/lexicon_coverage.py` reports the same number for a
-human.
+robustness test was exercising it.
 
 Loaded once and folded once. 1,800-odd sentences against the lexicons is cheap exactly once and not
 cheap per test.

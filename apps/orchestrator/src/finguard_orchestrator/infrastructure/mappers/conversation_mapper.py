@@ -10,24 +10,20 @@ that is not one, a rank of forty thousand are all refused at the edge with a 422
 layers in with an apology.
 """
 
-from collections.abc import Callable
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
+from finguard_orchestrator.domain.enums import Action
 from finguard_orchestrator.domain.models.chart import (
     ChartSpec,
-    ContextTrust,
     EncodingSort,
     FieldOrder,
     VisualContext,
     VisualField,
 )
-from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
-    AccountCandidate,
     AccountScopeClarification,
     ActiveWorkflow,
     ActivityOffers,
@@ -36,11 +32,8 @@ from finguard_orchestrator.domain.models.conversation import (
     FinancialClarification,
     PaymentConfirmation,
     PaymentInProgress,
-    ResultReference,
-    Slot,
     TransferInProgress,
     UnsupportedCapability,
-    Workflow,
     workflow_of,
 )
 from finguard_orchestrator.domain.models.expert_agents import ActivitySlot
@@ -50,10 +43,8 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlanDraft,
     RelativePeriod,
 )
-from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
-    ActivitySlotPayload,
     ConversationPayload,
     PaymentDraftPayload,
     PlanPayload,
@@ -61,24 +52,9 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     VisualContextPayload,
 )
 from finguard_orchestrator.infrastructure.mappers.plan_mapper import (
-    draft_to_domain,
     plan_to_domain,
 )
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
-
-# D-3b-4 (fix wave): named once, used by both `_visual_contexts` and `to_domain` below -- the two
-# signatures have to move together by definition (one is the closure the other threads through to
-# it), and a hand-written copy at each site is exactly the kind of pair this module's other
-# comments already warn drifts apart.
-#
-# A-1 (Wave 3 hardening): the closure now takes the conversation id and the context's position in
-# the echoed list, and returns *why* rather than whether -- `context_semantics` is still the last
-# argument, unchanged, so only the caller (`llm_controller._conversation_of`) had to grow the two
-# new arguments it already has both of by the time it builds this closure.
-type ContextVerifier = Callable[[str | None, UUID, int, dict[str, object]], ContextTrust]
-# The offers' own, bound by the controller the same way: token, conversation id, what the seal
-# covers. No position -- a conversation holds one set of offers (`MetricTokenCodec.seal_offers`).
-type OffersVerifier = Callable[[str | None, UUID, dict[str, object]], ContextTrust]
 
 # `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
 # `"NONE"` here would be the second copy that goes stale the moment that default changes -- the
@@ -387,93 +363,6 @@ def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
     return plan_to_domain(payload)
 
 
-def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
-    """The state the payload describes.
-
-    Nothing is recovered here any more. The payload's own validator has already refused a workflow
-    whose fields do not match it, so a PAYMENT_CONFIRMATION reaching this function has an intent and
-    a PAYMENT_IN_PROGRESS has a payment. That is why the asserts below are asserts and not branches:
-    they are the invariant restated, not a case a caller can produce.
-    """
-    match payload.workflow:
-        case Workflow.FINANCIAL_CLARIFICATION:
-            assert payload.draft is not None  # the payload's validator requires it
-            return FinancialClarification(
-                draft=draft_to_domain(payload.draft),
-                awaiting=payload.awaiting or Slot.WINDOW,
-            )
-        case Workflow.ACCOUNT_SCOPE:
-            assert payload.pending_plan is not None
-            return AccountScopeClarification(
-                pending=query_to_domain(payload.pending_plan),
-                candidates=tuple(
-                    AccountCandidate(row.account_id, row.display_name, row.kind)
-                    for row in payload.account_candidates
-                ),
-                requested_count=payload.pending_requested_count,
-                explicit_visualization=payload.pending_explicit_visualization,
-            )
-        case Workflow.UNSUPPORTED_CAPABILITY:
-            assert payload.capability  # the payload's validator requires it
-            return UnsupportedCapability(capability=payload.capability)
-        case Workflow.PAYMENT_IN_PROGRESS:
-            assert payload.payment is not None  # the payload's validator requires it
-            return PaymentInProgress(
-                draft=_payment_to_domain(payload.payment),
-                awaiting=payload.awaiting or Slot.AMOUNT,
-                candidates=tuple(
-                    Contact(row.contact_id, row.display_name, row.phone)
-                    for row in payload.candidates
-                ),
-                suspended=payload.suspended,
-            )
-        case Workflow.TRANSFER_IN_PROGRESS:
-            return TransferInProgress(
-                to_account_id=payload.transfer_to,
-                amount_minor=payload.transfer_amount_minor,
-                awaiting=payload.awaiting or Slot.AMOUNT,
-            )
-        case Workflow.PAYMENT_CONFIRMATION:
-            assert payload.intent_id is not None  # the payload's validator requires all three
-            assert payload.recipient is not None
-            assert payload.amount_minor is not None
-            return PaymentConfirmation(
-                intent_id=payload.intent_id,
-                recipient=payload.recipient,
-                amount_minor=payload.amount_minor,
-                # The domain's default is EUR, and taking it here is how a preview prepared in
-                # dollars came back from a round trip denominated in euros.
-                currency=payload.currency or "EUR",
-                concept=payload.concept,
-                rail=payload.rail or Rail.BIZUM,
-                recipient_iban=payload.recipient_iban,
-            )
-        case Workflow.BOOKING_CONFIRMATION:
-            assert payload.booking_id is not None  # the payload's validator requires all three
-            assert payload.booking_slot is not None
-            assert payload.booking_agent_name is not None
-            return BookingConfirmation(
-                booking_id=payload.booking_id,
-                slot=_slot(payload.booking_slot),
-                agent_name=payload.booking_agent_name,
-                context_id=payload.booking_context_id,
-            )
-        case _:
-            return None
-
-
-def _slot(payload: ActivitySlotPayload) -> ActivitySlot:
-    """One slot off the wire, through the domain type that refuses what a verifier never passed."""
-    return ActivitySlot(
-        payload.agent_id,
-        payload.activity,
-        payload.start,
-        payload.end,
-        payload.free_places,
-        payload.slot_ref,
-    )
-
-
 def _slot_payload(slot: ActivitySlot, agent_name: str) -> dict[str, object]:
     return {
         "agent_id": slot.agent_id,
@@ -486,17 +375,6 @@ def _slot_payload(slot: ActivitySlot, agent_name: str) -> dict[str, object]:
     }
 
 
-def _payment_to_domain(payload: PaymentDraftPayload) -> PaymentDraft:
-    return PaymentDraft(
-        recipient_name=payload.recipient_name,
-        recipient_contact_id=payload.recipient_contact_id,
-        amount_minor=payload.amount_minor,
-        currency=payload.currency,
-        concept=payload.concept,
-        rail=payload.rail,
-    )
-
-
 def to_payload(conversation: Conversation) -> ConversationPayload:
     """What the client stores and sends back.
 
@@ -507,9 +385,6 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
     itself now: a half-filled PAYMENT_CONFIRMATION is refused, and constructing one on the way to
     filling it would make this function raise on its own correct output.
     """
-    referenced_category, referenced_group_by, referenced_group_key, referenced_transaction_ids = (
-        _legacy_projection_of(conversation.result_reference)
-    )
     return ConversationPayload.model_validate(
         {
             # The half of the round trip that makes it one. Without this line the identifier is
@@ -520,106 +395,14 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "version": conversation.version,
             "workflow": workflow_of(conversation.active),
             "awaiting": conversation.awaiting,
-            "last_asked": conversation.last_asked,
-            "answered_the_balance": conversation.answered_the_balance,
-            "referenced_category": referenced_category,
-            "referenced_group_by": referenced_group_by,
-            "referenced_group_key": referenced_group_key,
-            "referenced_transaction_ids": referenced_transaction_ids,
-            "account_aliases": [
-                {
-                    "alias": alias.alias,
-                    "account_id": alias.account_id,
-                    "display_name": alias.display_name,
-                }
-                for alias in conversation.account_aliases
-            ],
-            "account_selection_mode": (
-                conversation.account_selection.mode if conversation.account_selection else None
-            ),
-            "account_selection_ids": (
-                list(conversation.account_selection.account_ids)
-                if conversation.account_selection
-                else []
-            ),
-            "counterparty_aliases": [
-                {
-                    "alias": alias.alias,
-                    "counterparty_name": alias.counterparty_name,
-                    "counterparty_type": alias.counterparty_type,
-                }
-                for alias in conversation.counterparty_aliases
-            ],
-            "recent_payment_rail": conversation.recent_payment_rail,
-            "turns": [
-                {
-                    "sentence": turn.sentence,
-                    "outcome": turn.outcome,
-                    "plan": turn.plan,
-                    "question": turn.question,
-                }
-                for turn in conversation.turns
-            ],
             "visual_contexts": [
                 _context_payload(context) for context in conversation.visual_contexts
             ],
             "activity_offers": _offers_payload(conversation.activity_offers),
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
-            "prior_plan": (
-                plan_payload(conversation.prior_plan) if conversation.prior_plan else None
-            ),
-            "retry_plan": (
-                plan_payload(conversation.retry_plan) if conversation.retry_plan else None
-            ),
-            "last_ratio_kind": (conversation.last_ratio.kind if conversation.last_ratio else None),
-            "last_ratio_part": (
-                plan_payload(conversation.last_ratio.part) if conversation.last_ratio else None
-            ),
-            "last_ratio_whole": (
-                plan_payload(conversation.last_ratio.whole) if conversation.last_ratio else None
-            ),
-            "pending_ratio_kind": (
-                conversation.pending_ratio.kind if conversation.pending_ratio else None
-            ),
-            "pending_ratio_part": (
-                plan_payload(conversation.pending_ratio.part)
-                if conversation.pending_ratio
-                else None
-            ),
-            "pending_ratio_whole": (
-                plan_payload(conversation.pending_ratio.whole)
-                if conversation.pending_ratio
-                else None
-            ),
-            "last_comparison_earlier": (
-                plan_payload(conversation.last_comparison.earlier)
-                if conversation.last_comparison
-                else None
-            ),
-            "last_comparison_latest": (
-                plan_payload(conversation.last_comparison.latest)
-                if conversation.last_comparison
-                else None
-            ),
             **_active_payload(conversation.active),
         }
     )
-
-
-def _legacy_projection_of(
-    reference: ResultReference | None,
-) -> tuple[str | None, GroupBy | None, str | None, list[UUID]]:
-    """Project only a canonical reference; stale/absent values become an empty legacy wire."""
-    if reference is None:
-        return None, None, None, []
-    category = reference.category
-    group_by = reference.group_by
-    group_key = reference.group_key
-    if category is not None and group_by is None:
-        group_by, group_key = GroupBy.CATEGORY, category
-    elif group_by is GroupBy.CATEGORY and category is None:
-        category = group_key
-    return category, group_by, group_key, list(reference.transaction_ids)
 
 
 def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:

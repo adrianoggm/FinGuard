@@ -36,7 +36,7 @@ Whichever phrase is longer is the one the person actually said.
 
 import re
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date
 from typing import Final
 
 from finguard_orchestrator.domain.enums import Period
@@ -806,9 +806,6 @@ def _so_far(folded: str) -> Window | None:
     return None
 
 
-_A_WORD: Final = re.compile(r"[a-z]+")
-
-
 # --- validation fix 1, F2: a month said after an answer is a month of the year in view ---------
 #
 # «Ahora solo julio» after «junio vs julio» of 2026, «pero de julio y agosto» after a comparison of
@@ -834,72 +831,6 @@ _A_WORD: Final = re.compile(r"[a-z]+")
 # now, below both readers that need them — the follow-up patch, which reads the unit off the answer,
 # and the follow-up reader, which reads it off the sentence — so the two cannot answer June in one
 # turn and July in the other. The other units stay where they were.
-
-# The calendar unit a window is one of, in the words a sentence names it with.
-_UNIT_OF_A_PERIOD: Final[dict[Period, str]] = {
-    Period.THIS_WEEK: "semana",
-    Period.LAST_WEEK: "semana",
-    Period.THIS_MONTH: "mes",
-    Period.LAST_MONTH: "mes",
-    Period.THIS_YEAR: "ano",
-}
-
-
-def calendar_unit_of(window: Window) -> str | None:
-    """«semana», «mes» or «ano» when `window` is one whole week, month or year — this one, the
-    last one, or one named by its dates — and None otherwise: thirty days back is no unit."""
-    if isinstance(window, RelativePeriod):
-        return _UNIT_OF_A_PERIOD.get(window.period)
-    if window == whole_month(window.start.year, window.start.month):
-        return "mes"
-    if window == whole_year(window.start.year):
-        return "ano"
-    if (window.end - window.start).days == 6:
-        return "semana"
-    return None
-
-
-def window_before(window: Window, unit: str, today: date) -> Window | None:
-    """The `unit` («semana», «mes», «ano») directly before `window`, or None when `window` is not
-    one of that unit.
-
-    Named periods step back as named periods while the banking contract has one — this month to
-    LAST_MONTH, this week to LAST_WEEK — and to dates when it has none: the month before last, the
-    week before last, last year. A range steps back by its own dates.
-    """
-    if unit == "mes":
-        if isinstance(window, RelativePeriod):
-            if window.period is Period.THIS_MONTH:
-                return RelativePeriod(Period.LAST_MONTH)
-            if window.period is Period.LAST_MONTH:
-                before_last = date(today.year, today.month, 1) - timedelta(days=32)
-                return whole_month(before_last.year, before_last.month)
-            return None
-        if window == whole_month(window.start.year, window.start.month):
-            before = window.start - timedelta(days=1)
-            return whole_month(before.year, before.month)
-        return None
-    if unit == "semana":
-        if isinstance(window, RelativePeriod):
-            if window.period is Period.THIS_WEEK:
-                return RelativePeriod(Period.LAST_WEEK)
-            if window.period is Period.LAST_WEEK:
-                monday = today - timedelta(days=today.weekday())
-                return AbsoluteRange(
-                    start=monday - timedelta(days=14), end=monday - timedelta(days=8)
-                )
-            return None
-        if (window.end - window.start).days == 6:
-            return AbsoluteRange(
-                start=window.start - timedelta(days=7), end=window.end - timedelta(days=7)
-            )
-        return None
-    if unit == "ano":
-        if isinstance(window, RelativePeriod):
-            return whole_year(today.year - 1) if window.period is Period.THIS_YEAR else None
-        if window == whole_year(window.start.year):
-            return whole_year(window.start.year - 1)
-    return None
 
 
 # "de junio a agosto de 2026" -- the season chip's own shape, and read narrowly on purpose: a

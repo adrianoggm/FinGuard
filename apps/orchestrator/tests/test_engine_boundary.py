@@ -41,20 +41,16 @@ from finguard_orchestrator.infrastructure.llm.counting_provider import calls_so_
 PKG = "finguard_orchestrator"
 SRC = Path(finguard_orchestrator.__file__).parent
 # The spec's list, word for word, as modules.
-# The rules handler, its readers, `query_recovery`, `plan_verifier` and `planning_context` were
-# deleted with the rules route; what is left of the list still exists and is still out of bounds.
+# The rules handler, its readers, `query_recovery`, `plan_verifier`, `planning_context`,
+# `turn_arbiter`, `merchant_words`, `explicit_facts`, `continuation_patch`, `capability_guard` and
+# `intent_lexicon` were deleted with the rules route; what is left of the list still exists and is
+# still out of bounds.
 LINGUISTIC = tuple(
     f"{PKG}.domain.services.{name}"
     for name in (
-        "turn_arbiter",
         "window_words",
         "account_words",
         "payment_words",
-        "merchant_words",
-        "explicit_facts",
-        "continuation_patch",
-        "capability_guard",
-        "intent_lexicon",
     )
 )
 NEVER_IMPORTED = frozenset(LINGUISTIC)
@@ -119,9 +115,9 @@ def test_the_graph_imports_nothing_linguistic() -> None:
 
 
 def test_the_check_sees_an_import_when_there_is_one() -> None:
-    """The control: the financial turn imports one of the list, and the same check says so."""
-    seen = forbidden(SRC / "application" / "queries" / "financial_turn.py")
-    assert f"{PKG}.domain.services.turn_arbiter" in seen
+    """The control: the expert-agent reader imports one of the list, and the same check says so."""
+    seen = forbidden(SRC / "domain" / "services" / "expert_agent_words.py")
+    assert f"{PKG}.domain.services.window_words" in seen
 
 
 def test_category_words_only_names_categories() -> None:
@@ -322,7 +318,7 @@ def arm(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         for name, value in list(vars(other).items()):
             if id(value) in wires:
                 monkeypatch.setattr(other, name, wires[id(value)])
-    assert len(wires) > 50, "the boundary modules define their readers as functions"
+    assert len(wires) > 40, "the boundary modules define their readers as functions"
     return tripped
 
 

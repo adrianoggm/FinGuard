@@ -58,10 +58,7 @@ function state(fields: Partial<ConversationState> = {}): ConversationState {
   return {
     workflow: null,
     awaiting: null,
-    last_asked: null,
-    answered_the_balance: false,
     last_plan: null,
-    retry_plan: null,
     draft: null,
     capability: null,
     payment: null,

@@ -84,12 +84,6 @@ _DETERMINERS: Final = r"(?:el|la|los|las|mi|mis|tu|tus|su|sus|al|a\s+la|a\s+mi|u
 # "corriente" — an adjective, and a property of water — from naming an account on its own.
 _ARTICLES: Final = ("la ", "el ", "los ", "las ", "al ")
 
-_CUSTOM_ACCOUNT: Final = re.compile(
-    r"\bcuenta\s+(?:(?:que\s+se\s+llama|llamada)\s+)?"
-    r"(?!corriente\b|nomina\b|de\s+ahorros?\b|de\s+inversion\b|"
-    r"cuanto\b|que\b|como\b|cuando\b|donde\b)[a-z][a-z0-9 -]{1,60}",
-)
-
 
 def _spelt(noun: str) -> str:
     """The noun and every slip of two neighbouring letters in it, as an alternation.
@@ -217,11 +211,6 @@ def chosen_among(sentence: str, names: tuple[str, ...]) -> tuple[str, ...]:
             found.append((match.start(), spanish.folded(name)))
     chosen = {spanish.folded(name): name for name in names}
     return tuple(chosen[folded] for _, folded in sorted(found))
-
-
-def explicitly_names_a_custom_account(sentence: str) -> bool:
-    """Whether the sentence uses the explicit ``cuenta <nombre>`` form."""
-    return _CUSTOM_ACCOUNT.search(spanish.folded(sentence)) is not None
 
 
 def _only_a_generic_name(name: str) -> bool:

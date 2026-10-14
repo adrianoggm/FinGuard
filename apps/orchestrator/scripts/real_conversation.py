@@ -615,7 +615,7 @@ async def record_of(
             }
         ),
         "suggestions": body.get("suggestions") or [],
-        "state": {key: state.get(key) for key in ("workflow", "awaiting", "last_asked")},
+        "state": {key: state.get(key) for key in ("workflow", "awaiting")},
         "seconds": seconds,
         "engine": (engine or {}).get("engine"),
         "model_calls": (engine or {}).get("model_calls"),

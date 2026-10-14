@@ -20,13 +20,13 @@ later edit could have broken the claim and left the prose standing. It is now th
 sentences, and the argument fails the build if it stops being true.
 """
 
+import pathlib
 import re
 
 import pytest
 from support import lexicon_corpus
 
 from finguard_orchestrator.domain.services import (
-    explicit_facts,
     explicit_lexicon,
     spanish,
 )
@@ -90,8 +90,7 @@ def test_every_phrasing_is_measured_or_seeded() -> None:
     review and nothing can break loudly.
 
     It is deliberately *not* a demand that everything be in a dataset. Most of this vocabulary is
-    unmeasured — see `scripts/lexicon_coverage.py` for the split — and closing that is Section C's
-    job, using exactly these seeds.
+    unmeasured, and closing that is a job for exactly these seeds.
     """
     naked = [
         f"{concept}:{phrasing.says}"
@@ -106,13 +105,16 @@ def test_every_phrasing_is_measured_or_seeded() -> None:
 def test_the_lexicon_is_enumerable_and_nothing_in_it_is_unread() -> None:
     """Both directions, because either alone rots.
 
-    A concept `explicit_facts` reads and the table does not define is a crash at import. A concept
+    A concept a reader asks for and the table does not define is a crash at import. A concept
     the table defines and nothing reads is vocabulary that has quietly stopped applying to any
     sentence — the same failure as a stale regex, wearing a table's respectability.
     """
-    source = explicit_facts.__file__
-    with open(source, encoding="utf-8") as handle:
-        text = handle.read()
+    package = pathlib.Path(explicit_lexicon.__file__).parent.parent
+    text = "".join(
+        path.read_text(encoding="utf-8")
+        for path in package.rglob("*.py")
+        if path.name != "explicit_lexicon.py"
+    )
     # Either quoting: a concept read as a whole pattern is `compiled("x")`, and one whose frame the
     # reader supplies is interpolated as `alternation('x')` inside an f-string.
     unread = [
@@ -124,28 +126,17 @@ def test_the_lexicon_is_enumerable_and_nothing_in_it_is_unread() -> None:
     assert all(phrasings for phrasings in PHRASINGS.values()), "a concept with no phrasings"
 
 
-def test_the_phrasings_two_concepts_share() -> None:
-    """The defect shape this table exists to expose, pinned so a new instance has to be argued.
+def test_no_phrasing_belongs_to_two_concepts() -> None:
+    """The defect shape this table exists to expose: one phrase meaning two things.
 
-    Each of these is deliberate today:
-
-    `recibos domiciliados` is both a recurrence phrase and a direct-debit phrase, and the reader
-    separates them by whether an aggregate was also asked. «me cobr» is in both `expense` and
-    `leaving`, which is the overlap `_direction` is written to resolve — the specific reading is
-    consulted first, so «me cobraron» is money leaving.
+    `income` and `expense` matched the same words once and nobody knew. A phrasing listed under
+    both would make a sentence about spending also read as one about income.
     """
     shared: dict[str, list[str]] = {}
     for concept, phrasings in PHRASINGS.items():
         for phrasing in phrasings:
             shared.setdefault(phrasing.says, []).append(concept)
-    found = {says: tuple(sorted(cs)) for says, cs in shared.items() if len(cs) > 1}
-    assert found == {
-        r"\b(?:recibos?\s+domiciliados?|domiciliaciones?|adeudos?\s+domiciliados?)\b": (
-            "direct_debit_query",
-            "recurrence",
-        ),
-        r"\bme\s+cobr": ("expense", "leaving"),
-    }
+    assert {says: cs for says, cs in shared.items() if len(cs) > 1} == {}
 
 
 def test_the_lexicon_holds_no_frame_it_cannot_explain() -> None:
@@ -165,15 +156,3 @@ def test_the_lexicon_holds_no_frame_it_cannot_explain() -> None:
             assert not (char == "|" and depth == 0), (
                 f"{concept}: {phrasing.says!r} holds a top-level alternation and is two phrasings"
             )
-
-
-def test_the_plural_calendar_unit_is_read() -> None:
-    """«por mes» already matched; «por meses» is the same phrasing, pluralised.
-
-    Task 2 (Wave 4.2b): the reader's regroup patch depends on this — «ahora compáralo por meses»
-    has to be seen as a monthly calendar unit the same way «por mes» already is.
-    """
-    pattern = explicit_lexicon.compiled("temporal_month")
-    assert pattern.search(spanish.folded("gasto por meses")) is not None
-    assert pattern.search(spanish.folded("gasto por mes")) is not None
-    assert pattern.search(spanish.folded("gasto por mesa")) is None

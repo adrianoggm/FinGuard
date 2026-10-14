@@ -247,37 +247,6 @@ export type ConversationState = {
   version?: number | null;
   workflow: Workflow | null;
   awaiting: Slot | null;
-  // What the last turn asked for even when it left no workflow behind. Round-tripped like the
-  // rest and never read here: it is how the service notices it has asked the same question twice
-  // and offers choices instead of a third open question.
-  last_asked: Slot | null;
-  // Whether the last turn said how much money there is. Round-tripped and never read here: it is
-  // how the service knows that "¿y en la hucha?" is about the balance rather than about spending.
-  answered_the_balance: boolean;
-  // Category explicitly highlighted by the previous answer; echoed without interpretation.
-  referenced_category?: string | null;
-  // Typed result row and exact movement evidence shown by the previous answer. The UI only
-  // round-trips these; the orchestrator alone decides what a later pronoun means.
-  referenced_group_by?: "CATEGORY" | "MERCHANT" | "COUNTERPARTY" | "ACCOUNT" | null;
-  referenced_group_key?: string | null;
-  referenced_transaction_ids?: string[];
-  // User-taught account names. Opaque conversational memory: the server revalidates each account
-  // identifier against the authenticated holder before applying it.
-  account_aliases?: { alias: string; account_id: string; display_name: string }[];
-  account_selection_mode?: "ALL" | "SELECTED" | null;
-  account_selection_ids?: string[];
-  counterparty_aliases?: {
-    alias: string;
-    counterparty_name: string;
-    counterparty_type: "MERCHANT" | "PERSON" | "EMPLOYER" | "BILLER" | "ACCOUNT" | "BANK" | "UNKNOWN";
-  }[];
-  // One-turn reference used only to understand an immediate "otro" after a completed payment.
-  recent_payment_rail?: "BIZUM" | "TRANSFER" | null;
-  // What has been said, oldest first and bounded by the service. Every other field here describes
-  // the turn immediately before; this is the thread, and it is what lets an ellipsis several turns
-  // deep still resolve. Round-tripped like the rest and never read here — rendering the chat uses
-  // the messages this client already holds, not the service's copy of them.
-  turns?: { sentence: string; outcome: string; plan?: string | null; question?: string | null }[];
   // Opaque, value-free chart memory. The client echoes it; only the orchestrator interprets it.
   visual_contexts?: {
     chart_id: string;
@@ -322,16 +291,6 @@ export type ConversationState = {
     token: string | null;
   } | null;
   last_plan: PlanContext | null;
-  prior_plan?: PlanContext | null;
-  retry_plan: PlanContext | null;
-  last_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | "NET_CASH_FLOW" | null;
-  last_ratio_part?: PlanContext | null;
-  last_ratio_whole?: PlanContext | null;
-  pending_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | "NET_CASH_FLOW" | null;
-  pending_ratio_part?: PlanContext | null;
-  pending_ratio_whole?: PlanContext | null;
-  last_comparison_earlier?: PlanContext | null;
-  last_comparison_latest?: PlanContext | null;
   draft: PlanContext | null;
   pending_plan?: PlanContext | null;
   pending_requested_count?: number | null;

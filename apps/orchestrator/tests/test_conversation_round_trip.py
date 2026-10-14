@@ -14,11 +14,6 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import ValidationError
 
-from finguard_orchestrator.domain.constants import (
-    MAX_REMEMBERED_TURNS,
-    MAX_TURN_NOTE,
-    MAX_TURN_SENTENCE,
-)
 from finguard_orchestrator.domain.enums import (
     Direction,
     GroupBy,
@@ -31,7 +26,6 @@ from finguard_orchestrator.domain.models.conversation import (
     AccountScopeClarification,
     ActivityOffers,
     BookingConfirmation,
-    Turn,
     Workflow,
 )
 from finguard_orchestrator.domain.models.expert_agents import ActivitySlot
@@ -39,7 +33,6 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
-from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 from finguard_orchestrator.infrastructure.dto.llm_dto import _SLOTS_OF, ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper as mapper
 
@@ -66,53 +59,6 @@ def test_an_identity_that_is_not_an_identifier_is_refused_at_the_edge() -> None:
         )
 
 
-def test_a_partial_group_reference_is_not_valid_conversation_state() -> None:
-    with pytest.raises(ValidationError):
-        ConversationPayload.model_validate({"referenced_group_by": "MERCHANT"})
-
-
-def test_duplicate_referenced_movements_are_not_valid_conversation_state() -> None:
-    movement_id = str(uuid.UUID(int=21))
-    with pytest.raises(ValidationError):
-        ConversationPayload.model_validate(
-            {"referenced_transaction_ids": [movement_id, movement_id]}
-        )
-
-
-@pytest.mark.parametrize("missing", ["earlier", "latest"])
-def test_a_partial_comparison_is_not_valid_conversation_state(missing: str) -> None:
-    fields: dict[str, object] = {
-        "last_comparison_earlier": mapper.plan_payload(LAST_MONTH),
-        "last_comparison_latest": mapper.plan_payload(
-            FinancialPlan(
-                direction=Direction.EXPENSE,
-                period=RelativePeriod(Period.THIS_MONTH),
-                categories=("GROCERIES",),
-                group_by=GroupBy.CATEGORY,
-                metric=Metric.COUNT,
-            )
-        ),
-    }
-    fields[f"last_comparison_{missing}"] = None
-
-    with pytest.raises(ValidationError, match="both ordered operands"):
-        ConversationPayload(**fields)
-
-
-@pytest.mark.parametrize("missing", ["kind", "part", "whole"])
-def test_a_partial_percentage_pair_is_not_valid_conversation_state(missing: str) -> None:
-    plan = mapper.plan_payload(LAST_MONTH)
-    fields: dict[str, object] = {
-        "last_ratio_kind": RatioKind.SHARE,
-        "last_ratio_part": plan,
-        "last_ratio_whole": plan,
-    }
-    fields[f"last_ratio_{missing}"] = None
-
-    with pytest.raises(ValidationError):
-        ConversationPayload(**fields)
-
-
 def test_every_workflow_says_which_slots_it_can_be_waiting_on() -> None:
     """`_SLOTS_OF` is subscripted, not `.get`, so a workflow with no row is a `KeyError` — an HTTP
     500 on the way out, for a conversation this service itself produced.
@@ -128,11 +74,12 @@ def test_every_workflow_says_which_slots_it_can_be_waiting_on() -> None:
 
 def test_account_scope_payload_rejects_count_for_aggregate_plan() -> None:
     payload = mapper.to_payload(
-        IDLE.with_active(
-            AccountScopeClarification(
+        replace(
+            IDLE,
+            active=AccountScopeClarification(
                 pending=LAST_MONTH,
                 candidates=(AccountCandidate(uuid.UUID(int=7), "Hucha", "SAVINGS"),),
-            )
+            ),
         )
     ).model_dump(mode="json")
     payload["pending_requested_count"] = 3
@@ -206,43 +153,6 @@ def test_a_field_that_is_not_part_of_a_conversation_is_refused() -> None:
 # --- the log of what happened --------------------------------------------------------
 
 
-def test_the_log_keeps_the_newest_turns() -> None:
-    """Bounded because it rides every request. Truncating rather than refusing: a long conversation
-    is the normal case, and the far end of one is what an ellipsis never reaches back to."""
-    conversation = IDLE
-    for index in range(MAX_REMEMBERED_TURNS + 3):
-        conversation = conversation.with_turn(Turn(sentence=f"turno {index}", outcome="PLANNED"))
-
-    assert len(conversation.turns) == MAX_REMEMBERED_TURNS
-    assert conversation.turns[-1].sentence == f"turno {MAX_REMEMBERED_TURNS + 2}"
-
-
-def test_a_caller_cannot_send_back_more_turns_than_travel() -> None:
-    """The payload bounds what the domain bounds. Without this the ceiling is only enforced on the
-    way out, and a caller echoing a hand-written log decides how long our prompts are."""
-    with pytest.raises(ValidationError):
-        ConversationPayload.model_validate(
-            {"turns": [{"sentence": "x", "outcome": "PLANNED"}] * (MAX_REMEMBERED_TURNS + 1)}
-        )
-
-
-def test_a_turn_too_long_to_remember_is_cut_rather_than_lost() -> None:
-    """A record is not a query. Every other value object here refuses what it cannot hold, because
-    it is about to be executed; a turn is only ever read as evidence, and refusing one would let a
-    long sentence six turns ago fail the turn happening now. Cut at the length the payload allows,
-    so what the domain keeps is exactly what survives a round trip."""
-    out = IDLE.with_turn(
-        Turn(
-            sentence="a" * (MAX_TURN_SENTENCE + 50),
-            outcome="PLANNED",
-            plan="b" * (MAX_TURN_NOTE + 50),
-        )
-    )
-
-    assert len(out.turns[0].sentence) == MAX_TURN_SENTENCE
-    assert out.turns[0].plan is not None and len(out.turns[0].plan) == MAX_TURN_NOTE
-
-
 # --- the offers of the last search (A2A expert agents, spec §5.3) ------------------------------
 
 MADRID = ZoneInfo("Europe/Madrid")
@@ -314,12 +224,14 @@ BOOKING = BookingConfirmation(uuid.UUID(int=11), NORTE_1900, "Gimnasio Norte", "
 
 
 def booking_on_the_wire() -> dict[str, Any]:
-    dumped: dict[str, Any] = mapper.to_payload(IDLE.with_active(BOOKING)).model_dump(mode="json")
+    dumped: dict[str, Any] = mapper.to_payload(replace(IDLE, active=BOOKING)).model_dump(
+        mode="json"
+    )
     return {key: value for key, value in dumped.items() if key.startswith("booking_")}
 
 
 def test_a_booking_travels_as_its_own_workflow_and_four_fields() -> None:
-    payload = mapper.to_payload(IDLE.with_active(BOOKING)).model_dump(mode="json")
+    payload = mapper.to_payload(replace(IDLE, active=BOOKING)).model_dump(mode="json")
 
     assert payload["workflow"] == "BOOKING_CONFIRMATION"
     assert payload["awaiting"] == "CONFIRMATION"
