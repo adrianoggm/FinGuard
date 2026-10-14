@@ -42,13 +42,11 @@ from finguard_orchestrator.infrastructure.http.dependencies import (
 )
 from finguard_orchestrator.observability.decisions import (
     REDACTED,
-    Consultation,
     Decision,
     Step,
     TurnRecord,
     TurnRecorder,
     Verdict,
-    consulting,
     current_turn,
     name_the_conversation,
     record,
@@ -134,8 +132,6 @@ def everything_in(sealed: TurnRecord) -> str:
             )
             for decision in sealed.decisions
         )
-        + "\n"
-        + "\n".join(found.reader for root in sealed.consulted for _, found in root.walk())
         + f"\n{sealed.outcome}\n{sealed.conversation}"
     )
 
@@ -207,7 +203,7 @@ def test_a_raw_account_id_is_refused_rather_than_recorded() -> None:
 )
 def test_prose_and_identifiers_are_redacted(value: str) -> None:
     """A sentence, a concept, a movement description, a full name, an overlong token, an account."""
-    assert record(Step.ENFORCE, Verdict.OVERRODE, changed=True, was=value).was == REDACTED
+    assert record(Step.PLAN_VERIFIER, Verdict.OVERRODE, changed=True, was=value).was == REDACTED
 
 
 @pytest.mark.parametrize(
@@ -228,7 +224,9 @@ def test_a_bare_word_still_gets_through_and_that_is_the_honest_limit() -> None:
     and it stops exactly there. Asserting the gap keeps a later reader from believing the call
     sites are behind a filter and relaxing the discipline that actually covers this case.
     """
-    assert record(Step.ENFORCE, Verdict.OVERRODE, changed=True, now="abogado").now == "abogado"
+    assert (
+        record(Step.PLAN_VERIFIER, Verdict.OVERRODE, changed=True, now="abogado").now == "abogado"
+    )
 
 
 def test_the_step_and_the_verdict_cannot_carry_anything() -> None:
@@ -245,11 +243,12 @@ def test_the_step_and_the_verdict_cannot_carry_anything() -> None:
 
     Fifteen since voice added `PAYMENT_CONFIRMATION`: a transcript is a guess, a yes is the one
     word that moves money, and a spoken yes held back nobody counts is a guard nobody can show ran.
+
+    Nine since the rules route went: intent, capability guard, enforce, inherited window, metric
+    without a bucket and context trust were seams of readers that no longer exist.
     """
-    assert len(Step) == 15, (
-        "the design argues fifteen seams; a sixteenth should be a diff to justify"
-    )
-    assert len({step.value for step in Step}) == 15, "two seams sharing a label share a time series"
+    assert len(Step) == 9, "the design argues nine seams; a tenth should be a diff to justify"
+    assert len({step.value for step in Step}) == 9, "two seams sharing a label share a time series"
     assert set(Verdict) == {
         Verdict.AGREED,
         Verdict.OVERRODE,
@@ -266,10 +265,10 @@ def test_a_decision_cannot_be_recorded_without_saying_whether_it_mattered() -> N
     """Keyword-only and no default. A rule that fires on every turn and alters nothing is noise,
     and a record that does not distinguish the two cannot tell you which one you have."""
     with pytest.raises(TypeError):
-        record(Step.ENFORCE, Verdict.OVERRODE)  # type: ignore[call-arg]
+        record(Step.PLAN_VERIFIER, Verdict.OVERRODE)  # type: ignore[call-arg]
 
     with pytest.raises(TypeError):
-        Decision(step=Step.ENFORCE, verdict=Verdict.OVERRODE)  # type: ignore[call-arg]
+        Decision(step=Step.PLAN_VERIFIER, verdict=Verdict.OVERRODE)  # type: ignore[call-arg]
 
 
 def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
@@ -281,15 +280,17 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
     """
     with recording_turn() as turn:
         record(
-            Step.ENFORCE,
+            Step.PLAN_VERIFIER,
             Verdict.OVERRODE,
             changed=True,
             field="window",
             was="LAST_N_MONTHS:5",
             now="LAST_N_MONTHS:3",
         )
-        record(Step.ENFORCE, Verdict.AGREED, changed=False, field="metric", was="SUM", now="SUM")
-        record(Step.CAPABILITY_GUARD, Verdict.DECLINED, changed=True, field="family", now="AVERAGE")
+        record(
+            Step.PLAN_VERIFIER, Verdict.AGREED, changed=False, field="metric", was="SUM", now="SUM"
+        )
+        record(Step.LEDGER, Verdict.DECLINED, changed=True, field="family", now="AVERAGE")
 
     for decision in turn.sealed().decisions:
         if decision.was is not None and decision.now is not None:
@@ -302,9 +303,9 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
 def test_the_changed_decisions_are_readable_as_a_group() -> None:
     """The panel this design exists for, as a value: which rules altered the answer."""
     with recording_turn() as turn:
-        record(Step.INTENT, Verdict.AGREED, changed=False)
+        record(Step.PLANNER, Verdict.AGREED, changed=False)
         record(
-            Step.ENFORCE,
+            Step.PLAN_VERIFIER,
             Verdict.OVERRODE,
             changed=True,
             field="window",
@@ -315,7 +316,7 @@ def test_the_changed_decisions_are_readable_as_a_group() -> None:
 
     sealed = turn.sealed()
     assert len(sealed.decisions) == 3
-    assert {d.step for d in sealed.changed} == {Step.ENFORCE, Step.RECOGNISER}
+    assert {d.step for d in sealed.changed} == {Step.PLAN_VERIFIER, Step.RECOGNISER}
 
 
 # --- assertable with nothing running ---------------------------------------------------------
@@ -326,7 +327,7 @@ def test_a_turn_records_that_enforce_overrode_the_window() -> None:
     exporter, no Grafana — the record is a value and this is what reading it looks like."""
     with recording_turn() as turn:
         record(
-            Step.ENFORCE,
+            Step.PLAN_VERIFIER,
             Verdict.OVERRODE,
             changed=True,
             field="window",
@@ -335,7 +336,7 @@ def test_a_turn_records_that_enforce_overrode_the_window() -> None:
         )
         turn.outcome = PlanningOutcome.PLANNED.value
 
-    (window,) = turn.sealed().where(Step.ENFORCE)
+    (window,) = turn.sealed().where(Step.PLAN_VERIFIER)
     assert window.verdict is Verdict.OVERRODE
     assert window.field == "window"
     assert (window.was, window.now) == ("LAST_N_MONTHS:5", "LAST_N_MONTHS:3")
@@ -375,7 +376,7 @@ def test_a_decision_outside_a_turn_is_dropped_and_still_built() -> None:
     starts a turn at all."""
     assert current_turn() is None
 
-    dropped = record(Step.INTENT, Verdict.AGREED, changed=False, now=PRIVATE)
+    dropped = record(Step.PLANNER, Verdict.AGREED, changed=False, now=PRIVATE)
 
     assert dropped.now == REDACTED
     assert current_turn() is None
@@ -385,7 +386,7 @@ def test_a_sealed_record_cannot_grow_afterwards() -> None:
     """An exporter holding a record must be holding what the turn decided, not a live view of a
     recorder somebody else is still writing to."""
     with recording_turn() as turn:
-        record(Step.INTENT, Verdict.AGREED, changed=False)
+        record(Step.PLANNER, Verdict.AGREED, changed=False)
         sealed = turn.sealed()
         record(Step.OUTCOME, Verdict.AGREED, changed=False)
 
@@ -395,7 +396,7 @@ def test_a_sealed_record_cannot_grow_afterwards() -> None:
 
 def test_a_decision_is_frozen() -> None:
     """A decision is a thing that happened."""
-    decision = record(Step.INTENT, Verdict.AGREED, changed=False)
+    decision = record(Step.PLANNER, Verdict.AGREED, changed=False)
     with pytest.raises(FrozenInstanceError):
         decision.changed = True  # type: ignore[misc]
 
@@ -411,7 +412,7 @@ def test_the_recorder_is_ambient_and_restored() -> None:
         assert current_turn() is outer
         with recording_turn() as inner:
             assert current_turn() is inner
-            record(Step.INTENT, Verdict.AGREED, changed=False)
+            record(Step.PLANNER, Verdict.AGREED, changed=False)
         assert current_turn() is outer
         assert outer.sealed().decisions == ()
         assert len(inner.sealed().decisions) == 1
@@ -435,7 +436,7 @@ def test_the_recorder_survives_being_reset_in_the_wrong_context() -> None:
     async def turn() -> AsyncIterator[int]:
         with recording_turn() as recorder:
             held.append(recorder)
-            record(Step.INTENT, Verdict.AGREED, changed=False)
+            record(Step.PLANNER, Verdict.AGREED, changed=False)
             yield 1
             yield 2
 
@@ -482,7 +483,7 @@ def test_the_record_is_reached_by_reference_not_by_reading_the_variable() -> Non
     could attribute one holder's decisions to the next turn; one that holds what `recording_turn`
     handed it cannot, whatever the variable says."""
     with recording_turn() as turn:
-        record(Step.INTENT, Verdict.AGREED, changed=False)
+        record(Step.PLANNER, Verdict.AGREED, changed=False)
         held = turn
     assert current_turn() is None
     assert len(held.sealed().decisions) == 1
@@ -502,14 +503,14 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
     """
     with recording_turn() as turn:
         record(
-            Step.INTENT,
+            Step.PLANNER,
             Verdict.OVERRODE,
             changed=True,
             field="intent",
             was="FINANCIAL_QUERY",
             now="ACCOUNT_BALANCE",
         )
-        record(Step.CAPABILITY_GUARD, Verdict.DECLINED, changed=True, field="family", now="AVERAGE")
+        record(Step.LEDGER, Verdict.DECLINED, changed=True, field="family", now="AVERAGE")
         record(Step.RECOGNISER, Verdict.CLAIMED, changed=True, detail="_cumulative_plan")
         record(
             Step.PLANNER,
@@ -519,7 +520,7 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
             detail="qwen2.5:7b",
         )
         record(
-            Step.ENFORCE,
+            Step.PLAN_VERIFIER,
             Verdict.OVERRODE,
             changed=True,
             field="window",
@@ -527,14 +528,14 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
             now="LAST_N_MONTHS:3",
         )
         record(
-            Step.INHERITED_WINDOW,
+            Step.VISUAL_FOLLOW_UP,
             Verdict.OVERRODE,
             changed=True,
             field="window",
             now="LAST_N_MONTHS:5",
         )
         record(
-            Step.METRIC_WITHOUT_A_BUCKET,
+            Step.OUTCOME,
             Verdict.OVERRODE,
             changed=True,
             field="group_by",
@@ -577,7 +578,7 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
         # Task 1 (Wave 3 hardening, A-1): the thirteenth seam -- an echoed visual context's seal
         # checked out, so nothing changed and nothing is declined.
         record(
-            Step.CONTEXT_TRUST,
+            Step.VISUAL_PLANNER,
             Verdict.AGREED,
             changed=False,
             field="chart",
@@ -641,129 +642,6 @@ def test_the_two_records_are_separate_modules() -> None:
 
 
 # --- the path the reasoning fell through -------------------------------------------------------
-
-
-def test_the_path_is_recorded_with_nothing_listening() -> None:
-    """**The property this module exists for, applied to the second record.**
-
-    `otel_recogniser_spans` decides whether the path is *drawn*. It does not decide whether it is
-    built, and it must never: the configuration that would switch this off is the configuration no
-    test runs under. So a turn with no exporter, no collector and no setting still comes out of
-    here holding the order the readers were asked in.
-    """
-    with recording_turn() as turn:
-        for reader in ("_ratio_request", "_gambling_plan", "_cumulative_plan"):
-            with consulting(reader) as consulted:
-                consulted.claimed = reader == "_cumulative_plan"
-
-    sealed = turn.sealed()
-
-    assert [found.reader for found in sealed.consulted] == [
-        "_ratio_request",
-        "_gambling_plan",
-        "_cumulative_plan",
-    ]
-    assert [found.claimed for found in sealed.consulted] == [False, False, True]
-
-
-def test_a_reader_consulted_from_inside_another_becomes_its_child() -> None:
-    """**The callback case, and the reason this exists at all.**
-
-    `_ratio_request` reads a percent-change follow-up by asking `_direct_period_comparison`, and
-    before this the two flattened into unrelated `CLAIMED` rows with nothing saying one asked the
-    other.
-
-    Nothing here names either function, and nothing passes a parent. The inner consultation is a
-    child because its frame opened while the outer one was still on the stack — the same rule
-    OpenTelemetry's own context uses, applied to a value so it holds with nothing listening.
-    """
-    with recording_turn() as turn, consulting("_ratio_request") as outer:
-        with consulting("_direct_period_comparison") as inner:
-            inner.claimed = True
-        outer.claimed = True
-
-    sealed = turn.sealed()
-
-    assert len(sealed.consulted) == 1, "one root: the reader the cascade asked"
-    assert [(depth, found.reader) for depth, found in sealed.consulted[0].walk()] == [
-        (0, "_ratio_request"),
-        (1, "_direct_period_comparison"),
-    ]
-    assert all(found.claimed for _, found in sealed.consulted[0].walk())
-
-
-def test_a_consultation_is_timed_and_a_decision_is_not() -> None:
-    """A `Decision` is a choice and carries no clock on purpose. A consultation is a call, and the
-    interval is what makes "the cascade asked this reader four times" a cost rather than a shrug."""
-    with recording_turn() as turn, consulting("_average_plan"):
-        pass
-
-    only = turn.sealed().consulted[0]
-
-    assert only.ended_at >= only.started_at
-    assert not hasattr(record(Step.INTENT, Verdict.AGREED, changed=False), "started_at")
-
-
-def test_a_reader_that_raises_still_closes_its_frame() -> None:
-    """Balanced by a `finally`. Without it one exception would leave the stack permanently deeper
-    and every later reader in the turn would be recorded as a child of a call that had ended."""
-    with recording_turn() as turn:
-        with pytest.raises(ValueError), consulting("_ratio_request"):
-            raise ValueError("a reader blew up")
-        with consulting("_frequency_plan"):
-            pass
-
-    sealed = turn.sealed()
-
-    assert [found.reader for found in sealed.consulted] == ["_ratio_request", "_frequency_plan"]
-    assert sealed.consulted[0].claimed is False, "it raised; it did not claim"
-    assert sealed.consulted[1].consulted == (), "the second reader is a sibling, not a child"
-
-
-def test_a_reader_consulted_outside_a_turn_is_dropped() -> None:
-    """The same answer `record` gives, for the same reason: there is nowhere honest to put it."""
-    assert current_turn() is None
-
-    with consulting("_ratio_request") as consulted:
-        consulted.claimed = True
-
-    assert current_turn() is None
-
-
-def test_the_path_is_bounded_rather_than_unbounded() -> None:
-    """A compound question runs the whole cascade once per clause inside one request, so the record
-    legitimately holds several passes. It is still bounded, and it truncates rather than raising —
-    a bookkeeping call that can abort a turn has made the service less reliable in exchange for
-    watching it."""
-    with recording_turn() as turn:
-        for index in range(300):
-            with consulting(f"_reader_{index}"):
-                pass
-
-    assert len(turn.sealed().consulted) == 128, "the ceiling, not three hundred"
-
-
-def test_a_declined_reader_is_not_a_decision() -> None:
-    """**The counter is untouched, and this is the assertion that says so.**
-
-    Section 2's argument for recording only claims is right for the metric: twenty "not mine" rows
-    a turn would bury the one that matters, and telling them apart would mean the reader's name as
-    a label, which is unbounded cardinality. The path goes to the trace and never to the counter.
-    """
-    with recording_turn() as turn, consulting("_ratio_request"):
-        pass
-
-    sealed = turn.sealed()
-
-    assert sealed.decisions == (), "consulting a reader records no decision at all"
-    assert len(sealed.consulted) == 1
-
-
-def test_a_reader_name_is_still_put_through_the_vocabulary_check() -> None:
-    """ "A Python identifier cannot hold a sentence" is true and is not a control. The same shape
-    check every other free slot gets applies here too, so a future caller that passes something
-    else is a redaction rather than a leak."""
-    assert Consultation(reader=PRIVATE, claimed=False, started_at=0, ended_at=1).reader == REDACTED
 
 
 # --- which conversation this turn belongs to ---------------------------------------------------

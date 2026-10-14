@@ -51,7 +51,6 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
 )
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
-from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
     BreakdownBlock,
@@ -276,65 +275,6 @@ def _evidence_of(plan: FinancialPlan | ComparisonPlan | RatioPlan | None) -> tup
     return plan.transaction_ids if isinstance(plan, FinancialPlan) else ()
 
 
-# design §4: `derived_from: str | None  # the chart this reshaped or drilled from`.
-#
-# B-3 (Wave 3 hardening): this used to be decided by `result.visual_follow_up.kind` -- whichever
-# reader happened to claim the turn -- and the fact and the verb drifted apart. "Agrúpalo por
-# meses" carries a clitic pronoun `_reshape_claims`'s own `turn_analyzer` reads as a follow-up;
-# "enséñamelo por meses" and a bare "por meses" do not, so `turn_analyzer.analyze` calls them
-# NEW_REQUEST, `visual_follow_up.kind` comes back `UNRELATED`, and a chart that regrouped the
-# exact same window and categories the trusted chart drew lost its lineage -- not because the
-# plan was any different, but because the sentence that asked for it phrased the request as a
-# fresh question. `_same_lineage` below reads the fact instead: whether the plan that drew THIS
-# chart is a refinement, a regroup, or a split of the plan that drew the trusted one, whatever
-# verb the holder used to ask for it.
-def _same_scope(a: FinancialPlan, b: FinancialPlan) -> bool:
-    """Same window, same direction, and categories that narrow or split rather than contradict --
-    one empty, one a subset of the other, or the two sets equal. Grouping and metric are left
-    out on purpose: a regroup ("por meses") and a re-metric are exactly the changes a lineage is
-    allowed to make."""
-    if a.direction != b.direction or (a.period, a.date_range) != (b.period, b.date_range):
-        return False
-    a_categories, b_categories = set(a.categories), set(b.categories)
-    return (
-        not a_categories
-        or not b_categories
-        or a_categories <= b_categories
-        or b_categories <= a_categories
-    )
-
-
-def _financial_operands(
-    plan: FinancialPlan | ComparisonPlan | RatioPlan | TopMovements | None,
-) -> tuple[FinancialPlan, ...]:
-    """`plan` reduced to the `FinancialPlan`(s) a scope comparison can read. A comparison's own
-    `__post_init__` already keeps its two operands' categories/direction/grouping identical to
-    each other -- only their windows differ -- so checking either against a candidate ancestor is
-    checking the same fact about the comparison as a whole. A ratio or a ranking reduces to
-    nothing here -- out of this task's scope, and a lineage check that cannot read a type is the
-    honest `False` rather than a guess at one."""
-    if isinstance(plan, FinancialPlan):
-        return (plan,)
-    if isinstance(plan, ComparisonPlan):
-        return (plan.earlier, plan.latest)
-    return ()
-
-
-def _same_lineage(
-    previous_plan: FinancialPlan | ComparisonPlan | RatioPlan | TopMovements | None,
-    new_plan: FinancialPlan | ComparisonPlan | RatioPlan | TopMovements | None,
-) -> bool:
-    """Whether `new_plan` descends from `previous_plan` -- the fact `derived_from` now reads,
-    replacing a check on which reader claimed the sentence."""
-    if previous_plan is None or new_plan is None:
-        return False
-    return any(
-        _same_scope(ancestor, descendant)
-        for ancestor in _financial_operands(previous_plan)
-        for descendant in _financial_operands(new_plan)
-    )
-
-
 def _remember_visual_context(
     result: AskFinancialQuestionResult,
     visualization: VisualizationResponse | None,
@@ -353,50 +293,6 @@ def _remember_visual_context(
     # is what this function used to do, and it omitted `plan_limited` and `plan_metric`, so the
     # profile stored on the conversation disagreed with the one the chart was chosen from.
     spec = replace(decision.spec, title=_visual_title(result, result.visual_dataset))
-    # The newest chart BEFORE this turn's is appended -- read now, because `with_visual_context`
-    # below appends the new one and would otherwise name itself.
-    previous = (
-        result.conversation.visual_contexts[-1] if result.conversation.visual_contexts else None
-    )
-    # B-3 (Wave 3 hardening): `previous.source_plan` is `None` whenever the chart's own producer
-    # never stamped `metric_definition` and nothing since has borrowed one for it either -- the
-    # first chart of a conversation is exactly this (`conversation.last_plan` is `None` when it
-    # was drawn too, so `stream()`'s own back-fill had nothing to borrow from). `result.
-    # conversation` here is still "was" -- the state before this turn's own turn is appended --
-    # so its `last_plan` is the plan that was in view when `previous` was drawn, the same fact
-    # `source_plan` names when a producer bothered to stamp it. Preferring `source_plan` and
-    # falling back to it is not a second, looser check: it is the one fact this function has,
-    # read from wherever it survived.
-    ancestor_plan: FinancialPlan | ComparisonPlan | RatioPlan | TopMovements | None = (
-        previous.source_plan if previous is not None and previous.source_plan is not None else None
-    )
-    if ancestor_plan is None and previous is not None:
-        ancestor_plan = result.conversation.last_plan
-    derived_from = (
-        previous.chart_id
-        if (
-            previous is not None
-            # m9 (fix wave): only a chart the server vouches for. Only the id crosses over here
-            # -- this turn's own dataset still builds the new chart's spec and profile -- but
-            # `derived_from` is what «el gráfico anterior» resolves through, so an untrusted
-            # previous chart naming itself as the origin would let a legitimate, freshly sealed
-            # chart point its provenance at one nobody signed for.
-            and previous.trusted
-            # F-H3 (Wave 3 hardening, fix round): the causal fact first -- the reader that
-            # answered this turn actually patched, regrouped or split whatever the conversation
-            # already carried (`plan_continues_conversation`, stamped in
-            # `AskFinancialQuestionHandler._answering`), rather than reading a fresh plan off the
-            # sentence alone. Two turns that structurally happen to name the same bare window are
-            # not lineage without this: `_same_lineage` cannot tell "the model read this window
-            # again, coincidentally" from "this chart reshapes that one", because both produce the
-            # identical `FinancialPlan` shape. The structural check stays below it as a sanity
-            # check, not the test -- a reader bug that continues the wrong thing must not still
-            # claim lineage just because the shapes happen to line up.
-            and result.plan_continues_conversation
-            and _same_lineage(ancestor_plan, result.metric_definition)
-        )
-        else None
-    )
     # Task 1 (Wave 4.3): the same dataset the profile above already came from, ranked the way the
     # chart itself ranks its bars -- computed here, before the seal, so a holder's own token
     # covers the labels too.
@@ -409,7 +305,6 @@ def _remember_visual_context(
         source_plan=result.metric_definition,
         evidence_ids=_evidence_of(result.metric_definition),
         turn_id=uuid4(),
-        derived_from=derived_from,
         labels=drawn.labels,
         series_labels=drawn.series_labels,
         ranked=drawn.ranked,
@@ -418,11 +313,6 @@ def _remember_visual_context(
         # is nothing to fingerprint (a comparison, a ratio, a metric_definition that is not a
         # `FinancialPlan` at all).
         window=result.visual_dataset.window,
-        # A fingerprint of `result.metric_definition` as `ask_financial_question.stream()` held it
-        # (`~:645-653`) -- borrowed or not; `_visual_dataset` and its sibling producers stamp
-        # nothing of their own. Sealed as data for 4.3's drill to bind to; the presenter reads
-        # `metric_definition_borrowed` instead of this digest (see `question_to_dto` below).
-        plan_digest=result.visual_plan_digest,
         # Task 1 (Wave 4.5): descriptive provenance, from the same decision the profile above
         # already came from -- never re-derived, never guessed.
         source=decision.source,

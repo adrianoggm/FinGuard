@@ -51,7 +51,6 @@ from finguard_orchestrator.domain.models import (
     expert_agents,
     payment_result,
     query_answer,
-    visual_follow_up,
     visual_plan,
 )
 from finguard_orchestrator.domain.services import deterministic_visual_planner
@@ -151,7 +150,6 @@ _SERIALIZATION_MODULES = (
     expert_agents,
     query_answer,
     payment_result,
-    visual_follow_up,
     visual_plan,
     deterministic_visual_planner,
     account_selection,
@@ -337,7 +335,10 @@ def _decoded(value: Any) -> Any:
         cls = _CLASSES.get(value["$type"])
         if cls is None:
             raise UnknownCheckpointTypeError(value["$type"])
-        return cls(**{name: _decoded(field) for name, field in value["f"].items()})
+        # A field the class no longer declares is dropped: answers and checkpoints stored before a
+        # dead field was deleted still carry it, always at its default since nothing set it.
+        known = {field.name for field in dataclasses.fields(cls)}
+        return cls(**{name: _decoded(field) for name, field in value["f"].items() if name in known})
     if "$tuple" in value:
         return tuple(_decoded(item) for item in value["$tuple"])
     if "$list" in value:

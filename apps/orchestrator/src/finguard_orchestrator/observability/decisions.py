@@ -31,7 +31,6 @@ where discipline has to take over.
 """
 
 import logging
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
@@ -58,26 +57,11 @@ class Step(StrEnum):
     that appears one day in a panel nobody built.
     """
 
-    INTENT = "intent"
-    """Deterministic router versus model, and any fallback between them."""
-
-    CAPABILITY_GUARD = "capability_guard"
-    """Allowed or refused, and which family refused it."""
-
     RECOGNISER = "recogniser"
     """Which deterministic recogniser claimed the turn — `changed` means the model never ran."""
 
     PLANNER = "planner"
     """The planning outcome, the model that produced it, and any retry on invalid structure."""
-
-    ENFORCE = "explicit_facts.enforce"
-    """Per field: what the sentence stated against what the model produced."""
-
-    INHERITED_WINDOW = "inherited_window"
-    """Whether a continuation's silence was filled from the previous turn."""
-
-    METRIC_WITHOUT_A_BUCKET = "metric_without_a_bucket"
-    """Whether the pair was settled — `changed` means a refusal became an answer."""
 
     PLAN_VERIFIER = "plan_verifier"
     """Agreed or disagreed, and which rule disagreed."""
@@ -94,11 +78,6 @@ class Step(StrEnum):
     VISUAL_FOLLOW_UP = "visual_follow_up"
     """What a turn wants from the chart it follows — recorded before anything is changed, so the
     readers' agreement can be measured before a model is trusted with the disagreement."""
-
-    CONTEXT_TRUST = "context_trust"
-    """Whether an echoed visual context's seal checked out, and if not, which of the five reasons
-    (Task 1, Wave 3 hardening: A-1) -- a replay from another conversation and a tampered payload
-    are two different failure populations, and this is the seam that tells them apart."""
 
     PAYMENT_CONFIRMATION = "payment_confirmation"
     """A reply to a payment preview, reduced to yes, no or neither -- and, on the voice channel, a
@@ -273,100 +252,12 @@ class Decision:
                 object.__setattr__(self, slot, checked)
 
 
-_PATH_CEILING: Final = 128
-"""How many reader consultations one turn may record before the rest are dropped.
-
-The cascade is nineteen readers and four of them consult another, so an ordinary turn records
-somewhere near twenty-four. This bound is not for that turn — it is for the compound one:
-`llm_controller` splits a sentence into two or three clauses and runs the whole cascade *per
-clause* inside one HTTP request, so one record legitimately holds three passes. Three times
-twenty-four is seventy-two, and a hundred and twenty-eight leaves room for the cascade to grow
-without a silent truncation appearing in a waterfall somebody is reading.
-
-Dropped rather than raised, for the reason the whole module gives: a bookkeeping call that can
-abort a turn has made the service less reliable in exchange for watching it.
-"""
-
-
-@dataclass(frozen=True, slots=True)
-class Consultation:
-    """One reader the cascade asked, whether it claimed, and what it asked in turn.
-
-    **This is not a `Decision` and it must never become one.** A reader that returns `None` has
-    declined to read, not decided anything, and `_recogniser` argues at length why twenty "not
-    mine" rows per turn would bury the one that matters — in `decisions_total` they are also
-    unbounded label churn, since `detail` would have to become a label to tell them apart. So the
-    counter and the `recogniser` decision keep exactly the behaviour they have, and this is a
-    second, separate value that exists only to be drawn as a tree.
-
-    A trace has neither problem. There the order *is* the finding: "which nineteen functions did
-    the reasoning fall through, and which called which" is a question a waterfall answers natively
-    and a counter cannot answer at all.
-
-    **`consulted` is what makes the callback case readable, and it is not programmed.** Nothing
-    here names `_ratio_request` or `_direct_period_comparison`. A consultation becomes a child of
-    another because it started while that one was still open — the same rule OpenTelemetry's own
-    context stack uses, applied to a value rather than to a span so that it still holds with
-    nothing listening. `otel` turns the tree into spans; the shape was already decided here.
-
-    Timed, unlike `Decision`. A decision is a choice and carries no clock on purpose; a
-    consultation is a *call*, and how long the cascade spent asking readers that declined is the
-    one cost this change adds and the one anybody will want to look at before turning it down.
-    """
-
-    reader: str
-    """The function's `__name__`. This service's own vocabulary by construction — a Python
-    identifier cannot hold a sentence — and it is still put through `_own_words` on the way in,
-    because "by construction" is what six green-but-dead instruments were also true by."""
-
-    claimed: bool
-    """Whether the reader took the turn. The one bit that is also in the record twice, on purpose:
-    the `CLAIMED` decision is what the counter and the dashboard read, and this is what makes a
-    tree readable without cross-referencing it against a sibling span."""
-
-    started_at: int
-    ended_at: int
-    """Nanoseconds since the epoch, from `time.time_ns`, so the span has a real interval."""
-
-    consulted: tuple["Consultation", ...] = ()
-    """What this reader asked while it was running, in order."""
-
-    def __post_init__(self) -> None:
-        checked = _own_words(self.reader, step=Step.RECOGNISER, slot="reader")
-        if checked is not self.reader:
-            object.__setattr__(self, "reader", checked)
-
-    def walk(self) -> "Iterator[tuple[int, Consultation]]":
-        """Every consultation under this one, depth first, with how deep it is.
-
-        A helper for the same reason `TurnRecord.where` is one: the assertion a test wants to write
-        is "the comparison reader ran inside the ratio reader", and hand-rolled recursion at each
-        call site is each call site's own chance to walk it wrongly.
-        """
-        yield 0, self
-        for child in self.consulted:
-            for depth, found in child.walk():
-                yield depth + 1, found
-
-
-@dataclass(slots=True)
-class Consulting:
-    """A reader that is running right now. The decorator sets `claimed` before the frame closes."""
-
-    reader: str
-    claimed: bool = False
-
-
 @dataclass(frozen=True, slots=True)
 class TurnRecord:
     """What one turn decided, sealed. The value Section 3 exports and a test asserts against."""
 
     decisions: tuple[Decision, ...] = ()
     outcome: str | None = None
-    consulted: tuple[Consultation, ...] = ()
-    """The readers the cascade fell through, in order, nested by who asked whom. Empty for every
-    turn that never reaches the cascade — a payment, a courtesy, a refused capability."""
-
     conversation: str | None = None
     """Which conversation this turn belongs to, as the opaque identifier the client round-trips.
 
@@ -413,76 +304,14 @@ class TurnRecorder:
     outcome: str | None = None
     conversation: str | None = None
 
-    # The finished consultations at the top of the cascade, and the frames still open above them.
-    # Two lists rather than one tree being mutated in place: a consultation is frozen, so it can
-    # only be built once the reader it describes has returned, and until then the children it
-    # collected have to live somewhere. `_open` is that somewhere, and it is a stack because the
-    # readers nest — which is the whole point, and the reason nothing here has to be told who
-    # called whom.
-    #
-    # **A stack is only correct because every reader is synchronous.** `_recogniser` wraps plain
-    # functions over a query — no `await` anywhere inside one — so nothing can suspend between an
-    # `opening` and its `closing` and let another reader interleave onto the same stack. A
-    # compound question does run the cascade several times in one request, but sequentially, with
-    # every await between passes and none inside one. The day a reader learns to await, this stack
-    # stops being a call stack and starts being a race, and that is the line to come back to.
-    _consulted: list[Consultation] = dataclass_field(default_factory=list)
-    _open: list[tuple[Consulting, int, list[Consultation]]] = dataclass_field(default_factory=list)
-    _recorded: int = 0
-    _dropped: int = 0
-
     def append(self, decision: Decision) -> None:
         self._decisions.append(decision)
 
-    def opening(self, reader: str) -> Consulting:
-        """Push a reader that has just started running, and return the frame to mark."""
-        frame = Consulting(reader=reader)
-        self._open.append((frame, time.time_ns(), []))
-        return frame
-
-    def closing(self) -> None:
-        """Pop the reader that has just returned and hand it to whoever asked for it.
-
-        Balanced with `opening` by a `finally` in `consulting`, so a reader that raises still
-        closes its frame. Without that, one exception would leave the stack permanently deeper and
-        every later reader in the turn would be recorded as a child of a call that had ended.
-        """
-        if not self._open:
-            # Unreachable through `consulting`, which pairs them. Written down rather than
-            # asserted: the whole module refuses to let bookkeeping raise inside a bank turn.
-            logger.debug("decisions.closed_without_opening")
-            return
-        frame, started_at, children = self._open.pop()
-        if self._recorded >= _PATH_CEILING:
-            # The subtree this reader collected is already counted and already inside `children`,
-            # so dropping the parent drops it too. Counting the parent as one drop rather than the
-            # whole subtree keeps the warning a count of *readers this turn stopped recording*,
-            # which is the number somebody deciding whether to raise the ceiling wants.
-            self._dropped += 1
-            return
-        self._recorded += 1
-        into = self._open[-1][2] if self._open else self._consulted
-        into.append(
-            Consultation(
-                reader=frame.reader,
-                claimed=frame.claimed,
-                started_at=started_at,
-                ended_at=time.time_ns(),
-                consulted=tuple(children),
-            )
-        )
-
     def sealed(self) -> TurnRecord:
         """The turn as a value. Copies, so a record handed to an exporter cannot grow afterwards."""
-        if self._dropped:
-            logger.warning("decisions.path_truncated", extra={"dropped": self._dropped})
         return TurnRecord(
             decisions=tuple(self._decisions),
             outcome=self.outcome,
-            # Only the consultations that finished. A turn abandoned mid-cascade — an SSE client
-            # closing the tab — seals with the frames still open left out, rather than with a
-            # half-built tree whose durations would be invented.
-            consulted=tuple(self._consulted),
             conversation=self.conversation,
         )
 
@@ -583,37 +412,6 @@ def record(
     if recorder is not None:
         recorder.append(decision)
     return decision
-
-
-@contextmanager
-def consulting(reader: str) -> Iterator[Consulting]:
-    """Note that the cascade is asking one reader, for as long as it is asking it.
-
-    Unconditional, exactly like `record` and for the same reason it gives: a call site that only
-    executes when a collector is listening is a call site nothing has ever executed. What the
-    *setting* turns down is the export — `otel_recogniser_spans` — and this goes on building the
-    tree either way, so a unit test can assert the path with nothing on 4318.
-
-    **The nesting is not passed in and is not looked up.** A reader consulted from inside another
-    opens its frame while the outer one is still on the stack, and that is the only thing that
-    makes it a child. Nothing here, and nothing in `_recogniser`, names a caller or a callee.
-
-    Yields a frame the caller marks. `claimed` defaults to False so a reader that raises is
-    recorded as having been consulted and not as having claimed — which is true, and is the one
-    thing a `try/except` around the mark would have got wrong.
-
-    Outside a turn this yields a frame nobody reads and records nothing, the way `record` drops a
-    decision recorded outside a turn: there is nowhere honest to put it.
-    """
-    recorder = _current.get()
-    if recorder is None:
-        yield Consulting(reader=reader)
-        return
-    frame = recorder.opening(reader)
-    try:
-        yield frame
-    finally:
-        recorder.closing()
 
 
 def settle_turn(outcome: str) -> None:

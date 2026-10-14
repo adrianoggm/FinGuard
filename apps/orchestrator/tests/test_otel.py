@@ -47,7 +47,6 @@ from finguard_orchestrator.infrastructure.http.dependencies import (
 from finguard_orchestrator.infrastructure.telemetry import otel
 from finguard_orchestrator.observability import logging as service_logging
 from finguard_orchestrator.observability.decisions import (
-    Consultation,
     Decision,
     Step,
     TurnRecord,
@@ -67,14 +66,14 @@ PRIVATE = "¿cuánto le he pagado a Marta Solís Vega por el abogado en los últ
 class Exported:
     """A tracer and a meter that keep everything, so a test can read what would have been sent."""
 
-    def __init__(self, *, readers: bool = True) -> None:
+    def __init__(self) -> None:
         self.spans = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(self.spans))
         self.reader = InMemoryMetricReader()
         meters = MeterProvider(metric_readers=[self.reader])
         self.telemetry = otel.TurnTelemetry.build(
-            provider.get_tracer("test"), meters.get_meter("test"), readers=readers
+            provider.get_tracer("test"), meters.get_meter("test")
         )
 
     def turn(self, sealed: TurnRecord) -> None:
@@ -102,7 +101,7 @@ def exported() -> Exported:
 
 def overrode_the_window() -> Decision:
     return Decision(
-        step=Step.ENFORCE,
+        step=Step.PLAN_VERIFIER,
         verdict=Verdict.OVERRODE,
         changed=True,
         field="window",
@@ -128,10 +127,10 @@ def test_a_record_becomes_a_turn_span_with_a_span_per_decision(exported: Exporte
     exported.turn(TurnRecord(decisions=(overrode_the_window(),), outcome="PLANNED"))
 
     turn = exported.span("turn")
-    enforce = exported.span("explicit_facts.enforce")
+    enforce = exported.span("plan_verifier")
     assert enforce.parent is not None
     assert enforce.parent.span_id == turn.context.span_id, "a decision belongs to its turn"
-    assert enforce.attributes["step"] == "explicit_facts.enforce"
+    assert enforce.attributes["step"] == "plan_verifier"
     assert enforce.attributes["verdict"] == "overrode"
     assert enforce.attributes["changed"] is True
     (event,) = enforce.events
@@ -161,7 +160,7 @@ def test_a_counter_is_incremented_from_the_same_record(exported: Exported) -> No
     (point,) = exported.points(otel.DECISIONS)
     assert point.value == 1
     assert dict(point.attributes) == {
-        "step": "explicit_facts.enforce",
+        "step": "plan_verifier",
         "verdict": "overrode",
         "changed": True,
     }
@@ -176,7 +175,7 @@ def test_the_field_is_not_a_metric_label(exported: Exported) -> None:
 
     (point,) = exported.points(otel.DECISIONS)
     assert "field" not in dict(point.attributes)
-    assert exported.span("explicit_facts.enforce").attributes["field"] == "window"
+    assert exported.span("plan_verifier").attributes["field"] == "window"
 
 
 def test_one_step_deciding_about_three_fields_is_three_spans(exported: Exported) -> None:
@@ -187,7 +186,7 @@ def test_one_step_deciding_about_three_fields_is_three_spans(exported: Exported)
     fields = ("window", "metric", "group_by")
     decisions = tuple(
         Decision(
-            step=Step.ENFORCE,
+            step=Step.PLAN_VERIFIER,
             verdict=verdict,
             changed=verdict is Verdict.OVERRODE,
             field=name,
@@ -199,7 +198,7 @@ def test_one_step_deciding_about_three_fields_is_three_spans(exported: Exported)
 
     exported.turn(TurnRecord(decisions=decisions, outcome="PLANNED"))
 
-    spans = [s for s in exported.spans.get_finished_spans() if s.name == "explicit_facts.enforce"]
+    spans = [s for s in exported.spans.get_finished_spans() if s.name == "plan_verifier"]
     assert len(spans) == 3
     assert {s.attributes["field"] for s in spans} == set(fields)
     # And the counter splits the same way, which is what makes the two agree by construction.
@@ -234,7 +233,7 @@ def test_the_counter_carries_the_trace_context_of_its_decision(exported: Exporte
     that fails instead."""
     exported.turn(TurnRecord(decisions=(overrode_the_window(),), outcome="PLANNED"))
 
-    span = exported.span("explicit_facts.enforce")
+    span = exported.span("plan_verifier")
     (point,) = exported.points(otel.DECISIONS)
     (exemplar,) = point.exemplars
     assert exemplar.trace_id == span.context.trace_id
@@ -604,74 +603,6 @@ def test_the_templated_path_only_replaces_identifiers() -> None:
 # --- the refusal the design is built on --------------------------------------------------------
 
 
-def test_the_call_graph_draws_itself_from_the_span_tree(exported: Exported) -> None:
-    """**The callback case, as spans.** `_ratio_request` reads a percent-change follow-up by asking
-    `_direct_period_comparison`, and before this the two arrived as unrelated rows.
-
-    Nothing in the adapter, the decorator or the record names either function. The inner span is a
-    child because the inner consultation is, and the inner consultation is one because its frame
-    opened while the outer one was still on the stack. The graph is not computed anywhere.
-    """
-    inner = Consultation(
-        reader="_direct_period_comparison", claimed=True, started_at=1_100, ended_at=1_400
-    )
-    outer = Consultation(
-        reader="_ratio_request", claimed=True, started_at=1_000, ended_at=1_500, consulted=(inner,)
-    )
-
-    exported.turn(
-        TurnRecord(decisions=(claimed_the_turn(),), consulted=(outer,), outcome="PLANNED")
-    )
-
-    turn = exported.span("turn")
-    ratio = exported.span("_ratio_request")
-    comparison = exported.span("_direct_period_comparison")
-    assert ratio.parent is not None and ratio.parent.span_id == turn.context.span_id
-    assert comparison.parent is not None
-    assert comparison.parent.span_id == ratio.context.span_id, "the callback nests under its caller"
-    assert ratio.attributes["claimed"] is True
-    assert comparison.attributes["claimed"] is True
-    assert ratio.end_time > ratio.start_time, "a consultation is a call and has a duration"
-
-
-def test_a_reader_that_declined_is_a_span_and_never_a_count(exported: Exported) -> None:
-    """**The line this change is careful about.** Eighteen "not mine" rows a turn would bury the
-    one that matters in a counter, and telling them apart would need the reader's name as a label —
-    unbounded cardinality by the one route `Step` and `Verdict` do not cover. A trace has neither
-    problem and there the order is the finding. So the path is drawn and never counted."""
-    declined = Consultation(reader="_gambling_plan", claimed=False, started_at=1, ended_at=2)
-
-    exported.turn(TurnRecord(decisions=(claimed_the_turn(),), consulted=(declined,)))
-
-    assert exported.span("_gambling_plan").attributes["claimed"] is False
-    # One point, from the one `CLAIMED` decision. The declining reader contributed nothing.
-    (point,) = exported.points(otel.DECISIONS)
-    assert point.value == 1
-    assert dict(point.attributes) == {"step": "recogniser", "verdict": "claimed", "changed": True}
-
-
-def test_the_setting_turns_the_path_down_and_leaves_everything_else(exported: Exported) -> None:
-    """`otel_recogniser_spans=False`. The cost is about nineteen spans a turn, so it has to be
-    possible to stop paying it without a redesign — and stopping must cost nothing else: the
-    decision spans, the counters and the exemplars are what a live dashboard is built on."""
-    consulted = (Consultation(reader="_gambling_plan", claimed=False, started_at=1, ended_at=2),)
-    record = TurnRecord(decisions=(overrode_the_window(),), consulted=consulted, outcome="PLANNED")
-    quiet = Exported(readers=False)
-
-    exported.turn(record)
-    quiet.turn(record)
-
-    assert [span.name for span in quiet.spans.get_finished_spans()] == [
-        "explicit_facts.enforce",
-        "turn",
-    ]
-    assert len(exported.spans.get_finished_spans()) == 3, "the reader span is the difference"
-    for both in (exported, quiet):
-        (point,) = both.points(otel.DECISIONS)
-        assert point.value == 1 and len(point.exemplars) == 1
-        assert [dict(p.attributes) for p in both.points(otel.TURNS)] == [{"outcome": "PLANNED"}]
-
-
 def test_the_turn_span_says_which_conversation_it_belongs_to(exported: Exported) -> None:
     """Gap one, as the attribute a Tempo search reads. On the `turn` span and nowhere else: one
     trace is one turn, so `{ span.conversation.id = "…" }` returns every turn of one conversation,
@@ -681,7 +612,7 @@ def test_the_turn_span_says_which_conversation_it_belongs_to(exported: Exported)
     exported.turn(TurnRecord(decisions=(overrode_the_window(),), conversation=identifier))
 
     assert exported.span("turn").attributes["conversation.id"] == identifier
-    assert "conversation.id" not in exported.span("explicit_facts.enforce").attributes
+    assert "conversation.id" not in exported.span("plan_verifier").attributes
 
 
 def test_only_one_module_imports_opentelemetry() -> None:

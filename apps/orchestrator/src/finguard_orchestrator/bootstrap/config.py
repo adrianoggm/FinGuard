@@ -321,29 +321,6 @@ class Settings(BaseSettings):
     # http://otel-collector:4318.
     otel_endpoint: str = "http://127.0.0.1:4318"
 
-    # Whether the deterministic cascade's path is exported as a span per reader consulted.
-    #
-    # **True, and it is only ever asked once `otel_enabled` is already true.** The compound default
-    # is therefore "nothing at all on a laptop or in a test run, and the whole path the moment
-    # somebody turns tracing on" — which is right, because seeing which readers the reasoning fell
-    # through and which called which is the thing they turned it on for. A default of False would
-    # be the fourth flag in a row whose off position is the one everybody has, and this design
-    # document's own lesson is that the configuration that makes instrumentation run is the
-    # configuration nobody has.
-    #
-    # What it costs when it is on: measured, not guessed. An ordinary spending question exports 29
-    # spans with this true and 7 with it false — one `turn`, six decisions, and twenty-two
-    # consultations, being the nineteen readers the cascade asks plus the three it reaches through
-    # another. A compound question pays that whole cost once per clause, and a clause list is
-    # bounded at three. `tests/test_otel.py` asserts the nineteen, so a change to the cascade that
-    # doubles it arrives as a failing number rather than as a Tempo bill.
-    #
-    # What it does *not* switch off is the recording. `decisions.consulting` builds the tree
-    # unconditionally, exactly like `record`, so a turn is still assertable with tracing off; this
-    # decides only whether the tree is drawn. If this flag ever starts deciding whether a call site
-    # executes, that is the seventh green-but-dead instrument.
-    otel_recogniser_spans: bool = True
-
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
     # a different measurement — scripts/evaluate_planning.py is what picks this value.

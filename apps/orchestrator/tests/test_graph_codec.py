@@ -165,6 +165,24 @@ def test_dialogue_checkpoint_migrates_payment_draft_without_suspended_field() ->
     assert not restored.payment.suspended
 
 
+def test_a_field_deleted_since_the_checkpoint_was_stored_is_dropped() -> None:
+    """Answers and checkpoints stored before a dead field was deleted still carry it."""
+    encoded = json.loads(
+        codec.dumps_state(
+            DialogueState(
+                uuid4(),
+                payment=PaymentDraftPending(PaymentDraft(recipient_name="Marta Solis Vega")),
+            )
+        )
+    )
+    encoded["state"]["f"]["payment"]["f"]["recent_payment_rail"] = None
+
+    restored = codec.loads_state(json.dumps(encoded))
+
+    assert isinstance(restored.payment, PaymentDraftPending)
+    assert restored.payment.draft.recipient_name == "Marta Solis Vega"
+
+
 def test_dialogue_checkpoint_round_trips_own_transfer_draft() -> None:
     draft = OwnTransferDraftPending(
         to_account_id=uuid4(), amount_minor=7_500, workflow_id=uuid4().hex

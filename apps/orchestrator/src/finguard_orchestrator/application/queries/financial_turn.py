@@ -15,7 +15,6 @@ from finguard_orchestrator.domain.models.conversation import (
     IDLE,
     Conversation,
 )
-from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -188,14 +187,6 @@ class AskFinancialQuestionResult:
     # every path here, because `movement_count` is the sum of both operands' counts.
     difference_minor: int | None = None
     movement_count: int | None = None
-    # Which of the holder's accounts a fully-read transfer is going to, once one is settled.
-    #
-    # This handler reads and never writes: resolving the account is reading, and staging money is a
-    # `payments:prepare` scope the questions route does not have. So the read comes out here and the
-    # route above decides whether it may be turned into a preview. Before this, the account was
-    # resolved, the amount was resolved, and the answer was a sentence telling the holder to go and
-    # do it again on a screen — with everything needed to offer it already in hand.
-    transfer_to: str | None = None
     groups: list[SpokenGroup] = field(default_factory=list)
     movements: list[SpokenMovement] = field(default_factory=list)
     # Filled only by a question about who can be paid. Data as well as prose, so a client
@@ -211,11 +202,6 @@ class AskFinancialQuestionResult:
     # for the response DTO and again for the conversational state -- and a mapper is not somewhere
     # a model call can live. The application decides; the mapper renders what it is handed.
     visual_decision: VisualDecision | None = None
-    # What this turn wanted from the chart it followed, in service vocabulary (kind + claimant) --
-    # never the sentence. `None` when no chart was in context; set in `stream()`'s own convergence,
-    # the same one that decides `visual_decision`, for the same reason: forty branches build a
-    # result and this is one fact common to all of them, not one any branch is asked to know.
-    visual_follow_up: VisualFollowUp | None = None
     # Internal, typed source for a save candidate. Never serialized as financial data.
     metric_definition: FinancialPlan | ComparisonPlan | RatioPlan | None = None
     # R14 (Wave 4.5, closes D-4.5-6/M-2): True when `metric_definition` came from
@@ -226,21 +212,3 @@ class AskFinancialQuestionResult:
     # prose -- the presenter's spoken noun -- must not when this is True, because naming a plan
     # nobody ran this turn is exactly M-2 (`branch-re-review.md`'s `probe_m2`).
     metric_definition_borrowed: bool = False
-    # F-H3 (Wave 3 hardening, fix round): True when `metric_definition` was built by one of the
-    # continuation readers (`contextual_follow_up_plan`, or one of the five comparison-continuity
-    # readers) -- a reshape, regroup, split or refinement of whatever plan/comparison the
-    # conversation already carried, as opposed to a fresh plan the sentence alone produced. This is
-    # the causal fact `llm_mapper._remember_visual_context` now reads to decide `derived_from`: the
-    # reader that built the plan states the lineage, and the mapper's own structural comparison
-    # (`_same_lineage`) stays only as a sanity check on top of it, never the sole test. Two turns
-    # that coincidentally ask about the same bare window are not lineage; a chart the reader
-    # actually reshaped is, whatever verb the sentence used to ask for it.
-    plan_continues_conversation: bool = False
-    # A fingerprint of `metric_definition` (back-fill included), taken in `stream()` and fixed for
-    # this turn -- the value `_remember_visual_context` seals onto a chart drawn THIS turn. Sealed
-    # as data because 4.3's drill binds to it; not read by the presenter (see
-    # `metric_definition_borrowed` above -- a digest of the same field cannot tell borrowed from
-    # owned, only `stream()` itself can, which is why this stays a fingerprint and that is a flag).
-    # `None` when `metric_definition` is not a `FinancialPlan` at all (a comparison, a ratio, or no
-    # plan ran this turn).
-    visual_plan_digest: str | None = None

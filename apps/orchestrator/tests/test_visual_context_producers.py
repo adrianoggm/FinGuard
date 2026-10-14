@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,14 +21,12 @@ from finguard_orchestrator.domain.models.chart import (
     VisualRow,
 )
 from finguard_orchestrator.domain.models.conversation import IDLE
-from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.services.visual_explanation import explain_chart
 from finguard_orchestrator.domain.services.visual_profile import drawn_labels, visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
-    AbsoluteRange,
     FinancialPlan,
     RelativePeriod,
 )
@@ -40,9 +37,6 @@ from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTo
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
 assert SPEC is not None
-# The mapper carries `visual_plan_digest` through as an opaque fingerprint, so any sixteen hex
-# characters stand in for the plan that drew the chart.
-DIGEST = "0123456789abcdef"
 
 
 async def _decided(result: AskFinancialQuestionResult) -> AskFinancialQuestionResult:
@@ -83,7 +77,6 @@ async def _charted_result() -> AskFinancialQuestionResult:
         metric_definition=plan,
         # The digest of the plan that drew THIS chart, set once on the Result, before anything a
         # test does afterward could change `metric_definition`.
-        visual_plan_digest=DIGEST,
     )
     return await _decided(result)
 
@@ -114,7 +107,6 @@ async def _charted_result_grouped_by_category() -> AskFinancialQuestionResult:
             rows=(VisualRow("Comida", 100), VisualRow("Casa", 50)), metric="SUM"
         ),
         metric_definition=plan,
-        visual_plan_digest=DIGEST,
     )
     return await _decided(result)
 
@@ -154,56 +146,6 @@ def test_a_fresh_chart_carries_the_labels_its_dataset_draws(charted_result, char
     assert context.ranked == expected.ranked
 
 
-async def test_a_fresh_chart_carries_the_window_and_plan_digest() -> None:
-    """The fix wave's own two provenance facts: the window this turn's dataset actually covers
-    (carried up from `VisualDataset.window`) and a fingerprint of the plan that produced it, both
-    set before the seal, the same as `test_a_fresh_chart_carries_the_labels_its_dataset_draws`
-    proves for labels above.
-
-    I-1 (fix wave, D-4.5-6/M-2): the digest sealed onto the context now comes from `result.
-    visual_plan_digest` -- `stream()`'s own line, computed from the plan that produced the
-    dataset BEFORE any back-fill -- not from `result.metric_definition` recomputed here. This
-    fixture builds the Result directly (bypassing `stream()`), so it sets `visual_plan_digest`
-    by hand the same way `stream()` would have."""
-    plan = FinancialPlan(
-        Direction.EXPENSE,
-        period=RelativePeriod(Period.LAST_MONTH),
-        transaction_ids=(uuid4(), uuid4()),
-    )
-    window = AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20))
-    result = AskFinancialQuestionResult(
-        outcome="PLANNED",
-        text="Resultado",
-        plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
-        groups=[SpokenGroup("visible", 100, 2), SpokenGroup("also visible", 50, 1)],
-        visual_dataset=VisualDataset(
-            rows=(VisualRow("Comida", 100), VisualRow("Casa", 50)), metric="SUM", window=window
-        ),
-        metric_definition=plan,
-        visual_plan_digest=DIGEST,
-    )
-    charted = await _decided(result)
-    response = _visualization_to_dto(charted)
-    remembered = llm_mapper._remember_visual_context(charted, response)
-    (context,) = remembered.conversation.visual_contexts[-1:]
-    assert context.window == window
-    assert context.plan_digest == DIGEST
-
-
-def test_a_fresh_chart_with_no_financial_plan_carries_no_digest(
-    charted_result, chart_response
-) -> None:
-    """`plan_digest` is `None` whenever the turn produced no `visual_plan_digest` at all --
-    `charted_result`'s own fixture sets one for its own `metric_definition`, so this drives the
-    guard with `None` directly (as `stream()` would leave it when `metric_definition` is not a
-    `FinancialPlan` at the point the digest is taken) rather than asserting only the positive
-    case above."""
-    no_plan = replace(charted_result, metric_definition=None, visual_plan_digest=None)
-    remembered = llm_mapper._remember_visual_context(no_plan, chart_response)
-    (context,) = remembered.conversation.visual_contexts[-1:]
-    assert context.plan_digest is None
-
-
 def test_a_kpi_or_no_chart_result_leaves_no_context(charted_result) -> None:
     """Unchanged behaviour: `_remember_visual_context`'s own guard (`not isinstance(visualization,
     ChartVisualizationResponse)`) is what a KPI response and a turn with no visualization at all
@@ -211,172 +153,6 @@ def test_a_kpi_or_no_chart_result_leaves_no_context(charted_result) -> None:
     as it arrived."""
     remembered = llm_mapper._remember_visual_context(charted_result, None)
     assert remembered.conversation.visual_contexts == charted_result.conversation.visual_contexts
-
-
-def test_a_reshape_names_the_chart_it_came_from(charted_result, chart_response) -> None:
-    """B-3 (Wave 3 hardening): a chart whose plan descends from the trusted chart's own plan --
-    same window, same direction, a narrowing or a split of its categories -- names that chart as
-    its origin. `visual_follow_up` still carries `ANALYTICAL_RESHAPE` here (a real reshape reads
-    this way too), but it is `previous.source_plan` matching `charted_result.metric_definition`
-    that decides it now, not the kind -- `test_derived_from_is_decided_by_the_plan_not_the_verb`
-    below is the pinned proof that the kind alone no longer does.
-
-    F-H3 (Wave 3 hardening, fix round): `plan_continues_conversation=True` stands in for the turn
-    that continued the conversation's plan -- the causal fact `derived_from` requires alongside
-    the structural match, so this fixture, which builds its result by hand, states it explicitly.
-    """
-    previous = VisualContext(
-        "chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=charted_result.metric_definition
-    )
-    reshaped = replace(
-        charted_result,
-        conversation=charted_result.conversation.with_visual_context(previous),
-        visual_follow_up=VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan"),
-        plan_continues_conversation=True,
-    )
-    remembered = llm_mapper._remember_visual_context(reshaped, chart_response)
-    (context,) = remembered.conversation.visual_contexts[-1:]
-    assert context.derived_from == "chart-0"
-
-
-def test_a_reshape_over_an_untrusted_previous_names_no_origin(
-    charted_result, chart_response
-) -> None:
-    """m9 (fix wave): a new, sealed chart used to be able to name an *untrusted* chart as its
-    `derived_from` -- only the id crossed over (this turn's own dataset still built the new
-    chart's spec and profile), but `derived_from` is what «el gráfico anterior» resolves through,
-    so a legitimate chart's provenance could point at one the server never vouched for. The trust
-    gate wins even when the plan matches (`source_plan` is set here, identical to the reshape test
-    above) -- an untrusted chart names no origin whatever its own plan says.
-    """
-    previous = replace(
-        VisualContext(
-            "chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=charted_result.metric_definition
-        ),
-        trusted=False,
-        trust_reason="content",
-    )
-    reshaped = replace(
-        charted_result,
-        conversation=charted_result.conversation.with_visual_context(previous),
-        visual_follow_up=VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan"),
-    )
-    remembered = llm_mapper._remember_visual_context(reshaped, chart_response)
-    (context,) = remembered.conversation.visual_contexts[-1:]
-    assert context.derived_from is None
-
-
-def test_a_drill_down_names_the_chart_it_drilled(charted_result, chart_response) -> None:
-    """The same fact-based rule as the reshape above, for a follow-up classified `DRILL_DOWN`."""
-    previous = VisualContext(
-        "chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=charted_result.metric_definition
-    )
-    drilled = replace(
-        charted_result,
-        conversation=charted_result.conversation.with_visual_context(previous),
-        visual_follow_up=VisualFollowUp("DRILL_DOWN", "drill_down_reader"),
-        plan_continues_conversation=True,
-    )
-    remembered = llm_mapper._remember_visual_context(drilled, chart_response)
-    (context,) = remembered.conversation.visual_contexts[-1:]
-    assert context.derived_from == "chart-0"
-
-
-def test_a_drill_down_over_an_untrusted_previous_names_no_origin(
-    charted_result, chart_response
-) -> None:
-    """The m9 rule holds for a drill too: an untrusted previous chart is never named as the
-    origin, whether the follow-up that produced the new chart was a reshape or a drill, and
-    whether or not its own plan matches."""
-    previous = replace(
-        VisualContext(
-            "chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=charted_result.metric_definition
-        ),
-        trusted=False,
-        trust_reason="content",
-    )
-    drilled = replace(
-        charted_result,
-        conversation=charted_result.conversation.with_visual_context(previous),
-        visual_follow_up=VisualFollowUp("DRILL_DOWN", "drill_down_reader"),
-    )
-    remembered = llm_mapper._remember_visual_context(drilled, chart_response)
-    (context,) = remembered.conversation.visual_contexts[-1:]
-    assert context.derived_from is None
-
-
-def test_an_unrelated_new_chart_names_no_origin(charted_result, chart_response) -> None:
-    """B-3: the same chart-in-context setup as the reshape above, but `chart-0`'s own plan (a
-    different window: THIS_YEAR rather than `charted_result`'s LAST_MONTH) shares no lineage with
-    the plan that drew the new one -- so the new chart names no origin, whatever
-    `visual_follow_up` says. Kept at `UNRELATED` here because that is what an unrelated question
-    is classified, but the kind is no longer what this reads (B-3): a mismatched plan behind an
-    `ANALYTICAL_RESHAPE` label would refuse exactly the same way."""
-    unrelated_plan = FinancialPlan(
-        direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_YEAR)
-    )
-    previous = VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=unrelated_plan)
-    unrelated = replace(
-        charted_result,
-        conversation=charted_result.conversation.with_visual_context(previous),
-        visual_follow_up=VisualFollowUp("UNRELATED", "none"),
-    )
-    remembered = llm_mapper._remember_visual_context(unrelated, chart_response)
-    (context,) = remembered.conversation.visual_contexts[-1:]
-    assert context.derived_from is None
-
-
-def test_two_unrelated_turns_sharing_a_shape_do_not_claim_each_other(
-    charted_result, chart_response
-) -> None:
-    """F-H3 (Wave 3 hardening, fix round): the review's own named risk. `chart-0` and
-    `charted_result` share window and direction and neither names a category -- exactly the
-    common bare-window shape `_same_scope` alone would call compatible -- but nothing continued
-    this turn from that chart: `plan_continues_conversation` is `False` (this turn's plan was
-    read fresh, not patched from the conversation), the honest state of a second, independently
-    asked "¿cuánto gasté?" several turns after an unrelated one. `derived_from` must stay `None`
-    even though the structural check alone (`_same_lineage`) would pass -- the causal flag is the
-    gate now, not a second vote alongside the shape.
-    """
-    previous = VisualContext(
-        "chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=charted_result.metric_definition
-    )
-    coincidental = replace(
-        charted_result,
-        conversation=charted_result.conversation.with_visual_context(previous),
-        visual_follow_up=VisualFollowUp("UNRELATED", "none"),
-        plan_continues_conversation=False,
-    )
-    remembered = llm_mapper._remember_visual_context(coincidental, chart_response)
-    (context,) = remembered.conversation.visual_contexts[-1:]
-    assert context.derived_from is None
-
-
-def test_derived_from_is_decided_by_the_plan_not_the_verb(charted_result, chart_response) -> None:
-    """B-3's own pin: a chart whose `visual_follow_up.kind` is `UNRELATED` -- the classification a
-    turn like "enséñamelo por meses" can get, because the verb alone does not read as a
-    follow-up -- still derives from the trusted chart in view when its plan is a refinement of the
-    same window and categories. The kind used to be the only thing `_remember_visual_context`
-    read; this is the case where it disagreed with the fact and the fact must win.
-
-    F-H3 (Wave 3 hardening, fix round): the fact itself moved on from B-3's own version of it.
-    B-3 read the *plan's shape* as the fact; the review named the gap that leaves (two unrelated
-    turns can share a shape by coincidence) and this reads the *reader's own causal claim*
-    (`plan_continues_conversation`) instead, with the shape kept only as the sanity check below
-    it. This unit fixture states that fact by hand, same as the kind it already stated by hand.
-    """
-    previous = VisualContext(
-        "chart-0", SPEC, BREAKDOWN_PROFILE, source_plan=charted_result.metric_definition
-    )
-    unrelated_but_same_plan = replace(
-        charted_result,
-        conversation=charted_result.conversation.with_visual_context(previous),
-        visual_follow_up=VisualFollowUp("UNRELATED", "none"),
-        plan_continues_conversation=True,
-    )
-    remembered = llm_mapper._remember_visual_context(unrelated_but_same_plan, chart_response)
-    (context,) = remembered.conversation.visual_contexts[-1:]
-    assert context.derived_from == "chart-0"
 
 
 def test_two_charts_in_one_process_get_two_turn_ids(charted_result, chart_response) -> None:
