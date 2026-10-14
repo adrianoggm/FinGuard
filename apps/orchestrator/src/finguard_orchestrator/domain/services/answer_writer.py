@@ -1167,22 +1167,6 @@ def _group_comparison_figure(group: Group, metric: Metric, currency: str) -> str
     return money(value, currency)
 
 
-def top_category(answer: QueryAnswer, plan: FinancialPlan) -> str:
-    """Name the leading category instead of making the user infer it from a breakdown."""
-    if answer.is_empty or not answer.groups:
-        return write(answer, plan)
-    leading = answer.groups[0]
-    category = _group_name(leading.key, plan)
-    amount = money(leading.total_minor, answer.currency)
-    movements = (
-        "1 movimiento" if leading.movement_count == 1 else f"{leading.movement_count} movimientos"
-    )
-    return (
-        f"La categoría en la que más gastaste {window_of(plan)} fue {category}: "
-        f"{amount}, en {movements}."
-    )
-
-
 def when(
     answer: QueryAnswer, plan: FinancialPlan, *, reporting_timezone: str = "Europe/Madrid"
 ) -> str:

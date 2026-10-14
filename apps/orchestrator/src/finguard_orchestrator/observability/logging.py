@@ -44,7 +44,7 @@ import logging
 import logging.config
 from collections.abc import Callable
 from contextvars import ContextVar
-from typing import Any, Final
+from typing import Any
 from uuid import UUID
 
 # The identifier tying every record of one HTTP request together. A ContextVar rather than an
@@ -52,9 +52,6 @@ from uuid import UUID
 # threading it through the planner and the ledger adapter would make every signature carry a field
 # only the logs read. Set by the middleware, read by the filter.
 request_id: ContextVar[str] = ContextVar("request_id", default="-")
-
-# The keys every record carries, whatever emitted it. Anything else arrives through `extra`.
-_ALWAYS: Final = ("levelname", "name", "message")
 
 # Where the trace and span a record was emitted inside come from, when anything is tracing.
 #

@@ -19,7 +19,6 @@ FORBIDDEN_TABLES = (
     "ledger_transactions",
     "accounts",
     "customers",
-    "balance_projections",
 )
 
 MODULES = (financial_query_repository, ledger_repository, query_compiler)

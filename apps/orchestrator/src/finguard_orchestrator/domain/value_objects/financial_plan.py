@@ -398,32 +398,6 @@ class FinancialPlanDraft:
         )
 
 
-def metric_without_a_bucket(group_by: GroupBy, metric: Metric) -> Metric:
-    """`metric` as it reads when the grouping gives it no calendar bucket to run over.
-
-    Only `CUMULATIVE` beside `NONE` changes, and it becomes `SUM` because that is **the same
-    figure, not a smaller one**: a running total is the sequence of subtotals its buckets produce,
-    and over a single undifferentiated bucket that sequence has exactly one entry — the total. The
-    rows selected, the window, the direction and every filter are untouched, so this settles how
-    one number is presented and never which movements it is about.
-
-    **`PERIOD_AVERAGE` is deliberately absent, and the asymmetry is the whole argument.** "Gasto
-    medio mensual" over an unbucketed year is not the year's total; it is that total over a divisor
-    the sentence named and the plan then failed to carry. No figure settles that reading, so
-    `FinancialPlan.__post_init__` refusing it stays right.
-
-    **A `CUMULATIVE` beside a real grouping is absent for the opposite reason.** `CATEGORY`,
-    `COUNTERPARTY` and `ACCOUNT` each state a second axis, so the pair asks for a running total
-    *and* a breakdown where a plan has one grouping — `explicit_facts.reshaped` and the handler's
-    `_cumulative_plan` both decline it rather than keeping a half, and this may not quietly choose
-    what they refuse to. `NONE` is the one grouping that claims no second axis, which is exactly
-    why it is the one this may settle.
-    """
-    if metric is Metric.CUMULATIVE and group_by is GroupBy.NONE:
-        return Metric.SUM
-    return metric
-
-
 def check_filters(
     categories: tuple[str, ...],
     merchants: tuple[str, ...],

@@ -363,9 +363,8 @@ class PostgresPaymentRepository:
         past its expiry too, and expiring it would rewrite a payment that happened into one that
         never did.
 
-        ponytail: nothing schedules this yet. Run it by hand or from cron —
-        `python -m finguard_banking.interface.expire_intents`. A sweep every minute buys nothing
-        while the confirm path refuses expired intents on its own.
+        ponytail: nothing schedules this yet; a sweep every minute buys nothing while the confirm
+        path refuses expired intents on its own. Schedule it when stale rows start to matter.
         """
         async with self._pool.acquire() as connection, connection.transaction():
             swept = await connection.fetch(

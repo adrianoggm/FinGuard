@@ -512,10 +512,3 @@ class CategoryRequest(_Body):
     """
 
     category: str | None = Field(default=None, max_length=MAX_CATEGORY_LENGTH)
-
-
-class CategoriesResponse(_Payload):
-    """The categories this ledger uses. A closed list, and the same one the planner is constrained
-    to: a category the assistant could not name back is not one a screen should offer."""
-
-    categories: list[str] = []

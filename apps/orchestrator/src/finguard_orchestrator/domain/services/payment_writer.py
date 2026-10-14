@@ -206,10 +206,6 @@ def not_understood() -> str:
     return "No he entendido el pago. ¿Puedes decírmelo otra vez, con la cantidad en cifras?"
 
 
-def provider_error() -> str:
-    return "No he podido procesar el pago ahora mismo. Vuelve a intentarlo."
-
-
 def bank_unavailable() -> str:
     return "No puedo hablar con el banco ahora mismo, así que no he enviado nada."
 

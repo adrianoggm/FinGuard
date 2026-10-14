@@ -32,13 +32,11 @@ from finguard_banking.bootstrap.dependencies import (
     reporting_today,
     reporting_zone,
 )
-from finguard_banking.domain import constants
 from finguard_banking.domain.constants import MAX_CARD_WINDOW_DAYS, MAX_SUPPORTING_MOVEMENTS
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
     CardChargesResponse,
     CardsResponse,
-    CategoriesResponse,
     CategoryRequest,
     ContactsResponse,
     FinancialQueryRequest,
@@ -230,17 +228,6 @@ async def categorise_movement(
         )
     )
     return Response(status_code=204)
-
-
-@queries_router.get("/categories", summary="The categories this ledger uses")
-async def read_categories() -> CategoriesResponse:
-    """A closed list, and the same one the planner is constrained to.
-
-    It comes from here because a movement's category is a fact about the ledger. The assistant keeps
-    its own copy to build the decoder's schema at startup; this is what a screen should offer, and
-    the two disagreeing shows up as a rejected override rather than as a wrong figure.
-    """
-    return CategoriesResponse(categories=list(constants.CATEGORIES))
 
 
 @queries_router.post("/ranked", summary="The nth largest movement of a period")

@@ -13,7 +13,7 @@ from finguard_banking.bootstrap.config import get_settings
 
 pytestmark = pytest.mark.integration
 
-TABLES = ["ledger_entries", "ledger_transactions", "accounts", "customers", "balance_projections"]
+TABLES = ["ledger_entries", "ledger_transactions", "accounts", "customers"]
 
 
 @pytest.fixture
