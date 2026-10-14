@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-05-continuous-visual-conversation-design.md` — §3 (the three kinds), §4 (the context), §5 (follow-up resolution), §10 row 4.1, §13 (refusals). Wave 3's spec `docs/superpowers/specs/2026-09-03-llm-visual-planner-design.md` stays binding for everything it covers.
 
-**Base:** `task/wave3` at `5bdb699` (Wave 3 complete: 55 commits over `develop`'s `d1b0a40`). Suite at base, recorded — do not re-measure: `tests/test_[a-l]*.py` + `tests/test_[m-s]*.py` + `tests/test_[t-z]*.py` = **3741 passed / 3 skipped / 192 deselected**, corpus **190 passed at 0.0 %**.
+**Base:** `task/wave3` at `4507f89` (Wave 3 complete: 55 commits over `develop`'s `b0124be`). Suite at base, recorded — do not re-measure: `tests/test_[a-l]*.py` + `tests/test_[m-s]*.py` + `tests/test_[t-z]*.py` = **3741 passed / 3 skipped / 192 deselected**, corpus **190 passed at 0.0 %**.
 
 ## Global Constraints
 
@@ -792,7 +792,7 @@ async def test_the_classification_changes_nothing_visible(handler_turn) -> None:
     assert recorded == unrecorded
 ```
 
-(Fixtures — exact, verified at 3661e0a: `tests/test_decisions_call_sites.py` exports `turn_for(sentence, plan, *, ledger=None, **extra) -> tuple[AskFinancialQuestionResult, TurnRecord]`, which builds a handler with fakes via `handler_for(plan, ledger)`, runs one whole turn under `recording_turn()` and returns the sealed record; `**extra` is forwarded into `AskFinancialQuestionQuery(sentence=..., account_id=ACCOUNT, today=TODAY, **extra)`, so pass `conversation=CHARTED`. Import them as the seam test imports its neighbours: `from test_decisions_call_sites import ACCOUNT, TODAY, FakeLedger, handler_for, turn_for`. Define in this file:
+(Fixtures — exact, verified at fc67a74: `tests/test_decisions_call_sites.py` exports `turn_for(sentence, plan, *, ledger=None, **extra) -> tuple[AskFinancialQuestionResult, TurnRecord]`, which builds a handler with fakes via `handler_for(plan, ledger)`, runs one whole turn under `recording_turn()` and returns the sealed record; `**extra` is forwarded into `AskFinancialQuestionQuery(sentence=..., account_id=ACCOUNT, today=TODAY, **extra)`, so pass `conversation=CHARTED`. Import them as the seam test imports its neighbours: `from test_decisions_call_sites import ACCOUNT, TODAY, FakeLedger, handler_for, turn_for`. Define in this file:
 
 ```python
 async def seam_turn(sentence: str, conversation: Conversation) -> TurnRecord:
@@ -866,7 +866,7 @@ async def test_a_reshape_turn_records_the_follow_up_reader_at_most_once(seam_tur
     """The classifier consults the follow-up reader's undecorated body (Task 5 fix), so the cascade's
     own @_recogniser call is the only one that may record a claim. Two CLAIMED rows for one reader
     in one turn is the regression tests/test_reader_registry.py's invariant exists to forbid."""
-    # The handler's deterministic analyser labels this turn NEW_REQUEST (probed at 11c1f54), so the
+    # The handler's deterministic analyser labels this turn NEW_REQUEST (probed at 43a5736), so the
     # reshape gate never opens unless the edge's analysis is handed in, as production does:
     _, sealed = await turn_for("Solo restaurantes", PREVIOUS, conversation=CHARTED, analysis=FOLLOW_UP)
     claims = [d for d in sealed.decisions if d.step is Step.RECOGNISER and d.detail == "contextual_follow_up_plan"]

@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-05-continuous-visual-conversation-design.md` §3.3 (lines 126-149: the pipeline, the rules — keep the account scope, restrict to the pointed-at period or group, never widen, link the movements to the original evidence, allow "back", refuse an ambiguous reference with a question; reference resolution over the previous result's dimension values first), §9 turns 4-5, §10 row 4.3 («turns 4-5 pass; an ambiguous reference asks»), §13.
 
-**Base:** `task/continuous-visual-conversation @ e3723aa` (Wave 4.2b closed). Suite at that head: 3965 / 3 / 206 + corpus 204 at 0.0 %; ratchets `UNMEASURED` 22 / `MUTE` 43 / recogniser 0.
+**Base:** `task/continuous-visual-conversation @ dfdd2f4` (Wave 4.2b closed). Suite at that head: 3965 / 3 / 206 + corpus 204 at 0.0 %; ratchets `UNMEASURED` 22 / `MUTE` 43 / recogniser 0.
 
 ## Global Constraints
 
@@ -78,12 +78,12 @@ In the handler, right after `_classify_and_record_visual_follow_up` returns `DRI
 
 One line per task, its commit SHAs read from `git log`:
 
-- **Plan**: `a05aecb` (draft) + `c1ccbcb` (base named, Task 1 restated per R1-R5: domain `drawn_labels` in rank order + `ranked`, the wire limit, two commits) + `67978f0` (the wire pattern's control bytes fixed as text).
-- **Task 1** — a trusted chart carries its labels: `f49d901` (domain `DrawnLabels`/`drawn_labels`, rank order + `ranked`) + `1843671` (context fields, wire, seal coverage, producers, web type, design §4).
-- **Task 2** — a reference resolver over the labels: `6e4fbc6` (`domain/models/visual_reference.py`, `domain/services/visual_reference.py`, `resolve_reference`).
-- **Task 3** — the analyser and the movement-set reference read the drill: `27a5f90` (the drill lexicon moved to the domain, one copy) + `f757291` (`turn_analyzer._drills_into_the_chart`) + `fcdf655` (`_MOVEMENT_SET_REFERENCE` admits «los movimientos responsables/detrás/que lo explican» and a bare «enséñame/muéstrame/dame los movimientos»).
-- **Task 4** — the handler drills: `6850a02` (`readers/drill_down.py`, the handler branch, `_answer(movements=)`) + `707c260` (`_remember_visual_context` derives for `DRILL_DOWN`); fix round 1: `dbbd8ae` (I-1 `parsed_month` made public and imported; M1 dead reshaped guard removed) + `c81effe` (M2 the in-progress month clamps to today; M3/M6 docstrings; M4/M5 tests).
-- **Task 5** — the corpus sees the drill: `a1c3138` (harness `Turn.movements`, `Ledger.movements_for_next_turn`, `tool_of` maps `DRILL_AMBIGUOUS` to `CLARIFY`) + `c8b6408` (episode 32 gains §9's turns 4-5 verbatim; the ambiguity-ask test; `scripts/handover_cases.py` wiring).
+- **Plan**: `dfdd2f4` (draft) + `dfdd2f4` (base named, Task 1 restated per R1-R5: domain `drawn_labels` in rank order + `ranked`, the wire limit, two commits) + `dfdd2f4` (the wire pattern's control bytes fixed as text).
+- **Task 1** — a trusted chart carries its labels: `67bb49a` (domain `DrawnLabels`/`drawn_labels`, rank order + `ranked`) + `67bb49a` (context fields, wire, seal coverage, producers, web type, design §4).
+- **Task 2** — a reference resolver over the labels: `67bb49a` (`domain/models/visual_reference.py`, `domain/services/visual_reference.py`, `resolve_reference`).
+- **Task 3** — the analyser and the movement-set reference read the drill: `6d02255` (the drill lexicon moved to the domain, one copy) + `6d02255` (`turn_analyzer._drills_into_the_chart`) + `6d02255` (`_MOVEMENT_SET_REFERENCE` admits «los movimientos responsables/detrás/que lo explican» and a bare «enséñame/muéstrame/dame los movimientos»).
+- **Task 4** — the handler drills: `be9aa7f` (`readers/drill_down.py`, the handler branch, `_answer(movements=)`) + `be9aa7f` (`_remember_visual_context` derives for `DRILL_DOWN`); fix round 1: `be9aa7f` (I-1 `parsed_month` made public and imported; M1 dead reshaped guard removed) + `be9aa7f` (M2 the in-progress month clamps to today; M3/M6 docstrings; M4/M5 tests).
+- **Task 5** — the corpus sees the drill: `d8ce518` (harness `Turn.movements`, `Ledger.movements_for_next_turn`, `tool_of` maps `DRILL_AMBIGUOUS` to `CLARIFY`) + `d8ce518` (episode 32 gains §9's turns 4-5 verbatim; the ambiguity-ask test; `scripts/handover_cases.py` wiring).
 - **Task 6** — the record on paper: this commit.
 
 One line per ruling that changed the plan's own text above, rather than only settling a "judge at
@@ -131,24 +131,24 @@ The whole-branch review (`branch-review.md`) found one Critical and four Importa
 controller's rulings (`branch-fix1.md`) are six atomic commits. One line per fix, its commit SHA
 read from `git log`:
 
-- **C-1 + I-1** — the context knows its window and its plan: `447a55f` (`VisualDataset.window`,
+- **C-1 + I-1** — the context knows its window and its plan: `d8ce518` (`VisualDataset.window`,
   `VisualContext.window`/`plan_digest`, `domain/services/plan_digest.py`, `_answered_window`, the
   wire fields, sealed; design §4 amended in the same commit).
-- **C-1 + I-1 + I-4** — the reader binds, intersects and asks only what it can act on: `5299584`
+- **C-1 + I-1 + I-4** — the reader binds, intersects and asks only what it can act on: `d07a18b`
   (`read_drill_down` checks `newest.plan_digest == plan_digest(plan)` before narrowing anything,
   intersects the drilled month with the chart's own window before the M2 clamp, and checks
   `group_by` feasibility before `resolve_reference` ever runs — so an undrillable chart never asks).
-- **I-2** — the evidence turn asks for exactly what it re-lists: `d4ba102`
+- **I-2** — the evidence turn asks for exactly what it re-lists: `d07a18b`
   (`_answer(query, referenced_result, movements=len(referenced_result.transaction_ids) or None)` —
   the same line also serves the pre-existing «esos movimientos» reference path).
-- **I-3** — the flagship episode's window genuinely contains its months: `3a9fbc6` (the harness
+- **I-3** — the flagship episode's window genuinely contains its months: `12096f9` (the harness
   fake, `Ledger.run`, now answers `period_start`/`period_end` from injected `MONTH`-keyed groups
   clamped to `TODAY`; episode 32's turn 1 anchor becomes «¿Cuánto gasté el último trimestre?»,
   claimed deterministically by `_natural_period_aggregate_plan`'s own `_LAST_QUARTER` phrase —
   `RelativePeriod(LAST_N_MONTHS, n=3)`, the value the controller's own two named probes were
   reaching for but neither reached deterministically nor without moving the ratchets; `UNMEASURED`
   22 / `MUTE` 43 unmoved).
-- **Minors M1, M2, M4, M5, M9, M10**: `dda4b24` (a stale "cannot happen" comment reworded to what
+- **Minors M1, M2, M4, M5, M9, M10**: `12096f9` (a stale "cannot happen" comment reworded to what
   the code does; `_DERIVING_KINDS` asserted a subset of `get_args(VisualFollowUpKind)` at import
   time plus a one-line test pinning the handler's own `"DRILL_DOWN"` literal against it; the fake's
   movement-rule docstring says production shows movements where the fake shows none; the fixture-id
@@ -165,13 +165,13 @@ The scoped re-review (`branch-re-review.md`) against `branch-fix1.md`'s own ruli
 Important items; the controller's rulings (`branch-fix2.md`) are two atomic commits. One line per
 fix, its commit SHA read from `git log`:
 
-- **N-1** — the empty-intersection guard now runs before the value is built: `0c33a40`
+- **N-1** — the empty-intersection guard now runs before the value is built: `8f40cf2`
   (`read_drill_down` computes `start`/`end` and checks `end < start` before constructing
   `AbsoluteRange`, so a month bucket the ledger reports outside the window it also reports, or a
   corpus episode whose `groups:` name a month past `TODAY`, falls to today's path rather than
   raising `InvalidValueError` as an unhandled HTTP 422).
 - **N-2** — the drill's window is what the ledger answered *inside* what the plan asked, not the
-  ledger's answer alone: `0c33a40` (`_answered_window` intersects `answer.period_start/period_end`
+  ledger's answer alone: `8f40cf2` (`_answered_window` intersects `answer.period_start/period_end`
   with `plan.date_range` when both are known, empty intersection → `None`; the harness fake's own
   `_resolved_window` now checks `plan.date_range` first, so an absolute plan answers exactly its
   own range and the month-key derivation applies only to a `RelativePeriod` plan; the re-reviewer's

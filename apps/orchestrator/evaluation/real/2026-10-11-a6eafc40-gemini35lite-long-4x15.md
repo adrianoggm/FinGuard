@@ -1,10 +1,10 @@
-# Conversaciones reales — 2026-10-11, `a6eafc40`
+# Conversaciones reales — 2026-10-11, `35d7101b`
 
 **Preflight** (2026-10-11T12:37:58+02:00)
 
 - Servicios: orchestrator ok · banking ok · gateway skipped (not used by this evaluation)
-- Orquestador: `a6eafc40` (task/legacy-removal) · HEAD `a6eafc40` · source `1f04c049701ce9a8fdf459336cc1f61ca8040aa374731534ee4816ea61d29ced` · código del producto: igual que el código local
-- Banking API: `a6eafc40` (task/legacy-removal) · source `9cd9a8ca27c731603fb5eb407e13930e2e9bef6f38e9e82d577ba384169e9f43`
+- Orquestador: `35d7101b` (task/legacy-removal) · HEAD `35d7101b` · source `1f04c049701ce9a8fdf459336cc1f61ca8040aa374731534ee4816ea61d29ced` · código del producto: igual que el código local
+- Banking API: `35d7101b` (task/legacy-removal) · source `9cd9a8ca27c731603fb5eb407e13930e2e9bef6f38e9e82d577ba384169e9f43`
 - Libro: último movimiento 2026-10-07 (hoy 2026-10-11) · antigüedad aceptada a mano: 4 días
 - GPU: P5, 352 MHz · Ollama en memoria: qwen2.5-coder:7b
 

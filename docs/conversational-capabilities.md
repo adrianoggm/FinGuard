@@ -77,10 +77,10 @@ sus cifras está cerrado por construcción.
 
 Lo que falta ahora es la medida. Ninguna de las tres filas aparece en el corpus y nada valida un spec
 contra un esquema. De los tres defectos que esta sección dejaba abiertos, dos ya están cerrados:
-~~el presentador declara Vega-Lite v5 contra un cliente que resuelve 6.4.3~~ (`dfc8940`, "declare the
+~~el presentador declara Vega-Lite v5 contra un cliente que resuelve 6.4.3~~ (`a05a2f1`, "declare the
 Vega-Lite version the client actually has") y ~~el orden por defecto de un ranking ordena las
-etiquetas y no la medida~~ (`e4e5376`, "a ranked dimension sorts by magnitude, not by label"); ambos
-en `develop` en `d1b0a40`. Sigue abierto que reformular una métrica ya guardada no se construyó
+etiquetas y no la medida~~ (`1e84772`, "a ranked dimension sorts by magnitude, not by label"); ambos
+en `develop` en `b0124be`. Sigue abierto que reformular una métrica ya guardada no se construyó
 nunca — `PATCH /v1/metrics/{id}` acepta un título y reutiliza la definición almacenada. El estado
 criterio por criterio está en [ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md).
 

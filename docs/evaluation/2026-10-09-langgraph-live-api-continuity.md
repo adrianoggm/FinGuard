@@ -1,7 +1,7 @@
 # LangGraph live API continuity check
 
 **Date:** 2026-10-09
-**Checkout:** `main` at `004b667e`
+**Checkout:** `main` at `66a6277b`
 **Stack:** isolated Compose project `finguard-graph-test`, graph enabled, Qwen 3.5 9B, seeded banking data
 
 The running orchestrator's `/version` endpoint reported `sha: unknown`, so this is runtime evidence

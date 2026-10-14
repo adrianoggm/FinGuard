@@ -1,6 +1,6 @@
 # A2A Expert Agents — FinGuard as a pure A2A consumer
 
-**Status:** design, awaiting the user's review. Branch `task/a2a-gateway`, cut from `task/wave3 @ 805f9e2`.
+**Status:** design, awaiting the user's review. Branch `task/a2a-gateway`, cut from `task/wave3 @ dab5943`.
 Written on 2026-09-30 with about ten days left before the jury. The implementation plan
 (`writing-plans`) follows only once this document is approved.
 

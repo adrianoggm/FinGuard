@@ -2,11 +2,11 @@
 
 Status: accepted by the person (2026-10-08/09), who asked for no further approval round: "documenta brevemente las decisiones, implementa el prototipo, ejecuta las pruebas y presenta los resultados".
 
-Branch: `task/conversation-engine`, from develop `a478f219`.
+Branch: `task/conversation-engine`, from develop `4597d5fd`.
 
 ## Why
 
-The rules engine reached 89 % of turns on its real corpus (`evaluation/real/2026-10-08-3608545b.md`), but it got there by recognising phrasings:
+The rules engine reached 89 % of turns on its real corpus (`evaluation/real/2026-10-08-54f392d3.md`), but it got there by recognising phrasings:
 - 19 linguistic readers and 5 precedence blocks;
 - a turn arbiter;
 - a 449 KB handler that grew by 30 % in slice 1.

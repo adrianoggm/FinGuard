@@ -1,6 +1,6 @@
 # What the test suite does and does not prove
 
-Audit by mutation testing, 2026-08-28. Base commit `684167b` on `task/visualization`.
+Audit by mutation testing, 2026-08-28. Base commit `8300929` on `task/visualization`.
 
 **Baseline, reproduced before any mutation and restored after every one:**
 
@@ -30,7 +30,7 @@ full-suite survivors.
 ## 1. The table
 
 `AFQ` = `apps/orchestrator/src/finguard_orchestrator/application/queries/ask_financial_question.py`.
-Line numbers are as of `684167b`. All commands run from the repository root.
+Line numbers are as of `8300929`. All commands run from the repository root.
 
 The recurring selection strings are abbreviated in the table and spelled out under it.
 
@@ -117,7 +117,7 @@ negative positively — so the assertion straddles the minus without ever touchi
 > `AccountSummary.available_minor` through unguarded, and nothing constrains that to be positive.
 > The other derived-figure call sites *are* guarded — `ask_financial_question.py:3023` orders its
 > operands, `:3510` and `ratio_writer:70` wrap in `abs()` — which is what made the wrong reading
-> plausible. Closed by `fe3e31b`, which added the seventeen direct assertions this section asked
+> plausible. Closed by `05a7429`, which added the seventeen direct assertions this section asked
 > for; mutation 1c now fails eight of them.
 >
 > The methodological lesson is the one this audit exists to teach: checking that a function is

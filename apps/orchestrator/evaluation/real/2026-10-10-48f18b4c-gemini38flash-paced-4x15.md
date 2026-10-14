@@ -3,7 +3,7 @@
 **Preflight** (2026-10-10T17:49:36+02:00)
 
 - Servicios: orchestrator ok · banking ok · gateway skipped (not used by this evaluation)
-- Orquestador: `unknown` (unknown) · HEAD `48f18b4c` · código del producto: desconocido
+- Orquestador: `unknown` (unknown) · HEAD `d0252493` · código del producto: desconocido
 - Libro: último movimiento 2026-10-07 (hoy 2026-10-10) · antigüedad aceptada a mano: 3 días
 - GPU: P8, 22 MHz · Ollama en memoria: ninguno
 

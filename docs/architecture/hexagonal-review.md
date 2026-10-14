@@ -1,6 +1,6 @@
 # Hexagonal review before phase 3
 
-Review of `banking-api` and `orchestrator` as they stand at commit `854ab05`, before
+Review of `banking-api` and `orchestrator` as they stand at commit `fcc1dc0`, before
 wiring the LLM service. Every finding carries the evidence it came from, so it can be
 argued with instead of believed.
 

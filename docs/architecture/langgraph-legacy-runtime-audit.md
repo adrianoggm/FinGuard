@@ -101,12 +101,12 @@ well as conversational coordination.
 ## Evidence that still blocks retirement
 
 1. The latest completed four-session, 60-turn report is
-   `apps/orchestrator/evaluation/real/2026-10-10-48f18b4c-long-sessions-4x15.md`. It achieved
+   `apps/orchestrator/evaluation/real/2026-10-10-d0252493-long-sessions-4x15.md`. It achieved
    **1/4 sessions** (the first); sessions 2–4 still lost or contaminated context. It could not
    check any of the 60 figures because the runner found no `last_plan` in graph state. The
    report's product-code identity is `unknown`, so this is useful failure evidence but cannot be
    attributed conclusively to the current source. A later mixed-model replay,
-   `2026-10-10-48f18b4c-gemini36-4x15.md`, achieved 0/4 with 47 failed turns, 12 valid responses
+   `2026-10-10-d0252493-gemini36-4x15.md`, achieved 0/4 with 47 failed turns, 12 valid responses
    and one chart awaiting browser verification; it switched manually among Gemini 3.6, 3.7 and
    3.8 and is not a per-model comparison. The subsequent `postfix` replay returned HTTP 429 on
    59/60 turns. These reports must not be collapsed into a semantic score: provider availability,
@@ -120,7 +120,7 @@ well as conversational coordination.
    banking session passed its scripted goals, including account changes, a chart, a bank-authored
    Bizum preview and cancellation without confirmation. A restart smoke also resumed and cancelled
    a pending preview. `/ready` reported graph mode and `/version` reported
-   `48f18b4c-dirty-session-acceptance-v2`. This is positive, attributable evidence for that one
+   `d0252493-dirty-session-acceptance-v2`. This is positive, attributable evidence for that one
    authored session and restart case; it does not establish unseen-session quality, human usability,
    broad recovery, or safe legacy retirement. The tested account had no Hucha movements, so that
    branch only established an empty list, not switching between populated accounts.

@@ -1,7 +1,7 @@
 # What the integration suites prove when the database is actually there
 
-Run 2026-08-28 at `0bf2db5` on `task/visualization`. Compose Postgres `18-alpine` up and healthy
-on `127.0.0.1:5442`, containers at `dd1d2d0`, nothing built, started or restarted.
+Run 2026-08-28 at `c94540c` on `task/visualization`. Compose Postgres `18-alpine` up and healthy
+on `127.0.0.1:5442`, containers at `404b9cf`, nothing built, started or restarted.
 
 These are the suites excluded from `just test-unit` and therefore from the default gate. They are
 the half of the test suite that nobody had run in this session, and one of them had never run in

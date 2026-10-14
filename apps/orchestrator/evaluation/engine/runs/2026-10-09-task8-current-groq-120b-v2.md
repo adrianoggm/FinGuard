@@ -3,7 +3,7 @@
 **Preflight** (2026-10-09T13:42:42+02:00)
 
 - Servicios: orchestrator ok · banking ok · gateway ok
-- Orquestador: `task/langgraph-experiment` (task/langgraph-experiment) · HEAD `aaa96c01` · código del producto: igual que HEAD
+- Orquestador: `task/langgraph-experiment` (task/langgraph-experiment) · HEAD `299d567f` · código del producto: igual que HEAD
 - Libro: último movimiento 2026-10-07 (hoy 2026-10-09) · antigüedad aceptada a mano: 3 días
 - GPU: P5, 210 MHz · Ollama en memoria: ninguno
 

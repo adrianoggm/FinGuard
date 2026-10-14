@@ -1,6 +1,6 @@
 # Expert-agent reply normaliser evaluation
 
-Model: `qwen3.5:9b` on `ollama`; temperature 0.0, max_output_tokens 384, context 2048 tokens, seed 0. Run 2026-10-01T11:40:29+00:00 at `bb43f30`.
+Model: `qwen3.5:9b` on `ollama`; temperature 0.0, max_output_tokens 384, context 2048 tokens, seed 0. Run 2026-10-01T11:40:29+00:00 at `9ade087`.
 
 28 cases · 6 hostile · judged at 2026-10-07T10:00+02:00
 

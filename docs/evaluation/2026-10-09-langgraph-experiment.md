@@ -7,20 +7,20 @@
 Where it lives:
 - Worktree: `C:/Users/adriano.garcia/Desktop/Developer/FinGuard-wt-langgraph`
 - Branch: `task/langgraph-experiment`
-- Base: `c907c6fa` (verified before starting). Not pushed, not merged.
+- Base: `696f61a4` (verified before starting). Not pushed, not merged.
 
 | Commit | Subject |
 |---|---|
-| `6552244e` | test(evaluation): capability conversations for the investigation experiment, written before the graph |
-| `61d4203e` | build(orchestrator): add langgraph for the investigation graph experiment |
-| `68d7595e` | feat(graph): the merchant investigation as pure functions, its checkpoint codec and the assessor's closed schema |
-| `60da19e7` | feat(graph): the bounded investigation StateGraph with reservations, resume and a checked narrative *(the narrative was removed in fix round 1)* |
-| `5dcd37e8` | feat(graph): the investigation graph behind its own off-by-default flag, held to the engine's boundary |
-| `7fd8334e` | fix(graph): no model-written text reaches the person; the rise is a closed explanation the templates render (R42) |
-| `192c61ae` | fix(graph): every exit that saved nothing releases the turn, cancellation included (R43) |
-| `7e4acdca` | fix(graph): every bank port call counts and is checkpointed; a resume reads only what it never read (R44) |
-| `36981c01` | fix(graph): a request id is bound to its sentence, the model's choice is checkpointed as a position, the tripwire covers an inspection, and the shared helpers are public (R45) |
-| `a506ec01` | fix(graph): the release survives a failed or cancelled persist, and a saved turn is never marked resumable |
+| `0bfa88d9` | test(evaluation): capability conversations for the investigation experiment, written before the graph |
+| `0bfa88d9` | build(orchestrator): add langgraph for the investigation graph experiment |
+| `0bfa88d9` | feat(graph): the merchant investigation as pure functions, its checkpoint codec and the assessor's closed schema |
+| `0bfa88d9` | feat(graph): the bounded investigation StateGraph with reservations, resume and a checked narrative *(the narrative was removed in fix round 1)* |
+| `0bfa88d9` | feat(graph): the investigation graph behind its own off-by-default flag, held to the engine's boundary |
+| `b50e48ca` | fix(graph): no model-written text reaches the person; the rise is a closed explanation the templates render (R42) |
+| `b50e48ca` | fix(graph): every exit that saved nothing releases the turn, cancellation included (R43) |
+| `b50e48ca` | fix(graph): every bank port call counts and is checkpointed; a resume reads only what it never read (R44) |
+| `b50e48ca` | fix(graph): a request id is bound to its sentence, the model's choice is checkpointed as a position, the tripwire covers an inspection, and the shared helpers are public (R45) |
+| `b50e48ca` | fix(graph): the release survives a failed or cancelled persist, and a saved turn is never marked resumable |
 
 **Tests, after fix round 1.** I ran the full orchestrator suite in two foreground halves of 104 test files each, with `test_ollama_provider.py::test_a_real_daemon_honours_the_schema` deselected.
 
@@ -67,7 +67,7 @@ Nothing failed.
 - A new merchant gets no explanation beyond its counts. A merchant that held level or fell is not named, and `UNKNOWN_MERCHANT` is never named.
 - A currency mismatch between the two windows is refused.
 
-**The capability conversations.** `apps/orchestrator/evaluation/engine/capability/conversations.yaml` was committed first, before any graph code (`6552244e`).
+**The capability conversations.** `apps/orchestrator/evaluation/engine/capability/conversations.yaml` was committed first, before any graph code (`0bfa88d9`).
 - It has 4 conversations and 11 turns.
 - Every turn has `say` and `expect.want`, in the same shape as the regression set.
 - `generalization/` was not opened.
@@ -178,7 +178,7 @@ The replay stopped after five of eleven turns:
 
 The runner's record does not include provider details, but the orchestrator logs confirm HTTP 429 responses from Groq. The logs from that build did not retain rate-limit reset headers, so whether this was a per-minute token cap or a daily cap is not confirmed. The first conversation also exposed a prompt/evaluation mismatch: the prompt required asking for a missing window while the case expected the model to choose and state one. The graph run and blind judging were not started because the baseline did not complete. This partial run is not a capability comparison and not a result for or against LangGraph.
 
-**Follow-up fixes after this run:** the interpreter prompt now defines the comparative default (two latest complete months unless a duration is named) and gives an independent grouped-comparison example; the Groq adapter logs only safe rate-limit headers on HTTP 429; the runner renders a report when no engine has successful latency measurements. These changes are not included in the recorded run, which used build `aaa96c01`.
+**Follow-up fixes after this run:** the interpreter prompt now defines the comparative default (two latest complete months unless a duration is named) and gives an independent grouped-comparison example; the Groq adapter logs only safe rate-limit headers on HTTP 429; the runner renders a report when no engine has successful latency measurements. These changes are not included in the recorded run, which used build `299d567f`.
 
 **Bounded live smoke after the prompt fix (2026-10-09):** one query on the isolated graph-enabled build completed as `PLANNED` in 3.8 s. The model selected September 2026 vs August 2026, grouped by merchant, and explained newly appearing merchants plus Uber's higher count and average transaction amount. It made two successful Groq calls (structured plan and grounded answer) and two successful banking queries; no clarification or provider error occurred. This validates the targeted prompt path only. It is not an A/B result, does not establish overall accuracy, and did not retry the eleven-turn baseline or the 56-case generalization set. The earlier 429 cause remains unconfirmed because its response headers were not captured.
 
@@ -301,7 +301,7 @@ Every safety rule stays deterministic FinGuard code: the allow-list, the budgets
 
 The review returned SPEC ❌. Each item below was fixed in its own commit.
 
-- **R42 (Critical): no model-written text reaches the person** (`7fd8334e`).
+- **R42 (Critical): no model-written text reaches the person** (`b50e48ca`).
   - **Removed:**
     - the free narrative;
     - `checked_narrative` and `unsupported_numbers`;
@@ -324,8 +324,8 @@ The review returned SPEC ❌. Each item below was fixed in its own commit.
     - a marker in the output of the real assessor adapter, over four shapes (text in a stop, a merchant off the allow-list, extra keys, non-JSON), never reaches the reply;
     - the whole reply equals the template rebuilt from bank figures.
   - **Report corrected:** the earlier claim of "no unsupported numeric claims" for a narrative is withdrawn; the narrative no longer exists.
-- **R43 (Important): the reservation is released on every exit** (`192c61ae`). It is released in `finally` (shielded), including on `CancelledError`, an unexpected port exception and a failed assert. Tests: a cancelled turn, a `RuntimeError` and an `AssertionError` each leave the conversation usable at the same version.
-- **R44 (Important): the bank budget counts every port call** (`7e4acdca`).
+- **R43 (Important): the reservation is released on every exit** (`b50e48ca`). It is released in `finally` (shielded), including on `CancelledError`, an unexpected port exception and a failed assert. Tests: a cancelled turn, a `RuntimeError` and an `AssertionError` each leave the conversation usable at the same version.
+- **R44 (Important): the bank budget counts every port call** (`b50e48ca`).
   - Every port call counts, failed ones included. A counting wrapper counts each call before it is made.
   - The count is persisted:
     - nodes add their calls to `bank_calls` in the checkpoint;
@@ -339,7 +339,7 @@ The review returned SPEC ❌. Each item below was fixed in its own commit.
     - a failed inspection is not retried past the budget;
     - the budget holds across resumes.
   - `GRAPH_VERSION` and `STATE_SCHEMA_VERSION` were bumped.
-- **R45 (Minor)** (`36981c01`).
+- **R45 (Minor)** (`b50e48ca`).
   - **Request id bound to its sentence.** A request id is bound to a SHA-256 of its sentence. The same id with another sentence raises `RequestReusedError`, for replay, for resume and for a new conversation. The boundary AST check lists that hash as the one extra place the sentence reaches.
   - **No model text in the checkpoint.** The assessment's choice is checkpointed as a position in the allow-list (`next_inspect`, -1 for a merchant off the list), never as the string the model wrote. The marker test also checks every checkpoint and every pending write. The validated operations are still checkpointed as the brief requires; they are the interpreter's typed output.
   - **Tripwire extended.** The runtime tripwire now covers an investigation that is assessed and inspects a purchase: 3 reads and the inspection line in the answer, on both routes, with nothing tripped.
@@ -347,7 +347,7 @@ The review returned SPEC ❌. Each item below was fixed in its own commit.
 
 ## Fix round 2
 
-The re-review confirmed R42, R44 and R45, and found two R43 residuals in `graph_turn.py`. Both are fixed in one commit, `a506ec01`. The tests were written first and seen red: each failed with a stale `StaleDialogueError`, or with the persist error masking the answer.
+The re-review confirmed R42, R44 and R45, and found two R43 residuals in `graph_turn.py`. Both are fixed in one commit, `b50e48ca`. The tests were written first and seen red: each failed with a stale `StaleDialogueError`, or with the persist error masking the answer.
 
 **1. The release no longer depends on the persist (Important).** Every exit that does not close normally now goes through `GraphTurnHandler._close`.
 - For a turn that did not save:

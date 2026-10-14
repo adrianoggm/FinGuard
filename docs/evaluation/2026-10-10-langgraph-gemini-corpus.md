@@ -55,7 +55,7 @@ would prepare or delegate a payment despite a past-transaction question. It asks
 correct the operation once and returns a clarification if the mismatch remains. Unit tests cover
 both correction and refusal; the full corpus did not trigger this guard. The pending-window prompt
 now includes a direct example and trims unrelated examples while retaining those for the visible
-focus. These changes were committed as `1e0469da`.
+focus. These changes were committed as `91a6a507`.
 
 The focused Python checks passed (**193 tests**) and Ruff passed. The evaluator output contains no
 latency or token measurements, and this replay has no rules-engine control or blind judge. The
@@ -145,7 +145,7 @@ the pre-existing Vite on port 3000 was left running and untouched.
 The attached acceptance critique called for evaluating a whole banking session, including task
 changes, implicit references, a chart, payment capability and safe cancellation. I added an opt-in
 Playwright flow and ran it in Chrome on the isolated graph stack with Gemini 3.5 Flash Lite. The build
-reported by `/version` was `48f18b4c-dirty-session-acceptance-v2`; the stack reported graph mode on.
+reported by `/version` was `d0252493-dirty-session-acceptance-v2`; the stack reported graph mode on.
 The browser run passed all ten turns at conversation versions 1 through 10:
 
 1. Balance question -> `BALANCE`.
@@ -185,7 +185,7 @@ token instrumentation, and migration/removal of legacy coordination remain promo
 
 I started the frozen 67-thread / 142-turn HTTP corpus against the isolated graph stack after the
 movement-list and conversation-session changes. `/ready` reported `graph=on`, Gemini 3.5 Flash Lite,
-and `/version` reported `48f18b4c-dirty-session-acceptance-v2`. The provider returned repeated HTTP
+and `/version` reported `d0252493-dirty-session-acceptance-v2`. The provider returned repeated HTTP
 429 responses with no retry delay or quota metadata. The replay was stopped after the consecutive
 failures; it did not complete, and the evaluator produced no report artifact. This is a provider
 availability failure, not a quality result. It does not replace the last completed full-corpus
@@ -194,7 +194,7 @@ complete replay can run against this code state.
 
 The focused local regression suites then found that the legacy route's byte-pinned test failed in
 both JSON and streaming mode. I reproduced the same six response hashes in a detached, clean
-`48f18b4c` worktree and in this working tree; the checked-in pins predated that clean-tree output.
+`d0252493` worktree and in this working tree; the checked-in pins predated that clean-tree output.
 The pins now describe the clean-tree baseline, and the same route suites pass with the graph changes
 present. The selected route, graph-turn, codec, and movement-list suites passed **166 tests**. The
 graph-enabled routes also return 503 when their handler is missing, for both JSON and streaming, so

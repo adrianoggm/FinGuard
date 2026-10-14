@@ -1,7 +1,7 @@
 # Visual Explainability (Wave 4.5) Implementation Plan
 
 > Committed 2026-09-11 on
-> `task/continuous-visual-conversation`; BASE = Wave 4.4's closing head `e95ce67`. Standing authorisation:
+> `task/continuous-visual-conversation`; BASE = Wave 4.4's closing head `6b9d79f`. Standing authorisation:
 > the user's 2026-09-05 13:07 instruction. Not authorised: push, merge into `develop`, any commit on `task/wave3`
 > other than a fast-forward. Pre-read: `.superpowers/sdd/2026-09-10-visual-explainability/explorer-report.md`.
 
@@ -118,19 +118,19 @@ Then: whole-branch review (opus, base = 4.4's closing head), one fix wave, scope
 ## Landed
 
 - **Task 1** — §7 rewritten per R1-R3; `VisualContext.source`/`.fallback_reason` sealed through the
-  three boundaries. `57063d6` (docs), `dc9c436` (code).
+  three boundaries. `6b9d79f` (docs), `d606236` (code).
 - **Task 2** — `explain_chart` derives `chart_reason`/`ordering_reason`/`scope_summary`/`provenance`
-  from the sealed context alone, over every family. `47a0597`.
+  from the sealed context alone, over every family. `d606236`.
 - **Task 2b** — nouns read from the drawn labels, not the field name; measure word from
   `measure_metric()`; `_spec_dimension` fixes the recurrence dimension pick (Task 2 review I-1); §7's
-  `provenance` typed `str | None`. `4a12083`.
+  `provenance` typed `str | None`. `d606236`.
 - **Task 3** — `QuestionResponse.explanation` on every charted answer, both channels, the restyle
   path included; R7's plan-digest guard; the web's inert `<details>` «¿Por qué este gráfico?».
-  `6aab2cb` (orchestrator), `5edccb1` (web).
+  `d606236` (orchestrator), `b9d9efb` (web).
 - **Task 4** — `asks_why` recogniser and the controller short-circuit on both routes →
-  `VISUAL_EXPLAINED`, zero ledger, zero model, conversation unchanged. `6283309`.
+  `VISUAL_EXPLAINED`, zero ledger, zero model, conversation unchanged. `b9d9efb`.
 - **Task 5** — episode 32 gains the why-turn after turn 1; episode 33 turn 1 asserts
-  `explanation: true`; `Turn.explanation` in the harness. `7f673e8`, `92b00e3`.
+  `explanation: true`; `Turn.explanation` in the harness. `b9d9efb`, `b9d9efb`.
 - **Task 6** — this record: design §7/§10/§11, `docs/next.md`, `docs/conversational-capabilities.md`,
   this Landed section. Docs only.
 - **Task 7 (R14)** — D-4.5-6/M-2 closed, not with the digest: `AskFinancialQuestionResult.
@@ -151,23 +151,23 @@ Then: whole-branch review (opus, base = 4.4's closing head), one fix wave, scope
   a chart that follows one of those, over whatever plan was previously in view, speaks the generic
   desglose line, by design.
 
-Suite at HEAD (`92b00e3`): orchestrator 4227 passed / 3 skipped / 209 deselected (three globs) +
+Suite at HEAD (`b9d9efb`): orchestrator 4227 passed / 3 skipped / 209 deselected (three globs) +
 corpus 207 (176 · 1194) at 0.0 %; web 117; gateway 122 / 1 (untouched across the whole wave);
 ratchets 22/43/0 (`UNMEASURED`/`MUTE`/`CONTESTED`), unmoved.
 
 **Fix wave (one commit per item):**
-1. `0b93c5e` — D-4.5-8, the scope count from `len(context.labels)`. FIXED.
-1b. `82bfde4` — D-4.5-9, the corpus fixture keys. FIXED.
-2. `ba2fe77` — D-4.5-6, the plan digest at the producer. **ATTEMPTED; STILL TAUTOLOGICAL; OPEN** —
+1. `eedda89` — D-4.5-8, the scope count from `len(context.labels)`. FIXED.
+1b. `eedda89` — D-4.5-9, the corpus fixture keys. FIXED.
+2. `2ba900e` — D-4.5-6, the plan digest at the producer. **ATTEMPTED; STILL TAUTOLOGICAL; OPEN** —
    the digest is captured one line after the `metric_definition` back-fill, off the same object the
    guard compares against, so the guard cannot fire in production; closing it needs the digest
    stamped by the dataset's own producer, not read off the back-filled field. Round-2 truthfulness
-   pass (`8fb2d4b`) rewrote the guard's comments and its test to say so plainly; no mechanism change.
-3. `3c89169` — D-4.5-4, M-7, M-8. FIXED.
-4. `7ce1a71` — D-4.5-7, M-10 (web). FIXED.
+   pass (`dbadbec`) rewrote the guard's comments and its test to say so plainly; no mechanism change.
+3. `2ba900e` — D-4.5-4, M-7, M-8. FIXED.
+4. `dbadbec` — D-4.5-7, M-10 (web). FIXED.
 
 Re-review (opus): with fixes, 0 critical / 2 important / 3 minor new (`branch-re-review.md`). Item 2
-above (D-4.5-6) was then CLOSED by Task 7 and its round 3 (`ca63a5f`, `b3f1081`, `21d0e93`; see below) —
+above (D-4.5-6) was then CLOSED by Task 7 and its round 3 (`ef70adc`, `ef70adc`, `ef70adc`; see below) —
 verified by the second re-review (`branch-re-review-2.md`).
 
 **Rulings, as applied:**

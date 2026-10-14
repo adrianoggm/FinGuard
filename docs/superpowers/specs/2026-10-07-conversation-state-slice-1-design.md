@@ -1,6 +1,6 @@
 # Conversation state, slice 1 — arbitration first, a base after every answer
 
-**Status:** proposed, 2026-10-07. **Branch:** `task/conversation-step2` (from `develop` 68b7fd9).
+**Status:** proposed, 2026-10-07. **Branch:** `task/conversation-step2` (from `develop` 9c42b58).
 **Scope:** the first slice of "Conversation State v2 + Turn Arbitration", sized for the days left
 before the panel. Everything listed under *Later* is out of this slice on purpose.
 

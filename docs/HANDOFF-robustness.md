@@ -1,6 +1,6 @@
 # Handoff — FinGuard, 2026-08-31
 
-## Update after `49b1124`
+## Update after `56dbfbf`
 
 Section C is now integrated into `task/visualization`; the worktree and commit references below
 describe the state before that squash and are retained as history.
@@ -31,16 +31,16 @@ otherwise.
 | | |
 | --- | --- |
 | branch | `task/visualization` |
-| HEAD | **`986469a`**, pushed, working tree clean |
+| HEAD | **`f609cf4`**, pushed, working tree clean |
 | suite | **3300 passed, 3 skipped, 2 deselected**, capabilities 16/16 green |
 | linters | `ruff check`, `ruff format --check`, `mypy src` clean |
 | corpus | 173 episodes / 1167 turns, all four rates 0.0 % |
-| unfinished work | branch `worktree-agent-ae15c0861ca65d01e` at **`b2fc1b3`**, parent `986469a`. **Not merged, not pushed.** |
+| unfinished work | branch `worktree-agent-ae15c0861ca65d01e` at **`b2fc1b3`**, parent `f609cf4`. **Not merged, not pushed.** |
 
 ## What is finished
 
 **Gate 1 passes eight of eight** (`docs/next.md`). Its last failing row was `Unsafe execution
-≤ 10 % on every set`; the five sets were re-taken in one sitting at `7156038` with `qwen3.5:9b`:
+≤ 10 % on every set`; the five sets were re-taken in one sitting at `b860847` with `qwen3.5:9b`:
 
 | set | unsafe | outcome |
 | --- | --- | --- |
@@ -188,7 +188,7 @@ free VRAM than there is now.
 
 ## Environment gotchas that have each cost real time
 
-- **Subagent worktrees are cut from `main` (`d062f03`), never from the current branch — 19 out of 19
+- **Subagent worktrees are cut from `main` (`8300929`), never from the current branch — 19 out of 19
   times.** Every brief must name the base commit and a *tell*: a file that exists only on the current
   branch. An agent cannot *be on* `task/visualization` because it is checked out in the main
   worktree; it resets its own worktree branch to that commit, which is the same tree under another

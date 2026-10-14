@@ -15,7 +15,7 @@ scopes and nothing else, so every payment episode fails on the capability guard 
 anything worth measuring — 17 violations that say nothing about the service. `demo-token-laura-pays`
 is the one in `compose.yaml` that carries `payments:prepare` and `payments:confirm`.
 
-## Measured 2026-08-23, at `858ad77`
+## Measured 2026-08-23, at `4909a98`
 
 63 threads, 132 turns. Planner: `ollama` / `qwen3.5:9b`, warmed before the run. **67 property
 violations**, and the number on its own is misleading — most of it is one stale expectation
@@ -23,8 +23,8 @@ repeated.
 
 | | violations | |
 | --- | ---: | --- |
-| `b928d90`, before the Phase 4 visualisation work | 115 | the branch point |
-| `858ad77`, the same run | 115 | identical, episode for episode: no regression |
+| `42dd188`, before the Phase 4 visualisation work | 115 | the branch point |
+| `4909a98`, the same run | 115 | identical, episode for episode: no regression |
 | with `pending_plan` counted as a half-built draft | 80 | 94 false violations removed |
 | with the paying token and a local planner | **67** | |
 

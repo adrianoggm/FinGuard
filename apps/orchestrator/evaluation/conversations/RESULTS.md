@@ -3,7 +3,7 @@
 > The script that produced it, `scripts/evaluate_interpreting.py`, was removed with the rules
 > route in October 2026.
 
-> **A snapshot, not the current state.** Measured on 2026-08-06 against `326e2f6`, with the
+> **A snapshot, not the current state.** Measured on 2026-08-06 against `1013f61`, with the
 > corpus at 13 files and the reference date 2026-08-05. The table below and everything under
 > "Open" describe the service as it was *before* the Phase 5 routing work, and two things have
 > moved since:

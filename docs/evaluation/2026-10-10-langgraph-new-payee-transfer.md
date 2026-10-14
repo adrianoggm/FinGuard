@@ -1,7 +1,7 @@
 # LangGraph transfer to a new named payee
 
 **Date:** 2026-10-10
-**Runtime:** `main` at `0e81276a`, isolated Compose project `finguard-graph-test`, graph enabled, synthetic account
+**Runtime:** `main` at `b43bfc7a`, isolated Compose project `finguard-graph-test`, graph enabled, synthetic account
 
 ## Live sequence
 
@@ -13,7 +13,7 @@ The isolated orchestrator was restarted. The conversation resumed with “20 eur
 CANCELLED | NULL | Juan Perez | ES9121000418450200051332
 ```
 
-No payment was confirmed and no transaction was created. Only the isolated orchestrator was restarted; the shared stack was not touched. `/version` reported `0e81276a`, and health was restored after restart.
+No payment was confirmed and no transaction was created. Only the isolated orchestrator was restarted; the shared stack was not touched. `/version` reported `b43bfc7a`, and health was restored after restart.
 
 ## Guards
 

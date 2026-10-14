@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-05-continuous-visual-conversation-design.md` §6 (continuity across voice, text and chart), §8 (performance), §9 «Multimodal cases» and the invariants, §10 row 4.4 («the five multimodal cases pass; full-turn latency measured against §8»), §13. `docs/architecture/adr-010-realtime-voice.md` (the event vocabulary; version 1).
 
-**Base:** `task/continuous-visual-conversation @ 131d214` (Wave 4.3 closed). Orchestrator suite at that head: 4095 / 3 / 208 + corpus 206 at 0.0 %; ratchets `UNMEASURED` 22 / `MUTE` 43 / recogniser 0. The gateway's `uv run pytest -q` and the web's `npm test` totals are recorded in the ledger at Task 1's dispatch.
+**Base:** `task/continuous-visual-conversation @ 8f40cf2` (Wave 4.3 closed). Orchestrator suite at that head: 4095 / 3 / 208 + corpus 206 at 0.0 %; ratchets `UNMEASURED` 22 / `MUTE` 43 / recogniser 0. The gateway's `uv run pytest -q` and the web's `npm test` totals are recorded in the ledger at Task 1's dispatch.
 
 ## Global Constraints
 
@@ -82,30 +82,30 @@ Orchestrator: (a) a VOICE and a TEXT presentation-only turn through the streamin
 
 One line per task, its SHAs, and the rulings that shaped its code:
 
-- **Task 1** — `09fcc85` (gateway: `chartId`/`visualTurnId` on the four turn events, the fake
-  charted case, the cancellation probe), `335740c` (web: the `announcedChartId` fence on
-  `audio.started`, the chart-before-audio invariant), `e142564` (ADR-010's one row). R1 (T1 lands
+- **Task 1** — `8f40cf2` (gateway: `chartId`/`visualTurnId` on the four turn events, the fake
+  charted case, the cancellation probe), `52a4459` (web: the `announcedChartId` fence on
+  `audio.started`, the chart-before-audio invariant), `52a4459` (ADR-010's one row). R1 (T1 lands
   before T3; T3 rebases on T1's shape), R2 (the fence compares `audio.started.chartId` against the
   same turn's `assistant.text.final` chart, mismatch the same protocol-error path as a wrong sample
   rate), R3 (no version bump; the ADR row says "optional since Wave 4.4"), R4 (a KPI's
   `.get("chart_id")` is `None`, so identity is omitted for it).
-- **Task 2** — `69b7d61` (the VOICE refusal removed from `interpret_visual` and its three call
+- **Task 2** — `5036d1b` (the VOICE refusal removed from `interpret_visual` and its three call
   sites; the parity tests). R5 (`voice` removed with its refusal; `offer_saving` stays TEXT-only,
   pinned both ways).
-- **Task 3** — `f745e33` (orchestrator: `spoken_presenter.py`, `QuestionResponse.spoken`,
-  `question_to_dto(..., spoken_for_voice=)`), `71a5036` (gateway: `AssistantReply.spoken`, the TTS
+- **Task 3** — `5036d1b` (orchestrator: `spoken_presenter.py`, `QuestionResponse.spoken`,
+  `question_to_dto(..., spoken_for_voice=)`), `5036d1b` (gateway: `AssistantReply.spoken`, the TTS
   speaks it, `FakeTts.spoken` recorder). R6 (`spoken_for_voice`; the spoken line reads
   `visual_contexts[-1]` after `_remember_visual_context` seals it; `None` on the restyle path), R7
   (`AssistantReply.spoken = payload.get("spoken")` when a `str`, else `None`), R9 (the closed noun
   table over every `GroupBy` member; income/expense by `plan.direction`); also R15 (the fake TTS
   gains a `spoken: list[str]` recorder, added at this task's pre-read).
-- **Task 4** — `15d6ac5` (orchestrator: `test_performance_objectives.py`, §8 a/b/e as tests, c/d
-  named), `373efb9` (gateway: `--follow-up-text` on `benchmark_e2e.py`, the RESULTS.md row). R10
+- **Task 4** — `386de13` (orchestrator: `test_performance_objectives.py`, §8 a/b/e as tests, c/d
+  named), `386de13` (gateway: `--follow-up-text` on `benchmark_e2e.py`, the RESULTS.md row). R10
   (§8 c/d named to Wave 3's own tests, nothing added; §8 e is the first stream frame ahead of the
   policy), R11 (the follow-up row measured with fakes, the gate stated with Wave 3's number; the
   real-provider row is the operator's, Task 9's runbook).
-- **Task 5** — `ef69fa5` (harness: `Turn.channel`, `Turn.spoken`, the streaming-route replay, the
-  frame assertions), `303cf36` (episode 33, seven turns, cases a/b/d/e; case c named to the
+- **Task 5** — `386de13` (harness: `Turn.channel`, `Turn.spoken`, the streaming-route replay, the
+  frame assertions), `386de13` (episode 33, seven turns, cases a/b/d/e; case c named to the
   gateway). R8 (`Turn.spoken` asserts presence/absence only), R12 (a VOICE turn posts to
   `/v1/questions/stream` with `channel: "VOICE"`, the last frame is the answer), R13 (episode 33
   carries a, b, d, e; case c is Task 1's gateway cancellation test), R14 (episode 33 speaks episode

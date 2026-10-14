@@ -1,9 +1,9 @@
 # LangGraph live transfer preparation and cancellation smoke
 
 **Date:** 2026-10-10
-**Checkout:** `main` at `9f022e7e`
+**Checkout:** `main` at `f0cab919`
 **Runtime:** isolated Compose project `finguard-graph-test`, graph enabled, seeded synthetic banking data
-**Runtime provenance:** `/version` reported `sha: 9f022e7e`, `ref: main`; `/health` returned `ok` after the isolated orchestrator was rebuilt and recreated. The shared stack was not restarted.
+**Runtime provenance:** `/version` reported `sha: f0cab919`, `ref: main`; `/health` returned `ok` after the isolated orchestrator was rebuilt and recreated. The shared stack was not restarted.
 
 ## API sequence
 

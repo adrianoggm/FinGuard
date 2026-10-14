@@ -13,19 +13,19 @@ criterion, reading the top of the file and reading the middle gave opposite verd
 then:
 
 **1. The last complete measurement passed its gate.** All five sets in one sitting,
-**2026-08-30 at `7156038`**, `qwen3.5:9b`: held-out `unsafe` **6.3 %**, dev 8.3 %, adversarial
+**2026-08-30 at `b860847`**, `qwen3.5:9b`: held-out `unsafe` **6.3 %**, dev 8.3 %, adversarial
 8.3 %, drift 5.3 %, metamorphic 0 % — every one under the ≤ 10 % bar. The same row is in
 [next.md](../../../../docs/next.md). A later change measured on the held-out set alone — the
 `metric_without_a_bucket` rule, [further down this file](#the-held-out-remainder-was-one-defect-and-it-was-not-in-the-prompt)
 — took held-out `unsafe` to **4/79 · 5.1 %**, and nothing entered the unsafe list to pay for it.
 
-**2. The measurement that failed is history, and stays written down.** **2026-08-28 at `a149b20`**:
+**2. The measurement that failed is history, and stays written down.** **2026-08-28 at `8300929`**:
 held-out `unsafe` **11.4 %** against the same bar, the table below. It is kept because the three
 deterministic-reader fixes that took it to 6.3 % are kept, and a record that only shows the good run
 is not a record.
 
-**3. HEAD is not measured, and that is the sentence that governs.** `e06f732` is **376 commits**
-past `7156038` — Wave 3.5, Wave 4 (4.1-4.5) and the whole Wave 3 hardening have landed since. **No
+**3. HEAD is not measured, and that is the sentence that governs.** `427c54b` is **376 commits**
+past `b860847` — Wave 3.5, Wave 4 (4.1-4.5) and the whole Wave 3 hardening have landed since. **No
 run exists at this commit.** So nothing here says the gate holds *today*; what it says is that it
 held on 30 August, on a tree this one no longer resembles. Promoting on this file as it stands is
 promoting on a measurement nobody re-took — which is a decision somebody may make deliberately, but
@@ -54,7 +54,7 @@ defaults to `qwen2.5-coder:7b`, the baseline — pass the model, or measure the 
 
 ## Re-measured 2026-08-28, and the eight conversational fixes are not why anything moved
 
-`qwen3.5:9b` at `a149b20`, alone on the GPU. Every set run once; the held-out and metamorphic
+`qwen3.5:9b` at `8300929`, alone on the GPU. Every set run once; the held-out and metamorphic
 sets run three further times, because a difference nobody bounded is not a result.
 
 | set | cases | outcome | exact | unsafe | INVENTED | over-asks | invalid |

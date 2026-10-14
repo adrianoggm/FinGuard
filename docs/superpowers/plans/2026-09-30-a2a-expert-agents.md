@@ -10,9 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-30-a2a-expert-agents-design.md` — §2 (decisions D1-D10), §3 (components), §4 (gateway), §5 (flows), §6 (normalisation and trust), §7 (errors), §8 (simulated gym), §9 (tests), §10 (docs), §11 (delivery, cut line), §12 (acceptance), §13 (refused), **§14 (amendments A1-A11, which override the sections they name)**.
 
-**Base:** `task/a2a-gateway` at the commit that adds this plan (its parent is `2be40bc`), in the worktree `C:\Users\adriano.garcia\Desktop\Developer\FinGuard-wt-a2a` (cut from `task/wave3 @ 805f9e2`). The tell: `docs/superpowers/specs/2026-09-30-a2a-expert-agents-design.md` exists and contains `## 14. Amendments`.
+**Base:** `task/a2a-gateway` at the commit that adds this plan (its parent is `b51aacf`), in the worktree `C:\Users\adriano.garcia\Desktop\Developer\FinGuard-wt-a2a` (cut from `task/wave3 @ dab5943`). The tell: `docs/superpowers/specs/2026-09-30-a2a-expert-agents-design.md` exists and contains `## 14. Amendments`.
 
-**Baseline:** the controller measures the orchestrator suite (four foreground calls, below), the voice gateway and the web **once at the plan commit before dispatching Task 3**, writes the counts into the ledger `.superpowers/sdd/2026-09-30-a2a-expert-agents/progress.md`, and every brief carries that recorded number. The last recorded count (`133e973`, 13 Sep: orchestrator 2193 + 1008 + 1137 / 3 skipped / 208 deselected + corpus 208; gateway 144/1; web 131) is 27 commits old and is not the baseline.
+**Baseline:** the controller measures the orchestrator suite (four foreground calls, below), the voice gateway and the web **once at the plan commit before dispatching Task 3**, writes the counts into the ledger `.superpowers/sdd/2026-09-30-a2a-expert-agents/progress.md`, and every brief carries that recorded number. The last recorded count (`b0add34`, 13 Sep: orchestrator 2193 + 1008 + 1137 / 3 skipped / 208 deselected + corpus 208; gateway 144/1; web 131) is 27 commits old and is not the baseline.
 
 ## Global Constraints
 

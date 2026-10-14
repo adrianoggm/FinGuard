@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, dataclasses, `Protocol`, `asyncio.wait_for`, pydantic-settings, pytest-asyncio (`asyncio_mode = "auto"`), the existing `LlmProviderPort` (`complete(prompt, *, model, temperature, max_output_tokens, schema)`), `observability.decisions.record`, PyYAML for the evaluation cases.
 
-**Spec:** `docs/superpowers/specs/2026-09-03-llm-visual-planner-design.md` — Sections B (port, guarantee, the no-values test), C (the draft, the verifier's contract), D (the rules), E (the policy and its mode table), F (the record), G (measurement). Sections A and D's floor-side rules landed on `task/visual-foundation` (`23e7efd`); this plan starts there.
+**Spec:** `docs/superpowers/specs/2026-09-03-llm-visual-planner-design.md` — Sections B (port, guarantee, the no-values test), C (the draft, the verifier's contract), D (the rules), E (the policy and its mode table), F (the record), G (measurement). Sections A and D's floor-side rules landed on `task/visual-foundation` (`9442663`); this plan starts there.
 
 ## Global Constraints
 
@@ -23,7 +23,7 @@
 - **`changed_from_baseline` compares canonicalised specs**: titles and encoding order do not count.
 - **Three runs, never one number.** Any promotion figure is the minimum over three runs with identical manifests, following `calibrate_robustness_gate.py`'s rule.
 - **Ruff line limit 100; no trailing pragma to dodge it.** Gates before every commit: `uv run --directory apps/orchestrator pytest -q -m "not integration" --deselect tests/test_conversation_corpus.py`, then `tests/test_conversation_corpus.py` alone, `ruff check .`, `ruff format --check .`, `mypy src`. Web only if `apps/web` is touched (it should not be).
-- **Baseline at `23e7efd`: 3614 passed / 3 skipped / 192 deselected + 190 corpus at 0.0 %; web 112.** Recorded; do not re-measure. **The conversation corpus cannot see charts** (0 of 190 episodes reach `question_to_dto`) — a green corpus proves nothing about this plan.
+- **Baseline at `9442663`: 3614 passed / 3 skipped / 192 deselected + 190 corpus at 0.0 %; web 112.** Recorded; do not re-measure. **The conversation corpus cannot see charts** (0 of 190 episodes reach `question_to_dto`) — a green corpus proves nothing about this plan.
 - **Implementers work in a worktree cut from a named SHA**, never in the primary tree. Suites run in the foreground, blocking. Commit per item. Never add a `Co-Authored-By` trailer. Do not push.
 - **Never edit a `Ceiling` or a `Floor`**, a dataset case or a corpus episode to move a number.
 
@@ -773,7 +773,7 @@ def _order(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
     return None
 ```
 
-Read `ChartSpec.fields()` and `VisualProfile.field_names()` before relying on them — both exist on `23e7efd`; if `fields()` has a different name, use the real one and say so.
+Read `ChartSpec.fields()` and `VisualProfile.field_names()` before relying on them — both exist on `9442663`; if `fields()` has a different name, use the real one and say so.
 
 - [ ] **Step 4: Run to verify it passes**
 

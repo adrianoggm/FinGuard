@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-05-continuous-visual-conversation-design.md` §4 (as amended in 4.2: the wire carries value-free shape facts; "the wire is not where authority lives: the verifier decides") — this plan makes the second half true by construction; §13. The argument: the second and third external reviews of `task/continuous-visual-conversation` (2026-09-06 23:16, 2026-09-07 10:03): a client could flip `comparison` and stack a comparison, or pair a valid `metric_source` with an unsigned profile and get a misleading chart signed and saved.
 
-**Base:** `task/continuous-visual-conversation @ 405b9a8`. Suite at base, recorded — do not re-measure: `tests/test_[a-l]*.py` + `[m-s]` + `[t-z]` = **3890 passed / 3 skipped / 204 deselected**, corpus **202 passed at 0.0 %**.
+**Base:** `task/continuous-visual-conversation @ b2e394c`. Suite at base, recorded — do not re-measure: `tests/test_[a-l]*.py` + `[m-s]` + `[t-z]` = **3890 passed / 3 skipped / 204 deselected**, corpus **202 passed at 0.0 %**.
 
 ## Global Constraints
 
@@ -53,7 +53,7 @@
 - Produces: `MetricTokenCodec.seal_context(self, holder_reference: str, semantics: dict[str, object]) -> str` and `MetricTokenCodec.verify_context(self, token: str | None, holder_reference: str, semantics: dict[str, object]) -> bool`. `semantics` is any JSON-serialisable dict; the codec canonicalises it (`json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`) and digests it with SHA-256; the token is `"c1." + b64url(body) + "." + b64url(hmac)` with body `{"v": 1, "k": <active key name>, "h": holder, "g": <hex digest>}`. `verify_context` returns `False` for `None`, a malformed token, a wrong prefix, an unknown key name, a bad signature, another holder or a different digest — never raises.
 - Consumes: the existing key dict, `active`, and the HMAC/base64 helpers of `issue`/`verify` — extract `_sign(body: dict) -> str` (returns the two encoded parts joined) and `_open(token: str, prefix: str) -> dict | None` so `issue`/`verify` and the two new methods share them; `issue`/`verify`'s behaviour and `MetricTokenError` are unchanged (their tests pass untouched).
 
-**Landed** (`0dd2caa`): exactly as specified — `seal_context`/`verify_context` on
+**Landed** (`beaa819`): exactly as specified — `seal_context`/`verify_context` on
 `MetricTokenCodec`, `_sign`/`_open` shared with `issue`/`verify`, prefix `c1.`, body `{v, k, h, g}`
 with `g` the SHA-256 hex digest of the canonical JSON; `verify_context` never raises, returning
 `False` for `None`, a malformed token, a wrong prefix, an unknown key, a bad signature, another
@@ -118,7 +118,7 @@ def test_a_seal_survives_key_order_and_dies_with_key_rotation() -> None:
 - `conversation_mapper.context_semantics(payload: VisualContextPayload) -> dict[str, object]` = `payload.model_dump(mode="json", exclude={"token"})` — the one definition of what a seal covers (the whole wire context minus the seal itself). `to_payload` builds each context's dict as today plus `"token": context.token`. The sealing function `seal_context(context: VisualContext, holder_reference: str, codec: MetricTokenCodec) -> VisualContext` lives in `conversation_mapper` too: it serialises the context exactly as `to_payload` does (factor the per-context dict into `_context_payload(context) -> dict` used by both), validates it through `VisualContextPayload.model_validate(...)`, and returns `replace(context, token=codec.seal_context(holder_reference, context_semantics(payload)))` — so the digest at creation and the digest at verification are computed over the same pydantic-normalised dict.
 - `to_domain(payload, *, verify: Callable[[str | None, dict[str, object]], bool] | None = None)`: for each item, `trusted = verify(item.token, context_semantics(item)) if verify is not None else True`; the rebuilt `VisualContext` gets `token=item.token if trusted else None`, `trusted=trusted`. The caller binds the holder into `verify` (Task 3).
 
-**Landed** (`3d0e78c`): exactly as specified — `VisualContext.token`/`.trusted`,
+**Landed** (`a66b933`): exactly as specified — `VisualContext.token`/`.trusted`,
 `VisualContextPayload.token`, `conversation_mapper.context_semantics`/`seal_context`, and
 `to_domain(payload, *, verify=None)` marking trust per item.
 
@@ -184,13 +184,13 @@ def test_the_seal_covers_the_whole_wire_context_but_not_itself() -> None:
 - `VISUAL_UNTRUSTED`: `QuestionResponse(outcome="VISUAL_UNTRUSTED", text="No reconozco ese gráfico; pide uno nuevo y podré cambiarlo.", conversation=<unchanged>)`, returned before `_saved_visual_source`/merge/verify; zero ledger calls; no decision row (a `VISUAL_FOLLOW_UP` row is recorded upstream as today).
 - The routes: `holder_reference=who.holder_reference` is passed to `_visual_only_response` unconditionally (today it is `None` unless a saved source exists — the save-candidate logic keeps its own `source is not None` guard).
 
-**Landed** (`e6ae808`, fix round 1 `56fc066`, fix round 2 `daf8e0c`): sealed where born
+**Landed** (`a66b933`, fix round 1 `a66b933`, fix round 2 `a66b933`): sealed where born
 (`question_to_dto`'s `holder_reference`/`metric_tokens`, `_derived_context`'s `seal`), verified
 where it enters (`_conversation_of`; the grep-style test confirms it is the only production
 `to_domain(` call site with `verify=`), refused where untrusted (`VISUAL_UNTRUSTED`, no saved
-source, no chips); the development-key warning lives in `main.py`. `56fc066` corrected the first
+source, no chips); the development-key warning lives in `main.py`. `a66b933` corrected the first
 cut, which had conflated "seal this chart" with "offer to save it" — a chart is now sealed
-whether or not `offer_saving` is `True`; only the save candidate is gated by it. `daf8e0c` found
+whether or not `offer_saving` is `True`; only the save candidate is gated by it. `a66b933` found
 the same mistake one level up: `_compound_read_reply` was still calling `question_to_dto(result)`
 with neither keyword, so a compound turn's own charts were born unsealed and refused their own
 restyle one turn later — fixed, and pinned there by a seal-side allowlist test
@@ -211,7 +211,7 @@ restyle one turn later — fixed, and pinned there by a seal-side allowlist test
 - Modify: `apps/orchestrator/evaluation/conversations/32-visual-continuation.yaml` — add a `tamper:` turn key ONLY if the harness can express "echo the previous conversation with one profile flag flipped" cheaply (a `Turn.tamper: str | None` naming the flag); else add the tamper case to `tests/test_conversation_corpus.py` as a harness test over episode 32's conversation.
 - Test: `tests/test_conversation_corpus.py`
 
-**Landed** (`04f61f2`): the probe came back green — every turn already reaches `/v1/questions` and
+**Landed** (`e779927`): the probe came back green — every turn already reaches `/v1/questions` and
 echoes its own answer's conversation, so the seal round-tripped through the harness for free and
 `episodes.py` needed only one line: `VISUAL_UNTRUSTED` added to `_VISUAL_OUTCOMES` beside
 `VISUAL_UNCHANGED`, so the harness's `tool_of` recognises it as the `VISUAL` route instead of
@@ -238,7 +238,7 @@ a reason neither prices in, so the plan's other option was taken instead. Corpus
 
 ### Fix wave: the whole-branch review's Important/Minor/Deferred findings (`branch-fix1.md`)
 
-**Landed** (five commits over BASE `0a3cecf`, starting `4817a3f`):
+**Landed** (five commits over BASE `e779927`, starting `e779927`):
 
 - I3 — `metric_tokens.py`: `issue`/`verify` gain `chart_id`; a token no longer pairs with a chart other than the one it was issued for.
 - m1 — `metric_tokens.py`: the envelope's type (`"t"`) moved inside the signed body, checked only after the MAC verifies.

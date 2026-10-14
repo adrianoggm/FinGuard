@@ -1,8 +1,8 @@
 # Gemini 3.5 Flash-Lite against 3.5 Flash, same turns (2026-10-11)
 
-121 turns per model, replayed on revision `6bc08170` (LangGraph runtime) against the same seeded
+121 turns per model, replayed on revision `e588bc53` (LangGraph runtime) against the same seeded
 bank: four 15-turn sessions, the 11-turn banking session, the model-comparison batteries and the
-reserved holdout sessions. Raw records: `2026-10-11-6bc08170-35-flash(-lite)-*.json`.
+reserved holdout sessions. Raw records: `2026-10-11-e588bc53-35-flash(-lite)-*.json`.
 
 Every turn was judged against its expectation (route, mechanism, intended query): OK when it did
 what was meant, PARTIAL when the route was right but a filter or period was wrong or a needless

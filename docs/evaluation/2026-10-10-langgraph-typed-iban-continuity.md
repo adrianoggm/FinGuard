@@ -1,7 +1,7 @@
 # LangGraph typed-IBAN transfer continuity
 
 **Date:** 2026-10-10
-**Checkout/runtime:** `main` at `bbf91510`
+**Checkout/runtime:** `main` at `43f95aa8`
 **Environment:** isolated Compose project `finguard-graph-test`, graph enabled, seeded synthetic banking account
 
 ## Live API sequence
@@ -12,7 +12,7 @@ Only the isolated orchestrator container was restarted. After it became healthy,
 
 The user then answered “no”. The graph returned `CANCELLED` at version 3. A read-only query of the banking database found the corresponding intent as `CANCELLED`, with `transaction_id` NULL and the same IBAN. The shared stack was not restarted.
 
-`/version` reported SHA `bbf91510` and `/health` returned `ok` after restart. This verifies durable draft state across an orchestrator process restart, continuation, bank preview, and cancellation against the exact committed build.
+`/version` reported SHA `43f95aa8` and `/health` returned `ok` after restart. This verifies durable draft state across an orchestrator process restart, continuation, bank preview, and cancellation against the exact committed build.
 
 ## Guards and implementation notes
 

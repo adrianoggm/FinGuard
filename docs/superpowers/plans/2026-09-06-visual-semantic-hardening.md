@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-03-llm-visual-planner-design.md` — Section C (refuse, never repair), Section D (mark table: the grouped comparison bar's colour + offset + `stack: disabled`; line/area comparison with series on colour), Section E (availability), Section G (evaluation: suitability is annotated structure, not a mark). The external review of 2026-09-06 (pasted by the user; its findings are restated in each task) is the argument; where it and the spec differ, the spec wins.
 
-**Base:** `task/wave3` at `0f35640` (Waves 3 and 4.1 landed). Suite at base, recorded — do not re-measure: `tests/test_[a-l]*.py` + `tests/test_[m-s]*.py` + `tests/test_[t-z]*.py` = **3793 passed / 3 skipped / 192 deselected**, corpus **190 passed at 0.0 %**.
+**Base:** `task/wave3` at `53e4cac` (Waves 3 and 4.1 landed). Suite at base, recorded — do not re-measure: `tests/test_[a-l]*.py` + `tests/test_[m-s]*.py` + `tests/test_[t-z]*.py` = **3793 passed / 3 skipped / 192 deselected**, corpus **190 passed at 0.0 %**.
 
 ## Global Constraints
 

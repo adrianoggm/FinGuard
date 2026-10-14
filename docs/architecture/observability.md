@@ -48,7 +48,7 @@ is a false negative shaped exactly like the failure you are looking for.
 
 ## The LangGraph turn (2026-10-12)
 
-Making LangGraph the only runtime (`c6765847`) deleted every call site that recorded a decision.
+Making LangGraph the only runtime (`96c5ad74`) deleted every call site that recorded a decision.
 The recorder, the exporter and the middleware survived intact, so the counters were wired and
 silent: no `turns_total`, no `decisions_total`, no `turn` span — a green-but-dead instrument of
 exactly the kind this document exists to prevent. The graph now records what it actually decides,
@@ -146,7 +146,7 @@ directory, and datasource uids are pinned so the JSON's references resolve on ev
 | Recent turns | Tempo, `{name="turn"}` | a waterfall without an exemplar to start from |
 
 The two recogniser panels this table used to hold were fed only by the cascade the legacy planner
-ran; it was removed with it (`c6765847`), and they were replaced rather than left empty.
+ran; it was removed with it (`96c5ad74`), and they were replaced rather than left empty.
 
 The waterfall is reachable two ways. The primary one is the exemplar: the dots on the three
 `increase()` panels each carry one turn's `trace_id`, and clicking one opens that turn in Tempo.
@@ -219,7 +219,7 @@ spans would multiply one fact and buy nothing.
 
 ## The path the reasoning fell through
 
-*History: the cascade below was the legacy planner's, removed in `c6765847`. The LangGraph turn
+*History: the cascade below was the legacy planner's, removed in `96c5ad74`. The LangGraph turn
 consults no recognisers, so no reader spans are drawn and `otel_recogniser_spans` has nothing to
 turn down.*
 

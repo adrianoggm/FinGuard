@@ -44,7 +44,7 @@ point**. A real violation count over 175 real answers is worth more than a zero 
 | `keep_alive` | 30m |
 | planner timeout | 120 s |
 | questions / payments / metrics | all enabled |
-| service code | container built at `dd1d2d0`, **not rebuilt for this run** |
+| service code | container built at `404b9cf`, **not rebuilt for this run** |
 | harness code | this commit — `scripts/evaluate_e2e.py` runs on the host, so it changed without touching the container |
 | ledger | `apps/banking-api/seeds/0001_demo.sql` — verified before, during and after: **1678** `ledger_transactions`, **3356** `ledger_entries` |
 | token | `demo-token-laura-0001` (read-only) |
@@ -53,7 +53,7 @@ point**. A real violation count over 175 real answers is worth more than a zero 
 Three caveats on that block.
 
 - `ORCHESTRATOR_BUILD_SHA` in the running container still reads `unknown`, so the container cannot
-  attest its own commit. That the image is `dd1d2d0` remains the operator's statement, not a
+  attest its own commit. That the image is `404b9cf` remains the operator's statement, not a
   measurement.
 - **The ledger's read surface is byte-identical to the previous entry's; its payment surface is
   not.** `payment_intents` holds **10** rows where that block recorded 0 — 6
@@ -68,7 +68,7 @@ Three caveats on that block.
 
 Two changes. Both exist because this benchmark spent a week reporting zeros it had not earned.
 
-**1 · The account scope is settled in the harness.** `b928d90` (2026-08-21) made every question
+**1 · The account scope is settled in the harness.** `42dd188` (2026-08-21) made every question
 that names no account ask which one first, and **119 of the 120 dev questions name none**. These
 sets are single-turn, so the account question could never be answered and the parked plan could
 never run.
@@ -317,7 +317,7 @@ but its timings are discarded rather than reported.
 
 ### Gate 1
 
-Both rows can now be filled. They were `⬜ not measured` at `d439648`, corrected there by `dd1d2d0`
+Both rows can now be filled. They were `⬜ not measured` at `404b9cf`, corrected there by `404b9cf`
 — they were **not** still carrying a ✅.
 
 | row | bar | reading |
@@ -387,7 +387,7 @@ Same file, same rule as the vacuity guard: **a run that did not measure somethin
 no hole is closed by relaxing what is asserted.** Nothing below weakened an expectation.
 
 The reference block at the top of this file applies, with one change: the harness is this commit,
-and the container is still `dd1d2d0`. **Every figure below is therefore harness-side.** No new
+and the container is still `404b9cf`. **Every figure below is therefore harness-side.** No new
 violation here can be attributed to the service without a rebuild, which was not done.
 
 #### The fifteen — `run()` never read `previous`
@@ -443,7 +443,7 @@ Two things follow that matter more than the colour changes.
 
 #### `dev`, run to completion — the answering gap closes
 
-120 cases, `demo-token-laura-0001`, harness at this commit against container `dd1d2d0`. Beside the
+120 cases, `demo-token-laura-0001`, harness at this commit against container `404b9cf`. Beside the
 entry this file already records for the same set:
 
 | | violations | exit | `PLANNED` | `NEEDS_CLARIFICATION` | `UNSUPPORTED` | answered / `expect: plan` | figures | breakdowns |
@@ -511,10 +511,10 @@ would accept.** No dataset edit was needed and none was made.
   lo que cobré?» — both answered `del 2026-08-28 al 2026-08-28, income` with their context supplied,
   instead of inheriting the declared `LAST_MONTH`. A direction-change follow-up appears to drop the
   window and collapse to today. That is accuracy, so it is `evaluate_planning.py`'s business, and
-  **the container is `dd1d2d0`, so it cannot be attributed to current service code without a
+  **the container is `404b9cf`, so it cannot be attributed to current service code without a
   rebuild.** Recorded so the operator's sweep knows to look.
 
-#### The property learns what the rows are — `64b6b3b` and the narrowing
+#### The property learns what the rows are — `800bdec` and the narrowing
 
 The service half landed as shape 1: a comparison now declares itself on the wire with
 `difference_minor`, and the sibling reported honestly that **its change alone does not clear the
@@ -575,7 +575,7 @@ benchmark earns the right to be switched off.
 #### Why `dev` cannot reach 0 on this container, and it is not the narrowing's fault
 
 **Measured directly, one request, before drawing any conclusion from a sweep.** The image at
-`dd1d2d0` predates `64b6b3b`, so it still emits the *old* comparison payload:
+`404b9cf` predates `800bdec`, so it still emits the *old* comparison payload:
 
 ```
 difference_minor present : False        total_minor    : -189597

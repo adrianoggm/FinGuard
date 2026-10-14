@@ -3,7 +3,7 @@
 **Preflight** (2026-10-13T21:05:28+02:00)
 
 - Servicios: orchestrator ok · banking ok · gateway skipped (not used by this evaluation)
-- Orquestador: `unknown` (unknown) · HEAD `96cccafa` · source `bf236dd9542898fef6a5420ae83867889cef42bbd4a91fb1057c1fc17f2cd231` · código del producto: igual que el código local
+- Orquestador: `unknown` (unknown) · HEAD `42333375` · source `bf236dd9542898fef6a5420ae83867889cef42bbd4a91fb1057c1fc17f2cd231` · código del producto: igual que el código local
 - Banking API: `unknown` (unknown) · source `bf0592a5ee7e448eeba77a7c0494f3be45e7b0d7924db3ad3b015a1666bbec27`
 - Libro: último movimiento 2026-10-12 (hoy 2026-10-13)
 - GPU: P2, 217 MHz · Ollama en memoria: qwen3.5:9b

@@ -54,14 +54,14 @@
 - Consumes: `category_words.precisely_named_in(sentence)` (domain), `conversation.last_plan`.
 - Produces: `analyze(...)` returns `relation=FOLLOW_UP, focus=LAST_ANSWER` for, when `last_plan is not None`: (a) a sentence opening with `ahora\b`; (b) a reshape/compare verb with a clitic — `(compara|separa|desglosa|agrupa|reparte|divide|distingue)(lo|la|los|las|melo|mela|melos|melas)\b` at the start; (c) a split imperative — `^(separa|desglosa|divide|distingue|reparte)\b` followed by ≥2 precise categories in the sentence. Everything else exactly as today.
 
-**Landed** (`20c202a`): exactly as specified — `_RESHAPE_FOLLOW_UP` (the `ahora` opener, and a
+**Landed** (`e23fd17`): exactly as specified — `_RESHAPE_FOLLOW_UP` (the `ahora` opener, and a
 reshape/compare verb + clitic) and `_SPLIT_IMPERATIVE` + `_splits_two_or_more_categories()` (a split
 verb naming ≥2 precise categories), combined in `_is_reshape_follow_up()` and ORed into the
 existing `last_plan is not None` branch's `elif`; a one-name split still declines as a filter
 question. Four foreground suite calls: 4147 passed / 3 skipped / 206 deselected — baseline plus the
 seven new tests, no corpus episode moved.
 
-**Fix wave** (`8066da5`): `spanish.folded(sentence)` folded once in `analyze` and threaded into
+**Fix wave** (`177aaaf`): `spanish.folded(sentence)` folded once in `analyze` and threaded into
 `_is_reshape_follow_up`/`_splits_two_or_more_categories` rather than re-computed by each (M-5); a
 comment beside `_RESHAPE_FOLLOW_UP`'s bare «ahora» records that «Ahora bien, ¿cuánto tengo?» reads
 FOLLOW_UP the moment a plan is in view and why that is provably inert, pinned by a handler-level
@@ -121,7 +121,7 @@ async def test_a_split_that_names_one_category_is_not_a_follow_up() -> None:
 - Produces, on the plan in view (`previous`): **split** — for a sentence matching `^(separa|desglosa|divide|distingue|reparte)(lo|la|los|las)?\b` with `named = precisely_named_in(sentence)` of length ≥ 2: `replace(previous, categories=named, excluded_categories=(), group_by=GroupBy.CATEGORY)` (window, direction, account, merchants kept); **regroup** — for a sentence carrying a calendar unit («por meses», «por mes», «mes a mes», «por semanas», «por días») and a reshape/compare verb or nothing else: `replace(previous, group_by=<MONTH|WEEK|DAY>)`; the comparison readers are unaffected (they run first and decline as today), and the COMPARISON capability guard is never reached because the reader claims.
 - `explicit_lexicon.temporal_month` matches `\b(?:por|al|cada)\s+mes(?:es)?\b` (same for week/day plurals).
 
-**Landed** (`d9a2783`, corpus `e8a0209`; four rounds — see `task-2-report.md`): the split patch is a
+**Landed** (`e23fd17`, corpus `41c73c3`; four rounds — see `task-2-report.md`): the split patch is a
 bare `replace`, not `enforce`-wrapped — two coordinated names read as one *combined* total to
 `explicit_facts.read`, and `enforce` would silently undo the very `GroupBy.CATEGORY` this patch
 states; the regroup patch widens the presentation-dimension gate to `DAY`/`WEEK`/`MONTH`, deferring
@@ -134,7 +134,7 @@ so turn 3's expectation (and turns 4-5's restyle targets, retargeted to «el pri
 re-probed against the real harness rather than assumed. Ratchets unchanged: `UNMEASURED` 22/22,
 `MUTE` 43/43.
 
-**Fix wave** (`9a57d1c`): the calendar half of the presentation-dimension gate now declines when
+**Fix wave** (`177aaaf`): the calendar half of the presentation-dimension gate now declines when
 the sentence itself names a category — «Dame el total por meses de gasolina» is handed back to the
 planner instead of answering every category's monthly total with the named one silently dropped
 (I-1, a route-change regression the whole-branch review found and the per-task reviews could not,
@@ -191,7 +191,7 @@ def test_a_one_name_split_still_declines() -> None:
 - `interpret_visual`: `_VISUAL` gains `horizontal|vertical|tumba\w*|de pie`; «en horizontal»/«túmbalo» → `orientation="horizontal"`, «en vertical»/«de pie» → `"vertical"`.
 - Chips: «Ponlo en vertical» / «Ponlo en horizontal» join the candidates and pass the same gate (verify + not-a-no-op), so a horizontal bar offers only «Ponlo en vertical».
 
-**Landed** (`e66d1f9`, fix round `d91f904`): `Orientation`, `EncodingPatch.orientation`, and
+**Landed** (`41c73c3`, fix round `41c73c3`): `Orientation`, `EncodingPatch.orientation`, and
 `merge_encoding_patch` swap a bar's `x`/`y` and `xOffset`/`yOffset` by whichever axis carries the
 *measure* — including the axis-less share bar `RATIO_SHARE` draws, found untested by the first pass
 (the report's own "unreachable" claim was false) and pinned by the fix round's own test; any other
@@ -200,7 +200,7 @@ chips offer «Ponlo en vertical»/«Ponlo en horizontal» through the existing v
 foreground suite calls: 3954 passed / 3 skipped / 206 deselected (baseline + 6 tests), corpus
 unaffected — no episode names an orientation yet.
 
-**Fix wave** (`dc3e88b`): the orientation chips gain the same `not temporal` guard the sort chips
+**Fix wave** (`177aaaf`): the orientation chips gain the same `not temporal` guard the sort chips
 already carried one line above, so a month bar offers neither turn — legal (`merge_encoding_patch`
 allows it) but not a chart worth suggesting (M-7); a bar carrying only a chart-wide
 `sort`/`sort_field` and no per-axis `EncodingSort`, turned, is now pinned beside
@@ -221,7 +221,7 @@ horizontal, the same first-listed-wins rule as everywhere else in the function (
 - Modify: `apps/orchestrator/evaluation/conversations/32-visual-continuation.yaml`
 - Maybe modify: `apps/orchestrator/evaluation/planning/conversations.yaml` (one case for turn 1), `tests/test_what_we_hand_to_the_planner.py` (ratchets lowered)
 
-**Landed** (`c058902`, `why` rewrite `fb14ad0`; four rounds — see `task-4-report.md`): episode 32
+**Landed** (`d68b3ab`, `why` rewrite `d68b3ab`; four rounds — see `task-4-report.md`): episode 32
 speaks §9's words for turns 2, 3 and both restyles. Turn 1 keeps its planning-dataset anchor
 («¿Cuánto gasté el mes pasado?») — §9's own opener reaches the planner on a probe and no case
 exercises it, but `window_words.py` excludes «este verano» by design, so no case was written rather
@@ -234,7 +234,7 @@ reserved as placeholders. Ratchets unchanged: `UNMEASURED` 22/22, `MUTE` 43/43. 
 suite calls: 3954 passed / 3 skipped / 204 deselected (`test_[a-l]*`/`[m-s]*`/`[t-z]*` sum, matching
 the recorded baseline exactly) + corpus 204 at 0.0 % on every rate.
 
-**Fix wave** (`6fcd53e`): the four remaining «(Task 4)» inline comments are scrubbed to their
+**Fix wave** (`177aaaf`): the four remaining «(Task 4)» inline comments are scrubbed to their
 substance alone — the corpus's last ticket references (M-4). Corpus and ratchets unchanged.
 
 - [ ] **Probe first**, through the harness, §9's turns: 1 «¿En qué he gastado más este verano?» — does a deterministic reader claim it, or does it reach the planner? If it reaches the planner and no planning case exercises it, write the case in the planning dataset (`why`: §9's opener; expected plan: EXPENSE, `group_by: CATEGORY`, the window the readers give «este verano» — read `explicit_facts`/`natural_periods`; if the readers know no summer window, the case's window is what the planner should produce and the brief says which; if that is genuinely ambiguous, keep Task 7's anchor sentence for turn 1 and say so in `why` — never guess). 2 «Separa transporte público y gasolina.» → `route: QUERY`, `banking_calls: 1`, `derived_from: true`, `chart:` a bar over two categories (the `groups:` override supplies `TRANSPORT_PUBLIC`/`TRANSPORT_FUEL` rows). 3 «Ahora compáralo por meses.» → `route: QUERY`, `banking_calls: 1`, `derived_from: true`, `chart:` temporal (line or bar, dimension temporal on the axis; `groups:` rows keyed by month). 6 «Pon el gráfico anterior en vertical.» → `route: VISUAL`, `banking_calls: 0`, `derived_from: true`, `chart:` with the dimension on `x`; then, if the six-turn floor allows, «Pon el gráfico anterior en horizontal.» → `route: VISUAL`, `banking_calls: 0`, the same chart as turn 3's (a second flip). Turns 4-5 stay 4.3's, named in `why`.

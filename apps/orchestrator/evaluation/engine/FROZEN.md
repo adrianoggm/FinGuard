@@ -4,7 +4,7 @@ These files are frozen and must not be edited. A change to any of them invalidat
 
 | File | sha256 of the stored content | Content |
 |---|---|---|
-| `regression/conversations.yaml` | `61ddf0c95780c33cfe71b4edea06839609d1ace7e5ccccd77d397c3deb767409` | Byte copy of `evaluation/real/conversations.yaml` at develop `a478f219`: 23 real conversations, 135 turns. |
+| `regression/conversations.yaml` | `61ddf0c95780c33cfe71b4edea06839609d1ace7e5ccccd77d397c3deb767409` | Byte copy of `evaluation/real/conversations.yaml` at develop `4597d5fd`: 23 real conversations, 135 turns. |
 | `regression/ux.yaml` | `06b2f9d2066cbc75d874f569db8497eba49b56abbaef0b9b7969812673171b13` | Byte copy of `evaluation/ux/conversations.yaml`: 10 episodes, 60 turns. |
 | `generalization/conversations.yaml` | `ea97364efbacabe54eceb761ac9909767dc3f59fd0f34ba647fedc57198f71af` | 33 paraphrased variants plus 23 new combination conversations: 56 conversations, 344 turns. |
 

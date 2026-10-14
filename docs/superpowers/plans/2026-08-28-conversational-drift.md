@@ -13,7 +13,7 @@ contract; neither touches `PlanPatch`, `TopMovements` or the wire.
 **Tech Stack:** Python 3.13 · pytest · pytest-asyncio · ruff · mypy. No new dependencies.
 
 **Spec:** this document. The findings it fixes were produced by manual validation on 2026-08-28
-against `39eee4b` with the compose stack up; every probe and its output is reproduced inline in the
+against `5261ce7` with the compose stack up; every probe and its output is reproduced inline in the
 task that fixes it. The product decisions it must not violate are in
 [docs/architecture/adr-011-derived-charts-and-saved-metrics.md](../../architecture/adr-011-derived-charts-and-saved-metrics.md)
 and [docs/conversational-capabilities.md](../../conversational-capabilities.md).
@@ -655,7 +655,7 @@ between conversations it never is. For a voice assistant that doubles every inte
 
 ## Root causes found on 2026-08-28
 
-Task 3's deliverable. Measured against the running compose stack at `6ba084c`, token
+Task 3's deliverable. Measured against the running compose stack at `fde43fd`, token
 `demo-token-laura-pays`, seeded today 2026-08-28. Every cause below was confirmed twice: once over
 HTTP against the live service, and once in-process by calling the recogniser or the patch directly
 with the same sentence, so the file and line quoted are the line that decides rather than the line
@@ -899,9 +899,9 @@ distant hunks in one file merge cleanly, as Tasks 1 and 2 proved.
 | B | **5** (defects 2+4, `_scope_note` at :7146 and `_period_comparison_plans` at :4566) | changes what the comparison recogniser accepts |
 | C | **7** (defect 5, a recogniser for «pronoun + one named window») | adds a recogniser that could claim sentences Task 5 just changed the handling of. Sequential after B on purpose |
 
-Every task starts from the merge commit `4da1516` on `task/visualization`, which carries this plan and
+Every task starts from the merge commit `8300929` on `task/visualization`, which carries this plan and
 both earlier fixes. **A worktree does not necessarily cut from that** — both Task 1 and Task 2 were
-handed a worktree at `main` (`d062f03`), where most of the code these tasks describe does not exist.
+handed a worktree at `main` (`8300929`), where most of the code these tasks describe does not exist.
 Verify the base before starting: the reliable tell is whether this plan document is present.
 
 ## Task 4: the scope phrase is not a grouping instruction

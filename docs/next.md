@@ -359,7 +359,7 @@ The chart decision left `llm_mapper` — a mapper cannot host a model call — f
 `DeterministicVisualPlanner` that carries a `VisualDecision(spec, profile, …)` on the result, decided
 once per turn instead of twice. The profile describes the dataset rather than a chart already chosen.
 `PresentationContext` is per-turn circumstance kept out of the round-tripped profile, threaded to the
-floor since `636042d` and not read there yet. The floor's output is honest: `Stack.disabled` reaches the
+floor since `a05a2f1` and not read there yet. The floor's output is honest: `Stack.disabled` reaches the
 wire as an explicit `null` beside an offset channel, a per-encoding `EncodingSort` wins over the
 chart-wide one, a categorical comparison is grouped, a ranked dimension sorts by its measure, and
 `$schema` names the v6 the client installs.
@@ -402,8 +402,8 @@ Left for the next branch, smallest first:
    async and returns a `VisualPlanDraft | None`; the floor's `plan(profile, presentation)` is sync and
    returns a `ChartSpec | None`. `VisualPlanningPolicy` is what holds both. `max_visible_rows` gets
    its first reader there, and every field of a `VisualPlanDraft` crosses the same three boundaries.
-5. ~~**Invalid visual payloads are dropped silently, not refused.**~~ CLOSED — `61cdb7a` (the
-   visual-context DTO refuses an invalid stack/sort/sort_field) and `434567f` (the conversation
+5. ~~**Invalid visual payloads are dropped silently, not refused.**~~ CLOSED — `9442663` (the
+   visual-context DTO refuses an invalid stack/sort/sort_field) and `9442663` (the conversation
    mapper stops silently dropping an invalid stack/sort).
 6. **`llm_mapper`'s field guard checks the intersection where the profile advertises the
    union.** `llm_mapper.py:233-238` checks a model's proposal against the serialised rows'
@@ -648,19 +648,19 @@ non-loopback `ORCHESTRATOR_WEB_ORIGINS`); an altered-context demo only means som
 own words.** `turn_analyzer.py` gains three follow-up shapes, all gated on
 `conversation.last_plan is not None`: a sentence opening with «ahora», a reshape/compare verb
 carrying a clitic («compáralo», «sepáralo», «desglósalo»), and a split imperative naming two or
-more precise categories (`20c202a`) — a one-name split still declines as a filter question, read
+more precise categories (`e23fd17`) — a one-name split still declines as a filter question, read
 exactly as before. `readers/follow_up.py` gains two patches on the plan already in view: a split
 names its categories (`categories=named, group_by=CATEGORY`, a bare `replace` rather than
 `enforce`-wrapped, because two coordinated names read as one *combined* total to
 `explicit_facts.read` and `enforce` would silently undo the very grouping this patch states), and a
 regroup names its calendar («por meses/semanas/días» → `group_by=MONTH|WEEK|DAY`, deferring to
 `_average_plan` on an `AVERAGE` metric so the two readers never contest the same turn);
-`explicit_lexicon`'s `por|al|cada` calendar phrasings now accept the plural (`d9a2783`). `chart.py`
+`explicit_lexicon`'s `por|al|cada` calendar phrasings now accept the plural (`e23fd17`). `chart.py`
 gains `Orientation` and `EncodingPatch.orientation`; `merge_encoding_patch` swaps a bar's `x`/`y`
 and `xOffset`/`yOffset` by whichever axis carries the *measure* — including the axis-less share bar
 `RATIO_SHARE` draws, found untested by the first pass and pinned by a fix round — and refuses
 orientation on any other mark; `visual_interpreter.py`'s whitelist and `llm_mapper.py`'s chips both
-learn «horizontal»/«vertical»/«tumba»/«de pie» (`e66d1f9`, fix round `d91f904`).
+learn «horizontal»/«vertical»/«tumba»/«de pie» (`41c73c3`, fix round `41c73c3`).
 
 `32-visual-continuation.yaml` now speaks turns 2 and 3 in §9's own words. «Separa transporte
 público y gasolina.» re-queries the plan turn 1 already asked about — one call, `derived_from:
@@ -671,7 +671,7 @@ sort. That answer is a LINE chart nothing can rotate, so the two restyle turns n
 rather than §9's own «el gráfico anterior»: turn 4, «Pon el primer gráfico en vertical.», reaches
 back to turn 1's own breakdown; turn 5, «Pon el gráfico anterior en horizontal.», resolves to the
 chart turn 4 just appended and flips it back, landing on chart 1's exact shape as its own new entry
-(`c058902`, the episode's `why` rewritten whole at `fb14ad0`). Ratchets `UNMEASURED` 22/22 and
+(`d68b3ab`, the episode's `why` rewritten whole at `d68b3ab`). Ratchets `UNMEASURED` 22/22 and
 `MUTE` 43/43 are unchanged — no sentence moved off or onto the handover, so no planning case was
 written; turn 1 keeps its existing planning-dataset anchor, «¿Cuánto gasté el mes pasado?», because
 `window_words.py` excludes «este verano» on purpose (its own docstring: «en verano» is a window "a
@@ -720,21 +720,21 @@ movements behind it.** A trusted chart's context now carries the labels it drew,
 `drawn_labels(dataset)` orders the dimension values by summed `value_minor` descending, ties in
 first-appearance order, capped at 100, `ranked` true only when both the top two and the bottom two
 totals are strict — sealed with the rest of the wire context: value-free strings the web already
-echoes and never reads (`f49d901`, `1843671`). `domain/services/visual_reference.py`'s
+echoes and never reads (`67bb49a`, `67bb49a`). `domain/services/visual_reference.py`'s
 `resolve_reference` reads a sentence against those labels: a named month by the answer writer's own
 vocabulary, the exact «agosto de 2025» picked before a bare «agosto» when two Augusts are on
 screen; a precisely named category; a superlative («la barra más alta», «el pico», «el más bajo»)
-only on a chart whose `ranked` is strict at both ends (`6e4fbc6`). `turn_analyzer.analyze` reads a
+only on a chart whose `ranked` is strict at both ends (`67bb49a`). `turn_analyzer.analyze` reads a
 drill sentence that resolves against the newest trusted chart as a follow-up
-(`_drills_into_the_chart`, `f757291`); the handler runs the plan in view narrowed to that one label
+(`_drills_into_the_chart`, `6d02255`); the handler runs the plan in view narrowed to that one label
 and regrouped by merchant — design §3.3's own third sentence, «¿Qué comercio es responsable?», is
 answered in the same turn rather than needing a question of its own (R16) — with
 `MAX_SELECTED_TRANSACTIONS` movements behind it, and the drilled chart derives from the chart it
-drilled (`6850a02`, `707c260`). «Enséñame los movimientos responsables.» re-lists that same
+drilled (`be9aa7f`, `be9aa7f`). «Enséñame los movimientos responsables.» re-lists that same
 evidence through the existing referenced-result path, once `_MOVEMENT_SET_REFERENCE` learns «los
 movimientos responsables/detrás/que lo explican» and a bare «enséñame/muéstrame/dame los
-movimientos» that ends the sentence (`fcdf655`, R17). Episode 32 speaks §9's own turns 4-5 verbatim,
-right after the month line (`c8b6408`).
+movimientos» that ends the sentence (`6d02255`, R17). Episode 32 speaks §9's own turns 4-5 verbatim,
+right after the month line (`d8ce518`).
 
 What it refuses: two bars fitting one reference — «ese pico» when two months tie, a bare «agosto»
 naming two Augusts — asks `DRILL_AMBIGUOUS`, a Spanish question naming the candidates in the
@@ -806,24 +806,24 @@ summary is spoken from the chart.** A turn's chart identity now rides its own vo
 gateway lifts `chartId` (the answer's `visualization.chart_id`) and `visualTurnId` (the newest
 `visual_contexts[].turn_id`) onto `assistant.text.final`, `audio.started`, `audio.completed` and
 `turn.completed`, omitted rather than `null` on an uncharted turn or a KPI answer, additive on the
-existing protocol (ADR-010 stays version 1) (`09fcc85`, `e142564`). The web client fences audio to
+existing protocol (ADR-010 stays version 1) (`8f40cf2`, `52a4459`). The web client fences audio to
 it: `audio.started` naming a `chartId` other than the one the same turn's `assistant.text.final`
 just announced fails the same way a wrong sample rate does, and the chart landing on the thread
 before `audio.started` arrives is now an asserted invariant rather than an accident of ordering
-(`335740c`). A spoken «ponlo en horizontal» takes the exact `_visual_only_response` path a typed
+(`52a4459`). A spoken «ponlo en horizontal» takes the exact `_visual_only_response` path a typed
 one does — `interpret_visual`'s unconditional VOICE refusal is gone, its `voice` parameter deleted
 from the signature and all three call sites — and the metric-saving offer stays a TEXT-only
-affordance, pinned both ways in the same test (`69b7d61`). The spoken summary of a charted answer
+affordance, pinned both ways in the same test (`5036d1b`). The spoken summary of a charted answer
 is a new domain presenter, `spoken_summary`, reading the accepted chart rather than the table: a
 top-group sentence only when the chart's labels are `ranked` strictly at both ends, named through a
 closed noun table over every `GroupBy` member (categoría/comercio/contraparte/cuenta/mes/semana/día),
 a second sentence keyed off the profile's own shape (temporal, comparison, donut, or the plain
 desglose) independent of the plan's grouping, and «ingreso»/«gasto» read off the plan's own
-direction — never an amount (`f745e33`). `QuestionResponse.spoken` is filled only when
+direction — never an amount (`5036d1b`). `QuestionResponse.spoken` is filled only when
 `request.channel == "VOICE"` and a chart exists, computed from the context this same turn just
 sealed; the gateway's `_reply_from` reads it defensively (a string or nothing) and `_process_turn`
 synthesises `reply.spoken or reply.text` while `assistant.text.final.text` keeps the full written
-answer the screen shows (`71a5036`). §8's five objectives are now tests rather than a promise, bar
+answer the screen shows (`5036d1b`). §8's five objectives are now tests rather than a promise, bar
 one superseded outright by §6's own design — the chart never delays the *written* answer; a
 charted turn's speech necessarily waits for the accepted chart by construction, so there is no
 budget under which it could not wait, and an uncharted turn's speech never waited in the first
@@ -834,17 +834,17 @@ the deterministic path's `Step.VISUAL_PLANNER` record reads `detail == "not_run"
 awaited exactly once; the first SSE frame is a `stage` and is observably ahead of the policy being
 consulted, drained one chunk at a time against a shared spy rather than checked as two isolated
 facts; the budget and the floor-on-expiry stay Wave 3's own `test_a_non_positive_budget_is_refused`
-and `test_the_three_failures_are_told_apart` (`15d6ac5`). The gateway's benchmark gained a
+and `test_the_three_failures_are_told_apart` (`386de13`). The gateway's benchmark gained a
 follow-up-turn row: a charted turn then a presentation-only restyle on the same open session, fake
 providers, `followUp:inputStartToTurnCompletedMs` P50 = P95 = 16 ms over 20 samples (win32
 timer-tick quantisation of protocol overhead, not a fabricated flat line —
 `apps/voice-gateway/evaluation/RESULTS.md`), and the §8 gate is stated in one sentence against
-Wave 3's real-provider P95 (5,076 ms, 17 August 2026) (`373efb9`, measured 10 September 2026). The
+Wave 3's real-provider P95 (5,076 ms, 17 August 2026) (`386de13`, measured 10 September 2026). The
 corpus speaks by voice: the harness gained `Turn.channel` and posts a VOICE turn to the streaming
-route, reading the last frame as the answer (`ef69fa5`); episode 33 carries §9's cases a, b, d and
+route, reading the last frame as the answer (`386de13`); episode 33 carries §9's cases a, b, d and
 e — a voice-opened chart restyled by text, a text chart continued by voice, a voice follow-up
 narrowing the window, and the chart on screen the same frame `spoken` is set — case c, the
-interruption, stays the gateway's own cancellation test from Task 1 (`303cf36`). Suite at HEAD:
+interruption, stays the gateway's own cancellation test from Task 1 (`386de13`). Suite at HEAD:
 4141 / 5 / 209, corpus 207 (176 · 1193); ratchets 22/43/0, unmoved.
 
 What it refuses: no voice saving offer (a save still needs a screen control); no amount in the
@@ -868,24 +868,24 @@ D-4.4-1 through D-4.4-8
 **2026-09-11 — wave 4.5 landed: a chart explains itself from what it carries, and the record says
 what it refuses to say.** The sealed `VisualContext` gains descriptive provenance —
 `source: "llm"|"deterministic"|"patch"|None` and `fallback_reason` — through the three boundaries
-and into the seal (`57063d6`, `dc9c436`); vocabulary, not authority, nothing reads either field to
+and into the seal (`6b9d79f`, `d606236`); vocabulary, not authority, nothing reads either field to
 decide anything. `domain/services/visual_explanation.py`'s `explain_chart(context) ->
 VisualExplanation` derives `chart_reason`, `ordering_reason`, `scope_summary` and `provenance` from
 the sealed context alone — mark and profile for shape, `EncodingSort`/`ranked` for order, `window`
 and the drawn `labels` for scope, `source`/`fallback_reason` for who chose it — the noun read off
 the labels themselves (`YYYY-MM` → mes, an ISO date → día, a known category key → categoría, else
 grupo) since no plan survives to a later turn, and the measure word from `profile.measure_metric()`
-(`47a0597`, `4a12083`). `QuestionResponse.explanation` now rides every charted answer, TEXT and
+(`d606236`, `d606236`). `QuestionResponse.explanation` now rides every charted answer, TEXT and
 VOICE alike, restyle included, and the web shows it under an inert `<details>` «¿Por qué este
-gráfico?» beside «Ver la consulta», no chip, no endpoint, no action (`6aab2cb`, `5edccb1`). The
+gráfico?» beside «Ver la consulta», no chip, no endpoint, no action (`d606236`, `b9d9efb`). The
 question itself — «¿Por qué este gráfico?» and its close variants, claimed only when a trusted
 chart exists — is answered outcome `VISUAL_EXPLAINED` from `explain_chart` alone: zero ledger calls,
-zero model calls, the conversation byte-identical to before the question (`6283309`). The presenter
+zero model calls, the conversation byte-identical to before the question (`b9d9efb`). The presenter
 is meant to speak only the chart's own plan: `question_to_dto` hands `spoken_summary` a plan only
 when `AskFinancialQuestionResult.metric_definition_borrowed` is False, otherwise the generic noun —
 M-2 (4.4's branch review) is now closed this way; see below for what closing it this way still
 does not reach. Episode 32 gains the why-turn right after turn 1 and
-episode 33's turn 1 asserts its voice explanation (`7f673e8`, `92b00e3`). Suite at HEAD: 4227 / 3 /
+episode 33's turn 1 asserts its voice explanation (`b9d9efb`, `b9d9efb`). Suite at HEAD: 4227 / 3 /
 209 (three globs) + corpus 207 (176 · 1194) at 0.0 %; ratchets 22/43/0 (`UNMEASURED`/`MUTE`/
 `CONTESTED`), unmoved; gateway untouched (`git diff --stat -- apps/voice-gateway` empty across the
 whole wave).
@@ -930,7 +930,7 @@ explanation visible after turn 1, spoken right after «¿Por qué este gráfico?
 
 **2026-09-13 — Wave 3 hardening landed: the audits' findings are closed, claimed, or written down as
 open — none silently dropped.** Three read-only auditors (design/architecture, code correctness,
-behaviour+harness+gateway+web) read `task/wave3` at `d88324c` and reported, by severity: design 2
+behaviour+harness+gateway+web) read `task/wave3` at `64c874d` and reported, by severity: design 2
 Critical / 11 Important / 10 Minor (+3 questions); code 1 Critical / 5 Important / 7 Minor;
 behaviour+gateway+web+measurement 13 Critical / 23 Important / 18 Minor. The measurement audit's own
 four Criticals, one line each: **M-1** the §8 latency gate summed a real-provider Linux number and a
@@ -943,27 +943,27 @@ method proposed to measure it is right-censored by construction (a run made *at*
 report a P95 above B).
 
 **What landed, by task, SHAs post-strip (D-H-3; the batch-1 review's five `Co-Authored-By` trailers
-were removed by `git filter-branch` over `f43fbab..HEAD` on 2026-09-11, which rewrote every commit
-after `f43fbab` in the process). F-6 (fix wave, Important 5): the previous version of this list
+were removed by `git filter-branch` over `64c874d..HEAD` on 2026-09-11, which rewrote every commit
+after `64c874d` in the process). F-6 (fix wave, Important 5): the previous version of this list
 named 15 SHAs — Task 1, all of Task 5, all of Task 6, all four of Task 7 — that predated that
 rewrite and are not reachable from HEAD; a fresh clone could not `git show` them. Regenerated from
-`git log d88324c..4feff6e` rather than hand-copied from task reports, every SHA below is the
-post-strip one:** Task 1 — the seal binds conversation + position (A-1/A-13): `6e1c350`, `b9e8231`.
-Task 2 — what crosses the wire (A-2/A-6/U-5/A-11/A-4/A-5): `09ddc3f`, `7801a15`, `fd2c9a9`,
-`77f5f1d`, `a164a90`. Task 3 — the language surface (B-1/B-4/A-8/A-9/A-10/B-6/B-3/C-1/C-3/C-4/C-6):
-`cd40ebe`, `72cb982`, `12880d4`, `cfb0836`, `541ecd3`, `e63d15a`, `2c3c75c`; B-2 left BLOCKED by
+`git log 64c874d..b0add34` rather than hand-copied from task reports, every SHA below is the
+post-strip one:** Task 1 — the seal binds conversation + position (A-1/A-13): `5ac0a77`, `5ac0a77`.
+Task 2 — what crosses the wire (A-2/A-6/U-5/A-11/A-4/A-5): `e9f6051`, `e9f6051`, `e9f6051`,
+`e9f6051`, `e9f6051`. Task 3 — the language surface (B-1/B-4/A-8/A-9/A-10/B-6/B-3/C-1/C-3/C-4/C-6):
+`e9f6051`, `60d6760`, `60d6760`, `60d6760`, `60d6760`, `3439555`, `3439555`; B-2 left BLOCKED by
 design (R-H1), closed instead by Task 8's stop-list. Task 3 fix round (F-H1 Critical/F-H2/F-H3, from
-the batch review): `45c9d6b`, `bbcaef6`, `2b64f14`. Task 4 — charts mean what they say
-(U-1/U-6/U-2/U-3/A-7/C-2/A-3/U-7/U-8/A-15/D-H-1): `ab1ae38`, `96fcbb9`, `a628f72`, `86befb1`,
-`d5f4e3a`, `96435fd`, `614ed0e`. Task 5 — the gateway (G-1..G-11): `0938625`, `d6593ad`, `f630636`,
-`177d426`, `93004d6` (G-2/G-3/G-6/G-8/G-11's own commit content landed inside `6a6ea71`, a
-shared-index race — see the git-race map below). Task 6 — the web (W-1..W-8): `6a6ea71`, `ca1efac`,
-`450c42b`, `e84919e`. Task 7 — measurement honesty (M-1..M-9/U-9): `0938625` (State-at-HEAD block,
-same race), `19447e3`, `d2a4515`, `0860db7`+`153d497`, `69f095b`. Task 8 — the corpus learns the
-sentences it avoided (B-2a/B-7, harness kinds, episode 34): `9147ac1`, `90c9264`, `ced6672`,
-`60db150`, `8c76c57`, `57b4140`. Task 8b — the ratchets come back under ceiling by claiming, not
+the batch review): `e572ad6`, `03c0530`, `03c0530`. Task 4 — charts mean what they say
+(U-1/U-6/U-2/U-3/A-7/C-2/A-3/U-7/U-8/A-15/D-H-1): `3439555`, `3439555`, `3439555`, `d69b235`,
+`d69b235`, `d69b235`, `e572ad6`. Task 5 — the gateway (G-1..G-11): `21e7d66`, `357e2a9`, `357e2a9`,
+`357e2a9`, `357e2a9` (G-2/G-3/G-6/G-8/G-11's own commit content landed inside `4ff54bd`, a
+shared-index race — see the git-race map below). Task 6 — the web (W-1..W-8): `4ff54bd`, `5bf6abe`,
+`5bf6abe`, `5bf6abe`. Task 7 — measurement honesty (M-1..M-9/U-9): `21e7d66` (State-at-HEAD block,
+same race), `21e7d66`, `21e7d66`, `4ff54bd`+`4ff54bd`, `4ff54bd`. Task 8 — the corpus learns the
+sentences it avoided (B-2a/B-7, harness kinds, episode 34): `03c0530`, `887be57`, `887be57`,
+`602b3aa`, `602b3aa`, `602b3aa`. Task 8b — the ratchets come back under ceiling by claiming, not
 raising (B-9, save request, «vuelve al anterior», the drill asks, `_SPLIT_BY_NAMES` reorder):
-`c530efb`, `94bae8d`, `423f7c9`, `1bfec6e`, `df43db4`, `133e973`.
+`4a5c95d`, `4a5c95d`, `4a5c95d`, `4a5c95d`, `b0add34`, `b0add34`.
 
 **Rulings, R-H1/R-H2:** R-H1 — B-2 (an unrecognised bare word read as a merchant filter) splits into
 a CLOSED stop-list (asks with zero calls, shipped by Task 8) and the ten (in fact twelve) pinned
@@ -980,13 +980,13 @@ reader (as Task 8b did for eight rows) or matched by a new planning-dataset case
 added — the ceiling itself may not move to make room.
 
 **The git-race attribution map** (from the batch-1 review, so the history reads honestly rather than
-looking tampered; SHAs corrected by F-6, fix wave, same regeneration as above): `0938625`
+looking tampered; SHAs corrected by F-6, fix wave, same regeneration as above): `21e7d66`
 (`fix(voice): a refused voice payment does not silence the session`) carries Task 5's own G-1 files
 **plus** Task 7's `RESULTS.md` State-at-HEAD block — two implementers' concurrent commits in one
-shared worktree, caught and mapped, not rewritten while implementers were live. `6a6ea71`
+shared worktree, caught and mapped, not rewritten while implementers were live. `4ff54bd`
 (`fix(web): the client accepts the answers the orchestrator really sends`) carries Task 6's
-W-1/W-2/W-3/W-4/W-6 web files **plus** Task 5's G-2/G-3/G-6/G-8/G-11 gateway files. `0860db7`/
-`153d497` share one subject line for two different files (`latency_gate.py` new, `RESULTS.md`
+W-1/W-2/W-3/W-4/W-6 web files **plus** Task 5's G-2/G-3/G-6/G-8/G-11 gateway files. `4ff54bd`/
+`4ff54bd` share one subject line for two different files (`latency_gate.py` new, `RESULTS.md`
 edited) — a background race split one intended commit into two. No content was lost in any of the
 three incidents, confirmed by direct file inspection at HEAD in both the ledger and the read-only
 batch review; the METHOD RULE this wave converged on — `git commit -m "<msg>" -- <paths>` in one
@@ -998,7 +998,7 @@ onward.
   over a `group_by: NONE` chart) and 33 («sepáralo…», the model path) were harness artefacts, now
   claimed or explained; after Task 8b, the only rows genuinely left open are out of this wave's
   declared scope entirely (B-9's «hazlo más grande»/«ponlo en tarta» were themselves claimed by
-  Task 8b — see its own table — so as of `133e973` every row of episode 34 is RIGHT except the ones
+  Task 8b — see its own table — so as of `b0add34` every row of episode 34 is RIGHT except the ones
   the wave never promised: none remain unaccounted for without a stated reason).
 - **D-H-2** (gateway + web, CLOSED by the fix wave): PCM audio frames used to carry no turn id on
   the wire; the gateway now sends an `audio.frame` event (turn id only) immediately before every
@@ -1039,7 +1039,7 @@ fact:** the 4.4 paragraph above is unchanged — nothing in this wave touched mu
 own mechanics. The 4.5 paragraph's own week-limit sentence is corrected in place, above (D-4.5-3
 RETIRED) — the paragraph no longer says a week-grouped chart's explanation says «días»; every other
 claim in it (the provenance strings, `metric_definition_borrowed`, the R14/R15 digest ruling) is
-unchanged. Suite at HEAD `133e973`: orchestrator 2193 + 1008 + 1137 / 3 skipped / 208 deselected +
+unchanged. Suite at HEAD `b0add34`: orchestrator 2193 + 1008 + 1137 / 3 skipped / 208 deselected +
 corpus 208 (177 · 1273) at 0.0 % on every metric; ratchets `UNMEASURED` 22/22, `MUTE` 43/43,
 `CONTESTED` 0 (at their ceilings, not exceeding them); gateway 144 passed / 1 skipped; web 131
 passed / 10 files. `ruff check`/`ruff format --check`/`mypy src` clean throughout.
@@ -1123,7 +1123,7 @@ get a tail — either the code enforces them or it does not.
 
 ### Gate 1 — the demo. Seeded data, localhost, a scripted scenario
 
-Re-measured **2026-08-28** at `a149b20`, `qwen3.5:9b` alone on the GPU. The figures this table
+Re-measured **2026-08-28** at `8300929`, `qwen3.5:9b` alone on the GPU. The figures this table
 carried before were written on **2026-08-03** and were never re-taken; the ✅ column below used to
 say all eight passed, and it had stopped being true at some point in the 158 planning-path commits
 in between.
@@ -1131,14 +1131,14 @@ in between.
 | property | bar | measured 2026-08-28 | how to check |
 | --- | --- | --- | --- |
 | `invalid structure` | **0** on all sets | ✅ 0 on all **five**, every run | `evaluate_planning --dataset <set>` |
-| E2E property violations | **0** | ✅ **0/120, 0/79, 0/36** — and this time earned: **185 answering outcomes carrying 185 figures**, on a build attested at `1975e77`. The identical-looking `✅` this row carried from 2026-08-03 was **vacuous**: `PLANNED` occurred **zero** times in 235 cases, every property is guarded on an answering outcome, and the run still exited 0. A benchmark that cannot detect its own silence now fails instead: `ANSWERING_FLOOR` | `just evaluate-e2e <token> <set>` |
-| Cross-account containment | **0** failures | ✅ **0 of 19**, re-run **2026-09-01 at `a278653`**, the build `/version` reported, after 172 commits in which only the unit suites had executed: **153 integration tests pass in banking and 1 in the orchestrator**, including the four that pin a confirmation's inability to redirect a payment to another IBAN. Those four were listed below as failing and are not any more. First run at last. Narrower than it reads: `relforcerowsecurity` is **false** on every banking table, so what passes is the **privilege barrier** plus the read views' `WHERE` — the policies are dormant and no test can reach them. The count here was also wrong: **19** isolation tests, not four | `pytest -m integration` in banking |
+| E2E property violations | **0** | ✅ **0/120, 0/79, 0/36** — and this time earned: **185 answering outcomes carrying 185 figures**, on a build attested at `8300929`. The identical-looking `✅` this row carried from 2026-08-03 was **vacuous**: `PLANNED` occurred **zero** times in 235 cases, every property is guarded on an answering outcome, and the run still exited 0. A benchmark that cannot detect its own silence now fails instead: `ANSWERING_FLOOR` | `just evaluate-e2e <token> <set>` |
+| Cross-account containment | **0** failures | ✅ **0 of 19**, re-run **2026-09-01 at `50cb68c`**, the build `/version` reported, after 172 commits in which only the unit suites had executed: **153 integration tests pass in banking and 1 in the orchestrator**, including the four that pin a confirmation's inability to redirect a payment to another IBAN. Those four were listed below as failing and are not any more. First run at last. Narrower than it reads: `relforcerowsecurity` is **false** on every banking table, so what passes is the **privilege barrier** plus the read views' `WHERE` — the policies are dormant and no test can reach them. The count here was also wrong: **19** isolation tests, not four | `pytest -m integration` in banking |
 | Known injection ASR | **0** for attacks a deterministic rule covers | ✅ `direction ALL` is **refused** by `SPENDING_ANSWERED_AS_EVERYTHING`; the group rose 64.3 % → 78.6 % | `evaluate_planning --dataset adversarial` |
 | Over-refusal by the guard | **0** on answerable cases | ✅ 0 — and the ablation puts a number on it: every rule's `cost` column is **+0** | `pytest tests/test_capability_guard.py`, `--ablate` |
 | Unsupported execution | **0** for the guard's six families | ✅ 5/5 held out, 6/6 dev | `evaluate_planning --ablate` |
 | Evidence reconciliation | **0** failures | ✅ **0 of 13** breakdowns inspected. `_reconciliation()` had executed **zero** times before 2026-08-28. It now knows three answer shapes it did not — a comparison's rows are operands (`difference_minor`), a cumulative's last row *is* the whole, and a cadence answer is not a sum that forgot its figure — each keyed on a field already on the wire and simply unread | the E2E properties |
-| **Unsafe execution** | **≤ 10 % on every set**, not only held out | ✅ **held out 6.3 %**. dev 8.3 %, adversarial 8.3 %, drift 5.3 %, metamorphic 0 % — the five re-taken **2026-08-30 in one sitting at `7156038`**, `qwen3.5:9b`, because the figures this row carried were measured on different commits and that is how the previous version of this table stopped being true. Held out was 11.4 % on 2026-08-28; three deterministic-reader fixes took it to 6.3 % without touching the model or the prompt | `evaluate_planning --dataset <set>` |
-| **Robustness to rewording** | macro **≥ 81.8 %**, over-refusal **≤ 7.8 %**, and neither may buy its way out of `unsafe ≤ 10 %` or `invalid structure = 0` | ✅ **macro 82.8 %**, per pair **352/416 · 84.6 %**, over-refusal **20/296 · 6.8 %**, unsafe **31/472 · 6.6 %**, invalid structure 0 — three runs at `b6709b1` with identical manifests (`dirty: false`, corpus `0fdb5581…`, digest `6488c96f…`, seed 0, ctx 4096), `qwen3.5:9b`. Thresholds from `calibrate_robustness_gate.py`, whose rule is *declared* (floor = min − max(range, 1 pt)) and whose per-run manifest has twice caught a comparison across builds. **Agreeing runs are not determinism** — `--repeat` says this planner is *“not bit-reproducible even at temperature 0”*. Rose 76.6 → 81.7 → 82.8 in one day, from two readers that claimed more than their sentence said: a bare `entre` in the *comparison* vocabulary pinning «entre gasolina y transporte público» to a breakdown, and «gasto acumulado» claiming a running series with no bucket named — the second turning one figure into a month-by-month series, and its `MONTH` default was spelled **twice**, in the reader and again in `readers/metrics`, with only one copy named. Per group: `noise` 97.4, `period_confusable` 91.7, `boundary` 87.8, `ambiguity` 86.0, `out_of_domain` 85.4, `period_absolute` 84.0, `category_multiple` 75.0, `merchant` 66.7, `follow_up` 46.9 | `evaluate_planning --dataset robustness` **three times**, then `calibrate_robustness_gate.py r1 r2 r3`; for a change to a deterministic reader, fingerprint it over every corpus sentence instead — that is a proof and this is a confirmation |
+| **Unsafe execution** | **≤ 10 % on every set**, not only held out | ✅ **held out 6.3 %**. dev 8.3 %, adversarial 8.3 %, drift 5.3 %, metamorphic 0 % — the five re-taken **2026-08-30 in one sitting at `b860847`**, `qwen3.5:9b`, because the figures this row carried were measured on different commits and that is how the previous version of this table stopped being true. Held out was 11.4 % on 2026-08-28; three deterministic-reader fixes took it to 6.3 % without touching the model or the prompt | `evaluate_planning --dataset <set>` |
+| **Robustness to rewording** | macro **≥ 81.8 %**, over-refusal **≤ 7.8 %**, and neither may buy its way out of `unsafe ≤ 10 %` or `invalid structure = 0` | ✅ **macro 82.8 %**, per pair **352/416 · 84.6 %**, over-refusal **20/296 · 6.8 %**, unsafe **31/472 · 6.6 %**, invalid structure 0 — three runs at `a46428a` with identical manifests (`dirty: false`, corpus `0fdb5581…`, digest `6488c96f…`, seed 0, ctx 4096), `qwen3.5:9b`. Thresholds from `calibrate_robustness_gate.py`, whose rule is *declared* (floor = min − max(range, 1 pt)) and whose per-run manifest has twice caught a comparison across builds. **Agreeing runs are not determinism** — `--repeat` says this planner is *“not bit-reproducible even at temperature 0”*. Rose 76.6 → 81.7 → 82.8 in one day, from two readers that claimed more than their sentence said: a bare `entre` in the *comparison* vocabulary pinning «entre gasolina y transporte público» to a breakdown, and «gasto acumulado» claiming a running series with no bucket named — the second turning one figure into a month-by-month series, and its `MONTH` default was spelled **twice**, in the reader and again in `readers/metrics`, with only one copy named. Per group: `noise` 97.4, `period_confusable` 91.7, `boundary` 87.8, `ambiguity` 86.0, `out_of_domain` 85.4, `period_absolute` 84.0, `category_multiple` 75.0, `merchant` 66.7, `follow_up` 46.9 | `evaluate_planning --dataset robustness` **three times**, then `calibrate_robustness_gate.py r1 r2 r3`; for a change to a deterministic reader, fingerprint it over every corpus sentence instead — that is a proof and this is a confirmation |
 
 **Nine rows, eight of them re-measured and one new.** Unsafe execution was the one that failed and it is the one that moved: 11.4 % → **6.3 %**
 on the held-out set, from three fixes that are all the same shape — a deterministic reader that could not

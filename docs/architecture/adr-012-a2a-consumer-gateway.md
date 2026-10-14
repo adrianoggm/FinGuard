@@ -146,7 +146,7 @@ default: the gateway's 10 s plus 5 s for normalisation, an allowance rather than
 `just evaluate-a2a` runs the real `LlmReplyNormaliser` and verifier over 28 recorded replies — both
 simulated styles, five vocabularies the simulator never produces, full classes, empty days,
 booking confirmations and six hostile replies. One run with `qwen3.5:9b` on Ollama, context 2048,
-seed 0, at the clean commit `bb43f30`:
+seed 0, at the clean commit `9ade087`:
 
 | measure | value | what it means |
 | --- | --- | --- |
@@ -158,7 +158,7 @@ seed 0, at the clean commit `bb43f30`:
 | bait | 3 / 6 | the model's draft carried a session or code the reply does not offer; the verifier stopped two |
 | latency P50 / P95 | 2997 / 5460 ms | with the GPU at full speed; on this laptop it can drop to a slow power state, where one call takes over 90 s |
 
-One run is not a number: it is a baseline to compare runs against. The first run, at `7433ecc`,
+One run is not a number: it is a baseline to compare runs against. The first run, at `0fff099`,
 before the full-class fix, read the same 28, 25, 0/6, 1/6 and 3/6 with 23/28 exact; the fix made
 `sur_weekend` exact. The live acceptance found the defect: told to copy the sessions a reply
 «offers», the model left out a class called «completa», so it could not be booked and the gym's

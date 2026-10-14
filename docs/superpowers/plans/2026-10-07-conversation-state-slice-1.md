@@ -12,13 +12,13 @@
 
 ## Global Constraints
 
-- Worktree `C:\Users\adriano.garcia\Desktop\Developer\FinGuard-wt-step2`, branch `task/conversation-step2`, base `a50215f` (develop 68b7fd9 + the spec). Never touch `C:\Users\adriano.garcia\Desktop\Developer\FinGuard` (the primary tree holds another assistant's uncommitted work).
+- Worktree `C:\Users\adriano.garcia\Desktop\Developer\FinGuard-wt-step2`, branch `task/conversation-step2`, base `df32ac4` (develop 9c42b58 + the spec). Never touch `C:\Users\adriano.garcia\Desktop\Developer\FinGuard` (the primary tree holds another assistant's uncommitted work).
 - No model-facing text changes: the planner, turn-interpreter, visual and payment prompts and schemas stay byte-identical (`tests/test_the_query_in_words.py`, `tests/test_prompt.py` pin them).
 - No figure is ever written by a model; answer texts stay templates.
 - Code, comments, tests, commits in English; what the person reads in Spanish; match the files' style (they explain *why* in comments and docstrings).
 - One coherent change per commit; `git commit -m "<subject>" -- <exact paths>`; never `git add -A`; no `Co-Authored-By` trailer; no push, no merge.
 - The live stack is the demo's: never load, truncate or migrate the database at 127.0.0.1:5442 (the dataset is the person's to load); read-only SQL only.
-- Full orchestrator suite = four foreground calls, each Bash call with `timeout: 600000`: `uv run pytest -q tests/test_[a-l]*.py --deselect tests/test_conversation_corpus.py`, `uv run pytest -q tests/test_[m-s]*.py`, `uv run pytest -q tests/test_[t-z]*.py`, `uv run pytest -q tests/test_conversation_corpus.py` (from `apps/orchestrator`). Baseline at develop 68b7fd9: **5370 passed, 4 skipped, 0 failed** (2792+3 / 1074+1 / 1294 / 210).
+- Full orchestrator suite = four foreground calls, each Bash call with `timeout: 600000`: `uv run pytest -q tests/test_[a-l]*.py --deselect tests/test_conversation_corpus.py`, `uv run pytest -q tests/test_[m-s]*.py`, `uv run pytest -q tests/test_[t-z]*.py`, `uv run pytest -q tests/test_conversation_corpus.py` (from `apps/orchestrator`). Baseline at develop 9c42b58: **5370 passed, 4 skipped, 0 failed** (2792+3 / 1074+1 / 1294 / 210).
 - An expectation in `evaluation/ux/conversations.yaml` or `evaluation/real/conversations.yaml` is never edited to make a turn pass.
 
 ## Review Focus
