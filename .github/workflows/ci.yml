@@ -8,8 +8,14 @@ name: ci
 # minutes on a question already answered by `just check` locally.
 #
 # So the gate moved to where a mistake actually becomes expensive — the merge into main — and
-# `workflow_dispatch` covers verifying a branch before that.
+# `workflow_dispatch` covers verifying a branch before that. The push into main runs it once more,
+# on the merge commit itself: that is the commit GitHub shows at the head of main, and without a
+# run of its own it carries no check mark.
 on:
+  push:
+    branches:
+      - main
+
   pull_request:
     branches:
       - main
@@ -29,10 +35,10 @@ concurrency:
 
 # Every job below repeats one condition:
 #
-#     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'develop'
+#     if: github.event_name != 'pull_request' || github.head_ref == 'develop'
 #
 # `branches:` above filters the *target*, so a PR from anywhere into main matches it; this filters
-# the source. It is written out three times because there is nowhere to put it once — a workflow
+# the source. A push to main and a manual run always pass. It is written out three times because there is nowhere to put it once — a workflow
 # level `if` does not exist, `env` is not readable from a job level `if`, and a shared gate job
 # would spend a runner to say no. An anchor would deduplicate the text and not the maintenance.
 #
@@ -44,7 +50,7 @@ jobs:
   # and the operating systems the team develops on. Development happens on Windows
   # and the images run on Linux, so both have to be green.
   check:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'develop'
+    if: github.event_name != 'pull_request' || github.head_ref == 'develop'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -95,7 +101,7 @@ jobs:
   # payloads it claims to receive, and that the state machine holding the conversation still
   # follows its four rules.
   web:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'develop'
+    if: github.event_name != 'pull_request' || github.head_ref == 'develop'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -124,7 +130,7 @@ jobs:
   # coverage of the integration path is therefore a gap — running it there means
   # installing PostgreSQL on the runner, which is a decision of its own.
   integration:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'develop'
+    if: github.event_name != 'pull_request' || github.head_ref == 'develop'
     runs-on: ubuntu-latest
     services:
       postgres:
