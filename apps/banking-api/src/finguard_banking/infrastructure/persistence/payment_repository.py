@@ -472,6 +472,7 @@ def _destination_of(intent: Any) -> Destination:
 
 def _receipt_payload(receipt: PaymentReceipt) -> dict[str, Any]:
     """JSON snapshot written atomically with the ledger booking and intent transition."""
+    destination: dict[str, str | None]
     match receipt.to:
         case ToPhone(contact_id=contact_id, name=name, phone=phone):
             destination = {
