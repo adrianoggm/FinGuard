@@ -81,7 +81,7 @@ class TurnGraphState(TypedDict, total=False):
     payment_answer: str
     payment_reply: str
     # Canonical payment workflow identity, independent from this request's checkpoint thread.
-    payment_workflow_id: str
+    payment_workflow_id: str | None
     direct_payment_confirmation: bool
     pending_state: str
     pending_result: str

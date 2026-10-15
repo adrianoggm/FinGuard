@@ -145,13 +145,13 @@ async def execute(
                 answer = cumulative_calculator.accumulate(answer, plan.group_by)
             return QueryRun(plan, answer)
         case MovementListPlan() as plan:
-            answer = await queries.list_movements(
+            page = await queries.list_movements(
                 plan,
                 account_id=account_id,
                 today=today,
                 reporting_timezone=reporting_timezone,
             )
-            return MovementListRun(plan, answer)
+            return MovementListRun(plan, page)
         case TopMovements() as top:
             # Phase 1 reads a rank as "the N largest" (ruling R5), one position at a time as the
             # rules route does, and stops at the first position the window does not hold.

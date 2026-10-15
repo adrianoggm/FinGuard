@@ -566,7 +566,8 @@ class GraphTurnHandler:
         if isinstance(pending, PaymentConfirmationPending):
             # Older releases also used the payment workflow id as the checkpoint thread id. Clean
             # up that legacy thread; this request has its own thread id now.
-            await self._checkpointer.adelete_thread(pending.workflow_id)
+            if pending.workflow_id is not None:
+                await self._checkpointer.adelete_thread(pending.workflow_id)
             fresh["payment_workflow_id"] = pending.workflow_id
             reply = _reply(sentence, spoken)
             if reply != "respuesta ambigua":

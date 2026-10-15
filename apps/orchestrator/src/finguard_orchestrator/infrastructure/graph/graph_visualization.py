@@ -37,7 +37,7 @@ from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
 from finguard_orchestrator.infrastructure.graph import codec
-from finguard_orchestrator.infrastructure.graph.graph_state import Ctx, TurnGraphState
+from finguard_orchestrator.infrastructure.graph.graph_state import Ctx, GraphContext, TurnGraphState
 from finguard_orchestrator.infrastructure.graph.graph_store import canonical_state, commit_state
 from finguard_orchestrator.observability.decisions import Step, Verdict, record
 
@@ -573,7 +573,7 @@ def _edited(shown: ActiveVisual, edit: ChartEdit) -> tuple[VisualDecision | None
 
 async def _visualize_movement_page(
     current: DialogueState,
-    ctx: Ctx,
+    ctx: GraphContext,
     visual_op: Visualize,
 ) -> tuple[AskFinancialQuestionResult, SpokenPlan, int, str | None]:
     """Choose a view over the bounded summary of the movement page already read from banking."""

@@ -188,7 +188,7 @@ class PostgresTurnReservations(TurnReservationsPort):
                     request_id,
                     lease_token,
                 )
-                return result == "UPDATE 1"
+                return str(result) == "UPDATE 1"
 
     async def abandon_expired_checkpoints(
         self, key: TurnKey, *, retention_seconds: int, limit: int = 20
