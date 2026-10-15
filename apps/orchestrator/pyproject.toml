@@ -1,6 +1,7 @@
 [project]
 name = "finguard-orchestrator"
 version = "0.1.0"
+license = "MIT"
 description = "Conversational orchestrator of FinGuard"
 requires-python = ">=3.12"
 dependencies = [

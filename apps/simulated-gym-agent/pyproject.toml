@@ -1,6 +1,7 @@
 [project]
 name = "finguard-simulated-gym"
 version = "0.1.0"
+license = "MIT"
 description = "A simulated third-party gym agent (A2A 1.0) used to demo and test FinGuard's A2A consumption"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,6 +1,7 @@
 [project]
 name = "finguard-banking-api"
 version = "0.1.0"
+license = "MIT"
 description = "Deterministic financial core of FinGuard"
 requires-python = ">=3.12"
 dependencies = [

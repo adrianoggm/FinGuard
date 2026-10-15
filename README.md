@@ -241,3 +241,9 @@ What is open, in order, is in [docs/next.md](docs/next.md).
 Code, comments, tests and documentation are in English. The data (merchant names, movement
 descriptions, the questions people ask) stays in Spanish: it is what a Spanish-speaking holder says
 and reads.
+
+## License
+
+[MIT](LICENSE) © 2026 Adriano García-Giralda Milena. The speech and language models the
+project downloads at runtime (the Piper voice, Whisper, the Ollama and Gemini models) are not part
+of this repository and keep their own licences.
