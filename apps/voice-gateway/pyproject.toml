@@ -1,6 +1,7 @@
 [project]
 name = "finguard-voice-gateway"
 version = "0.1.0"
+license = "MIT"
 description = "Real-time voice channel adapter for FinGuard"
 requires-python = ">=3.12"
 dependencies = [
