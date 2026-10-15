@@ -143,6 +143,40 @@ def test_the_card_is_in_the_answers_own_unit() -> None:
     assert _card(averaged) is None
 
 
+def test_the_answer_names_the_plan_the_web_reads_its_unit_from() -> None:
+    """The web draws a breakdown's rows as counts, averages or money from `last_plan.metric`; it
+    was always empty, so a count by category was shown in euros."""
+    groups = (Group("GROCERIES", 30_000, 5), Group("RESTAURANTS", 20_000, 6))
+    counted = _converse(
+        {JULY: groups},
+        (
+            Ask(
+                PlanFields(
+                    direction=Direction.EXPENSE,
+                    window=JULY,
+                    group_by=GroupBy.CATEGORY,
+                    metric=Metric.COUNT,
+                )
+            ),
+        ),
+    )[0]
+    compared = _converse(
+        {JUNE: (Group("x", 28_000, 7),), JULY: (Group("x", 30_000, 3),)},
+        (
+            Compare(
+                PlanFields(direction=Direction.EXPENSE, metric=Metric.AVERAGE),
+                PlanFields(window=JUNE),
+                PlanFields(window=JULY),
+            ),
+        ),
+    )[0]
+
+    assert counted["conversation"]["last_plan"]["metric"] == "COUNT"
+    assert counted["conversation"]["last_plan"]["group_by"] == "CATEGORY"
+    # A comparison's two sides share their metric; the later one is the plan in view.
+    assert compared["conversation"]["last_plan"]["metric"] == "AVERAGE"
+
+
 def test_an_average_compared_with_an_empty_period_states_no_change() -> None:
     answered, charted = _converse(
         {JUNE: (Group("x", 28_000, 7),), JULY: ()},

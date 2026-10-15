@@ -1176,6 +1176,14 @@ describe("financial breakdowns", () => {
     });
     expect(groupFigure(payload, payload.groups[0]!)).toContain("0,30");
   });
+  it("draws a count's rows as movements, never as money", () => {
+    const payload = answer({
+      currency: "EUR",
+      groups: [{ key: "Comida", total_minor: 12000, movement_count: 7, value_minor: 7 }],
+      conversation: state({ last_plan: { ...LAST_MONTH, metric: "COUNT" } }),
+    });
+    expect(groupFigure(payload, payload.groups[0]!)).toBe("7 movimientos");
+  });
   it("validates the complete voice answer, including groups and parts", () => {
     const payload = answer({
       text: "Dos resultados",

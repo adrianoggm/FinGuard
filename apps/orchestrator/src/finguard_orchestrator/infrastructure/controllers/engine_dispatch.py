@@ -49,9 +49,13 @@ from finguard_orchestrator.application.engine.turn_commands import (
 from finguard_orchestrator.application.engine.turn_result import EngineAnswer
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionResult
 from finguard_orchestrator.domain.enums import PlanningOutcome
-from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.conversation import Conversation, PlannedQuery
 from finguard_orchestrator.domain.ports.dialogue_store import StaleDialogueError
 from finguard_orchestrator.domain.value_objects.caller import Caller
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     ConversationPayload,
     QuestionRequest,
@@ -209,6 +213,18 @@ async def try_engine_streaming(
     return StreamingResponse(frames(), media_type="text/event-stream")
 
 
+def _plan_in_view(
+    plan: FinancialPlan | ComparisonPlan | RatioPlan | TopMovements | None,
+) -> PlannedQuery | None:
+    """The plan the client reads an answer's unit and grouping from: the one that ran, or the
+    later side of a comparison, whose two sides share a metric. A ratio has no single one."""
+    if isinstance(plan, ComparisonPlan):
+        return plan.latest
+    if isinstance(plan, FinancialPlan | TopMovements):
+        return plan
+    return None
+
+
 def _on_the_wire(
     result: AskFinancialQuestionResult,
     held: Conversation,
@@ -229,6 +245,7 @@ def _on_the_wire(
         result.conversation,
         conversation_id=held.conversation_id,
         version=held.version,
+        last_plan=_plan_in_view(result.metric_definition) or result.conversation.last_plan,
     )
     return llm_mapper.question_to_dto(
         replace(result, conversation=conversation),

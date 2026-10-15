@@ -53,6 +53,7 @@ from finguard_orchestrator.domain.errors import (
     DomainError,
     InvalidValueError,
 )
+from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.turn_operations import InterpretationFailedError
 from finguard_orchestrator.domain.services import answer_writer, category_words, ratio_writer
@@ -186,6 +187,8 @@ def _pair(run: PairRun) -> AskFinancialQuestionResult:
             _side(windows[1], run.latest, latest),
         ],
         movements=[_spoken(m) for m in (*run.earlier.movements, *run.latest.movements)],
+        # The plan in view, so the client draws both sides in the unit they were measured in.
+        conversation=Conversation(last_plan=latest),
     )
 
 
