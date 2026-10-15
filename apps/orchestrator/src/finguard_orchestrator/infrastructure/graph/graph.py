@@ -542,7 +542,7 @@ async def present_and_commit(state: TurnGraphState, runtime: Ctx) -> TurnGraphSt
     if "model_budget" in state.get("refused", []):
         current = await _canonical(state, ctx)
         result = AskFinancialQuestionResult(
-            outcome=PlanningOutcome.BANKING_UNAVAILABLE.value,
+            outcome=PlanningOutcome.PROVIDER_ERROR.value,
             text=(
                 "No he podido interpretar esta pregunta dentro del límite de intentos. "
                 "Puedes volver a formularla."
